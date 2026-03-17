@@ -7,9 +7,9 @@ import (
 	"time"
 )
 
-// TestDbOpenAndPing verifies that Open() returns a usable DB handle and the DSN
+// TestDBOpenAndPing verifies that Open() returns a usable DB handle and the DSN
 // can establish a real connection to PostgreSQl.
-func TestDbOpenAndPing(t *testing.T) {
+func TestDBOpenAndPing(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_DSN")
 	if dsn == "" {
 		t.Skip("TEST_DATABASE_DSN is not set yet")
