@@ -18,6 +18,10 @@ func NewJobRepository(db *sql.DB) *JobRepository {
 }
 
 // Create inserts a new job row and returns the persisted snapshot.
+//
+// Defaulting strategy:
+//   - tenant_id defaults to "default" when omitted.
+//   - timezone defaults to "UTC" when omitted.
 func (r *JobRepository) Create(ctx context.Context, in job.CreateJobRequest) (job.Job, error) {
 	tenantID := in.TenantID
 	if tenantID == "" {
@@ -28,6 +32,8 @@ func (r *JobRepository) Create(ctx context.Context, in job.CreateJobRequest) (jo
 		timezone = "UTC"
 	}
 
+	// Keep payload as JSON object to match schema constraint:
+	// chk_jobs_handler_payload_object.
 	payload := in.HandlerPayload
 	if payload == nil {
 		payload = map[string]any{}
@@ -51,11 +57,12 @@ func (r *JobRepository) Create(ctx context.Context, in job.CreateJobRequest) (jo
 		in.Name, tenantID, in.TriggerType, in.CronExpr, timezone,
 		in.HandlerType, string(payloadBytes),
 	).Scan(
-		&out.ID, &out.Name, &out.TenantID, &out.Status, &out.NextRunAt, &out.CreatedAt, &out.UpdatedAt,
+		&out.ID, &out.Name, &out.TenantID, &out.Status, &nextRunAt, &out.CreatedAt, &out.UpdatedAt,
 	)
 	if err != nil {
 		return job.Job{}, fmt.Errorf("insert job: %w", err)
 	}
+
 	if nextRunAt.Valid {
 		t := nextRunAt.Time
 		out.NextRunAt = &t
