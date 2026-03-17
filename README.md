@@ -1,3 +1,3 @@
 # OrbitJob
 
-Distributed Job Schedule Platform
+Industrial-grade distributed scheduler in Go.
