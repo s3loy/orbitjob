@@ -2,7 +2,10 @@ module orbitjob
 
 go 1.25.0
 
-require github.com/gin-gonic/gin v1.12.0
+require (
+	github.com/gin-gonic/gin v1.12.0
+	github.com/lib/pq v1.11.2
+)
 
 require (
 	github.com/bytedance/gopkg v0.1.4 // indirect
