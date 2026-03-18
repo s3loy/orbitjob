@@ -146,7 +146,7 @@ func NormalizeCreateJob(now time.Time, in CreateJobInput) (CreateJobSpec, error)
 		retryBackoffStrategy = RetryBackoffFixed
 	}
 	if !isOneOf(retryBackoffStrategy, RetryBackoffFixed, RetryBackoffExponential) {
-		return CreateJobSpec{}, fmt.Errorf("invalid retry_backoff_strategy. Valid options: (fixed, exponential)")
+		return CreateJobSpec{}, fmt.Errorf("retry_backoff_strategy must be one of: fixed, exponential")
 	}
 
 	concurrencyPolicy := strings.TrimSpace(in.ConcurrencyPolicy)
@@ -154,14 +154,14 @@ func NormalizeCreateJob(now time.Time, in CreateJobInput) (CreateJobSpec, error)
 		concurrencyPolicy = ConcurrencyAllow
 	}
 	if !isOneOf(concurrencyPolicy, ConcurrencyAllow, ConcurrencyForbid, ConcurrencyReplace) {
-		return CreateJobSpec{}, fmt.Errorf("invalid concurrency_policy. Valid options: (allow, forbid, replace)")
+		return CreateJobSpec{}, fmt.Errorf("concurrency_policy must be one of: allow, forbid, replace")
 	}
 	misfirePolicy := strings.TrimSpace(in.MisfirePolicy)
 	if misfirePolicy == "" {
 		misfirePolicy = MisfireSkip
 	}
 	if !isOneOf(misfirePolicy, MisfireSkip, MisfireFireNow, MisfireCatchUp) {
-		return CreateJobSpec{}, fmt.Errorf("invalid misfire_policy. Valid options: (skip, fire_now, catch_up)")
+		return CreateJobSpec{}, fmt.Errorf("misfire_policy must be one of: skip, fire_now, catch_up")
 	}
 
 	payload := cloneHandlerPayload(in.HandlerPayload)
