@@ -19,7 +19,12 @@ func NewJobRepository(db *sql.DB) *JobRepository {
 
 // Create inserts a new job row and returns the persisted snapshot.
 func (r *JobRepository) Create(ctx context.Context, in job.CreateJobSpec) (job.Job, error) {
-	payloadBytes, err := json.Marshal(in.HandlerPayload)
+	payload := in.HandlerPayload
+	if payload == nil {
+		payload = map[string]any{}
+	}
+
+	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		return job.Job{}, fmt.Errorf("marshal handler_payload: %w", err)
 	}
