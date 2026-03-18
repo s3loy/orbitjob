@@ -75,7 +75,7 @@ func TestCreateJobUseCase_Create(t *testing.T) {
 		t.Fatalf("expected repo input timezone=%q, got %q", "Asia/Shanghai", repo.in.Timezone)
 	}
 	if repo.in.NextRunAt == nil {
-		t.Fatalf("expected repo input next_run_at to be set,")
+		t.Fatalf("expected repo input next_run_at to be set")
 	}
 
 	wantNextRunAt := time.Date(2026, 3, 18, 1, 0, 0, 0, time.UTC)
@@ -90,6 +90,6 @@ func TestCreateJobUseCase_Create(t *testing.T) {
 		t.Fatalf("expected out.ID=%d, got %d", repo.out.ID, out.ID)
 	}
 	if out.Name != repo.out.Name {
-		t.Fatalf("expected out.Name=%q,got %q", repo.out.Name, out.Name)
+		t.Fatalf("expected out.Name=%q, got %q", repo.out.Name, out.Name)
 	}
 }
