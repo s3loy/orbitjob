@@ -18,27 +18,8 @@ func NewJobRepository(db *sql.DB) *JobRepository {
 }
 
 // Create inserts a new job row and returns the persisted snapshot.
-//
-// Defaulting strategy:
-//   - tenant_id defaults to "default" when omitted.
-//   - timezone defaults to "UTC" when omitted.
-func (r *JobRepository) Create(ctx context.Context, in job.CreateJobRequest) (job.Job, error) {
-	tenantID := in.TenantID
-	if tenantID == "" {
-		tenantID = "default"
-	}
-	timezone := in.Timezone
-	if timezone == "" {
-		timezone = "UTC"
-	}
-
-	// Keep payload as JSON object to match schema constraint:
-	// chk_jobs_handler_payload_object.
-	payload := in.HandlerPayload
-	if payload == nil {
-		payload = map[string]any{}
-	}
-	payloadBytes, err := json.Marshal(payload)
+func (r *JobRepository) Create(ctx context.Context, in job.CreateJobSpec) (job.Job, error) {
+	payloadBytes, err := json.Marshal(in.HandlerPayload)
 	if err != nil {
 		return job.Job{}, fmt.Errorf("marshal handler_payload: %w", err)
 	}
@@ -47,17 +28,50 @@ func (r *JobRepository) Create(ctx context.Context, in job.CreateJobRequest) (jo
 	var nextRunAt sql.NullTime
 
 	err = r.db.QueryRowContext(ctx, `
-                INSERT INTO jobs (
-                        name, tenant_id, trigger_type, cron_expr, timezone,
-                        handler_type, handler_payload
+				INSERT INTO jobs (
+						name,
+						tenant_id,
+						trigger_type,
+						cron_expr,
+						timezone,
+						handler_type,
+						handler_payload,
+						timeout_sec,
+						retry_limit,
+						retry_backoff_sec,
+						retry_backoff_strategy,
+						concurrency_policy,
+						misfire_policy,
+						next_run_at
                 )
-                VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb)
+                VALUES (
+						$1, $2, $3, $4, $5, $6, $7::jsonb,
+						$8, $9, $10, $11, $12, $13, $14
+				)
                 RETURNING id, name, tenant_id, status, next_run_at, created_at, updated_at
         `,
-		in.Name, tenantID, in.TriggerType, in.CronExpr, timezone,
-		in.HandlerType, string(payloadBytes),
+		in.Name,
+		in.TenantID,
+		in.TriggerType,
+		in.CronExpr,
+		in.Timezone,
+		in.HandlerType,
+		string(payloadBytes),
+		in.TimeoutSec,
+		in.RetryLimit,
+		in.RetryBackoffSec,
+		in.RetryBackoffStrategy,
+		in.ConcurrencyPolicy,
+		in.MisfirePolicy,
+		in.NextRunAt,
 	).Scan(
-		&out.ID, &out.Name, &out.TenantID, &out.Status, &nextRunAt, &out.CreatedAt, &out.UpdatedAt,
+		&out.ID,
+		&out.Name,
+		&out.TenantID,
+		&out.Status,
+		&nextRunAt,
+		&out.CreatedAt,
+		&out.UpdatedAt,
 	)
 	if err != nil {
 		return job.Job{}, fmt.Errorf("insert job: %w", err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 
 	"orbitjob/internal/job"
 )
@@ -38,7 +39,13 @@ func TestJobRepository_Create(t *testing.T) {
 		},
 	}
 
-	out, err := repo.Create(context.Background(), in)
+	input := job.NewCreateJobInput(in)
+	spec, err := job.NormalizeCreateJob(time.Now().UTC(), input)
+	if err != nil {
+		t.Fatalf("NormalizeCreateJob() error = %v", err)
+	}
+
+	out, err := repo.Create(context.Background(), spec)
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
@@ -54,5 +61,8 @@ func TestJobRepository_Create(t *testing.T) {
 	}
 	if out.Status != "active" {
 		t.Fatalf("expected sttus=active, got %q", out.Status)
+	}
+	if out.NextRunAt == nil {
+		t.Fatalf("expected next_run_at to be set for cron job")
 	}
 }
