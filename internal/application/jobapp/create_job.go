@@ -7,11 +7,11 @@ import (
 	"orbitjob/internal/job"
 )
 
-type JobCreator interface {
+type jobCreator interface {
 	Create(ctx context.Context, in job.CreateJobSpec) (job.Job, error)
 }
 
-type Clock interface {
+type clock interface {
 	Now() time.Time
 }
 
@@ -22,11 +22,11 @@ func (realClock) Now() time.Time {
 }
 
 type CreateJobUseCase struct {
-	repo  JobCreator
-	clock Clock
+	repo  jobCreator
+	clock clock
 }
 
-func NewCreateJobUseCase(repo JobCreator) *CreateJobUseCase {
+func NewCreateJobUseCase(repo jobCreator) *CreateJobUseCase {
 	return &CreateJobUseCase{
 		repo:  repo,
 		clock: realClock{},
