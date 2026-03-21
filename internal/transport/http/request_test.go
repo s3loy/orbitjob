@@ -52,15 +52,42 @@ func TestCreateJobRequest_ToCreateJobInput(t *testing.T) {
 		t.Fatalf("expected retry_limit=%d, got %d", req.RetryLimit, got.RetryLimit)
 	}
 	if got.RetryBackoffSec != req.RetryBackoffSec {
-		t.Fatalf("expected retry_backoff_sec=%d, got %d", req.RetryBackoffSec, got.RetryBackoffSec)
+		t.Fatalf("expected retry_backoff_sec=%d, got %d", req.RetryBackoffSec,
+			got.RetryBackoffSec)
 	}
 	if got.RetryBackoffStrategy != req.RetryBackoffStrategy {
-		t.Fatalf("expected retry_backoff_strategy=%q, got %q", req.RetryBackoffStrategy, got.RetryBackoffStrategy)
+		t.Fatalf("expected retry_backoff_strategy=%q, got %q", req.RetryBackoffStrategy,
+			got.RetryBackoffStrategy)
 	}
 	if got.ConcurrencyPolicy != req.ConcurrencyPolicy {
-		t.Fatalf("expected concurrency_policy=%q, got %q", req.ConcurrencyPolicy, got.ConcurrencyPolicy)
+		t.Fatalf("expected concurrency_policy=%q, got %q", req.ConcurrencyPolicy,
+			got.ConcurrencyPolicy)
 	}
 	if got.MisfirePolicy != req.MisfirePolicy {
 		t.Fatalf("expected misfire_policy=%q, got %q", req.MisfirePolicy, got.MisfirePolicy)
+	}
+}
+
+func TestListJobsRequest_ToListJobsQuery(t *testing.T) {
+	req := ListJobsRequest{
+		TenantID: "tenant-a",
+		Status:   job.JobStatusActive,
+		Limit:    20,
+		Offset:   40,
+	}
+
+	got := req.ToListJobsQuery()
+
+	if got.TenantID != req.TenantID {
+		t.Fatalf("expected tenant_id=%q, got %q", req.TenantID, got.TenantID)
+	}
+	if got.Status != req.Status {
+		t.Fatalf("expected status=%q, got %q", req.Status, got.Status)
+	}
+	if got.Limit != req.Limit {
+		t.Fatalf("expected limit=%d, got %d", req.Limit, got.Limit)
+	}
+	if got.Offset != req.Offset {
+		t.Fatalf("expected offset=%d, got %d", req.Offset, got.Offset)
 	}
 }

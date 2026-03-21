@@ -41,3 +41,21 @@ func (r CreateJobRequest) ToCreateJobInput() job.CreateJobInput {
 		MisfirePolicy:        r.MisfirePolicy,
 	}
 }
+
+// ListJobsRequest defines the query parameters for listing jobs.
+type ListJobsRequest struct {
+	TenantID string `form:"tenant_id" binding:"omitempty,max=64"`
+	Status   string `form:"status" binding:"omitempty,oneof=active paused"`
+	Limit    int    `form:"limit" binding:"omitempty,min=1,max=100"`
+	Offset   int    `form:"offset" binding:"omitempty,min=0"`
+}
+
+// ToListJobsQuery converts the HTTP query parameters into a domain query.
+func (r ListJobsRequest) ToListJobsQuery() job.ListJobsQuery {
+	return job.ListJobsQuery{
+		TenantID: r.TenantID,
+		Status:   r.Status,
+		Limit:    r.Limit,
+		Offset:   r.Offset,
+	}
+}

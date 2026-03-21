@@ -14,25 +14,41 @@ type createJobUseCase interface {
 	Create(ctx context.Context, in job.CreateJobInput) (job.Job, error)
 }
 
+type listJobsUseCase interface {
+	List(ctx context.Context, in job.ListJobsQuery) ([]job.JobListItem, error)
+}
+
 type errorResponse struct {
 	Error string `json:"error"`
+}
+
+type jobListResponse struct {
+	Items []job.JobListItem `json:"items"`
 }
 
 // Handler wires HTTP endpoints to application use cases.
 type Handler struct {
 	createJobUC createJobUseCase
+	listJobsUC  listJobsUseCase
 }
 
-func NewHandler(createJobUC createJobUseCase) *Handler {
+func NewHandler(createJobUC createJobUseCase, listJobsUC listJobsUseCase) *Handler {
 	return &Handler{
 		createJobUC: createJobUC,
+		listJobsUC:  listJobsUC,
 	}
 }
 
 // Register mounts HTTP routes for the admin API.
 func (h *Handler) Register(r gin.IRouter) {
 	v1 := r.Group("/api/v1")
-	v1.POST("/jobs", h.CreateJob)
+
+	if h.listJobsUC != nil {
+		v1.GET("/jobs", h.ListJobs)
+	}
+	if h.createJobUC != nil {
+		v1.POST("/jobs", h.CreateJob)
+	}
 }
 
 // CreateJob handles job creation requests.
@@ -62,4 +78,35 @@ func (h *Handler) CreateJob(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, out)
+}
+
+// ListJobs handles job list queries.
+func (h *Handler) ListJobs(c *gin.Context) {
+	var req ListJobsRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{
+			Error: err.Error(),
+		})
+		return
+	}
+
+	out, err := h.listJobsUC.List(c.Request.Context(), req.ToListJobsQuery())
+	if err != nil {
+		if job.IsValidationError(err) {
+			c.JSON(http.StatusBadRequest, errorResponse{
+				Error: err.Error(),
+			})
+			return
+		}
+
+		_ = c.Error(err)
+		c.JSON(http.StatusInternalServerError, errorResponse{
+			Error: "internal server error",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, jobListResponse{
+		Items: out,
+	})
 }
