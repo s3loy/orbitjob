@@ -2,6 +2,7 @@ package jobapp
 
 import (
 	"context"
+	"errors"
 	"orbitjob/internal/job"
 	"testing"
 	"time"
@@ -91,5 +92,59 @@ func TestCreateJobUseCase_Create(t *testing.T) {
 	}
 	if out.Name != repo.out.Name {
 		t.Fatalf("expected out.Name=%q, got %q", repo.out.Name, out.Name)
+	}
+}
+
+func TestNewCreateJobUseCase_CreateValidationError(t *testing.T) {
+	repo := &testRepo{}
+	uc := NewCreateJobUseCase(repo)
+
+	if uc == nil {
+		t.Fatalf("expected use case to be initialized")
+	}
+	if uc.repo != repo {
+		t.Fatalf("expected repo to be stored on use case")
+	}
+	if uc.clock == nil {
+		t.Fatalf("expected clock to be initialized")
+	}
+
+	_, err := uc.Create(context.Background(), job.CreateJobInput{
+		TriggerType: job.TriggerTypeManual,
+		HandlerType: "http",
+	})
+	if err == nil {
+		t.Fatalf("expected validation error, got nil")
+	}
+	if repo.called {
+		t.Fatalf("expected repo.Create not to be called on validation error")
+	}
+}
+
+func TestCreateJobUseCase_CreateRepoError(t *testing.T) {
+	now := time.Date(2026, 3, 18, 0, 58, 0, 0, time.UTC)
+	cronExpr := "0 9 * * *"
+	repoErr := errors.New("insert failed")
+
+	repo := &testRepo{
+		err: repoErr,
+	}
+	uc := &CreateJobUseCase{
+		repo:  repo,
+		clock: fixedClock{t: now},
+	}
+
+	_, err := uc.Create(context.Background(), job.CreateJobInput{
+		Name:        "daily-report",
+		TriggerType: job.TriggerTypeCron,
+		CronExpr:    &cronExpr,
+		Timezone:    "Asia/Shanghai",
+		HandlerType: "http",
+	})
+	if !errors.Is(err, repoErr) {
+		t.Fatalf("expected repo error %q, got %v", repoErr, err)
+	}
+	if !repo.called {
+		t.Fatalf("expected repo.Create to be called")
 	}
 }
