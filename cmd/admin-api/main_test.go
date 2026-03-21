@@ -3,12 +3,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"orbitjob/internal/job"
-	httpapi "orbitjob/internal/transport/http"
 	"strings"
 	"testing"
+
+	"orbitjob/internal/job"
+	httpapi "orbitjob/internal/transport/http"
 
 	"github.com/gin-gonic/gin"
 )
@@ -21,6 +23,19 @@ type stubCreateJobUseCase struct {
 }
 
 func (s *stubCreateJobUseCase) Create(ctx context.Context, in job.CreateJobInput) (job.Job, error) {
+	s.called = true
+	s.in = in
+	return s.out, s.err
+}
+
+type stubListJobsUseCase struct {
+	called bool
+	in     job.ListJobsQuery
+	out    []job.JobListItem
+	err    error
+}
+
+func (s *stubListJobsUseCase) List(ctx context.Context, in job.ListJobsQuery) ([]job.JobListItem, error) {
 	s.called = true
 	s.in = in
 	return s.out, s.err
@@ -46,7 +61,7 @@ func TestNewRouter_Healthz(t *testing.T) {
 func TestNewRouter_CreateJobRoute(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	uc := &stubCreateJobUseCase{
+	createUC := &stubCreateJobUseCase{
 		out: job.Job{
 			ID:       1,
 			Name:     "demo-job",
@@ -55,14 +70,14 @@ func TestNewRouter_CreateJobRoute(t *testing.T) {
 		},
 	}
 
-	handler := httpapi.NewHandler(uc)
+	handler := httpapi.NewHandler(createUC, nil)
 	router := newRouter(handler)
 
 	body := `{
-                "name":"demo-job",
-                "trigger_type":"manual",
-                "handler_type":"http"
-        }`
+                  "name":"demo-job",
+                  "trigger_type":"manual",
+                  "handler_type":"http"
+          }`
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs",
 		bytes.NewBufferString(body))
@@ -75,14 +90,68 @@ func TestNewRouter_CreateJobRoute(t *testing.T) {
 		t.Fatalf("expected status=%d, got %d, body=%s", http.StatusCreated, resp.Code,
 			resp.Body.String())
 	}
-	if !uc.called {
+	if !createUC.called {
 		t.Fatalf("expected use case to be called")
 	}
-	if uc.in.Name != "demo-job" {
-		t.Fatalf("expected input name=%q, got %q", "demo-job", uc.in.Name)
+	if createUC.in.Name != "demo-job" {
+		t.Fatalf("expected input name=%q, got %q", "demo-job", createUC.in.Name)
 	}
-	if uc.in.TriggerType != job.TriggerTypeManual {
+	if createUC.in.TriggerType != job.TriggerTypeManual {
 		t.Fatalf("expected input trigger_type=%q, got %q", job.TriggerTypeManual,
-			uc.in.TriggerType)
+			createUC.in.TriggerType)
+	}
+}
+
+func TestNewRouter_ListJobsRoute(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	listUC := &stubListJobsUseCase{
+		out: []job.JobListItem{
+			{
+				ID:              1,
+				Name:            "demo-job",
+				TenantID:        "default",
+				TriggerType:     job.TriggerTypeManual,
+				ScheduleSummary: "manual",
+				HandlerType:     "http",
+				Status:          job.JobStatusActive,
+			},
+		},
+	}
+
+	handler := httpapi.NewHandler(nil, listUC)
+	router := newRouter(handler)
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/jobs?tenant_id=default&status=active&limit=10&offset=0", nil)
+	resp := httptest.NewRecorder()
+
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected status=%d, got %d, body=%s", http.StatusOK, resp.Code,
+			resp.Body.String())
+	}
+	if !listUC.called {
+		t.Fatalf("expected list use case to be called")
+	}
+	if listUC.in.TenantID != "default" {
+		t.Fatalf("expected tenant_id=%q, got %q", "default", listUC.in.TenantID)
+	}
+	if listUC.in.Status != job.JobStatusActive {
+		t.Fatalf("expected status=%q, got %q", job.JobStatusActive, listUC.in.Status)
+	}
+
+	var out struct {
+		Items []job.JobListItem `json:"items"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(out.Items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(out.Items))
+	}
+	if out.Items[0].ID != 1 {
+		t.Fatalf("expected item id=1, got %d", out.Items[0].ID)
 	}
 }

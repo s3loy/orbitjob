@@ -55,8 +55,9 @@ func main() {
 	}
 
 	repo := postgres.NewJobRepository(db)
-	uc := jobapp.NewCreateJobUseCase(repo)
-	handler := httpapi.NewHandler(uc)
+	createJobUC := jobapp.NewCreateJobUseCase(repo)
+	listJobsUC := jobapp.NewListJobsUseCase(repo)
+	handler := httpapi.NewHandler(createJobUC, listJobsUC)
 
 	if err := newRouter(handler).Run(":8080"); err != nil {
 		log.Fatal(err)
