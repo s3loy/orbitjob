@@ -123,8 +123,14 @@ CREATE TABLE IF NOT EXISTS jobs (
 
   -- Enforce cron_expr when using cron trigger
   CONSTRAINT chk_jobs_cron_expr_required CHECK (
-    (trigger_type = 'cron' AND cron_expr IS NOT NULL) OR
-    (trigger_type = 'manual')
+    (
+      trigger_type = 'cron'
+      AND cron_expr IS NOT NULL
+      AND btrim(cron_expr) <> ''
+    ) OR (
+      trigger_type = 'manual'
+      AND cron_expr IS NULL
+    )
   ),
 
   -- Ensure numeric fields are valid

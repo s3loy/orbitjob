@@ -1,6 +1,7 @@
 package job
 
 import (
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -151,6 +152,10 @@ func NormalizeCreateJob(now time.Time, in CreateJobInput) (CreateJobSpec, error)
 
 	payload := cloneHandlerPayload(in.HandlerPayload)
 
+	if err := validateHandlerPayload(payload); err != nil {
+		return CreateJobSpec{}, err
+	}
+
 	var cronExpr *string
 	var nextRunAt *time.Time
 
@@ -218,4 +223,20 @@ func cloneHandlerPayload(in map[string]any) map[string]any {
 		out[k] = v
 	}
 	return out
+}
+
+func validateHandlerPayload(in map[string]any) error {
+	if in == nil {
+		return nil
+	}
+
+	if _, err := json.Marshal(in); err != nil {
+		return &ValidationError{
+			Field:   "handler_payload",
+			Message: "must be JSON serializable",
+			Cause:   err,
+		}
+	}
+
+	return nil
 }

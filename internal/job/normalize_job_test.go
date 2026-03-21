@@ -341,3 +341,30 @@ func TestNormalizeCreateJob_InvalidInputReturnsValidationError(t *testing.T) {
 		t.Fatalf("expected validation error, got %T", err)
 	}
 }
+
+func TestNormalizeCreateJob_InvalidHandlerPayload(t *testing.T) {
+	now := time.Date(2026, 3, 18, 0, 0, 0, 0, time.UTC)
+
+	_, err := NormalizeCreateJob(now, CreateJobInput{
+		Name:        "demo-job",
+		TriggerType: TriggerTypeManual,
+		HandlerType: "http",
+		HandlerPayload: map[string]any{
+			"bad": func() {},
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+	if !IsValidationError(err) {
+		t.Fatalf("expected validation error, got %T", err)
+	}
+
+	var validationErr *ValidationError
+	if !AsValidationError(err, &validationErr) {
+		t.Fatalf("expected error to unwrap as ValidationError")
+	}
+	if validationErr.Field != "handler_payload" {
+		t.Fatalf("expected field=%q, got %q", "handler_payload", validationErr.Field)
+	}
+}
