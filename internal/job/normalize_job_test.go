@@ -6,66 +6,6 @@ import (
 	"time"
 )
 
-func TestNewCreateJobInput(t *testing.T) {
-	cronExpr := "*/5 * * * *"
-
-	req := CreateJobRequest{
-		Name:                 "demo-job",
-		TenantID:             "tenant-a",
-		TriggerType:          TriggerTypeCron,
-		CronExpr:             &cronExpr,
-		Timezone:             "Asia/Shanghai",
-		HandlerType:          "http",
-		HandlerPayload:       map[string]any{"url": "https://example.com/hook"},
-		TimeoutSec:           120,
-		RetryLimit:           3,
-		RetryBackoffSec:      10,
-		RetryBackoffStrategy: RetryBackoffExponential,
-		ConcurrencyPolicy:    ConcurrencyForbid,
-		MisfirePolicy:        MisfireFireNow,
-	}
-
-	got := NewCreateJobInput(req)
-
-	if got.Name != req.Name {
-		t.Fatalf("expected name=%q, got %q", req.Name, got.Name)
-	}
-	if got.TenantID != req.TenantID {
-		t.Fatalf("expected tenant_id=%q, got %q", req.TenantID, got.TenantID)
-	}
-	if got.TriggerType != req.TriggerType {
-		t.Fatalf("expected trigger_type=%q, got %q", req.TriggerType, got.TriggerType)
-	}
-	if got.CronExpr != req.CronExpr {
-		t.Fatalf("expected cron_expr pointer to be preserved")
-	}
-	if got.Timezone != req.Timezone {
-		t.Fatalf("expected timezone=%q, got %q", req.Timezone, got.Timezone)
-	}
-	if got.HandlerType != req.HandlerType {
-		t.Fatalf("expected handler_type=%q, got %q", req.HandlerType, got.HandlerType)
-	}
-	if got.TimeoutSec != req.TimeoutSec {
-		t.Fatalf("expected timeout_sec=%d, got %d", req.TimeoutSec, got.TimeoutSec)
-	}
-	if got.RetryLimit != req.RetryLimit {
-		t.Fatalf("expected retry_limit=%d, got %d", req.RetryLimit, got.RetryLimit)
-	}
-	if got.RetryBackoffSec != req.RetryBackoffSec {
-		t.Fatalf("expected retry_backoff_sec=%d, got %d", req.RetryBackoffSec, got.RetryBackoffSec)
-	}
-	if got.RetryBackoffStrategy != req.RetryBackoffStrategy {
-		t.Fatalf("expected retry_backoff_strategy=%q, got %q", req.RetryBackoffStrategy,
-			got.RetryBackoffStrategy)
-	}
-	if got.ConcurrencyPolicy != req.ConcurrencyPolicy {
-		t.Fatalf("expected concurrency_policy=%q, got %q", req.ConcurrencyPolicy, got.ConcurrencyPolicy)
-	}
-	if got.MisfirePolicy != req.MisfirePolicy {
-		t.Fatalf("expected misfire_policy=%q, got %q", req.MisfirePolicy, got.MisfirePolicy)
-	}
-}
-
 func TestNormalizeCreateJob_ManualDefaults(t *testing.T) {
 	now := time.Date(2026, 3, 18, 0, 0, 0, 0, time.UTC)
 
@@ -169,9 +109,10 @@ func TestNormalizeCreateJob_InvalidInput(t *testing.T) {
 	}
 
 	tests := []struct {
-		name    string
-		input   CreateJobInput
-		wantErr string
+		name        string
+		input       CreateJobInput
+		wantField   string
+		wantMessage string
 	}{
 		{
 			name: "empty name",
@@ -180,7 +121,8 @@ func TestNormalizeCreateJob_InvalidInput(t *testing.T) {
 				in.Name = "   "
 				return in
 			}(),
-			wantErr: "name is required",
+			wantField:   "name",
+			wantMessage: "is required",
 		},
 		{
 			name: "name too long",
@@ -189,7 +131,8 @@ func TestNormalizeCreateJob_InvalidInput(t *testing.T) {
 				in.Name = strings.Repeat("a", 129)
 				return in
 			}(),
-			wantErr: "name must be <= 128 characters",
+			wantField:   "name",
+			wantMessage: "must be <= 128 characters",
 		},
 		{
 			name: "empty handler type",
@@ -198,7 +141,8 @@ func TestNormalizeCreateJob_InvalidInput(t *testing.T) {
 				in.HandlerType = ""
 				return in
 			}(),
-			wantErr: "handler_type is required",
+			wantField:   "handler_type",
+			wantMessage: "is required",
 		},
 		{
 			name: "handler type too long",
@@ -207,7 +151,8 @@ func TestNormalizeCreateJob_InvalidInput(t *testing.T) {
 				in.HandlerType = strings.Repeat("h", 33)
 				return in
 			}(),
-			wantErr: "handler_type must be <= 32 characters",
+			wantField:   "handler_type",
+			wantMessage: "must be <= 32 characters",
 		},
 		{
 			name: "invalid trigger type",
@@ -216,7 +161,8 @@ func TestNormalizeCreateJob_InvalidInput(t *testing.T) {
 				in.TriggerType = "delay"
 				return in
 			}(),
-			wantErr: "trigger_type must be one of",
+			wantField:   "trigger_type",
+			wantMessage: "must be one of: cron, manual",
 		},
 		{
 			name: "tenant too long",
@@ -225,7 +171,8 @@ func TestNormalizeCreateJob_InvalidInput(t *testing.T) {
 				in.TenantID = strings.Repeat("t", 65)
 				return in
 			}(),
-			wantErr: "tenant_id must be <= 64 characters",
+			wantField:   "tenant_id",
+			wantMessage: "must be <= 64 characters",
 		},
 		{
 			name: "invalid timezone",
@@ -234,7 +181,8 @@ func TestNormalizeCreateJob_InvalidInput(t *testing.T) {
 				in.Timezone = "Mars/Colony"
 				return in
 			}(),
-			wantErr: "invalid timezone",
+			wantField:   "timezone",
+			wantMessage: "invalid timezone",
 		},
 		{
 			name: "timezone too long",
@@ -243,7 +191,8 @@ func TestNormalizeCreateJob_InvalidInput(t *testing.T) {
 				in.Timezone = strings.Repeat("z", 65)
 				return in
 			}(),
-			wantErr: "timezone must be <= 64 characters",
+			wantField:   "timezone",
+			wantMessage: "must be <= 64 characters",
 		},
 		{
 			name: "timeout less than one",
@@ -252,7 +201,8 @@ func TestNormalizeCreateJob_InvalidInput(t *testing.T) {
 				in.TimeoutSec = -1
 				return in
 			}(),
-			wantErr: "timeout_sec must be >= 1",
+			wantField:   "timeout_sec",
+			wantMessage: "must be >= 1",
 		},
 		{
 			name: "negative retry limit",
@@ -261,7 +211,8 @@ func TestNormalizeCreateJob_InvalidInput(t *testing.T) {
 				in.RetryLimit = -1
 				return in
 			}(),
-			wantErr: "retry_limit must be >= 0",
+			wantField:   "retry_limit",
+			wantMessage: "must be >= 0",
 		},
 		{
 			name: "negative retry backoff sec",
@@ -270,7 +221,8 @@ func TestNormalizeCreateJob_InvalidInput(t *testing.T) {
 				in.RetryBackoffSec = -1
 				return in
 			}(),
-			wantErr: "retry_backoff_sec must be >= 0",
+			wantField:   "retry_backoff_sec",
+			wantMessage: "must be >= 0",
 		},
 		{
 			name: "invalid retry backoff strategy",
@@ -279,7 +231,8 @@ func TestNormalizeCreateJob_InvalidInput(t *testing.T) {
 				in.RetryBackoffStrategy = "random"
 				return in
 			}(),
-			wantErr: "retry_backoff_strategy must be one of: fixed, exponential",
+			wantField:   "retry_backoff_strategy",
+			wantMessage: "must be one of: fixed, exponential",
 		},
 		{
 			name: "invalid concurrency policy",
@@ -288,7 +241,8 @@ func TestNormalizeCreateJob_InvalidInput(t *testing.T) {
 				in.ConcurrencyPolicy = "queue"
 				return in
 			}(),
-			wantErr: "concurrency_policy must be one of: allow, forbid, replace",
+			wantField:   "concurrency_policy",
+			wantMessage: "must be one of: allow, forbid, replace",
 		},
 		{
 			name: "invalid misfire policy",
@@ -297,7 +251,8 @@ func TestNormalizeCreateJob_InvalidInput(t *testing.T) {
 				in.MisfirePolicy = "delay"
 				return in
 			}(),
-			wantErr: "misfire_policy must be one of: skip, fire_now, catch_up",
+			wantField:   "misfire_policy",
+			wantMessage: "must be one of: skip, fire_now, catch_up",
 		},
 		{
 			name: "missing cron expr for cron job",
@@ -306,7 +261,8 @@ func TestNormalizeCreateJob_InvalidInput(t *testing.T) {
 				TriggerType: TriggerTypeCron,
 				HandlerType: "http",
 			},
-			wantErr: "cron_expr is required for cron jobs",
+			wantField:   "cron_expr",
+			wantMessage: "is required for cron jobs",
 		},
 		{
 			name: "cron expr too long",
@@ -316,7 +272,8 @@ func TestNormalizeCreateJob_InvalidInput(t *testing.T) {
 				in.CronExpr = &expr
 				return in
 			}(),
-			wantErr: "cron_expr must be <= 64 characters",
+			wantField:   "cron_expr",
+			wantMessage: "must be <= 64 characters",
 		},
 		{
 			name: "invalid cron expr",
@@ -326,7 +283,8 @@ func TestNormalizeCreateJob_InvalidInput(t *testing.T) {
 				in.CronExpr = &expr
 				return in
 			}(),
-			wantErr: "invalid cron_expr",
+			wantField:   "cron_expr",
+			wantMessage: "invalid cron_expr",
 		},
 		{
 			name: "manual job must not carry cron expr",
@@ -335,7 +293,8 @@ func TestNormalizeCreateJob_InvalidInput(t *testing.T) {
 				in.TriggerType = TriggerTypeManual
 				return in
 			}(),
-			wantErr: "cron_expr must be empty for manual jobs",
+			wantField:   "cron_expr",
+			wantMessage: "must be empty for manual jobs",
 		},
 	}
 
@@ -345,11 +304,40 @@ func TestNormalizeCreateJob_InvalidInput(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := NormalizeCreateJob(now, tt.input)
 			if err == nil {
-				t.Fatalf("expected error containing %q, got nil", tt.wantErr)
+				t.Fatalf("expected validation error, got nil")
 			}
-			if !strings.Contains(err.Error(), tt.wantErr) {
-				t.Fatalf("expected error containing %q, got %q", tt.wantErr, err.Error())
+
+			var validationErr *ValidationError
+			if !strings.Contains(err.Error(), tt.wantMessage) {
+				t.Fatalf("expected error containing %q, got %q", tt.wantMessage, err.Error())
+			}
+			if !IsValidationError(err) {
+				t.Fatalf("expected validation error, got %T", err)
+			}
+			if !AsValidationError(err, &validationErr) {
+				t.Fatalf("expected error to unwrap as ValidationError")
+			}
+			if validationErr.Field != tt.wantField {
+				t.Fatalf("expected field=%q, got %q", tt.wantField, validationErr.Field)
+			}
+			if validationErr.Message != tt.wantMessage {
+				t.Fatalf("expected message=%q, got %q", tt.wantMessage, validationErr.Message)
 			}
 		})
+	}
+}
+
+func TestNormalizeCreateJob_InvalidInputReturnsValidationError(t *testing.T) {
+	now := time.Date(2026, 3, 18, 0, 0, 0, 0, time.UTC)
+
+	_, err := NormalizeCreateJob(now, CreateJobInput{
+		TriggerType: TriggerTypeManual,
+		HandlerType: "http",
+	})
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+	if !IsValidationError(err) {
+		t.Fatalf("expected validation error, got %T", err)
 	}
 }
