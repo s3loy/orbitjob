@@ -114,7 +114,10 @@ func TestHandler_CreateJob_UseCaseError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	useCase := &stubCreateJobUseCase{
-		err: errors.New("invalid cron_expr"),
+		err: &job.ValidationError{
+			Field:   "cron_expr",
+			Message: "invalid cron_expr",
+		},
 	}
 	handler := NewHandler(useCase)
 	router := gin.New()
@@ -134,6 +137,36 @@ func TestHandler_CreateJob_UseCaseError(t *testing.T) {
 
 	if resp.Code != http.StatusBadRequest {
 		t.Fatalf("expected status=%d, got %d", http.StatusBadRequest, resp.Code)
+	}
+	if !useCase.called {
+		t.Fatalf("expected use case to be called")
+	}
+}
+
+func TestHandler_CreateJob_InternalError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	useCase := &stubCreateJobUseCase{
+		err: errors.New("insert job: db down"),
+	}
+	handler := NewHandler(useCase)
+	router := gin.New()
+	handler.Register(router)
+
+	body := `{
+		"name":"demo-job",
+		"trigger_type":"manual",
+		"handler_type":"http"
+	}`
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status=%d, got %d", http.StatusInternalServerError, resp.Code)
 	}
 	if !useCase.called {
 		t.Fatalf("expected use case to be called")

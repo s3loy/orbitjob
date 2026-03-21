@@ -27,10 +27,10 @@ func TestJobRepository_Create(t *testing.T) {
 
 	// a normal cron job creation flow
 	cron := "*/5 * * * *"
-	in := job.CreateJobRequest{
+	input := job.CreateJobInput{
 		Name:        "demo-job",
 		TenantID:    "default",
-		TriggerType: "cron",
+		TriggerType: job.TriggerTypeCron,
 		CronExpr:    &cron,
 		Timezone:    "UTC",
 		HandlerType: "http",
@@ -39,7 +39,6 @@ func TestJobRepository_Create(t *testing.T) {
 		},
 	}
 
-	input := job.NewCreateJobInput(in)
 	spec, err := job.NormalizeCreateJob(time.Now().UTC(), input)
 	if err != nil {
 		t.Fatalf("NormalizeCreateJob() error = %v", err)
@@ -53,11 +52,11 @@ func TestJobRepository_Create(t *testing.T) {
 	if out.ID <= 0 {
 		t.Fatalf("expected ID > 0, got %d", out.ID)
 	}
-	if out.Name != in.Name {
-		t.Fatalf("expected name=%q, got %q", in.Name, out.Name)
+	if out.Name != input.Name {
+		t.Fatalf("expected name=%q, got %q", input.Name, out.Name)
 	}
-	if out.TenantID != in.TenantID {
-		t.Fatalf("expected tenant_id=%q, got %q", in.TenantID, out.TenantID)
+	if out.TenantID != input.TenantID {
+		t.Fatalf("expected tenant_id=%q, got %q", input.TenantID, out.TenantID)
 	}
 	if out.Status != "active" {
 		t.Fatalf("expected sttus=active, got %q", out.Status)
