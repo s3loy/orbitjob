@@ -136,7 +136,7 @@ func (r *JobRepository) List(ctx context.Context, in job.ListJobsQuery) ([]job.J
 	}
 	defer rows.Close()
 
-	out := make([]job.JobListItem, 0, in.Limit)
+	var out []job.JobListItem
 	for rows.Next() {
 		item, err := scanJobListItem(rows)
 		if err != nil {
