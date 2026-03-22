@@ -177,7 +177,9 @@ func TestTraceMiddleware(t *testing.T) {
 	var out struct {
 		TraceID string `json:"trace_id"`
 	}
-	json.Unmarshal(resp.Body.Bytes(), &out)
+	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
 
 	if out.TraceID == "" {
 		t.Fatal("trace_id should not be empty")
@@ -195,7 +197,9 @@ func TestTraceMiddleware(t *testing.T) {
 	var out2 struct {
 		TraceID string `json:"trace_id"`
 	}
-	json.Unmarshal(resp2.Body.Bytes(), &out2)
+	if err := json.Unmarshal(resp2.Body.Bytes(), &out2); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
 
 	if out2.TraceID != "my-trace-123" {
 		t.Fatalf("expected trace_id=my-trace-123, got %s", out2.TraceID)
