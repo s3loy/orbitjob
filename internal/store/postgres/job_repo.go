@@ -92,7 +92,7 @@ func (r *JobRepository) Create(ctx context.Context, in job.CreateJobSpec) (job.J
 }
 
 // List queries control-plane job list items.
-func (r *JobRepository) List(ctx context.Context, in job.ListJobsQuery) ([]job.JobListItem, error) {
+func (r *JobRepository) List(ctx context.Context, in job.ListJobsQuery) (_ []job.JobListItem, err error) {
 	const baseQuery = `
                 SELECT
                     id,
@@ -116,7 +116,6 @@ func (r *JobRepository) List(ctx context.Context, in job.ListJobsQuery) ([]job.J
 
 	var (
 		rows *sql.Rows
-		err  error
 	)
 
 	if in.Status == "" {
@@ -134,7 +133,11 @@ func (r *JobRepository) List(ctx context.Context, in job.ListJobsQuery) ([]job.J
 	if err != nil {
 		return nil, fmt.Errorf("query job list: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close job list rows: %w", closeErr)
+		}
+	}()
 
 	var out []job.JobListItem
 	for rows.Next() {
