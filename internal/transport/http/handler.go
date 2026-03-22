@@ -18,10 +18,6 @@ type listJobsUseCase interface {
 	List(ctx context.Context, in job.ListJobsQuery) ([]job.JobListItem, error)
 }
 
-type errorResponse struct {
-	Error string `json:"error"`
-}
-
 type jobListResponse struct {
 	Items []job.JobListItem `json:"items"`
 }
@@ -55,25 +51,19 @@ func (h *Handler) Register(r gin.IRouter) {
 func (h *Handler) CreateJob(c *gin.Context) {
 	var req CreateJobRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{
-			Error: err.Error(),
-		})
+		c.JSON(http.StatusBadRequest, gin.H{"error": toAPIError(err)})
 		return
 	}
 
 	out, err := h.createJobUC.Create(c.Request.Context(), req.ToCreateJobInput())
 	if err != nil {
 		if job.IsValidationError(err) {
-			c.JSON(http.StatusBadRequest, errorResponse{
-				Error: err.Error(),
-			})
+			c.JSON(http.StatusBadRequest, gin.H{"error": toAPIError(err)})
 			return
 		}
 
 		_ = c.Error(err)
-		c.JSON(http.StatusInternalServerError, errorResponse{
-			Error: "internal server error",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": toAPIError(err)})
 		return
 	}
 
@@ -84,25 +74,19 @@ func (h *Handler) CreateJob(c *gin.Context) {
 func (h *Handler) ListJobs(c *gin.Context) {
 	var req ListJobsRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{
-			Error: err.Error(),
-		})
+		c.JSON(http.StatusBadRequest, gin.H{"error": toAPIError(err)})
 		return
 	}
 
 	out, err := h.listJobsUC.List(c.Request.Context(), req.ToListJobsQuery())
 	if err != nil {
 		if job.IsValidationError(err) {
-			c.JSON(http.StatusBadRequest, errorResponse{
-				Error: err.Error(),
-			})
+			c.JSON(http.StatusBadRequest, gin.H{"error": toAPIError(err)})
 			return
 		}
 
 		_ = c.Error(err)
-		c.JSON(http.StatusInternalServerError, errorResponse{
-			Error: "internal server error",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": toAPIError(err)})
 		return
 	}
 
