@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,6 +31,10 @@ func TestMain(m *testing.M) {
 }
 
 func applyTestSchema(dsn string) error {
+	if err := validateTestDatabaseDSN(dsn); err != nil {
+		return err
+	}
+
 	path, err := findMigrationFile("db", "migrations", "0001_init.sql")
 	if err != nil {
 		return err
@@ -74,6 +80,24 @@ func resetTestData(ctx context.Context, db *sql.DB) error {
 		RESTART IDENTITY CASCADE
 	`)
 	return err
+}
+
+func validateTestDatabaseDSN(dsn string) error {
+	parsed, err := url.Parse(dsn)
+	if err != nil {
+		return err
+	}
+
+	dbName := strings.TrimPrefix(parsed.Path, "/")
+	if dbName == "" {
+		return fmt.Errorf("test database name is required")
+	}
+
+	if strings.Contains(strings.ToLower(dbName), "test") {
+		return nil
+	}
+
+	return fmt.Errorf("TEST_DATABASE_DSN must point to a dedicated test database, got %q", dbName)
 }
 
 func findMigrationFile(parts ...string) (string, error) {

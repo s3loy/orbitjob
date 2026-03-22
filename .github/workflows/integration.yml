@@ -26,19 +26,19 @@ jobs:
       postgres:
         image: postgres:17@sha256:b994732fcf33f73776c65d3a5bf1f80c00120ba5007e8ab90307b1a743c1fc16
         env:
-          POSTGRES_DB: orbitjob
+          POSTGRES_DB: orbitjob_test
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres -d orbitjob"
+          --health-cmd "pg_isready -U postgres -d orbitjob_test"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
 
     env:
-      TEST_DATABASE_DSN: postgres://postgres:postgres@127.0.0.1:5432/orbitjob?sslmode=disable
+      TEST_DATABASE_DSN: postgres://postgres:postgres@127.0.0.1:5432/orbitjob_test?sslmode=disable
 
     steps:
       - name: Checkout
