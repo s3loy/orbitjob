@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -59,4 +60,15 @@ func findDotenvFrom(startDir, name string) (string, error) {
 		}
 		dir = parent
 	}
+}
+
+// InitLogger returns a JSON-formatted slog logger
+// Set level to DEBUG in non-production environments, INFO in production.
+func InitLogger(env string) *slog.Logger {
+	level := slog.LevelDebug
+	if env == "production" {
+		level = slog.LevelInfo
+	}
+	opts := &slog.HandlerOptions{Level: level}
+	return slog.New(slog.NewJSONHandler(os.Stdout, opts))
 }

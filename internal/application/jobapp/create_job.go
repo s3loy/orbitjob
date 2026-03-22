@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"orbitjob/internal/job"
+	"orbitjob/internal/metrics"
 )
 
 type jobCreator interface {
@@ -39,5 +40,10 @@ func (uc *CreateJobUseCase) Create(ctx context.Context, in job.CreateJobInput) (
 		return job.Job{}, err
 	}
 
-	return uc.repo.Create(ctx, spec)
+	out, err := uc.repo.Create(ctx, spec)
+	if err == nil {
+		metrics.JobsTotal.WithLabelValues(spec.TenantID, string(spec.TriggerType)).Inc()
+	}
+
+	return out, err
 }

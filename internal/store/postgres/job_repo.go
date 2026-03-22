@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"orbitjob/internal/job"
@@ -80,6 +81,10 @@ func (r *JobRepository) Create(ctx context.Context, in job.CreateJobSpec) (job.J
 		&out.UpdatedAt,
 	)
 	if err != nil {
+		slog.Error("job create failed",
+			"error", err.Error(),
+			"tenant_id", in.TenantID,
+		)
 		return job.Job{}, fmt.Errorf("insert job: %w", err)
 	}
 
@@ -131,6 +136,9 @@ func (r *JobRepository) List(ctx context.Context, in job.ListJobsQuery) (_ []job
                 `, in.TenantID, in.Status, in.Limit, in.Offset)
 	}
 	if err != nil {
+		slog.Error("job list failed",
+			"error", err.Error(),
+		)
 		return nil, fmt.Errorf("query job list: %w", err)
 	}
 	defer func() {
