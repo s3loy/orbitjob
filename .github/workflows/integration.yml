@@ -50,11 +50,5 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Install PostgreSQL client
-        run: sudo apt-get update && sudo apt-get install --yes postgresql-client
-
-      - name: Apply schema
-        run: psql "$TEST_DATABASE_DSN" -v ON_ERROR_STOP=1 -f db/migrations/0001_init.sql
-
       - name: Run postgres integration tests
         run: go test -count=1 ./internal/store/postgres
