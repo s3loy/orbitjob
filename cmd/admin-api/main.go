@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"orbitjob/internal/application/jobapp"
 	"orbitjob/internal/config"
@@ -36,6 +37,8 @@ func newRouter(handler *httpapi.Handler) *gin.Engine {
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
+
+	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	if handler != nil {
 		handler.Register(r)

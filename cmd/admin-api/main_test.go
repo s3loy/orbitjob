@@ -155,3 +155,53 @@ func TestNewRouter_ListJobsRoute(t *testing.T) {
 		t.Fatalf("expected item id=1, got %d", out.Items[0].ID)
 	}
 }
+
+func TestTraceMiddleware(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	router.Use(traceMiddleware())
+	router.GET("/test", func(c *gin.Context) {
+		traceID, _ := c.Get("trace_id")
+		c.JSON(http.StatusOK, gin.H{"trace_id": traceID})
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", resp.Code)
+	}
+
+	var out struct {
+		TraceID string `json:"trace_id"`
+	}
+	json.Unmarshal(resp.Body.Bytes(), &out)
+
+	if out.TraceID == "" {
+		t.Fatal("trace_id should not be empty")
+	}
+
+	if resp.Header().Get("X-Trace-ID") == "" {
+		t.Fatal("X-Trace-ID header should be set in response")
+	}
+
+	req2 := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req2.Header.Set("X-Trace-ID", "my-trace-123")
+	resp2 := httptest.NewRecorder()
+	router.ServeHTTP(resp2, req2)
+
+	var out2 struct {
+		TraceID string `json:"trace_id"`
+	}
+	json.Unmarshal(resp2.Body.Bytes(), &out2)
+
+	if out2.TraceID != "my-trace-123" {
+		t.Fatalf("expected trace_id=my-trace-123, got %s", out2.TraceID)
+	}
+
+	if resp2.Header().Get("X-Trace-ID") != "my-trace-123" {
+		t.Fatalf("expected X-Trace-ID=my-trace-123, got %s", resp2.Header().Get("X-Trace-ID"))
+	}
+}
