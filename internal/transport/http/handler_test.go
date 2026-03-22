@@ -331,3 +331,98 @@ func TestHandler_ListJobs_InternalError(t *testing.T) {
 		t.Fatalf("expected use case to be called")
 	}
 }
+
+func TestHandler_CreateJob_ValidationErrorResponseFormat(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	uc := &stubCreateJobUseCase{
+		err: &job.ValidationError{
+			Field:   "cron_expr",
+			Message: "is required for cron jobs",
+		},
+	}
+	handler := NewHandler(uc, nil)
+	router := gin.New()
+	handler.Register(router)
+
+	body := `{
+                "name":"demo",
+                "trigger_type":"cron",
+                "handler_type":"http"
+        }`
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs",
+		bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, resp.Code)
+	}
+
+	var out struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+			Field   string `json:"field"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+
+	if out.Error.Code != "VALIDATION_ERROR" {
+		t.Fatalf("expected code VALIDATION_ERROR, got %q", out.Error.Code)
+	}
+	if out.Error.Field != "cron_expr" {
+		t.Fatalf("expected field cron_expr, got %q", out.Error.Field)
+	}
+}
+
+func TestHandler_CreateJob_InternalErrorResponseFormat(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	uc := &stubCreateJobUseCase{
+		err: errors.New("insert job: db down"),
+	}
+	handler := NewHandler(uc, nil)
+	router := gin.New()
+	handler.Register(router)
+
+	body := `{
+                "name":"demo",
+                "trigger_type":"manual",
+                "handler_type":"http"
+        }`
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs",
+		bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, resp.Code)
+	}
+
+	var out struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+
+	if out.Error.Code != "INTERNAL_ERROR" {
+		t.Fatalf("expected code INTERNAL_ERROR, got %q", out.Error.Code)
+	}
+	// Internal error message must be fixed, not the raw error string
+	if out.Error.Message == "insert job: db down" {
+		t.Fatalf("internal error message must not leak raw error: %q", out.Error.Message)
+	}
+}
