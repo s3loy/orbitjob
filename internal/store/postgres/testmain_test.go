@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -55,7 +56,24 @@ func applyTestSchema(dsn string) error {
 		return err
 	}
 
+	if err := resetTestData(ctx, db); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+func resetTestData(ctx context.Context, db *sql.DB) error {
+	_, err := db.ExecContext(ctx, `
+		TRUNCATE TABLE
+			job_change_audits,
+			job_instance_attempts,
+			job_instances,
+			workers,
+			jobs
+		RESTART IDENTITY CASCADE
+	`)
+	return err
 }
 
 func findMigrationFile(parts ...string) (string, error) {
