@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
 	"orbitjob/internal/application/jobapp"
 	"orbitjob/internal/config"
@@ -15,8 +17,21 @@ import (
 	httpapi "orbitjob/internal/transport/http"
 )
 
+func traceMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		traceID := c.GetHeader("X-Trace-ID")
+		if traceID == "" {
+			traceID = uuid.New().String()
+		}
+		c.Set("trace_id", traceID)
+		c.Header("X-Trace-ID", traceID)
+		c.Next()
+	}
+}
+
 func newRouter(handler *httpapi.Handler) *gin.Engine {
 	r := gin.Default()
+	r.Use(traceMiddleware())
 
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -33,6 +48,8 @@ func main() {
 	if err := config.LoadDotenv(); err != nil {
 		log.Fatal(err)
 	}
+	logger := config.InitLogger(os.Getenv("APP_ENV"))
+	slog.SetDefault(logger)
 
 	dsn := os.Getenv("DATABASE_DSN")
 	if dsn == "" {
