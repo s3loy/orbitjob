@@ -195,6 +195,27 @@ func TestHandler_CreateJob_BindError(t *testing.T) {
 	if useCase.called {
 		t.Fatalf("expected use case not to be called on bind error")
 	}
+
+	var out struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+			Field   string `json:"field"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+
+	if out.Error.Code != "VALIDATION_ERROR" {
+		t.Fatalf("expected code VALIDATION_ERROR, got %q", out.Error.Code)
+	}
+	if out.Error.Message == "" {
+		t.Fatal("expected validation error message to be non-empty")
+	}
+	if out.Error.Code == "INTERNAL_ERROR" {
+		t.Fatal("bind error must not be mapped to INTERNAL_ERROR")
+	}
 }
 
 func TestHandler_ListJobs_BindError(t *testing.T) {
@@ -215,6 +236,27 @@ func TestHandler_ListJobs_BindError(t *testing.T) {
 	}
 	if useCase.called {
 		t.Fatalf("expected use case not to be called on bind error")
+	}
+
+	var out struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+			Field   string `json:"field"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+
+	if out.Error.Code != "VALIDATION_ERROR" {
+		t.Fatalf("expected code VALIDATION_ERROR, got %q", out.Error.Code)
+	}
+	if out.Error.Message == "" {
+		t.Fatal("expected validation error message to be non-empty")
+	}
+	if out.Error.Code == "INTERNAL_ERROR" {
+		t.Fatal("bind error must not be mapped to INTERNAL_ERROR")
 	}
 }
 

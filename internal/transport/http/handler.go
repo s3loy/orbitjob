@@ -51,7 +51,7 @@ func (h *Handler) Register(r gin.IRouter) {
 func (h *Handler) CreateJob(c *gin.Context) {
 	var req CreateJobRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": toAPIError(err)})
+		c.JSON(http.StatusBadRequest, gin.H{"error": toBindAPIError(err)})
 		return
 	}
 
@@ -74,7 +74,7 @@ func (h *Handler) CreateJob(c *gin.Context) {
 func (h *Handler) ListJobs(c *gin.Context) {
 	var req ListJobsRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": toAPIError(err)})
+		c.JSON(http.StatusBadRequest, gin.H{"error": toBindAPIError(err)})
 		return
 	}
 
