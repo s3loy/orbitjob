@@ -18,8 +18,15 @@ const (
 // APIError is the stable HTTP error response structure.
 type APIError struct {
 	Code    ErrorCode `json:"code"`
-	Messgae string    `json:"message"`
+	Message string    `json:"message"`
 	Field   string    `json:"field,omitempty"`
+}
+
+func toBindAPIError(_ error) APIError {
+	return APIError{
+		Code:    ErrCodeValidation,
+		Message: "invalid request",
+	}
 }
 
 // toAPIError maps a domain error to the stable API error structure.
@@ -28,7 +35,7 @@ func toAPIError(err error) APIError {
 	if job.AsValidationError(err, &ve) {
 		return APIError{
 			Code:    ErrCodeValidation,
-			Messgae: ve.Message,
+			Message: ve.Message,
 			Field:   ve.Field,
 		}
 	}
@@ -37,13 +44,13 @@ func toAPIError(err error) APIError {
 	if errors.As(err, &ne) {
 		return APIError{
 			Code:    ErrCodeNotFound,
-			Messgae: "resource not found",
+			Message: "resource not found",
 			Field:   ne.Resource,
 		}
 	}
 
 	return APIError{
 		Code:    ErrCodeInternal,
-		Messgae: "an internal error occurred",
+		Message: "an internal error occurred",
 	}
 }
