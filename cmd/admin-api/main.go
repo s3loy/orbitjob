@@ -12,8 +12,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	command "orbitjob/internal/admin/app/job/command"
+	query "orbitjob/internal/admin/app/job/query"
 	httpapi "orbitjob/internal/admin/transport/http"
-	"orbitjob/internal/application/jobapp"
 	"orbitjob/internal/config"
 	"orbitjob/internal/store/postgres"
 )
@@ -75,8 +76,8 @@ func main() {
 	}
 
 	repo := postgres.NewJobRepository(db)
-	createJobUC := jobapp.NewCreateJobUseCase(repo)
-	listJobsUC := jobapp.NewListJobsUseCase(repo)
+	createJobUC := command.NewCreateJobUseCase(repo)
+	listJobsUC := query.NewListJobsUseCase(repo)
 	handler := httpapi.NewHandler(createJobUC, listJobsUC)
 
 	if err := newRouter(handler).Run(":8080"); err != nil {
