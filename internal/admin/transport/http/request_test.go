@@ -52,16 +52,13 @@ func TestCreateJobRequest_ToCreateJobInput(t *testing.T) {
 		t.Fatalf("expected retry_limit=%d, got %d", req.RetryLimit, got.RetryLimit)
 	}
 	if got.RetryBackoffSec != req.RetryBackoffSec {
-		t.Fatalf("expected retry_backoff_sec=%d, got %d", req.RetryBackoffSec,
-			got.RetryBackoffSec)
+		t.Fatalf("expected retry_backoff_sec=%d, got %d", req.RetryBackoffSec, got.RetryBackoffSec)
 	}
 	if got.RetryBackoffStrategy != req.RetryBackoffStrategy {
-		t.Fatalf("expected retry_backoff_strategy=%q, got %q", req.RetryBackoffStrategy,
-			got.RetryBackoffStrategy)
+		t.Fatalf("expected retry_backoff_strategy=%q, got %q", req.RetryBackoffStrategy, got.RetryBackoffStrategy)
 	}
 	if got.ConcurrencyPolicy != req.ConcurrencyPolicy {
-		t.Fatalf("expected concurrency_policy=%q, got %q", req.ConcurrencyPolicy,
-			got.ConcurrencyPolicy)
+		t.Fatalf("expected concurrency_policy=%q, got %q", req.ConcurrencyPolicy, got.ConcurrencyPolicy)
 	}
 	if got.MisfirePolicy != req.MisfirePolicy {
 		t.Fatalf("expected misfire_policy=%q, got %q", req.MisfirePolicy, got.MisfirePolicy)
