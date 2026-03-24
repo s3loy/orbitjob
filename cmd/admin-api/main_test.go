@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	httpapi "orbitjob/internal/admin/transport/http"
+	domainjob "orbitjob/internal/domain/job"
 	"orbitjob/internal/job"
 
 	"github.com/gin-gonic/gin"
@@ -17,12 +18,12 @@ import (
 
 type stubCreateJobUseCase struct {
 	called bool
-	in     job.CreateJobInput
+	in     domainjob.CreateInput
 	out    job.Job
 	err    error
 }
 
-func (s *stubCreateJobUseCase) Create(ctx context.Context, in job.CreateJobInput) (job.Job, error) {
+func (s *stubCreateJobUseCase) Create(ctx context.Context, in domainjob.CreateInput) (job.Job, error) {
 	s.called = true
 	s.in = in
 	return s.out, s.err
@@ -96,8 +97,8 @@ func TestNewRouter_CreateJobRoute(t *testing.T) {
 	if createUC.in.Name != "demo-job" {
 		t.Fatalf("expected input name=%q, got %q", "demo-job", createUC.in.Name)
 	}
-	if createUC.in.TriggerType != job.TriggerTypeManual {
-		t.Fatalf("expected input trigger_type=%q, got %q", job.TriggerTypeManual,
+	if createUC.in.TriggerType != domainjob.TriggerTypeManual {
+		t.Fatalf("expected input trigger_type=%q, got %q", domainjob.TriggerTypeManual,
 			createUC.in.TriggerType)
 	}
 }

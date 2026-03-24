@@ -1,9 +1,12 @@
 package httpapi
 
-import "orbitjob/internal/job"
+import (
+	domainjob "orbitjob/internal/domain/job"
+	"orbitjob/internal/job"
+)
 
 // CreateJobRequest defines the HTTP payload for creating a job.
-// It is a transport-layer input and should be converted into job.CreateJobInput.
+// It is a transport-layer input and should be converted into domainjob.CreateInput.
 type CreateJobRequest struct {
 	Name        string  `json:"name" binding:"required,max=128"`
 	TenantID    string  `json:"tenant_id"`
@@ -22,10 +25,10 @@ type CreateJobRequest struct {
 	MisfirePolicy        string `json:"misfire_policy" binding:"omitempty,oneof=skip fire_now catch_up"`
 }
 
-// ToCreateJobInput converts the HTTP request into a domain input.
+// ToCreateInput converts the HTTP request into a domain input.
 // Validation, defaulting and next_run_at calculation are handled in the domain layer.
-func (r CreateJobRequest) ToCreateJobInput() job.CreateJobInput {
-	return job.CreateJobInput{
+func (r CreateJobRequest) ToCreateInput() domainjob.CreateInput {
+	return domainjob.CreateInput{
 		Name:                 r.Name,
 		TenantID:             r.TenantID,
 		TriggerType:          r.TriggerType,

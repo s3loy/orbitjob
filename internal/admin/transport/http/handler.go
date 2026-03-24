@@ -6,12 +6,13 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	domainjob "orbitjob/internal/domain/job"
 	"orbitjob/internal/job"
 )
 
 // createJobUseCase defines the application capability required by the HTTP handler.
 type createJobUseCase interface {
-	Create(ctx context.Context, in job.CreateJobInput) (job.Job, error)
+	Create(ctx context.Context, in domainjob.CreateInput) (job.Job, error)
 }
 
 type listJobsUseCase interface {
@@ -55,9 +56,9 @@ func (h *Handler) CreateJob(c *gin.Context) {
 		return
 	}
 
-	out, err := h.createJobUC.Create(c.Request.Context(), req.ToCreateJobInput())
+	out, err := h.createJobUC.Create(c.Request.Context(), req.ToCreateInput())
 	if err != nil {
-		if job.IsValidationError(err) {
+		if domainjob.IsValidationError(err) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": toAPIError(err)})
 			return
 		}

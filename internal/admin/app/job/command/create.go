@@ -4,12 +4,13 @@ import (
 	"context"
 	"time"
 
+	domainjob "orbitjob/internal/domain/job"
 	"orbitjob/internal/job"
 	"orbitjob/internal/metrics"
 )
 
 type jobCreator interface {
-	Create(ctx context.Context, in job.CreateJobSpec) (job.Job, error)
+	Create(ctx context.Context, in domainjob.CreateSpec) (job.Job, error)
 }
 
 type clock interface {
@@ -34,15 +35,15 @@ func NewCreateJobUseCase(repo jobCreator) *CreateJobUseCase {
 	}
 }
 
-func (uc *CreateJobUseCase) Create(ctx context.Context, in job.CreateJobInput) (job.Job, error) {
-	spec, err := job.NormalizeCreateJob(uc.clock.Now(), in)
+func (uc *CreateJobUseCase) Create(ctx context.Context, in domainjob.CreateInput) (job.Job, error) {
+	spec, err := domainjob.NormalizeCreate(uc.clock.Now(), in)
 	if err != nil {
 		return job.Job{}, err
 	}
 
 	out, err := uc.repo.Create(ctx, spec)
 	if err == nil {
-		metrics.JobsTotal.WithLabelValues(spec.TenantID, string(spec.TriggerType)).Inc()
+		metrics.JobsTotal.WithLabelValues(spec.TenantID, spec.TriggerType).Inc()
 	}
 
 	return out, err

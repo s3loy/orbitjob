@@ -12,17 +12,18 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	domainjob "orbitjob/internal/domain/job"
 	"orbitjob/internal/job"
 )
 
 type stubCreateJobUseCase struct {
 	called bool
-	in     job.CreateJobInput
+	in     domainjob.CreateInput
 	out    job.Job
 	err    error
 }
 
-func (s *stubCreateJobUseCase) Create(ctx context.Context, in job.CreateJobInput) (job.Job, error) {
+func (s *stubCreateJobUseCase) Create(ctx context.Context, in domainjob.CreateInput) (job.Job, error) {
 	s.called = true
 	s.in = in
 	return s.out, s.err
@@ -84,8 +85,8 @@ func TestHandler_RegisterAndCreateJob(t *testing.T) {
 	if useCase.in.Name != "demo-job" {
 		t.Fatalf("expected input name=%q, got %q", "demo-job", useCase.in.Name)
 	}
-	if useCase.in.TriggerType != job.TriggerTypeManual {
-		t.Fatalf("expected input trigger_type=%q, got %q", job.TriggerTypeManual,
+	if useCase.in.TriggerType != domainjob.TriggerTypeManual {
+		t.Fatalf("expected input trigger_type=%q, got %q", domainjob.TriggerTypeManual,
 			useCase.in.TriggerType)
 	}
 	if useCase.in.HandlerType != "http" {

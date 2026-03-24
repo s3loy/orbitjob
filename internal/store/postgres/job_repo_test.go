@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	domainjob "orbitjob/internal/domain/job"
 	"orbitjob/internal/job"
 )
 
@@ -30,10 +31,10 @@ func TestJobRepository_Create(t *testing.T) {
 
 	// a normal cron job creation flow
 	cron := "*/5 * * * *"
-	input := job.CreateJobInput{
+	input := domainjob.CreateInput{
 		Name:        "demo-job",
 		TenantID:    "default",
-		TriggerType: job.TriggerTypeCron,
+		TriggerType: domainjob.TriggerTypeCron,
 		CronExpr:    &cron,
 		Timezone:    "UTC",
 		HandlerType: "http",
@@ -42,9 +43,9 @@ func TestJobRepository_Create(t *testing.T) {
 		},
 	}
 
-	spec, err := job.NormalizeCreateJob(time.Now().UTC(), input)
+	spec, err := domainjob.NormalizeCreate(time.Now().UTC(), input)
 	if err != nil {
-		t.Fatalf("NormalizeCreateJob() error = %v", err)
+		t.Fatalf("NormalizeCreate() error = %v", err)
 	}
 
 	out, err := repo.Create(context.Background(), spec)
@@ -88,32 +89,32 @@ func TestJobRepository_List(t *testing.T) {
 	tenantID := fmt.Sprintf("tenant-list-%d", now.UnixNano())
 
 	cron := "*/10 * * * *"
-	activeInput := job.CreateJobInput{
+	activeInput := domainjob.CreateInput{
 		Name:        fmt.Sprintf("active-job-%d", now.UnixNano()),
 		TenantID:    tenantID,
-		TriggerType: job.TriggerTypeCron,
+		TriggerType: domainjob.TriggerTypeCron,
 		CronExpr:    &cron,
 		Timezone:    "Asia/Shanghai",
 		HandlerType: "http",
 	}
-	activeSpec, err := job.NormalizeCreateJob(now, activeInput)
+	activeSpec, err := domainjob.NormalizeCreate(now, activeInput)
 	if err != nil {
-		t.Fatalf("NormalizeCreateJob(active) error = %v", err)
+		t.Fatalf("NormalizeCreate(active) error = %v", err)
 	}
 	activeJob, err := repo.Create(ctx, activeSpec)
 	if err != nil {
 		t.Fatalf("Create(active) error = %v", err)
 	}
 
-	pausedInput := job.CreateJobInput{
+	pausedInput := domainjob.CreateInput{
 		Name:        fmt.Sprintf("paused-job-%d", now.UnixNano()),
 		TenantID:    tenantID,
-		TriggerType: job.TriggerTypeManual,
+		TriggerType: domainjob.TriggerTypeManual,
 		HandlerType: "http",
 	}
-	pausedSpec, err := job.NormalizeCreateJob(now, pausedInput)
+	pausedSpec, err := domainjob.NormalizeCreate(now, pausedInput)
 	if err != nil {
-		t.Fatalf("NormalizeCreateJob(paused) error = %v", err)
+		t.Fatalf("NormalizeCreate(paused) error = %v", err)
 	}
 	pausedJob, err := repo.Create(ctx, pausedSpec)
 	if err != nil {

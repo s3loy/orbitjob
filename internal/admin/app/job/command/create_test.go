@@ -6,17 +6,18 @@ import (
 	"testing"
 	"time"
 
+	domainjob "orbitjob/internal/domain/job"
 	"orbitjob/internal/job"
 )
 
 type testRepo struct {
 	called bool
-	in     job.CreateJobSpec
+	in     domainjob.CreateSpec
 	out    job.Job
 	err    error
 }
 
-func (r *testRepo) Create(ctx context.Context, in job.CreateJobSpec) (job.Job, error) {
+func (r *testRepo) Create(ctx context.Context, in domainjob.CreateSpec) (job.Job, error) {
 	r.called = true
 	r.in = in
 	return r.out, r.err
@@ -47,9 +48,9 @@ func TestCreateJobUseCase_Create(t *testing.T) {
 		clock: fixedClock{t: now},
 	}
 
-	out, err := uc.Create(context.Background(), job.CreateJobInput{
+	out, err := uc.Create(context.Background(), domainjob.CreateInput{
 		Name:        "daily-report",
-		TriggerType: job.TriggerTypeCron,
+		TriggerType: domainjob.TriggerTypeCron,
 		CronExpr:    &cronExpr,
 		Timezone:    "Asia/Shanghai",
 		HandlerType: "http",
@@ -67,11 +68,11 @@ func TestCreateJobUseCase_Create(t *testing.T) {
 	if repo.in.Name != "daily-report" {
 		t.Fatalf("expected repo input name=%q, got %q", "daily-report", repo.in.Name)
 	}
-	if repo.in.TenantID != job.DefaultTenantID {
-		t.Fatalf("expected repo input tenant_id=%q, got %q", job.DefaultTenantID, repo.in.TenantID)
+	if repo.in.TenantID != domainjob.DefaultTenantID {
+		t.Fatalf("expected repo input tenant_id=%q, got %q", domainjob.DefaultTenantID, repo.in.TenantID)
 	}
-	if repo.in.TriggerType != job.TriggerTypeCron {
-		t.Fatalf("expected repo input trigger_type=%q, got %q", job.TriggerTypeCron, repo.in.TriggerType)
+	if repo.in.TriggerType != domainjob.TriggerTypeCron {
+		t.Fatalf("expected repo input trigger_type=%q, got %q", domainjob.TriggerTypeCron, repo.in.TriggerType)
 	}
 	if repo.in.Timezone != "Asia/Shanghai" {
 		t.Fatalf("expected repo input timezone=%q, got %q", "Asia/Shanghai", repo.in.Timezone)
@@ -110,8 +111,8 @@ func TestNewCreateJobUseCase_CreateValidationError(t *testing.T) {
 		t.Fatalf("expected clock to be initialized")
 	}
 
-	_, err := uc.Create(context.Background(), job.CreateJobInput{
-		TriggerType: job.TriggerTypeManual,
+	_, err := uc.Create(context.Background(), domainjob.CreateInput{
+		TriggerType: domainjob.TriggerTypeManual,
 		HandlerType: "http",
 	})
 	if err == nil {
@@ -135,9 +136,9 @@ func TestCreateJobUseCase_CreateRepoError(t *testing.T) {
 		clock: fixedClock{t: now},
 	}
 
-	_, err := uc.Create(context.Background(), job.CreateJobInput{
+	_, err := uc.Create(context.Background(), domainjob.CreateInput{
 		Name:        "daily-report",
-		TriggerType: job.TriggerTypeCron,
+		TriggerType: domainjob.TriggerTypeCron,
 		CronExpr:    &cronExpr,
 		Timezone:    "Asia/Shanghai",
 		HandlerType: "http",

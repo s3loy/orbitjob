@@ -3,6 +3,7 @@ package httpapi
 import (
 	"errors"
 
+	"orbitjob/internal/domain/validation"
 	"orbitjob/internal/job"
 )
 
@@ -31,8 +32,8 @@ func toBindAPIError(_ error) APIError {
 
 // toAPIError maps a domain error to the stable API error structure.
 func toAPIError(err error) APIError {
-	var ve *job.ValidationError
-	if job.AsValidationError(err, &ve) {
+	var ve *validation.Error
+	if validation.As(err, &ve) {
 		return APIError{
 			Code:    ErrCodeValidation,
 			Message: ve.Message,

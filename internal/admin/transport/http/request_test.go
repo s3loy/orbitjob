@@ -3,16 +3,17 @@ package httpapi
 import (
 	"testing"
 
+	domainjob "orbitjob/internal/domain/job"
 	"orbitjob/internal/job"
 )
 
-func TestCreateJobRequest_ToCreateJobInput(t *testing.T) {
+func TestCreateJobRequest_ToCreateInput(t *testing.T) {
 	cronExpr := "*/5 * * * *"
 
 	req := CreateJobRequest{
 		Name:                 "demo-job",
 		TenantID:             "tenant-a",
-		TriggerType:          job.TriggerTypeCron,
+		TriggerType:          domainjob.TriggerTypeCron,
 		CronExpr:             &cronExpr,
 		Timezone:             "Asia/Shanghai",
 		HandlerType:          "http",
@@ -20,12 +21,12 @@ func TestCreateJobRequest_ToCreateJobInput(t *testing.T) {
 		TimeoutSec:           120,
 		RetryLimit:           3,
 		RetryBackoffSec:      10,
-		RetryBackoffStrategy: job.RetryBackoffExponential,
-		ConcurrencyPolicy:    job.ConcurrencyForbid,
-		MisfirePolicy:        job.MisfireFireNow,
+		RetryBackoffStrategy: domainjob.RetryBackoffExponential,
+		ConcurrencyPolicy:    domainjob.ConcurrencyForbid,
+		MisfirePolicy:        domainjob.MisfireFireNow,
 	}
 
-	got := req.ToCreateJobInput()
+	got := req.ToCreateInput()
 
 	if got.Name != req.Name {
 		t.Fatalf("expected name=%q, got %q", req.Name, got.Name)

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"time"
 
+	domainjob "orbitjob/internal/domain/job"
 	"orbitjob/internal/job"
 )
 
@@ -20,7 +21,7 @@ func NewJobRepository(db *sql.DB) *JobRepository {
 }
 
 // Create inserts a new job row and returns the persisted snapshot.
-func (r *JobRepository) Create(ctx context.Context, in job.CreateJobSpec) (job.Job, error) {
+func (r *JobRepository) Create(ctx context.Context, in domainjob.CreateSpec) (job.Job, error) {
 	payload := in.HandlerPayload
 	if payload == nil {
 		payload = map[string]any{}
