@@ -12,10 +12,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	httpapi "orbitjob/internal/admin/transport/http"
 	"orbitjob/internal/application/jobapp"
 	"orbitjob/internal/config"
 	"orbitjob/internal/store/postgres"
-	httpapi "orbitjob/internal/transport/http"
 )
 
 func traceMiddleware() gin.HandlerFunc {
