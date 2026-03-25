@@ -14,8 +14,9 @@ import (
 
 	command "orbitjob/internal/admin/app/job/command"
 	query "orbitjob/internal/admin/app/job/query"
-	httpapi "orbitjob/internal/admin/transport/http"
-	"orbitjob/internal/config"
+	adminhttp "orbitjob/internal/admin/http"
+	"orbitjob/internal/platform/config"
+	platformlogger "orbitjob/internal/platform/logger"
 	"orbitjob/internal/store/postgres"
 )
 
@@ -31,7 +32,7 @@ func traceMiddleware() gin.HandlerFunc {
 	}
 }
 
-func newRouter(handler *httpapi.Handler) *gin.Engine {
+func newRouter(handler *adminhttp.Handler) *gin.Engine {
 	r := gin.Default()
 	r.Use(traceMiddleware())
 
@@ -52,7 +53,7 @@ func main() {
 	if err := config.LoadDotenv(); err != nil {
 		log.Fatal(err)
 	}
-	logger := config.InitLogger(os.Getenv("APP_ENV"))
+	logger := platformlogger.New(os.Getenv("APP_ENV"))
 	slog.SetDefault(logger)
 
 	dsn := os.Getenv("DATABASE_DSN")
@@ -78,7 +79,7 @@ func main() {
 	repo := postgres.NewJobRepository(db)
 	createJobUC := command.NewCreateJobUseCase(repo)
 	listJobsUC := query.NewListJobsUseCase(repo)
-	handler := httpapi.NewHandler(createJobUC, listJobsUC)
+	handler := adminhttp.NewHandler(createJobUC, listJobsUC)
 
 	if err := newRouter(handler).Run(":8080"); err != nil {
 		log.Fatal(err)

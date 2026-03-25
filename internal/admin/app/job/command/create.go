@@ -6,7 +6,7 @@ import (
 
 	domainjob "orbitjob/internal/domain/job"
 	"orbitjob/internal/job"
-	"orbitjob/internal/metrics"
+	"orbitjob/internal/platform/metrics"
 )
 
 type jobCreator interface {
