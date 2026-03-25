@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	query "orbitjob/internal/admin/app/job/query"
 	adminhttp "orbitjob/internal/admin/http"
 	domainjob "orbitjob/internal/domain/job"
 	"orbitjob/internal/job"
@@ -31,12 +32,12 @@ func (s *stubCreateJobUseCase) Create(ctx context.Context, in domainjob.CreateIn
 
 type stubListJobsUseCase struct {
 	called bool
-	in     job.ListJobsQuery
-	out    []job.JobListItem
+	in     query.ListInput
+	out    []query.ListItem
 	err    error
 }
 
-func (s *stubListJobsUseCase) List(ctx context.Context, in job.ListJobsQuery) ([]job.JobListItem, error) {
+func (s *stubListJobsUseCase) List(ctx context.Context, in query.ListInput) ([]query.ListItem, error) {
 	s.called = true
 	s.in = in
 	return s.out, s.err
@@ -107,7 +108,7 @@ func TestNewRouter_ListJobsRoute(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	listUC := &stubListJobsUseCase{
-		out: []job.JobListItem{
+		out: []query.ListItem{
 			{
 				ID:              1,
 				Name:            "demo-job",
@@ -115,7 +116,7 @@ func TestNewRouter_ListJobsRoute(t *testing.T) {
 				TriggerType:     job.TriggerTypeManual,
 				ScheduleSummary: "manual",
 				HandlerType:     "http",
-				Status:          job.JobStatusActive,
+				Status:          query.StatusActive,
 			},
 		},
 	}
@@ -139,12 +140,12 @@ func TestNewRouter_ListJobsRoute(t *testing.T) {
 	if listUC.in.TenantID != "default" {
 		t.Fatalf("expected tenant_id=%q, got %q", "default", listUC.in.TenantID)
 	}
-	if listUC.in.Status != job.JobStatusActive {
-		t.Fatalf("expected status=%q, got %q", job.JobStatusActive, listUC.in.Status)
+	if listUC.in.Status != query.StatusActive {
+		t.Fatalf("expected status=%q, got %q", query.StatusActive, listUC.in.Status)
 	}
 
 	var out struct {
-		Items []job.JobListItem `json:"items"`
+		Items []query.ListItem `json:"items"`
 	}
 	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal response: %v", err)

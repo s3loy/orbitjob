@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	query "orbitjob/internal/admin/app/job/query"
 	domainjob "orbitjob/internal/domain/job"
 	"orbitjob/internal/job"
 )
@@ -16,11 +17,11 @@ type createJobUseCase interface {
 }
 
 type listJobsUseCase interface {
-	List(ctx context.Context, in job.ListJobsQuery) ([]job.JobListItem, error)
+	List(ctx context.Context, in query.ListInput) ([]query.ListItem, error)
 }
 
 type jobListResponse struct {
-	Items []job.JobListItem `json:"items"`
+	Items []query.ListItem `json:"items"`
 }
 
 // Handler wires HTTP endpoints to application use cases.
@@ -79,7 +80,7 @@ func (h *Handler) ListJobs(c *gin.Context) {
 		return
 	}
 
-	out, err := h.listJobsUC.List(c.Request.Context(), req.ToListJobsQuery())
+	out, err := h.listJobsUC.List(c.Request.Context(), req.ToListInput())
 	if err != nil {
 		if job.IsValidationError(err) {
 			c.JSON(stdhttp.StatusBadRequest, gin.H{"error": toAPIError(err)})

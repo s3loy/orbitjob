@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	query "orbitjob/internal/admin/app/job/query"
 	domainjob "orbitjob/internal/domain/job"
 	"orbitjob/internal/job"
 )
@@ -129,7 +130,7 @@ func TestJobRepository_List(t *testing.T) {
 		t.Fatalf("pause job: %v", err)
 	}
 
-	allItems, err := repo.List(ctx, job.ListJobsQuery{
+	allItems, err := repo.List(ctx, query.ListInput{
 		TenantID: tenantID,
 		Limit:    10,
 	})
@@ -143,7 +144,7 @@ func TestJobRepository_List(t *testing.T) {
 	if allItems[0].ID != pausedJob.ID {
 		t.Fatalf("expected newest item id=%d, got %d", pausedJob.ID, allItems[0].ID)
 	}
-	if allItems[0].Status != job.JobStatusPaused {
+	if allItems[0].Status != query.StatusPaused {
 		t.Fatalf("expected paused status, got %q", allItems[0].Status)
 	}
 	if allItems[0].ScheduleSummary != "manual" {
@@ -153,7 +154,7 @@ func TestJobRepository_List(t *testing.T) {
 	if allItems[1].ID != activeJob.ID {
 		t.Fatalf("expected second item id=%d, got %d", activeJob.ID, allItems[1].ID)
 	}
-	if allItems[1].Status != job.JobStatusActive {
+	if allItems[1].Status != query.StatusActive {
 		t.Fatalf("expected active status, got %q", allItems[1].Status)
 	}
 	if allItems[1].ScheduleSummary != "cron: */10 * * * * (Asia/Shanghai)" {
@@ -166,9 +167,9 @@ func TestJobRepository_List(t *testing.T) {
 		t.Fatalf("expected next_run_at to be set for cron job")
 	}
 
-	activeItems, err := repo.List(ctx, job.ListJobsQuery{
+	activeItems, err := repo.List(ctx, query.ListInput{
 		TenantID: tenantID,
-		Status:   job.JobStatusActive,
+		Status:   query.StatusActive,
 		Limit:    10,
 	})
 	if err != nil {

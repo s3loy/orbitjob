@@ -3,102 +3,15 @@ package postgres
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
 
-	domainjob "orbitjob/internal/domain/job"
-	"orbitjob/internal/job"
+	query "orbitjob/internal/admin/app/job/query"
 )
 
-type JobRepository struct {
-	db *sql.DB
-}
-
-func NewJobRepository(db *sql.DB) *JobRepository {
-	return &JobRepository{db: db}
-}
-
-// Create inserts a new job row and returns the persisted snapshot.
-func (r *JobRepository) Create(ctx context.Context, in domainjob.CreateSpec) (job.Job, error) {
-	payload := in.HandlerPayload
-	if payload == nil {
-		payload = map[string]any{}
-	}
-
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return job.Job{}, fmt.Errorf("marshal handler_payload: %w", err)
-	}
-
-	var out job.Job
-	var nextRunAt sql.NullTime
-
-	err = r.db.QueryRowContext(ctx, `
-				INSERT INTO jobs (
-						name,
-						tenant_id,
-						trigger_type,
-						cron_expr,
-						timezone,
-						handler_type,
-						handler_payload,
-						timeout_sec,
-						retry_limit,
-						retry_backoff_sec,
-						retry_backoff_strategy,
-						concurrency_policy,
-						misfire_policy,
-						next_run_at
-                )
-                VALUES (
-						$1, $2, $3, $4, $5, $6, $7::jsonb,
-						$8, $9, $10, $11, $12, $13, $14
-				)
-                RETURNING id, name, tenant_id, status, next_run_at, created_at, updated_at
-        `,
-		in.Name,
-		in.TenantID,
-		in.TriggerType,
-		in.CronExpr,
-		in.Timezone,
-		in.HandlerType,
-		string(payloadBytes),
-		in.TimeoutSec,
-		in.RetryLimit,
-		in.RetryBackoffSec,
-		in.RetryBackoffStrategy,
-		in.ConcurrencyPolicy,
-		in.MisfirePolicy,
-		in.NextRunAt,
-	).Scan(
-		&out.ID,
-		&out.Name,
-		&out.TenantID,
-		&out.Status,
-		&nextRunAt,
-		&out.CreatedAt,
-		&out.UpdatedAt,
-	)
-	if err != nil {
-		slog.Error("job create failed",
-			"error", err.Error(),
-			"tenant_id", in.TenantID,
-		)
-		return job.Job{}, fmt.Errorf("insert job: %w", err)
-	}
-
-	if nextRunAt.Valid {
-		t := nextRunAt.Time
-		out.NextRunAt = &t
-	}
-
-	return out, nil
-}
-
 // List queries control-plane job list items.
-func (r *JobRepository) List(ctx context.Context, in job.ListJobsQuery) (_ []job.JobListItem, err error) {
+func (r *JobRepository) List(ctx context.Context, in query.ListInput) (_ []query.ListItem, err error) {
 	const baseQuery = `
                 SELECT
                     id,
@@ -120,9 +33,7 @@ func (r *JobRepository) List(ctx context.Context, in job.ListJobsQuery) (_ []job
                   AND deleted_at IS NULL
         `
 
-	var (
-		rows *sql.Rows
-	)
+	var rows *sql.Rows
 
 	if in.Status == "" {
 		rows, err = r.db.QueryContext(ctx, baseQuery+`
@@ -148,7 +59,7 @@ func (r *JobRepository) List(ctx context.Context, in job.ListJobsQuery) (_ []job
 		}
 	}()
 
-	var out []job.JobListItem
+	var out []query.ListItem
 	for rows.Next() {
 		item, err := scanJobListItem(rows)
 		if err != nil {
@@ -168,8 +79,8 @@ type rowScanner interface {
 	Scan(dest ...any) error
 }
 
-func scanJobListItem(scanner rowScanner) (job.JobListItem, error) {
-	var out job.JobListItem
+func scanJobListItem(scanner rowScanner) (query.ListItem, error) {
+	var out query.ListItem
 	var cronExpr sql.NullString
 	var timezone string
 	var nextRunAt sql.NullTime
@@ -192,12 +103,12 @@ func scanJobListItem(scanner rowScanner) (job.JobListItem, error) {
 		&out.UpdatedAt,
 	)
 	if err != nil {
-		return job.JobListItem{}, fmt.Errorf("scan job list item: %w", err)
+		return query.ListItem{}, fmt.Errorf("scan job list item: %w", err)
 	}
 
 	out.NextRunAt = nullTimePtr(nextRunAt)
 	out.LastScheduledAt = nullTimePtr(lastScheduledAt)
-	out.ScheduleSummary = job.BuildJobScheduleSummary(
+	out.ScheduleSummary = query.BuildScheduleSummary(
 		out.TriggerType,
 		nullStringPtr(cronExpr),
 		timezone,

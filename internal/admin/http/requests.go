@@ -1,8 +1,8 @@
 package http
 
 import (
+	query "orbitjob/internal/admin/app/job/query"
 	domainjob "orbitjob/internal/domain/job"
-	"orbitjob/internal/job"
 )
 
 // CreateJobRequest defines the HTTP payload for creating a job.
@@ -53,9 +53,9 @@ type ListJobsRequest struct {
 	Offset   int    `form:"offset" binding:"omitempty,min=0"`
 }
 
-// ToListJobsQuery converts the HTTP query parameters into a domain query.
-func (r ListJobsRequest) ToListJobsQuery() job.ListJobsQuery {
-	return job.ListJobsQuery{
+// ToListInput converts the HTTP query parameters into a control-plane query input.
+func (r ListJobsRequest) ToListInput() query.ListInput {
+	return query.ListInput{
 		TenantID: r.TenantID,
 		Status:   r.Status,
 		Limit:    r.Limit,

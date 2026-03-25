@@ -3,8 +3,8 @@ package http
 import (
 	"testing"
 
+	query "orbitjob/internal/admin/app/job/query"
 	domainjob "orbitjob/internal/domain/job"
-	"orbitjob/internal/job"
 )
 
 func TestCreateJobRequest_ToCreateInput(t *testing.T) {
@@ -66,15 +66,15 @@ func TestCreateJobRequest_ToCreateInput(t *testing.T) {
 	}
 }
 
-func TestListJobsRequest_ToListJobsQuery(t *testing.T) {
+func TestListJobsRequest_ToListInput(t *testing.T) {
 	req := ListJobsRequest{
 		TenantID: "tenant-a",
-		Status:   job.JobStatusActive,
+		Status:   query.StatusActive,
 		Limit:    20,
 		Offset:   40,
 	}
 
-	got := req.ToListJobsQuery()
+	got := req.ToListInput()
 
 	if got.TenantID != req.TenantID {
 		t.Fatalf("expected tenant_id=%q, got %q", req.TenantID, got.TenantID)

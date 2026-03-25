@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	query "orbitjob/internal/admin/app/job/query"
 	domainjob "orbitjob/internal/domain/job"
 	"orbitjob/internal/job"
 )
@@ -31,12 +32,12 @@ func (s *stubCreateJobUseCase) Create(ctx context.Context, in domainjob.CreateIn
 
 type stubListJobsUseCase struct {
 	called bool
-	in     job.ListJobsQuery
-	out    []job.JobListItem
+	in     query.ListInput
+	out    []query.ListItem
 	err    error
 }
 
-func (s *stubListJobsUseCase) List(ctx context.Context, in job.ListJobsQuery) ([]job.JobListItem, error) {
+func (s *stubListJobsUseCase) List(ctx context.Context, in query.ListInput) ([]query.ListItem, error) {
 	s.called = true
 	s.in = in
 	return s.out, s.err
@@ -111,7 +112,7 @@ func TestHandler_RegisterAndListJobs(t *testing.T) {
 	nextRunAt := time.Date(2026, 3, 22, 2, 0, 0, 0, time.UTC)
 	createdAt := time.Date(2026, 3, 22, 1, 0, 0, 0, time.UTC)
 	useCase := &stubListJobsUseCase{
-		out: []job.JobListItem{
+		out: []query.ListItem{
 			{
 				ID:                1,
 				Name:              "demo-job",
@@ -121,7 +122,7 @@ func TestHandler_RegisterAndListJobs(t *testing.T) {
 				HandlerType:       "http",
 				ConcurrencyPolicy: job.ConcurrencyAllow,
 				MisfirePolicy:     job.MisfireSkip,
-				Status:            job.JobStatusActive,
+				Status:            query.StatusActive,
 				NextRunAt:         &nextRunAt,
 				CreatedAt:         createdAt,
 				UpdatedAt:         createdAt,
@@ -149,8 +150,8 @@ func TestHandler_RegisterAndListJobs(t *testing.T) {
 	if useCase.in.TenantID != "tenant-a" {
 		t.Fatalf("expected tenant_id=%q, got %q", "tenant-a", useCase.in.TenantID)
 	}
-	if useCase.in.Status != job.JobStatusActive {
-		t.Fatalf("expected status=%q, got %q", job.JobStatusActive, useCase.in.Status)
+	if useCase.in.Status != query.StatusActive {
+		t.Fatalf("expected status=%q, got %q", query.StatusActive, useCase.in.Status)
 	}
 	if useCase.in.Limit != 20 {
 		t.Fatalf("expected limit=%d, got %d", 20, useCase.in.Limit)

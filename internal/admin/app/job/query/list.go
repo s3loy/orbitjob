@@ -2,12 +2,10 @@ package query
 
 import (
 	"context"
-
-	"orbitjob/internal/job"
 )
 
 type jobListReader interface {
-	List(ctx context.Context, in job.ListJobsQuery) ([]job.JobListItem, error)
+	List(ctx context.Context, in ListInput) ([]ListItem, error)
 }
 
 type ListJobsUseCase struct {
@@ -20,8 +18,8 @@ func NewListJobsUseCase(repo jobListReader) *ListJobsUseCase {
 	}
 }
 
-func (uc *ListJobsUseCase) List(ctx context.Context, in job.ListJobsQuery) ([]job.JobListItem, error) {
-	query, err := job.NormalizeListJobsQuery(in)
+func (uc *ListJobsUseCase) List(ctx context.Context, in ListInput) ([]ListItem, error) {
+	query, err := NormalizeListInput(in)
 	if err != nil {
 		return nil, err
 	}

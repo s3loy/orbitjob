@@ -1,61 +1,63 @@
-package job
+package query
 
 import (
 	"strings"
 	"testing"
+
+	domainjob "orbitjob/internal/domain/job"
 )
 
-func TestNormalizeListJobsQuery_Defaults(t *testing.T) {
-	out, err := NormalizeListJobsQuery(ListJobsQuery{})
+func TestNormalizeListInput_Defaults(t *testing.T) {
+	out, err := NormalizeListInput(ListInput{})
 	if err != nil {
-		t.Fatalf("NormalizeListJobsQuery() error = %v", err)
+		t.Fatalf("NormalizeListInput() error = %v", err)
 	}
 
-	if out.TenantID != DefaultTenantID {
-		t.Fatalf("expected tenant_id=%q, got %q", DefaultTenantID, out.TenantID)
+	if out.TenantID != defaultTenantID {
+		t.Fatalf("expected tenant_id=%q, got %q", defaultTenantID, out.TenantID)
 	}
 	if out.Status != "" {
 		t.Fatalf("expected empty status, got %q", out.Status)
 	}
-	if out.Limit != DefaultListJobsLimit {
-		t.Fatalf("expected limit=%d, got %d", DefaultListJobsLimit, out.Limit)
+	if out.Limit != DefaultListLimit {
+		t.Fatalf("expected limit=%d, got %d", DefaultListLimit, out.Limit)
 	}
 	if out.Offset != 0 {
 		t.Fatalf("expected offset=0, got %d", out.Offset)
 	}
 }
 
-func TestNormalizeListJobsQuery_TrimsTenantID(t *testing.T) {
-	out, err := NormalizeListJobsQuery(ListJobsQuery{
+func TestNormalizeListInput_TrimsTenantID(t *testing.T) {
+	out, err := NormalizeListInput(ListInput{
 		TenantID: " tenant-a ",
-		Status:   JobStatusActive,
+		Status:   StatusActive,
 		Limit:    10,
 	})
 	if err != nil {
-		t.Fatalf("NormalizeListJobsQuery() error = %v", err)
+		t.Fatalf("NormalizeListInput() error = %v", err)
 	}
 
 	if out.TenantID != "tenant-a" {
 		t.Fatalf("expected tenant_id=%q, got %q", "tenant-a", out.TenantID)
 	}
-	if out.Status != JobStatusActive {
-		t.Fatalf("expected status=%q, got %q", JobStatusActive, out.Status)
+	if out.Status != StatusActive {
+		t.Fatalf("expected status=%q, got %q", StatusActive, out.Status)
 	}
 	if out.Limit != 10 {
 		t.Fatalf("expected limit=10, got %d", out.Limit)
 	}
 }
 
-func TestNormalizeListJobsQuery_InvalidInput(t *testing.T) {
+func TestNormalizeListInput_InvalidInput(t *testing.T) {
 	tests := []struct {
 		name        string
-		input       ListJobsQuery
+		input       ListInput
 		wantField   string
 		wantMessage string
 	}{
 		{
 			name: "tenant too long",
-			input: ListJobsQuery{
+			input: ListInput{
 				TenantID: strings.Repeat("t", 65),
 			},
 			wantField:   "tenant_id",
@@ -63,7 +65,7 @@ func TestNormalizeListJobsQuery_InvalidInput(t *testing.T) {
 		},
 		{
 			name: "invalid status",
-			input: ListJobsQuery{
+			input: ListInput{
 				Status: "running",
 			},
 			wantField:   "status",
@@ -71,7 +73,7 @@ func TestNormalizeListJobsQuery_InvalidInput(t *testing.T) {
 		},
 		{
 			name: "limit less than one",
-			input: ListJobsQuery{
+			input: ListInput{
 				Limit: -1,
 			},
 			wantField:   "limit",
@@ -79,15 +81,15 @@ func TestNormalizeListJobsQuery_InvalidInput(t *testing.T) {
 		},
 		{
 			name: "limit too large",
-			input: ListJobsQuery{
-				Limit: MaxListJobsLimit + 1,
+			input: ListInput{
+				Limit: MaxListLimit + 1,
 			},
 			wantField:   "limit",
 			wantMessage: "must be <= 100",
 		},
 		{
 			name: "offset less than zero",
-			input: ListJobsQuery{
+			input: ListInput{
 				Offset: -1,
 			},
 			wantField:   "offset",
@@ -97,16 +99,17 @@ func TestNormalizeListJobsQuery_InvalidInput(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := NormalizeListJobsQuery(tt.input)
+			_, err := NormalizeListInput(tt.input)
 			if err == nil {
 				t.Fatalf("expected validation error, got nil")
 			}
 
-			var validationErr *ValidationError
-			if !IsValidationError(err) {
+			if !domainjob.IsValidationError(err) {
 				t.Fatalf("expected validation error, got %T", err)
 			}
-			if !AsValidationError(err, &validationErr) {
+
+			var validationErr *domainjob.ValidationError
+			if !domainjob.AsValidationError(err, &validationErr) {
 				t.Fatalf("expected error to unwrap as ValidationError")
 			}
 			if validationErr.Field != tt.wantField {
@@ -119,18 +122,18 @@ func TestNormalizeListJobsQuery_InvalidInput(t *testing.T) {
 	}
 }
 
-func TestBuildJobScheduleSummary(t *testing.T) {
+func TestBuildScheduleSummary(t *testing.T) {
 	cronExpr := "*/5 * * * *"
 
-	if got := BuildJobScheduleSummary(TriggerTypeManual, nil, ""); got != "manual" {
+	if got := BuildScheduleSummary(domainjob.TriggerTypeManual, nil, ""); got != "manual" {
 		t.Fatalf("expected manual summary, got %q", got)
 	}
 
-	if got := BuildJobScheduleSummary(TriggerTypeCron, &cronExpr, "Asia/Shanghai"); got != "cron: */5 * * * * (Asia/Shanghai)" {
+	if got := BuildScheduleSummary(domainjob.TriggerTypeCron, &cronExpr, "Asia/Shanghai"); got != "cron: */5 * * * * (Asia/Shanghai)" {
 		t.Fatalf("unexpected cron summary: %q", got)
 	}
 
-	if got := BuildJobScheduleSummary(TriggerTypeCron, nil, ""); got != "cron (UTC)" {
+	if got := BuildScheduleSummary(domainjob.TriggerTypeCron, nil, ""); got != "cron (UTC)" {
 		t.Fatalf("unexpected empty cron summary: %q", got)
 	}
 }

@@ -4,18 +4,16 @@ import (
 	"context"
 	"errors"
 	"testing"
-
-	"orbitjob/internal/job"
 )
 
 type testJobListReader struct {
 	called bool
-	in     job.ListJobsQuery
-	out    []job.JobListItem
+	in     ListInput
+	out    []ListItem
 	err    error
 }
 
-func (r *testJobListReader) List(ctx context.Context, in job.ListJobsQuery) ([]job.JobListItem, error) {
+func (r *testJobListReader) List(ctx context.Context, in ListInput) ([]ListItem, error) {
 	r.called = true
 	r.in = in
 	return r.out, r.err
@@ -23,19 +21,19 @@ func (r *testJobListReader) List(ctx context.Context, in job.ListJobsQuery) ([]j
 
 func TestListJobsUseCase_List(t *testing.T) {
 	repo := &testJobListReader{
-		out: []job.JobListItem{
+		out: []ListItem{
 			{
 				ID:     1,
 				Name:   "demo-job",
-				Status: job.JobStatusActive,
+				Status: StatusActive,
 			},
 		},
 	}
 	uc := NewListJobsUseCase(repo)
 
-	out, err := uc.List(context.Background(), job.ListJobsQuery{
+	out, err := uc.List(context.Background(), ListInput{
 		TenantID: " tenant-a ",
-		Status:   job.JobStatusActive,
+		Status:   StatusActive,
 	})
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
@@ -46,11 +44,11 @@ func TestListJobsUseCase_List(t *testing.T) {
 	if repo.in.TenantID != "tenant-a" {
 		t.Fatalf("expected tenant_id=%q, got %q", "tenant-a", repo.in.TenantID)
 	}
-	if repo.in.Status != job.JobStatusActive {
-		t.Fatalf("expected status=%q, got %q", job.JobStatusActive, repo.in.Status)
+	if repo.in.Status != StatusActive {
+		t.Fatalf("expected status=%q, got %q", StatusActive, repo.in.Status)
 	}
-	if repo.in.Limit != job.DefaultListJobsLimit {
-		t.Fatalf("expected limit=%d, got %d", job.DefaultListJobsLimit, repo.in.Limit)
+	if repo.in.Limit != DefaultListLimit {
+		t.Fatalf("expected limit=%d, got %d", DefaultListLimit, repo.in.Limit)
 	}
 	if len(out) != 1 {
 		t.Fatalf("expected 1 item, got %d", len(out))
@@ -64,8 +62,8 @@ func TestListJobsUseCase_ListValidationError(t *testing.T) {
 	repo := &testJobListReader{}
 	uc := NewListJobsUseCase(repo)
 
-	_, err := uc.List(context.Background(), job.ListJobsQuery{
-		Limit: job.MaxListJobsLimit + 1,
+	_, err := uc.List(context.Background(), ListInput{
+		Limit: MaxListLimit + 1,
 	})
 	if err == nil {
 		t.Fatalf("expected validation error, got nil")
@@ -82,7 +80,7 @@ func TestListJobsUseCase_ListRepoError(t *testing.T) {
 	}
 	uc := NewListJobsUseCase(repo)
 
-	_, err := uc.List(context.Background(), job.ListJobsQuery{
+	_, err := uc.List(context.Background(), ListInput{
 		Limit: 10,
 	})
 	if !errors.Is(err, repoErr) {
