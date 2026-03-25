@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"log/slog"
 
+	command "orbitjob/internal/admin/app/job/command"
 	domainjob "orbitjob/internal/domain/job"
-	"orbitjob/internal/job"
 )
 
 // Create inserts a new job row and returns the persisted snapshot.
-func (r *JobRepository) Create(ctx context.Context, in domainjob.CreateSpec) (job.Job, error) {
+func (r *JobRepository) Create(ctx context.Context, in domainjob.CreateSpec) (command.CreateResult, error) {
 	payload := in.HandlerPayload
 	if payload == nil {
 		payload = map[string]any{}
@@ -20,10 +20,10 @@ func (r *JobRepository) Create(ctx context.Context, in domainjob.CreateSpec) (jo
 
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
-		return job.Job{}, fmt.Errorf("marshal handler_payload: %w", err)
+		return command.CreateResult{}, fmt.Errorf("marshal handler_payload: %w", err)
 	}
 
-	var out job.Job
+	var out command.CreateResult
 	var nextRunAt sql.NullTime
 
 	err = r.db.QueryRowContext(ctx, `
@@ -77,7 +77,7 @@ func (r *JobRepository) Create(ctx context.Context, in domainjob.CreateSpec) (jo
 			"error", err.Error(),
 			"tenant_id", in.TenantID,
 		)
-		return job.Job{}, fmt.Errorf("insert job: %w", err)
+		return command.CreateResult{}, fmt.Errorf("insert job: %w", err)
 	}
 
 	if nextRunAt.Valid {

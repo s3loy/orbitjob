@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	command "orbitjob/internal/admin/app/job/command"
 	query "orbitjob/internal/admin/app/job/query"
 	domainjob "orbitjob/internal/domain/job"
 	"orbitjob/internal/job"
@@ -13,7 +14,7 @@ import (
 
 // createJobUseCase defines the application capability required by the HTTP handler.
 type createJobUseCase interface {
-	Create(ctx context.Context, in domainjob.CreateInput) (job.Job, error)
+	Create(ctx context.Context, in domainjob.CreateInput) (command.CreateResult, error)
 }
 
 type listJobsUseCase interface {

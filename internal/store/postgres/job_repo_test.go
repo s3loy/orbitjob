@@ -11,7 +11,6 @@ import (
 
 	query "orbitjob/internal/admin/app/job/query"
 	domainjob "orbitjob/internal/domain/job"
-	"orbitjob/internal/job"
 )
 
 // TestJobRepository_Create is an integration test against a real PostgreSQL

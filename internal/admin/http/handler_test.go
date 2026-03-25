@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	command "orbitjob/internal/admin/app/job/command"
 	query "orbitjob/internal/admin/app/job/query"
 	domainjob "orbitjob/internal/domain/job"
 	"orbitjob/internal/job"
@@ -20,11 +21,11 @@ import (
 type stubCreateJobUseCase struct {
 	called bool
 	in     domainjob.CreateInput
-	out    job.Job
+	out    command.CreateResult
 	err    error
 }
 
-func (s *stubCreateJobUseCase) Create(ctx context.Context, in domainjob.CreateInput) (job.Job, error) {
+func (s *stubCreateJobUseCase) Create(ctx context.Context, in domainjob.CreateInput) (command.CreateResult, error) {
 	s.called = true
 	s.in = in
 	return s.out, s.err
@@ -48,7 +49,7 @@ func TestHandler_RegisterAndCreateJob(t *testing.T) {
 
 	createdAt := time.Date(2026, 3, 22, 1, 0, 0, 0, time.UTC)
 	useCase := &stubCreateJobUseCase{
-		out: job.Job{
+		out: command.CreateResult{
 			ID:        1,
 			Name:      "demo-job",
 			TenantID:  "default",
@@ -94,7 +95,7 @@ func TestHandler_RegisterAndCreateJob(t *testing.T) {
 		t.Fatalf("expected input handler_type=%q, got %q", "http", useCase.in.HandlerType)
 	}
 
-	var out job.Job
+	var out command.CreateResult
 	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}

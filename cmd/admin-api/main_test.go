@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	command "orbitjob/internal/admin/app/job/command"
 	query "orbitjob/internal/admin/app/job/query"
 	adminhttp "orbitjob/internal/admin/http"
 	domainjob "orbitjob/internal/domain/job"
@@ -20,11 +21,11 @@ import (
 type stubCreateJobUseCase struct {
 	called bool
 	in     domainjob.CreateInput
-	out    job.Job
+	out    command.CreateResult
 	err    error
 }
 
-func (s *stubCreateJobUseCase) Create(ctx context.Context, in domainjob.CreateInput) (job.Job, error) {
+func (s *stubCreateJobUseCase) Create(ctx context.Context, in domainjob.CreateInput) (command.CreateResult, error) {
 	s.called = true
 	s.in = in
 	return s.out, s.err
@@ -64,7 +65,7 @@ func TestNewRouter_CreateJobRoute(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	createUC := &stubCreateJobUseCase{
-		out: job.Job{
+		out: command.CreateResult{
 			ID:       1,
 			Name:     "demo-job",
 			TenantID: "default",
