@@ -9,7 +9,7 @@ import (
 	command "orbitjob/internal/admin/app/job/command"
 	query "orbitjob/internal/admin/app/job/query"
 	domainjob "orbitjob/internal/domain/job"
-	"orbitjob/internal/job"
+	"orbitjob/internal/domain/validation"
 )
 
 // createJobUseCase defines the application capability required by the HTTP handler.
@@ -60,7 +60,7 @@ func (h *Handler) CreateJob(c *gin.Context) {
 
 	out, err := h.createJobUC.Create(c.Request.Context(), req.ToCreateInput())
 	if err != nil {
-		if domainjob.IsValidationError(err) {
+		if validation.Is(err) {
 			c.JSON(stdhttp.StatusBadRequest, gin.H{"error": toAPIError(err)})
 			return
 		}
@@ -83,7 +83,7 @@ func (h *Handler) ListJobs(c *gin.Context) {
 
 	out, err := h.listJobsUC.List(c.Request.Context(), req.ToListInput())
 	if err != nil {
-		if job.IsValidationError(err) {
+		if validation.Is(err) {
 			c.JSON(stdhttp.StatusBadRequest, gin.H{"error": toAPIError(err)})
 			return
 		}

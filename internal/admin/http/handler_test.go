@@ -15,7 +15,7 @@ import (
 	command "orbitjob/internal/admin/app/job/command"
 	query "orbitjob/internal/admin/app/job/query"
 	domainjob "orbitjob/internal/domain/job"
-	"orbitjob/internal/job"
+	"orbitjob/internal/domain/validation"
 )
 
 type stubCreateJobUseCase struct {
@@ -118,11 +118,11 @@ func TestHandler_RegisterAndListJobs(t *testing.T) {
 				ID:                1,
 				Name:              "demo-job",
 				TenantID:          "tenant-a",
-				TriggerType:       job.TriggerTypeCron,
+				TriggerType:       domainjob.TriggerTypeCron,
 				ScheduleSummary:   "cron: */5 * * * * (UTC)",
 				HandlerType:       "http",
-				ConcurrencyPolicy: job.ConcurrencyAllow,
-				MisfirePolicy:     job.MisfireSkip,
+				ConcurrencyPolicy: domainjob.ConcurrencyAllow,
+				MisfirePolicy:     domainjob.MisfireSkip,
 				Status:            query.StatusActive,
 				NextRunAt:         &nextRunAt,
 				CreatedAt:         createdAt,
@@ -267,7 +267,7 @@ func TestHandler_CreateJob_UseCaseError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	useCase := &stubCreateJobUseCase{
-		err: &job.ValidationError{
+		err: &validation.Error{
 			Field:   "cron_expr",
 			Message: "invalid cron_expr",
 		},
@@ -301,7 +301,7 @@ func TestHandler_ListJobs_UseCaseError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	useCase := &stubListJobsUseCase{
-		err: &job.ValidationError{
+		err: &validation.Error{
 			Field:   "tenant_id",
 			Message: "must be <= 64 characters",
 		},
@@ -381,7 +381,7 @@ func TestHandler_CreateJob_ValidationErrorResponseFormat(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	uc := &stubCreateJobUseCase{
-		err: &job.ValidationError{
+		err: &validation.Error{
 			Field:   "cron_expr",
 			Message: "is required for cron jobs",
 		},

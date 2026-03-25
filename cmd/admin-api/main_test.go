@@ -13,7 +13,6 @@ import (
 	query "orbitjob/internal/admin/app/job/query"
 	adminhttp "orbitjob/internal/admin/http"
 	domainjob "orbitjob/internal/domain/job"
-	"orbitjob/internal/job"
 
 	"github.com/gin-gonic/gin"
 )
@@ -114,7 +113,7 @@ func TestNewRouter_ListJobsRoute(t *testing.T) {
 				ID:              1,
 				Name:            "demo-job",
 				TenantID:        "default",
-				TriggerType:     job.TriggerTypeManual,
+				TriggerType:     domainjob.TriggerTypeManual,
 				ScheduleSummary: "manual",
 				HandlerType:     "http",
 				Status:          query.StatusActive,
