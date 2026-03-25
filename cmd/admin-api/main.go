@@ -15,9 +15,9 @@ import (
 	command "orbitjob/internal/admin/app/job/command"
 	query "orbitjob/internal/admin/app/job/query"
 	adminhttp "orbitjob/internal/admin/http"
+	"orbitjob/internal/admin/store/postgres"
 	"orbitjob/internal/platform/config"
 	platformlogger "orbitjob/internal/platform/logger"
-	"orbitjob/internal/store/postgres"
 )
 
 func traceMiddleware() gin.HandlerFunc {
