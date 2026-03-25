@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	domainjob "orbitjob/internal/domain/job"
+	domainjob "orbitjob/internal/core/domain/job"
 )
 
 // ListItem is the control-plane read model used by GET /api/v1/jobs.

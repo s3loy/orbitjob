@@ -10,7 +10,7 @@ import (
 	"time"
 
 	query "orbitjob/internal/admin/app/job/query"
-	domainjob "orbitjob/internal/domain/job"
+	domainjob "orbitjob/internal/core/domain/job"
 )
 
 // TestJobRepository_Create is an integration test against a real PostgreSQL

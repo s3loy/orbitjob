@@ -2,7 +2,7 @@ package http
 
 import (
 	query "orbitjob/internal/admin/app/job/query"
-	domainjob "orbitjob/internal/domain/job"
+	domainjob "orbitjob/internal/core/domain/job"
 )
 
 // CreateJobRequest defines the HTTP payload for creating a job.

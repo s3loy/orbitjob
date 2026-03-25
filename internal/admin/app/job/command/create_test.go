@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	domainjob "orbitjob/internal/domain/job"
+	domainjob "orbitjob/internal/core/domain/job"
 )
 
 type testRepo struct {

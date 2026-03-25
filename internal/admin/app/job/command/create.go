@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	domainjob "orbitjob/internal/domain/job"
+	domainjob "orbitjob/internal/core/domain/job"
 	"orbitjob/internal/platform/metrics"
 )
 

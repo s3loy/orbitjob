@@ -8,7 +8,7 @@ import (
 	"log/slog"
 
 	command "orbitjob/internal/admin/app/job/command"
-	domainjob "orbitjob/internal/domain/job"
+	domainjob "orbitjob/internal/core/domain/job"
 )
 
 // Create inserts a new job row and returns the persisted snapshot.

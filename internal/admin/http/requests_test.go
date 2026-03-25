@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	query "orbitjob/internal/admin/app/job/query"
-	domainjob "orbitjob/internal/domain/job"
+	domainjob "orbitjob/internal/core/domain/job"
 )
 
 func TestCreateJobRequest_ToCreateInput(t *testing.T) {

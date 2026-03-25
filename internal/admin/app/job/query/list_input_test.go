@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	domainjob "orbitjob/internal/domain/job"
+	domainjob "orbitjob/internal/core/domain/job"
 )
 
 func TestNormalizeListInput_Defaults(t *testing.T) {

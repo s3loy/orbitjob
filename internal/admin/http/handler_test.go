@@ -14,7 +14,7 @@ import (
 
 	command "orbitjob/internal/admin/app/job/command"
 	query "orbitjob/internal/admin/app/job/query"
-	domainjob "orbitjob/internal/domain/job"
+	domainjob "orbitjob/internal/core/domain/job"
 	"orbitjob/internal/domain/validation"
 )
 
