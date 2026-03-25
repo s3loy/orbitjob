@@ -10,6 +10,7 @@ import (
 	"time"
 
 	query "orbitjob/internal/admin/app/job/query"
+	corepostgres "orbitjob/internal/core/store/postgres"
 	domainjob "orbitjob/internal/core/domain/job"
 )
 
@@ -27,7 +28,7 @@ func TestJobRepository_Create(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	repo := NewJobRepository(db)
+	repo := corepostgres.NewJobRepository(db)
 
 	// a normal cron job creation flow
 	cron := "*/5 * * * *"
@@ -82,7 +83,8 @@ func TestJobRepository_List(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	repo := NewJobRepository(db)
+	writeRepo := corepostgres.NewJobRepository(db)
+	readRepo := NewJobRepository(db)
 	ctx := context.Background()
 
 	now := time.Now().UTC()
@@ -101,7 +103,7 @@ func TestJobRepository_List(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NormalizeCreate(active) error = %v", err)
 	}
-	activeJob, err := repo.Create(ctx, activeSpec)
+	activeJob, err := writeRepo.Create(ctx, activeSpec)
 	if err != nil {
 		t.Fatalf("Create(active) error = %v", err)
 	}
@@ -116,7 +118,7 @@ func TestJobRepository_List(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NormalizeCreate(paused) error = %v", err)
 	}
-	pausedJob, err := repo.Create(ctx, pausedSpec)
+	pausedJob, err := writeRepo.Create(ctx, pausedSpec)
 	if err != nil {
 		t.Fatalf("Create(paused) error = %v", err)
 	}
@@ -129,7 +131,7 @@ func TestJobRepository_List(t *testing.T) {
 		t.Fatalf("pause job: %v", err)
 	}
 
-	allItems, err := repo.List(ctx, query.ListInput{
+	allItems, err := readRepo.List(ctx, query.ListInput{
 		TenantID: tenantID,
 		Limit:    10,
 	})
@@ -166,7 +168,7 @@ func TestJobRepository_List(t *testing.T) {
 		t.Fatalf("expected next_run_at to be set for cron job")
 	}
 
-	activeItems, err := repo.List(ctx, query.ListInput{
+	activeItems, err := readRepo.List(ctx, query.ListInput{
 		TenantID: tenantID,
 		Status:   query.StatusActive,
 		Limit:    10,
