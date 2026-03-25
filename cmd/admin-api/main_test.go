@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	httpapi "orbitjob/internal/admin/transport/http"
+	adminhttp "orbitjob/internal/admin/http"
 	domainjob "orbitjob/internal/domain/job"
 	"orbitjob/internal/job"
 
@@ -71,7 +71,7 @@ func TestNewRouter_CreateJobRoute(t *testing.T) {
 		},
 	}
 
-	handler := httpapi.NewHandler(createUC, nil)
+	handler := adminhttp.NewHandler(createUC, nil)
 	router := newRouter(handler)
 
 	body := `{
@@ -120,7 +120,7 @@ func TestNewRouter_ListJobsRoute(t *testing.T) {
 		},
 	}
 
-	handler := httpapi.NewHandler(nil, listUC)
+	handler := adminhttp.NewHandler(nil, listUC)
 	router := newRouter(handler)
 
 	req := httptest.NewRequest(http.MethodGet,

@@ -1,11 +1,11 @@
-package httpapi
+package http
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
+	stdhttp "net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -68,15 +68,15 @@ func TestHandler_RegisterAndCreateJob(t *testing.T) {
                 "handler_payload":{"url":"https://example.com/hook"}
         }`
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs",
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/jobs",
 		bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp := httptest.NewRecorder()
 
 	router.ServeHTTP(resp, req)
 
-	if resp.Code != http.StatusCreated {
-		t.Fatalf("expected status=%d, got %d, body=%s", http.StatusCreated, resp.Code,
+	if resp.Code != stdhttp.StatusCreated {
+		t.Fatalf("expected status=%d, got %d, body=%s", stdhttp.StatusCreated, resp.Code,
 			resp.Body.String())
 	}
 	if !useCase.called {
@@ -133,14 +133,14 @@ func TestHandler_RegisterAndListJobs(t *testing.T) {
 	router := gin.New()
 	handler.Register(router)
 
-	req := httptest.NewRequest(http.MethodGet,
+	req := httptest.NewRequest(stdhttp.MethodGet,
 		"/api/v1/jobs?tenant_id=tenant-a&status=active&limit=20&offset=40", nil)
 	resp := httptest.NewRecorder()
 
 	router.ServeHTTP(resp, req)
 
-	if resp.Code != http.StatusOK {
-		t.Fatalf("expected status=%d, got %d, body=%s", http.StatusOK, resp.Code,
+	if resp.Code != stdhttp.StatusOK {
+		t.Fatalf("expected status=%d, got %d, body=%s", stdhttp.StatusOK, resp.Code,
 			resp.Body.String())
 	}
 	if !useCase.called {
@@ -183,15 +183,15 @@ func TestHandler_CreateJob_BindError(t *testing.T) {
 	router := gin.New()
 	handler.Register(router)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs",
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/jobs",
 		bytes.NewBufferString(`{"trigger_type":"manual"}`))
 	req.Header.Set("Content-Type", "application/json")
 	resp := httptest.NewRecorder()
 
 	router.ServeHTTP(resp, req)
 
-	if resp.Code != http.StatusBadRequest {
-		t.Fatalf("expected status=%d, got %d", http.StatusBadRequest, resp.Code)
+	if resp.Code != stdhttp.StatusBadRequest {
+		t.Fatalf("expected status=%d, got %d", stdhttp.StatusBadRequest, resp.Code)
 	}
 	if useCase.called {
 		t.Fatalf("expected use case not to be called on bind error")
@@ -227,13 +227,13 @@ func TestHandler_ListJobs_BindError(t *testing.T) {
 	router := gin.New()
 	handler.Register(router)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs?limit=bad", nil)
+	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/jobs?limit=bad", nil)
 	resp := httptest.NewRecorder()
 
 	router.ServeHTTP(resp, req)
 
-	if resp.Code != http.StatusBadRequest {
-		t.Fatalf("expected status=%d, got %d", http.StatusBadRequest, resp.Code)
+	if resp.Code != stdhttp.StatusBadRequest {
+		t.Fatalf("expected status=%d, got %d", stdhttp.StatusBadRequest, resp.Code)
 	}
 	if useCase.called {
 		t.Fatalf("expected use case not to be called on bind error")
@@ -280,15 +280,15 @@ func TestHandler_CreateJob_UseCaseError(t *testing.T) {
                 "handler_type":"http"
         }`
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs",
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/jobs",
 		bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp := httptest.NewRecorder()
 
 	router.ServeHTTP(resp, req)
 
-	if resp.Code != http.StatusBadRequest {
-		t.Fatalf("expected status=%d, got %d", http.StatusBadRequest, resp.Code)
+	if resp.Code != stdhttp.StatusBadRequest {
+		t.Fatalf("expected status=%d, got %d", stdhttp.StatusBadRequest, resp.Code)
 	}
 	if !useCase.called {
 		t.Fatalf("expected use case to be called")
@@ -308,13 +308,13 @@ func TestHandler_ListJobs_UseCaseError(t *testing.T) {
 	router := gin.New()
 	handler.Register(router)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/jobs", nil)
 	resp := httptest.NewRecorder()
 
 	router.ServeHTTP(resp, req)
 
-	if resp.Code != http.StatusBadRequest {
-		t.Fatalf("expected status=%d, got %d", http.StatusBadRequest, resp.Code)
+	if resp.Code != stdhttp.StatusBadRequest {
+		t.Fatalf("expected status=%d, got %d", stdhttp.StatusBadRequest, resp.Code)
 	}
 	if !useCase.called {
 		t.Fatalf("expected use case to be called")
@@ -337,15 +337,15 @@ func TestHandler_CreateJob_InternalError(t *testing.T) {
                 "handler_type":"http"
         }`
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs",
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/jobs",
 		bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp := httptest.NewRecorder()
 
 	router.ServeHTTP(resp, req)
 
-	if resp.Code != http.StatusInternalServerError {
-		t.Fatalf("expected status=%d, got %d", http.StatusInternalServerError, resp.Code)
+	if resp.Code != stdhttp.StatusInternalServerError {
+		t.Fatalf("expected status=%d, got %d", stdhttp.StatusInternalServerError, resp.Code)
 	}
 	if !useCase.called {
 		t.Fatalf("expected use case to be called")
@@ -362,13 +362,13 @@ func TestHandler_ListJobs_InternalError(t *testing.T) {
 	router := gin.New()
 	handler.Register(router)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/jobs", nil)
 	resp := httptest.NewRecorder()
 
 	router.ServeHTTP(resp, req)
 
-	if resp.Code != http.StatusInternalServerError {
-		t.Fatalf("expected status=%d, got %d", http.StatusInternalServerError, resp.Code)
+	if resp.Code != stdhttp.StatusInternalServerError {
+		t.Fatalf("expected status=%d, got %d", stdhttp.StatusInternalServerError, resp.Code)
 	}
 	if !useCase.called {
 		t.Fatalf("expected use case to be called")
@@ -394,15 +394,15 @@ func TestHandler_CreateJob_ValidationErrorResponseFormat(t *testing.T) {
                 "handler_type":"http"
         }`
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs",
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/jobs",
 		bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp := httptest.NewRecorder()
 
 	router.ServeHTTP(resp, req)
 
-	if resp.Code != http.StatusBadRequest {
-		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, resp.Code)
+	if resp.Code != stdhttp.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d", stdhttp.StatusBadRequest, resp.Code)
 	}
 
 	var out struct {
@@ -440,15 +440,15 @@ func TestHandler_CreateJob_InternalErrorResponseFormat(t *testing.T) {
                 "handler_type":"http"
         }`
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs",
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/jobs",
 		bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp := httptest.NewRecorder()
 
 	router.ServeHTTP(resp, req)
 
-	if resp.Code != http.StatusInternalServerError {
-		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, resp.Code)
+	if resp.Code != stdhttp.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d", stdhttp.StatusInternalServerError, resp.Code)
 	}
 
 	var out struct {

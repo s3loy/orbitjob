@@ -1,4 +1,4 @@
-package httpapi
+package http
 
 import (
 	domainjob "orbitjob/internal/domain/job"
