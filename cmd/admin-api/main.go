@@ -12,10 +12,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"orbitjob/internal/application/jobapp"
-	"orbitjob/internal/config"
-	"orbitjob/internal/store/postgres"
-	httpapi "orbitjob/internal/transport/http"
+	command "orbitjob/internal/admin/app/job/command"
+	query "orbitjob/internal/admin/app/job/query"
+	adminhttp "orbitjob/internal/admin/http"
+	"orbitjob/internal/admin/store/postgres"
+	"orbitjob/internal/platform/config"
+	platformlogger "orbitjob/internal/platform/logger"
 )
 
 func traceMiddleware() gin.HandlerFunc {
@@ -30,7 +32,7 @@ func traceMiddleware() gin.HandlerFunc {
 	}
 }
 
-func newRouter(handler *httpapi.Handler) *gin.Engine {
+func newRouter(handler *adminhttp.Handler) *gin.Engine {
 	r := gin.Default()
 	r.Use(traceMiddleware())
 
@@ -51,7 +53,7 @@ func main() {
 	if err := config.LoadDotenv(); err != nil {
 		log.Fatal(err)
 	}
-	logger := config.InitLogger(os.Getenv("APP_ENV"))
+	logger := platformlogger.New(os.Getenv("APP_ENV"))
 	slog.SetDefault(logger)
 
 	dsn := os.Getenv("DATABASE_DSN")
@@ -75,9 +77,9 @@ func main() {
 	}
 
 	repo := postgres.NewJobRepository(db)
-	createJobUC := jobapp.NewCreateJobUseCase(repo)
-	listJobsUC := jobapp.NewListJobsUseCase(repo)
-	handler := httpapi.NewHandler(createJobUC, listJobsUC)
+	createJobUC := command.NewCreateJobUseCase(repo)
+	listJobsUC := query.NewListJobsUseCase(repo)
+	handler := adminhttp.NewHandler(createJobUC, listJobsUC)
 
 	if err := newRouter(handler).Run(":8080"); err != nil {
 		log.Fatal(err)
