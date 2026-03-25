@@ -3,8 +3,8 @@ package http
 import (
 	"errors"
 
+	"orbitjob/internal/domain/resource"
 	"orbitjob/internal/domain/validation"
-	"orbitjob/internal/job"
 )
 
 // ErrorCode is the machine-readable error category, stable for clients to depend on.
@@ -41,7 +41,7 @@ func toAPIError(err error) APIError {
 		}
 	}
 
-	var ne *job.NotFoundError
+	var ne *resource.NotFoundError
 	if errors.As(err, &ne) {
 		return APIError{
 			Code:    ErrCodeNotFound,
