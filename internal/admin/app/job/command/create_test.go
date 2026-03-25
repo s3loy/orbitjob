@@ -47,7 +47,7 @@ func TestCreateJobUseCase_Create(t *testing.T) {
 		clock: fixedClock{t: now},
 	}
 
-	out, err := uc.Create(context.Background(), domainjob.CreateInput{
+	out, err := uc.Create(context.Background(), CreateInput{
 		Name:        "daily-report",
 		TriggerType: domainjob.TriggerTypeCron,
 		CronExpr:    &cronExpr,
@@ -110,7 +110,7 @@ func TestNewCreateJobUseCase_CreateValidationError(t *testing.T) {
 		t.Fatalf("expected clock to be initialized")
 	}
 
-	_, err := uc.Create(context.Background(), domainjob.CreateInput{
+	_, err := uc.Create(context.Background(), CreateInput{
 		TriggerType: domainjob.TriggerTypeManual,
 		HandlerType: "http",
 	})
@@ -135,7 +135,7 @@ func TestCreateJobUseCase_CreateRepoError(t *testing.T) {
 		clock: fixedClock{t: now},
 	}
 
-	_, err := uc.Create(context.Background(), domainjob.CreateInput{
+	_, err := uc.Create(context.Background(), CreateInput{
 		Name:        "daily-report",
 		TriggerType: domainjob.TriggerTypeCron,
 		CronExpr:    &cronExpr,

@@ -34,8 +34,22 @@ func NewCreateJobUseCase(repo jobCreator) *CreateJobUseCase {
 	}
 }
 
-func (uc *CreateJobUseCase) Create(ctx context.Context, in domainjob.CreateInput) (CreateResult, error) {
-	spec, err := domainjob.NormalizeCreate(uc.clock.Now(), in)
+func (uc *CreateJobUseCase) Create(ctx context.Context, in CreateInput) (CreateResult, error) {
+	spec, err := domainjob.NormalizeCreate(uc.clock.Now(), domainjob.CreateInput{
+		Name:                 in.Name,
+		TenantID:             in.TenantID,
+		TriggerType:          in.TriggerType,
+		CronExpr:             in.CronExpr,
+		Timezone:             in.Timezone,
+		HandlerType:          in.HandlerType,
+		HandlerPayload:       in.HandlerPayload,
+		TimeoutSec:           in.TimeoutSec,
+		RetryLimit:           in.RetryLimit,
+		RetryBackoffSec:      in.RetryBackoffSec,
+		RetryBackoffStrategy: in.RetryBackoffStrategy,
+		ConcurrencyPolicy:    in.ConcurrencyPolicy,
+		MisfirePolicy:        in.MisfirePolicy,
+	})
 	if err != nil {
 		return CreateResult{}, err
 	}

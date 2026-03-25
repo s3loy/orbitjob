@@ -8,13 +8,12 @@ import (
 
 	command "orbitjob/internal/admin/app/job/command"
 	query "orbitjob/internal/admin/app/job/query"
-	domainjob "orbitjob/internal/core/domain/job"
 	"orbitjob/internal/domain/validation"
 )
 
 // createJobUseCase defines the application capability required by the HTTP handler.
 type createJobUseCase interface {
-	Create(ctx context.Context, in domainjob.CreateInput) (command.CreateResult, error)
+	Create(ctx context.Context, in command.CreateInput) (command.CreateResult, error)
 }
 
 type listJobsUseCase interface {

@@ -20,12 +20,12 @@ import (
 
 type stubCreateJobUseCase struct {
 	called bool
-	in     domainjob.CreateInput
+	in     command.CreateInput
 	out    command.CreateResult
 	err    error
 }
 
-func (s *stubCreateJobUseCase) Create(ctx context.Context, in domainjob.CreateInput) (command.CreateResult, error) {
+func (s *stubCreateJobUseCase) Create(ctx context.Context, in command.CreateInput) (command.CreateResult, error) {
 	s.called = true
 	s.in = in
 	return s.out, s.err
