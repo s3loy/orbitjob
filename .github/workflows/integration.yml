@@ -51,4 +51,4 @@ jobs:
           cache: true
 
       - name: Run postgres integration tests
-        run: go test -count=1 ./internal/store/postgres
+        run: go test -count=1 -tags integration ./internal/admin/store/postgres

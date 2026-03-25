@@ -16,14 +16,6 @@ func AsValidationError(err error, target **ValidationError) bool {
 	return validation.As(err, target)
 }
 
-func validationError(field, message string) error {
-	return validation.New(field, message)
-}
-
-func validationErrorf(field, format string, args ...any) error {
-	return validation.Errorf(field, format, args...)
-}
-
 // NotFoundEror indicates a requested resource does not exist.
 type NotFoundError struct {
 	Resource string
