@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"orbitjob/internal/config"
+	"orbitjob/internal/platform/config"
 )
 
 func TestMain(m *testing.M) {
