@@ -4,18 +4,16 @@ package postgres
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
+
+	"orbitjob/internal/platform/postgrestest"
 )
 
 // TestDBOpenAndPing verifies that Open() returns a usable DB handle and the DSN
 // can establish a real connection to PostgreSQl.
 func TestDBOpenAndPing(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_DSN")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_DSN is not set yet")
-	}
+	dsn := postgrestest.DSN(t)
 
 	db, err := Open(dsn)
 	if err != nil {
