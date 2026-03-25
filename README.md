@@ -2,15 +2,13 @@
 
 OrbitJob is a job scheduling system written in Go.
 
-This repository currently contains the admin API and the first phase of a context-first refactor. The main path is now:
-
-`cmd/admin-api -> internal/admin/http -> internal/admin/app -> internal/admin/store/postgres`
+This repository is in the middle of a context-first refactor.
 
 ## Status
 
-OrbitJob is still under active refactoring.
-
-The admin boundary is mostly in place. The `core` context, worker-side processes, and the remaining compatibility cleanup are still in progress.
+- `admin` owns the control-plane HTTP API and read models.
+- `core` owns job domain rules and write-side persistence.
+- `worker` and runtime processes are still being carved out.
 
 ## Development
 
@@ -28,7 +26,7 @@ go test ./...
 Run integration build checks:
 
 ```bash
-go test -tags integration ./internal/admin/store/postgres
+go test -tags integration ./internal/admin/store/postgres ./internal/core/store/postgres
 ```
 
 Run the admin API:
@@ -48,6 +46,7 @@ Environment variables:
 ```text
 cmd/admin-api
 internal/admin
+internal/core
 internal/domain
 internal/platform
 db/migrations
