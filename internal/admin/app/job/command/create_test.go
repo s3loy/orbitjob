@@ -12,11 +12,11 @@ import (
 type testRepo struct {
 	called bool
 	in     domainjob.CreateSpec
-	out    CreateResult
+	out    domainjob.Snapshot
 	err    error
 }
 
-func (r *testRepo) Create(ctx context.Context, in domainjob.CreateSpec) (CreateResult, error) {
+func (r *testRepo) Create(ctx context.Context, in domainjob.CreateSpec) (domainjob.Snapshot, error) {
 	r.called = true
 	r.in = in
 	return r.out, r.err
@@ -35,7 +35,7 @@ func TestCreateJobUseCase_Create(t *testing.T) {
 	cronExpr := "0 9 * * *"
 
 	repo := &testRepo{
-		out: CreateResult{
+		out: domainjob.Snapshot{
 			ID:       1,
 			Name:     "daily-report",
 			TenantID: "default",

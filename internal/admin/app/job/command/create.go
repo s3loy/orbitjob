@@ -9,7 +9,7 @@ import (
 )
 
 type jobCreator interface {
-	Create(ctx context.Context, in domainjob.CreateSpec) (CreateResult, error)
+	Create(ctx context.Context, in domainjob.CreateSpec) (domainjob.Snapshot, error)
 }
 
 type clock interface {
@@ -59,5 +59,13 @@ func (uc *CreateJobUseCase) Create(ctx context.Context, in CreateInput) (CreateR
 		metrics.JobsTotal.WithLabelValues(spec.TenantID, spec.TriggerType).Inc()
 	}
 
-	return out, err
+	return CreateResult{
+		ID:        out.ID,
+		Name:      out.Name,
+		TenantID:  out.TenantID,
+		Status:    out.Status,
+		NextRunAt: out.NextRunAt,
+		CreatedAt: out.CreatedAt,
+		UpdatedAt: out.UpdatedAt,
+	}, err
 }
