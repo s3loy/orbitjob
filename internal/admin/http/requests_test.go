@@ -3,7 +3,6 @@ package http
 import (
 	"testing"
 
-	command "orbitjob/internal/admin/app/job/command"
 	query "orbitjob/internal/admin/app/job/query"
 )
 
@@ -27,8 +26,6 @@ func TestCreateJobRequest_ToCreateInput(t *testing.T) {
 	}
 
 	got := req.ToCreateInput()
-
-	var _ command.CreateInput = got
 
 	if got.Name != req.Name {
 		t.Fatalf("expected name=%q, got %q", req.Name, got.Name)

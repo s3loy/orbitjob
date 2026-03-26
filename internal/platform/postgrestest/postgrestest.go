@@ -105,17 +105,6 @@ func open(dsn string) (*sql.DB, error) {
 	return db, nil
 }
 
-func applySchema(dsn string) error {
-	return withAdvisoryLock(
-		dsn,
-		sharedSchemaLockClassID,
-		sharedSchemaLockObjectID,
-		func(db *sql.DB) error {
-			return applySchemaWithDB(dsn, db)
-		},
-	)
-}
-
 func resetTestData(ctx context.Context, db *sql.DB) error {
 	_, err := db.ExecContext(ctx, `
 		TRUNCATE TABLE

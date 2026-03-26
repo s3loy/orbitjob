@@ -76,7 +76,14 @@ func TestApplySchemaWaitsForSharedDatabaseLock(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- applySchema(dsn)
+		done <- withAdvisoryLock(
+			dsn,
+			sharedSchemaLockClassID,
+			sharedSchemaLockObjectID,
+			func(db *sql.DB) error {
+				return applySchemaWithDB(dsn, db)
+			},
+		)
 	}()
 
 	waiting, err := waitForWaitingLock(ctx, observerDB, expectedLockClassID, expectedLockObjectID)
@@ -86,9 +93,9 @@ func TestApplySchemaWaitsForSharedDatabaseLock(t *testing.T) {
 	if !waiting {
 		select {
 		case err := <-done:
-			t.Fatalf("applySchema() finished before waiting on shared database lock: %v", err)
+			t.Fatalf("schema setup finished before waiting on shared database lock: %v", err)
 		default:
-			t.Fatalf("applySchema() did not request the shared database lock")
+			t.Fatalf("schema setup did not request the shared database lock")
 		}
 	}
 
@@ -104,10 +111,10 @@ func TestApplySchemaWaitsForSharedDatabaseLock(t *testing.T) {
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Fatalf("applySchema() error = %v", err)
+			t.Fatalf("schema setup error = %v", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("applySchema() did not finish after releasing the shared database lock")
+		t.Fatal("schema setup did not finish after releasing the shared database lock")
 	}
 }
 
