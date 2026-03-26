@@ -26,6 +26,7 @@ go test ./...
 Run integration build checks:
 
 ```bash
+go test -tags integration ./internal/platform/postgrestest
 go test -tags integration ./internal/admin/store/postgres ./internal/core/store/postgres
 ```
 

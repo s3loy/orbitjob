@@ -1,5 +1,3 @@
-//go:build integration
-
 package postgrestest
 
 import (
@@ -18,6 +16,14 @@ import (
 	"orbitjob/internal/platform/config"
 )
 
+const (
+	sharedSchemaLockClassID   = 32117
+	sharedSchemaLockObjectID  = 260326
+	sharedPackageLockClassID  = 32117
+	sharedPackageLockObjectID = 260327
+	advisoryLockWaitTimeout   = 5 * time.Minute
+)
+
 // Run prepares the integration database before package tests execute.
 func Run(m *testing.M) int {
 	if err := config.LoadDotenv(); err != nil {
@@ -25,14 +31,30 @@ func Run(m *testing.M) int {
 		return 1
 	}
 
-	if dsn := os.Getenv("TEST_DATABASE_DSN"); dsn != "" {
-		if err := applySchema(dsn); err != nil {
-			fmt.Fprintf(os.Stderr, "apply test schema: %v\n", err)
-			return 1
-		}
+	dsn := os.Getenv("TEST_DATABASE_DSN")
+	if dsn == "" {
+		return m.Run()
 	}
 
-	return m.Run()
+	exitCode := 0
+	if err := withAdvisoryLock(
+		dsn,
+		sharedPackageLockClassID,
+		sharedPackageLockObjectID,
+		func(db *sql.DB) error {
+			if err := applySchemaWithDB(dsn, db); err != nil {
+				return err
+			}
+
+			exitCode = m.Run()
+			return nil
+		},
+	); err != nil {
+		fmt.Fprintf(os.Stderr, "apply test schema: %v\n", err)
+		return 1
+	}
+
+	return exitCode
 }
 
 // DSN returns the test database DSN or skips the integration test package.
@@ -84,6 +106,30 @@ func open(dsn string) (*sql.DB, error) {
 }
 
 func applySchema(dsn string) error {
+	return withAdvisoryLock(
+		dsn,
+		sharedSchemaLockClassID,
+		sharedSchemaLockObjectID,
+		func(db *sql.DB) error {
+			return applySchemaWithDB(dsn, db)
+		},
+	)
+}
+
+func resetTestData(ctx context.Context, db *sql.DB) error {
+	_, err := db.ExecContext(ctx, `
+		TRUNCATE TABLE
+			job_change_audits,
+			job_instance_attempts,
+			job_instances,
+			workers,
+			jobs
+		RESTART IDENTITY CASCADE
+	`)
+	return err
+}
+
+func applySchemaWithDB(dsn string, db *sql.DB) error {
 	if err := validateDSN(dsn); err != nil {
 		return err
 	}
@@ -98,18 +144,9 @@ func applySchema(dsn string) error {
 		return err
 	}
 
-	db, err := open(dsn)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = db.Close() }()
-
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := db.PingContext(ctx); err != nil {
-		return err
-	}
 	if _, err := db.ExecContext(ctx, string(sqlBytes)); err != nil {
 		return err
 	}
@@ -117,17 +154,74 @@ func applySchema(dsn string) error {
 	return resetTestData(ctx, db)
 }
 
-func resetTestData(ctx context.Context, db *sql.DB) error {
-	_, err := db.ExecContext(ctx, `
-		TRUNCATE TABLE
-			job_change_audits,
-			job_instance_attempts,
-			job_instances,
-			workers,
-			jobs
-		RESTART IDENTITY CASCADE
-	`)
-	return err
+// withAdvisoryLock serializes shared test-database access across go test processes.
+func withAdvisoryLock(dsn string, classID, objectID int, fn func(db *sql.DB) error) (err error) {
+	if err := validateDSN(dsn); err != nil {
+		return err
+	}
+
+	db, err := open(dsn)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := db.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), advisoryLockWaitTimeout)
+	defer cancel()
+
+	if err := db.PingContext(ctx); err != nil {
+		return err
+	}
+
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := conn.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
+
+	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock($1, $2)`, classID, objectID); err != nil {
+		return err
+	}
+
+	locked := true
+	defer func() {
+		if !locked {
+			return
+		}
+
+		unlockCtx, unlockCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer unlockCancel()
+		if _, unlockErr := conn.ExecContext(
+			unlockCtx,
+			`SELECT pg_advisory_unlock($1, $2)`,
+			classID,
+			objectID,
+		); err == nil && unlockErr != nil {
+			err = unlockErr
+		}
+	}()
+
+	err = fn(db)
+	if err != nil {
+		return err
+	}
+
+	locked = false
+	unlockCtx, unlockCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer unlockCancel()
+	if _, err := conn.ExecContext(unlockCtx, `SELECT pg_advisory_unlock($1, $2)`, classID, objectID); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func validateDSN(dsn string) error {
