@@ -6,17 +6,17 @@ import (
 	"testing"
 	"time"
 
-	domainjob "orbitjob/internal/domain/job"
+	domainjob "orbitjob/internal/core/domain/job"
 )
 
 type testRepo struct {
 	called bool
 	in     domainjob.CreateSpec
-	out    CreateResult
+	out    domainjob.Snapshot
 	err    error
 }
 
-func (r *testRepo) Create(ctx context.Context, in domainjob.CreateSpec) (CreateResult, error) {
+func (r *testRepo) Create(ctx context.Context, in domainjob.CreateSpec) (domainjob.Snapshot, error) {
 	r.called = true
 	r.in = in
 	return r.out, r.err
@@ -35,7 +35,7 @@ func TestCreateJobUseCase_Create(t *testing.T) {
 	cronExpr := "0 9 * * *"
 
 	repo := &testRepo{
-		out: CreateResult{
+		out: domainjob.Snapshot{
 			ID:       1,
 			Name:     "daily-report",
 			TenantID: "default",
@@ -47,7 +47,7 @@ func TestCreateJobUseCase_Create(t *testing.T) {
 		clock: fixedClock{t: now},
 	}
 
-	out, err := uc.Create(context.Background(), domainjob.CreateInput{
+	out, err := uc.Create(context.Background(), CreateInput{
 		Name:        "daily-report",
 		TriggerType: domainjob.TriggerTypeCron,
 		CronExpr:    &cronExpr,
@@ -110,7 +110,7 @@ func TestNewCreateJobUseCase_CreateValidationError(t *testing.T) {
 		t.Fatalf("expected clock to be initialized")
 	}
 
-	_, err := uc.Create(context.Background(), domainjob.CreateInput{
+	_, err := uc.Create(context.Background(), CreateInput{
 		TriggerType: domainjob.TriggerTypeManual,
 		HandlerType: "http",
 	})
@@ -135,7 +135,7 @@ func TestCreateJobUseCase_CreateRepoError(t *testing.T) {
 		clock: fixedClock{t: now},
 	}
 
-	_, err := uc.Create(context.Background(), domainjob.CreateInput{
+	_, err := uc.Create(context.Background(), CreateInput{
 		Name:        "daily-report",
 		TriggerType: domainjob.TriggerTypeCron,
 		CronExpr:    &cronExpr,

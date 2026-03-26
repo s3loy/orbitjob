@@ -50,5 +50,8 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Run postgres integration tests
-        run: go test -count=1 -tags integration ./internal/admin/store/postgres
+      - name: Run postgres integration test helpers
+        run: go test -count=1 -tags integration ./internal/platform/postgrestest
+
+      - name: Run postgres repository integration tests
+        run: go test -count=1 -tags integration ./internal/admin/store/postgres ./internal/core/store/postgres

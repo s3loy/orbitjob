@@ -15,7 +15,8 @@ import (
 	command "orbitjob/internal/admin/app/job/command"
 	query "orbitjob/internal/admin/app/job/query"
 	adminhttp "orbitjob/internal/admin/http"
-	"orbitjob/internal/admin/store/postgres"
+	adminpostgres "orbitjob/internal/admin/store/postgres"
+	corepostgres "orbitjob/internal/core/store/postgres"
 	"orbitjob/internal/platform/config"
 	platformlogger "orbitjob/internal/platform/logger"
 )
@@ -61,7 +62,7 @@ func main() {
 		log.Fatal("DATABASE_DSN is required")
 	}
 
-	db, err := postgres.Open(dsn)
+	db, err := adminpostgres.Open(dsn)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -76,9 +77,10 @@ func main() {
 		log.Fatal(err)
 	}
 
-	repo := postgres.NewJobRepository(db)
-	createJobUC := command.NewCreateJobUseCase(repo)
-	listJobsUC := query.NewListJobsUseCase(repo)
+	writeRepo := corepostgres.NewJobRepository(db)
+	readRepo := adminpostgres.NewJobRepository(db)
+	createJobUC := command.NewCreateJobUseCase(writeRepo)
+	listJobsUC := query.NewListJobsUseCase(readRepo)
 	handler := adminhttp.NewHandler(createJobUC, listJobsUC)
 
 	if err := newRouter(handler).Run(":8080"); err != nil {

@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	query "orbitjob/internal/admin/app/job/query"
-	domainjob "orbitjob/internal/domain/job"
 )
 
 func TestCreateJobRequest_ToCreateInput(t *testing.T) {
@@ -13,7 +12,7 @@ func TestCreateJobRequest_ToCreateInput(t *testing.T) {
 	req := CreateJobRequest{
 		Name:                 "demo-job",
 		TenantID:             "tenant-a",
-		TriggerType:          domainjob.TriggerTypeCron,
+		TriggerType:          "cron",
 		CronExpr:             &cronExpr,
 		Timezone:             "Asia/Shanghai",
 		HandlerType:          "http",
@@ -21,9 +20,9 @@ func TestCreateJobRequest_ToCreateInput(t *testing.T) {
 		TimeoutSec:           120,
 		RetryLimit:           3,
 		RetryBackoffSec:      10,
-		RetryBackoffStrategy: domainjob.RetryBackoffExponential,
-		ConcurrencyPolicy:    domainjob.ConcurrencyForbid,
-		MisfirePolicy:        domainjob.MisfireFireNow,
+		RetryBackoffStrategy: "exponential",
+		ConcurrencyPolicy:    "forbid",
+		MisfirePolicy:        "fire_now",
 	}
 
 	got := req.ToCreateInput()

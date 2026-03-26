@@ -12,19 +12,19 @@ import (
 	command "orbitjob/internal/admin/app/job/command"
 	query "orbitjob/internal/admin/app/job/query"
 	adminhttp "orbitjob/internal/admin/http"
-	domainjob "orbitjob/internal/domain/job"
+	domainjob "orbitjob/internal/core/domain/job"
 
 	"github.com/gin-gonic/gin"
 )
 
 type stubCreateJobUseCase struct {
 	called bool
-	in     domainjob.CreateInput
+	in     command.CreateInput
 	out    command.CreateResult
 	err    error
 }
 
-func (s *stubCreateJobUseCase) Create(ctx context.Context, in domainjob.CreateInput) (command.CreateResult, error) {
+func (s *stubCreateJobUseCase) Create(ctx context.Context, in command.CreateInput) (command.CreateResult, error) {
 	s.called = true
 	s.in = in
 	return s.out, s.err

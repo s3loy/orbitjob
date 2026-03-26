@@ -4,12 +4,12 @@ import (
 	"context"
 	"time"
 
-	domainjob "orbitjob/internal/domain/job"
+	domainjob "orbitjob/internal/core/domain/job"
 	"orbitjob/internal/platform/metrics"
 )
 
 type jobCreator interface {
-	Create(ctx context.Context, in domainjob.CreateSpec) (CreateResult, error)
+	Create(ctx context.Context, in domainjob.CreateSpec) (domainjob.Snapshot, error)
 }
 
 type clock interface {
@@ -34,8 +34,22 @@ func NewCreateJobUseCase(repo jobCreator) *CreateJobUseCase {
 	}
 }
 
-func (uc *CreateJobUseCase) Create(ctx context.Context, in domainjob.CreateInput) (CreateResult, error) {
-	spec, err := domainjob.NormalizeCreate(uc.clock.Now(), in)
+func (uc *CreateJobUseCase) Create(ctx context.Context, in CreateInput) (CreateResult, error) {
+	spec, err := domainjob.NormalizeCreate(uc.clock.Now(), domainjob.CreateInput{
+		Name:                 in.Name,
+		TenantID:             in.TenantID,
+		TriggerType:          in.TriggerType,
+		CronExpr:             in.CronExpr,
+		Timezone:             in.Timezone,
+		HandlerType:          in.HandlerType,
+		HandlerPayload:       in.HandlerPayload,
+		TimeoutSec:           in.TimeoutSec,
+		RetryLimit:           in.RetryLimit,
+		RetryBackoffSec:      in.RetryBackoffSec,
+		RetryBackoffStrategy: in.RetryBackoffStrategy,
+		ConcurrencyPolicy:    in.ConcurrencyPolicy,
+		MisfirePolicy:        in.MisfirePolicy,
+	})
 	if err != nil {
 		return CreateResult{}, err
 	}
@@ -45,5 +59,13 @@ func (uc *CreateJobUseCase) Create(ctx context.Context, in domainjob.CreateInput
 		metrics.JobsTotal.WithLabelValues(spec.TenantID, spec.TriggerType).Inc()
 	}
 
-	return out, err
+	return CreateResult{
+		ID:        out.ID,
+		Name:      out.Name,
+		TenantID:  out.TenantID,
+		Status:    out.Status,
+		NextRunAt: out.NextRunAt,
+		CreatedAt: out.CreatedAt,
+		UpdatedAt: out.UpdatedAt,
+	}, err
 }

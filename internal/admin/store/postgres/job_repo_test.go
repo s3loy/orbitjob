@@ -4,132 +4,44 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
 	query "orbitjob/internal/admin/app/job/query"
-	domainjob "orbitjob/internal/domain/job"
+	"orbitjob/internal/platform/postgrestest"
 )
 
-// TestJobRepository_Create is an integration test against a real PostgreSQL
-// instance. It verifies the main insert path for a cron-triggered job.
-func TestJobRepository_Create(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_DSN")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_DSN is not set")
-	}
-
-	db, err := Open(dsn)
-	if err != nil {
-		t.Fatalf("Open() error = %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-
-	repo := NewJobRepository(db)
-
-	// a normal cron job creation flow
-	cron := "*/5 * * * *"
-	input := domainjob.CreateInput{
-		Name:        "demo-job",
-		TenantID:    "default",
-		TriggerType: domainjob.TriggerTypeCron,
-		CronExpr:    &cron,
-		Timezone:    "UTC",
-		HandlerType: "http",
-		HandlerPayload: map[string]any{
-			"url": "https://example.com/hook",
-		},
-	}
-
-	spec, err := domainjob.NormalizeCreate(time.Now().UTC(), input)
-	if err != nil {
-		t.Fatalf("NormalizeCreate() error = %v", err)
-	}
-
-	out, err := repo.Create(context.Background(), spec)
-	if err != nil {
-		t.Fatalf("Create() error = %v", err)
-	}
-
-	if out.ID <= 0 {
-		t.Fatalf("expected ID > 0, got %d", out.ID)
-	}
-	if out.Name != input.Name {
-		t.Fatalf("expected name=%q, got %q", input.Name, out.Name)
-	}
-	if out.TenantID != input.TenantID {
-		t.Fatalf("expected tenant_id=%q, got %q", input.TenantID, out.TenantID)
-	}
-	if out.Status != "active" {
-		t.Fatalf("expected status=active, got %q", out.Status)
-	}
-	if out.NextRunAt == nil {
-		t.Fatalf("expected next_run_at to be set for cron job")
-	}
-}
-
 func TestJobRepository_List(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_DSN")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_DSN is not set")
-	}
-
-	db, err := Open(dsn)
-	if err != nil {
-		t.Fatalf("Open() error = %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-
-	repo := NewJobRepository(db)
+	db := postgrestest.Open(t)
+	readRepo := NewJobRepository(db)
 	ctx := context.Background()
 
 	now := time.Now().UTC()
 	tenantID := fmt.Sprintf("tenant-list-%d", now.UnixNano())
+	activeNextRunAt := now.Add(10 * time.Minute).Truncate(time.Second)
 
-	cron := "*/10 * * * *"
-	activeInput := domainjob.CreateInput{
+	activeJobID := insertTestJob(t, db, testJobSeed{
 		Name:        fmt.Sprintf("active-job-%d", now.UnixNano()),
 		TenantID:    tenantID,
-		TriggerType: domainjob.TriggerTypeCron,
-		CronExpr:    &cron,
+		TriggerType: triggerTypeCron,
+		CronExpr:    stringPtr("*/10 * * * *"),
 		Timezone:    "Asia/Shanghai",
 		HandlerType: "http",
-	}
-	activeSpec, err := domainjob.NormalizeCreate(now, activeInput)
-	if err != nil {
-		t.Fatalf("NormalizeCreate(active) error = %v", err)
-	}
-	activeJob, err := repo.Create(ctx, activeSpec)
-	if err != nil {
-		t.Fatalf("Create(active) error = %v", err)
-	}
-
-	pausedInput := domainjob.CreateInput{
+		Status:      query.StatusActive,
+		NextRunAt:   &activeNextRunAt,
+	})
+	pausedJobID := insertTestJob(t, db, testJobSeed{
 		Name:        fmt.Sprintf("paused-job-%d", now.UnixNano()),
 		TenantID:    tenantID,
-		TriggerType: domainjob.TriggerTypeManual,
+		TriggerType: triggerTypeManual,
+		Timezone:    "UTC",
 		HandlerType: "http",
-	}
-	pausedSpec, err := domainjob.NormalizeCreate(now, pausedInput)
-	if err != nil {
-		t.Fatalf("NormalizeCreate(paused) error = %v", err)
-	}
-	pausedJob, err := repo.Create(ctx, pausedSpec)
-	if err != nil {
-		t.Fatalf("Create(paused) error = %v", err)
-	}
+		Status:      query.StatusPaused,
+	})
 
-	if _, err := db.ExecContext(ctx, `
-                UPDATE jobs
-                SET status = 'paused'
-                WHERE id = $1
-        `, pausedJob.ID); err != nil {
-		t.Fatalf("pause job: %v", err)
-	}
-
-	allItems, err := repo.List(ctx, query.ListInput{
+	allItems, err := readRepo.List(ctx, query.ListInput{
 		TenantID: tenantID,
 		Limit:    10,
 	})
@@ -140,8 +52,8 @@ func TestJobRepository_List(t *testing.T) {
 		t.Fatalf("expected 2 items, got %d", len(allItems))
 	}
 
-	if allItems[0].ID != pausedJob.ID {
-		t.Fatalf("expected newest item id=%d, got %d", pausedJob.ID, allItems[0].ID)
+	if allItems[0].ID != pausedJobID {
+		t.Fatalf("expected newest item id=%d, got %d", pausedJobID, allItems[0].ID)
 	}
 	if allItems[0].Status != query.StatusPaused {
 		t.Fatalf("expected paused status, got %q", allItems[0].Status)
@@ -150,8 +62,8 @@ func TestJobRepository_List(t *testing.T) {
 		t.Fatalf("expected manual summary, got %q", allItems[0].ScheduleSummary)
 	}
 
-	if allItems[1].ID != activeJob.ID {
-		t.Fatalf("expected second item id=%d, got %d", activeJob.ID, allItems[1].ID)
+	if allItems[1].ID != activeJobID {
+		t.Fatalf("expected second item id=%d, got %d", activeJobID, allItems[1].ID)
 	}
 	if allItems[1].Status != query.StatusActive {
 		t.Fatalf("expected active status, got %q", allItems[1].Status)
@@ -166,7 +78,7 @@ func TestJobRepository_List(t *testing.T) {
 		t.Fatalf("expected next_run_at to be set for cron job")
 	}
 
-	activeItems, err := repo.List(ctx, query.ListInput{
+	activeItems, err := readRepo.List(ctx, query.ListInput{
 		TenantID: tenantID,
 		Status:   query.StatusActive,
 		Limit:    10,
@@ -177,11 +89,65 @@ func TestJobRepository_List(t *testing.T) {
 	if len(activeItems) != 1 {
 		t.Fatalf("expected 1 active item, got %d", len(activeItems))
 	}
-	if activeItems[0].ID != activeJob.ID {
-		t.Fatalf("expected active item id=%d, got %d", activeJob.ID, activeItems[0].ID)
+	if activeItems[0].ID != activeJobID {
+		t.Fatalf("expected active item id=%d, got %d", activeJobID, activeItems[0].ID)
 	}
 	if activeItems[0].LastScheduledAt != nil {
 		t.Fatalf("expected last_scheduled_at to be nil, got %v",
 			*activeItems[0].LastScheduledAt)
 	}
+}
+
+type testJobSeed struct {
+	Name        string
+	TenantID    string
+	TriggerType string
+	CronExpr    *string
+	Timezone    string
+	HandlerType string
+	Status      string
+	NextRunAt   *time.Time
+}
+
+const (
+	triggerTypeCron   = "cron"
+	triggerTypeManual = "manual"
+)
+
+func insertTestJob(t *testing.T, db *sql.DB, in testJobSeed) int64 {
+	t.Helper()
+
+	var id int64
+	err := db.QueryRowContext(context.Background(), `
+		INSERT INTO jobs (
+			name,
+			tenant_id,
+			trigger_type,
+			cron_expr,
+			timezone,
+			handler_type,
+			status,
+			next_run_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING id
+	`,
+		in.Name,
+		in.TenantID,
+		in.TriggerType,
+		in.CronExpr,
+		in.Timezone,
+		in.HandlerType,
+		in.Status,
+		in.NextRunAt,
+	).Scan(&id)
+	if err != nil {
+		t.Fatalf("insert test job: %v", err)
+	}
+
+	return id
+}
+
+func stringPtr(s string) *string {
+	return &s
 }
