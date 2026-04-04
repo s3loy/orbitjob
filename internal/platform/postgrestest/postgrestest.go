@@ -3,7 +3,9 @@ package postgrestest
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"hash/fnv"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -17,11 +19,11 @@ import (
 )
 
 const (
-	sharedSchemaLockClassID   = 32117
-	sharedSchemaLockObjectID  = 260326
-	sharedPackageLockClassID  = 32117
-	sharedPackageLockObjectID = 260327
-	advisoryLockWaitTimeout   = 5 * time.Minute
+	sharedSchemaLockClassID  = 32117
+	sharedSchemaLockObjectID = 260326
+	advisoryLockWaitTimeout  = 5 * time.Minute
+	testSchemaPrefix         = "ojtest_"
+	maxIdentifierLength      = 63
 )
 
 // Run prepares the integration database before package tests execute.
@@ -36,25 +38,29 @@ func Run(m *testing.M) int {
 		return m.Run()
 	}
 
-	exitCode := 0
-	if err := withAdvisoryLock(
-		dsn,
-		sharedPackageLockClassID,
-		sharedPackageLockObjectID,
-		func(db *sql.DB) error {
-			if err := applySchemaWithDB(dsn, db); err != nil {
-				return err
-			}
+	packageDSN, _, err := packageDSN(dsn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "scope test dsn: %v\n", err)
+		return 1
+	}
+	if err := os.Setenv("TEST_DATABASE_DSN", packageDSN); err != nil {
+		fmt.Fprintf(os.Stderr, "set TEST_DATABASE_DSN: %v\n", err)
+		return 1
+	}
 
-			exitCode = m.Run()
-			return nil
+	if err := withAdvisoryLock(
+		packageDSN,
+		sharedSchemaLockClassID,
+		sharedSchemaLockObjectID,
+		func(db *sql.DB) error {
+			return applySchemaWithDB(packageDSN, db)
 		},
 	); err != nil {
 		fmt.Fprintf(os.Stderr, "apply test schema: %v\n", err)
 		return 1
 	}
 
-	return exitCode
+	return m.Run()
 }
 
 // DSN returns the test database DSN or skips the integration test package.
@@ -122,6 +128,10 @@ func applySchemaWithDB(dsn string, db *sql.DB) error {
 	if err := validateDSN(dsn); err != nil {
 		return err
 	}
+	schemaName, err := schemaNameFromDSN(dsn)
+	if err != nil {
+		return err
+	}
 
 	path, err := findMigrationFile("db", "migrations", "0001_init.sql")
 	if err != nil {
@@ -136,6 +146,9 @@ func applySchemaWithDB(dsn string, db *sql.DB) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	if err := ensureSchema(ctx, db, schemaName); err != nil {
+		return err
+	}
 	if _, err := db.ExecContext(ctx, string(sqlBytes)); err != nil {
 		return err
 	}
@@ -228,6 +241,129 @@ func validateDSN(dsn string) error {
 	}
 
 	return fmt.Errorf("TEST_DATABASE_DSN must point to a dedicated test database, got %q", dbName)
+}
+
+func packageDSN(baseDSN string) (string, string, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", "", err
+	}
+
+	goModPath, err := findMigrationFile("go.mod")
+	if err != nil {
+		return "", "", err
+	}
+
+	repoRoot := filepath.Dir(goModPath)
+	relPath, err := filepath.Rel(repoRoot, wd)
+	if err != nil {
+		return "", "", err
+	}
+
+	if relPath == "." {
+		return "", "", errors.New("postgrestest must run from a package directory")
+	}
+
+	schemaName := schemaNameForPackagePath(filepath.ToSlash(relPath))
+	dsn, err := withSearchPath(baseDSN, schemaName)
+	if err != nil {
+		return "", "", err
+	}
+
+	return dsn, schemaName, nil
+}
+
+func schemaNameForPackagePath(pkgPath string) string {
+	sanitized := sanitizeIdentifier(pkgPath)
+	if sanitized == "" {
+		sanitized = "pkg"
+	}
+
+	hash := fnv.New32a()
+	_, _ = hash.Write([]byte(pkgPath))
+	hashHex := fmt.Sprintf("%08x", hash.Sum32())
+
+	maxPrefixLength := maxIdentifierLength - len(testSchemaPrefix) - 1 - len(hashHex)
+	if maxPrefixLength < 1 {
+		maxPrefixLength = 1
+	}
+	if len(sanitized) > maxPrefixLength {
+		sanitized = sanitized[:maxPrefixLength]
+		sanitized = strings.TrimRight(sanitized, "_")
+	}
+
+	return testSchemaPrefix + sanitized + "_" + hashHex
+}
+
+func sanitizeIdentifier(value string) string {
+	var b strings.Builder
+	b.Grow(len(value))
+
+	lastUnderscore := false
+	for _, r := range strings.ToLower(value) {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+			lastUnderscore = false
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+			lastUnderscore = false
+		default:
+			if lastUnderscore {
+				continue
+			}
+			b.WriteByte('_')
+			lastUnderscore = true
+		}
+	}
+
+	return strings.Trim(b.String(), "_")
+}
+
+func withSearchPath(dsn, schemaName string) (string, error) {
+	parsed, err := url.Parse(dsn)
+	if err != nil {
+		return "", err
+	}
+
+	query := parsed.Query()
+	query.Set("search_path", schemaName+",public")
+	parsed.RawQuery = query.Encode()
+
+	return parsed.String(), nil
+}
+
+func schemaNameFromDSN(dsn string) (string, error) {
+	parsed, err := url.Parse(dsn)
+	if err != nil {
+		return "", err
+	}
+
+	searchPath := strings.TrimSpace(parsed.Query().Get("search_path"))
+	if searchPath == "" {
+		return "public", nil
+	}
+
+	schemaName, _, _ := strings.Cut(searchPath, ",")
+	schemaName = strings.TrimSpace(schemaName)
+	if schemaName == "" {
+		return "", fmt.Errorf("search_path must include a schema name")
+	}
+
+	return schemaName, nil
+}
+
+func ensureSchema(ctx context.Context, db *sql.DB, schemaName string) error {
+	if schemaName == "public" {
+		return nil
+	}
+
+	_, err := db.ExecContext(ctx, `CREATE SCHEMA IF NOT EXISTS `+quoteIdentifier(schemaName))
+	return err
+}
+
+func quoteIdentifier(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
 func findMigrationFile(parts ...string) (string, error) {

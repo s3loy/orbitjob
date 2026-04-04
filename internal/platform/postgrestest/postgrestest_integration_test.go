@@ -28,6 +28,10 @@ func TestApplySchemaWaitsForSharedDatabaseLock(t *testing.T) {
 	if dsn == "" {
 		t.Skip("TEST_DATABASE_DSN is not set")
 	}
+	dsn, _, err := packageDSN(dsn)
+	if err != nil {
+		t.Fatalf("packageDSN() error = %v", err)
+	}
 
 	holderDB, err := open(dsn)
 	if err != nil {
