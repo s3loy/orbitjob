@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-func TestSchemaNameForPackagePath(t *testing.T) {
-	got := schemaNameForPackagePath("internal/admin/store/postgres")
+func TestSchemaNameForPath(t *testing.T) {
+	got := schemaNameForPath("internal/admin/store/postgres")
 	if !strings.HasPrefix(got, testSchemaPrefix) {
 		t.Fatalf("expected schema prefix %q, got %q", testSchemaPrefix, got)
 	}
