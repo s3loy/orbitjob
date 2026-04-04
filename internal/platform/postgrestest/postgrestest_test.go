@@ -42,3 +42,19 @@ func TestSchemaNameFromDSN(t *testing.T) {
 		t.Fatalf("expected schema name %q, got %q", "ojtest_core", got)
 	}
 }
+
+func TestTestDSN(t *testing.T) {
+	got, schemaName, err := testDSN(
+		"postgres://postgres:postgres@127.0.0.1:5432/orbitjob_test?search_path=ojtest_pkg%2Cpublic&sslmode=disable",
+		"TestRepository/Create",
+	)
+	if err != nil {
+		t.Fatalf("testDSN() error = %v", err)
+	}
+	if schemaName == "ojtest_pkg" {
+		t.Fatalf("expected test-specific schema, got package schema %q", schemaName)
+	}
+	if !strings.Contains(got, "search_path=") {
+		t.Fatalf("expected search_path in scoped test dsn, got %q", got)
+	}
+}

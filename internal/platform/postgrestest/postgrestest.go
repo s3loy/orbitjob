@@ -75,11 +75,16 @@ func DSN(t *testing.T) string {
 	return dsn
 }
 
-// Open returns a real PostgreSQL handle with test data reset for the caller.
+// Open returns a PostgreSQL handle scoped to the current test name.
 func Open(t *testing.T) *sql.DB {
 	t.Helper()
 
-	db, err := open(DSN(t))
+	dsn, _, err := testDSN(DSN(t), t.Name())
+	if err != nil {
+		t.Fatalf("scope test dsn: %v", err)
+	}
+
+	db, err := open(dsn)
 	if err != nil {
 		t.Fatalf("open test db: %v", err)
 	}
@@ -91,8 +96,15 @@ func Open(t *testing.T) *sql.DB {
 	if err := db.PingContext(ctx); err != nil {
 		t.Fatalf("ping test db: %v", err)
 	}
-	if err := resetTestData(ctx, db); err != nil {
-		t.Fatalf("reset test data: %v", err)
+	if err := withAdvisoryLock(
+		dsn,
+		sharedSchemaLockClassID,
+		lockObjectID(dsn),
+		func(_ *sql.DB) error {
+			return applySchemaWithDB(dsn, db)
+		},
+	); err != nil {
+		t.Fatalf("prepare test schema: %v", err)
 	}
 
 	return db
@@ -273,6 +285,21 @@ func packageDSN(baseDSN string) (string, string, error) {
 	return dsn, schemaName, nil
 }
 
+func testDSN(baseDSN, testName string) (string, string, error) {
+	packageSchema, err := schemaNameFromDSN(baseDSN)
+	if err != nil {
+		return "", "", err
+	}
+
+	schemaName := schemaNameForPackagePath(packageSchema + "/" + testName)
+	dsn, err := withSearchPath(baseDSN, schemaName)
+	if err != nil {
+		return "", "", err
+	}
+
+	return dsn, schemaName, nil
+}
+
 func schemaNameForPackagePath(pkgPath string) string {
 	sanitized := sanitizeIdentifier(pkgPath)
 	if sanitized == "" {
@@ -364,6 +391,12 @@ func ensureSchema(ctx context.Context, db *sql.DB, schemaName string) error {
 
 func quoteIdentifier(name string) string {
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+}
+
+func lockObjectID(value string) int {
+	hash := fnv.New32a()
+	_, _ = hash.Write([]byte(value))
+	return int(hash.Sum32() & 0x7fffffff)
 }
 
 func findMigrationFile(parts ...string) (string, error) {
