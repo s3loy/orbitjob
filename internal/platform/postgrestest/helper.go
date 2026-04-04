@@ -76,7 +76,7 @@ func DSN(t *testing.T) string {
 func Open(t *testing.T) *sql.DB {
 	t.Helper()
 
-	dsn, _, err := testDSN(DSN(t), t.Name())
+	dsn, schemaName, err := testDSN(DSN(t), t.Name())
 	if err != nil {
 		t.Fatalf("scope test dsn: %v", err)
 	}
@@ -103,6 +103,14 @@ func Open(t *testing.T) *sql.DB {
 	); err != nil {
 		t.Fatalf("prepare test schema: %v", err)
 	}
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+
+		if err := dropSchema(cleanupCtx, db, schemaName); err != nil {
+			t.Errorf("drop test schema %q: %v", schemaName, err)
+		}
+	})
 
 	return db
 }

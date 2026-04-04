@@ -146,6 +146,15 @@ func ensureSchema(ctx context.Context, db *sql.DB, schemaName string) error {
 	return err
 }
 
+func dropSchema(ctx context.Context, db *sql.DB, schemaName string) error {
+	if schemaName == "public" {
+		return nil
+	}
+
+	_, err := db.ExecContext(ctx, `DROP SCHEMA IF EXISTS `+quoteIdentifier(schemaName)+` CASCADE`)
+	return err
+}
+
 func quoteIdentifier(name string) string {
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }

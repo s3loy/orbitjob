@@ -162,6 +162,52 @@ func TestOpenIsolatesParallelTests(t *testing.T) {
 	}
 }
 
+func TestOpenCleansUpTestSchema(t *testing.T) {
+	baseDSN := DSN(t)
+	childFullName := t.Name() + "/child"
+
+	_, schemaName, err := testDSN(baseDSN, childFullName)
+	if err != nil {
+		t.Fatalf("testDSN() error = %v", err)
+	}
+
+	t.Run("child", func(t *testing.T) {
+		db := Open(t)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO jobs (name, tenant_id, trigger_type, handler_type)
+			VALUES ($1, $2, $3, $4)
+		`, "cleanup-check", "default", "manual", "http"); err != nil {
+			t.Fatalf("insert job: %v", err)
+		}
+	})
+
+	db, err := open(baseDSN)
+	if err != nil {
+		t.Fatalf("open package db: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var exists bool
+	if err := db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM pg_namespace
+			WHERE nspname = $1
+		)
+	`, schemaName).Scan(&exists); err != nil {
+		t.Fatalf("query schema existence: %v", err)
+	}
+	if exists {
+		t.Fatalf("expected test schema %q to be dropped during cleanup", schemaName)
+	}
+}
+
 func waitForWaitingLock(parent context.Context, db *sql.DB, classID, objectID int) (bool, error) {
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
