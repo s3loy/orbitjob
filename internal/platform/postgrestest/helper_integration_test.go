@@ -5,6 +5,7 @@ package postgrestest
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -27,6 +28,10 @@ func TestApplySchemaWaitsForSharedDatabaseLock(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_DSN")
 	if dsn == "" {
 		t.Skip("TEST_DATABASE_DSN is not set")
+	}
+	dsn, _, err := packageDSN(dsn)
+	if err != nil {
+		t.Fatalf("packageDSN() error = %v", err)
 	}
 
 	holderDB, err := open(dsn)
@@ -115,6 +120,91 @@ func TestApplySchemaWaitsForSharedDatabaseLock(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("schema setup did not finish after releasing the shared database lock")
+	}
+}
+
+func TestOpenIsolatesParallelTests(t *testing.T) {
+	ready := make(chan struct{}, 2)
+	start := make(chan struct{})
+
+	go func() {
+		<-ready
+		<-ready
+		close(start)
+	}()
+
+	for i := range 2 {
+		t.Run(fmt.Sprintf("parallel_%d", i), func(t *testing.T) {
+			t.Parallel()
+
+			db := Open(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			if _, err := db.ExecContext(ctx, `
+				INSERT INTO jobs (name, tenant_id, trigger_type, handler_type)
+				VALUES ($1, $2, $3, $4)
+			`, "same-name", "default", "manual", "http"); err != nil {
+				t.Fatalf("insert job: %v", err)
+			}
+
+			ready <- struct{}{}
+			<-start
+
+			var count int
+			if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM jobs`).Scan(&count); err != nil {
+				t.Fatalf("count jobs: %v", err)
+			}
+			if count != 1 {
+				t.Fatalf("expected isolated jobs table count=1, got %d", count)
+			}
+		})
+	}
+}
+
+func TestOpenCleansUpTestSchema(t *testing.T) {
+	baseDSN := DSN(t)
+	childFullName := t.Name() + "/child"
+
+	_, schemaName, err := testDSN(baseDSN, childFullName)
+	if err != nil {
+		t.Fatalf("testDSN() error = %v", err)
+	}
+
+	t.Run("child", func(t *testing.T) {
+		db := Open(t)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO jobs (name, tenant_id, trigger_type, handler_type)
+			VALUES ($1, $2, $3, $4)
+		`, "cleanup-check", "default", "manual", "http"); err != nil {
+			t.Fatalf("insert job: %v", err)
+		}
+	})
+
+	db, err := open(baseDSN)
+	if err != nil {
+		t.Fatalf("open package db: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var exists bool
+	if err := db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM pg_namespace
+			WHERE nspname = $1
+		)
+	`, schemaName).Scan(&exists); err != nil {
+		t.Fatalf("query schema existence: %v", err)
+	}
+	if exists {
+		t.Fatalf("expected test schema %q to be dropped during cleanup", schemaName)
 	}
 }
 
