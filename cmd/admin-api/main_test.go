@@ -43,6 +43,19 @@ func (s *stubListJobsUseCase) List(ctx context.Context, in query.ListInput) ([]q
 	return s.out, s.err
 }
 
+type stubGetJobUseCase struct {
+	called bool
+	in     query.GetInput
+	out    query.GetItem
+	err    error
+}
+
+func (s *stubGetJobUseCase) Get(ctx context.Context, in query.GetInput) (query.GetItem, error) {
+	s.called = true
+	s.in = in
+	return s.out, s.err
+}
+
 func TestNewRouter_Healthz(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -72,7 +85,7 @@ func TestNewRouter_CreateJobRoute(t *testing.T) {
 		},
 	}
 
-	handler := adminhttp.NewHandler(createUC, nil)
+	handler := adminhttp.NewHandler(createUC, nil, nil)
 	router := newRouter(handler)
 
 	body := `{
@@ -121,7 +134,7 @@ func TestNewRouter_ListJobsRoute(t *testing.T) {
 		},
 	}
 
-	handler := adminhttp.NewHandler(nil, listUC)
+	handler := adminhttp.NewHandler(nil, listUC, nil)
 	router := newRouter(handler)
 
 	req := httptest.NewRequest(http.MethodGet,
@@ -155,6 +168,44 @@ func TestNewRouter_ListJobsRoute(t *testing.T) {
 	}
 	if out.Items[0].ID != 1 {
 		t.Fatalf("expected item id=1, got %d", out.Items[0].ID)
+	}
+}
+
+func TestNewRouter_GetJobRoute(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	getUC := &stubGetJobUseCase{
+		out: query.GetItem{
+			ID:              1,
+			Name:            "demo-job",
+			TenantID:        "default",
+			Version:         1,
+			TriggerType:     domainjob.TriggerTypeManual,
+			ScheduleSummary: "manual",
+			HandlerType:     "http",
+			Status:          query.StatusActive,
+		},
+	}
+
+	handler := adminhttp.NewHandler(nil, nil, getUC)
+	router := newRouter(handler)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/1?tenant_id=default", nil)
+	resp := httptest.NewRecorder()
+
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected status=%d, got %d, body=%s", http.StatusOK, resp.Code, resp.Body.String())
+	}
+	if !getUC.called {
+		t.Fatalf("expected get use case to be called")
+	}
+	if getUC.in.ID != 1 {
+		t.Fatalf("expected id=%d, got %d", 1, getUC.in.ID)
+	}
+	if getUC.in.TenantID != "default" {
+		t.Fatalf("expected tenant_id=%q, got %q", "default", getUC.in.TenantID)
 	}
 }
 
