@@ -60,3 +60,17 @@ func (r ListJobsRequest) ToListInput() query.ListInput {
 		Offset:   r.Offset,
 	}
 }
+
+// GetJobRequest defines the route and query parameters for reading one job.
+type GetJobRequest struct {
+	ID       int64  `uri:"id" binding:"required,min=1"`
+	TenantID string `form:"tenant_id" binding:"omitempty,max=64"`
+}
+
+// ToGetInput converts the HTTP route and query parameters into a control-plane query input.
+func (r GetJobRequest) ToGetInput() query.GetInput {
+	return query.GetInput{
+		ID:       r.ID,
+		TenantID: r.TenantID,
+	}
+}
