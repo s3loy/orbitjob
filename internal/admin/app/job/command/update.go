@@ -2,7 +2,6 @@ package command
 
 import (
 	"context"
-	"time"
 
 	domainjob "orbitjob/internal/core/domain/job"
 )
@@ -61,5 +60,3 @@ func (uc *UpdateJobUseCase) Update(ctx context.Context, in UpdateInput) (UpdateR
 		UpdatedAt: out.UpdatedAt,
 	}, nil
 }
-
-type _updateClockCompatibility time.Time
