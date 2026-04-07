@@ -87,8 +87,8 @@ type UpdateJobRequest struct {
 	CronExpr    *string `json:"cron_expr"`
 	Timezone    *string `json:"timezone"`
 
-	HandlerType    *string         `json:"handler_type" binding:"omitempty,max=32"`
-	HandlerPayload map[string]any  `json:"handler_payload"`
+	HandlerType    *string        `json:"handler_type" binding:"omitempty,max=32"`
+	HandlerPayload map[string]any `json:"handler_payload"`
 
 	TimeoutSec           *int    `json:"timeout_sec" binding:"omitempty,min=1"`
 	RetryLimit           *int    `json:"retry_limit" binding:"omitempty,min=0"`
@@ -96,6 +96,23 @@ type UpdateJobRequest struct {
 	RetryBackoffStrategy *string `json:"retry_backoff_strategy" binding:"omitempty,oneof=fixed exponential"`
 	ConcurrencyPolicy    *string `json:"concurrency_policy" binding:"omitempty,oneof=allow forbid replace"`
 	MisfirePolicy        *string `json:"misfire_policy" binding:"omitempty,oneof=skip fire_now catch_up"`
+}
+
+// ChangeStatusRequest defines the route, query, and payload fields for pause/resume.
+type ChangeStatusRequest struct {
+	ID       int64
+	TenantID string
+	Version  int `json:"version" binding:"required,min=1"`
+}
+
+// ToChangeStatusInput converts the HTTP request into a lifecycle status command input.
+func (r ChangeStatusRequest) ToChangeStatusInput(changedBy string) command.ChangeStatusInput {
+	return command.ChangeStatusInput{
+		ID:        r.ID,
+		TenantID:  r.TenantID,
+		Version:   r.Version,
+		ChangedBy: changedBy,
+	}
 }
 
 // ToUpdateInput merges sparse HTTP update fields onto the current job state.
