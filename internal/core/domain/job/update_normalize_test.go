@@ -1,0 +1,126 @@
+package job
+
+import (
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestNormalizeUpdate_ManualJobClearsCron(t *testing.T) {
+	now := time.Date(2026, 4, 7, 0, 0, 0, 0, time.UTC)
+
+	spec, err := NormalizeUpdate(now, UpdateInput{
+		ID:          42,
+		Version:     4,
+		Name:        "manual-report",
+		TenantID:    "tenant-a",
+		TriggerType: TriggerTypeManual,
+		HandlerType: "http",
+	})
+	if err != nil {
+		t.Fatalf("NormalizeUpdate() error = %v", err)
+	}
+	if spec.CronExpr != nil {
+		t.Fatalf("manual job should clear cron_expr")
+	}
+	if spec.NextRunAt != nil {
+		t.Fatalf("manual job should clear next_run_at")
+	}
+	if spec.Version != 4 {
+		t.Fatalf("expected version=%d, got %d", 4, spec.Version)
+	}
+}
+
+func TestNormalizeUpdate_CronJobComputesNextRunAt(t *testing.T) {
+	now := time.Date(2026, 4, 7, 0, 58, 0, 0, time.UTC)
+	cronExpr := "0 9 * * *"
+
+	spec, err := NormalizeUpdate(now, UpdateInput{
+		ID:          7,
+		Version:     2,
+		Name:        "daily-report",
+		TenantID:    "tenant-a",
+		TriggerType: TriggerTypeCron,
+		CronExpr:    &cronExpr,
+		Timezone:    "Asia/Shanghai",
+		HandlerType: "http",
+	})
+	if err != nil {
+		t.Fatalf("NormalizeUpdate() error = %v", err)
+	}
+	if spec.NextRunAt == nil {
+		t.Fatalf("expected next_run_at to be computed")
+	}
+
+	wantNextRunAt := time.Date(2026, 4, 7, 1, 0, 0, 0, time.UTC)
+	if !spec.NextRunAt.Equal(wantNextRunAt) {
+		t.Fatalf("expected next_run_at=%s, got %s",
+			wantNextRunAt.Format(time.RFC3339),
+			spec.NextRunAt.Format(time.RFC3339),
+		)
+	}
+}
+
+func TestNormalizeUpdate_InvalidInputReturnsValidationError(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       UpdateInput
+		wantField   string
+		wantMessage string
+	}{
+		{
+			name: "id less than one",
+			input: UpdateInput{
+				ID:      0,
+				Version: 1,
+			},
+			wantField:   "id",
+			wantMessage: "must be >= 1",
+		},
+		{
+			name: "version less than one",
+			input: UpdateInput{
+				ID:      1,
+				Version: 0,
+			},
+			wantField:   "version",
+			wantMessage: "must be >= 1",
+		},
+		{
+			name: "tenant too long",
+			input: UpdateInput{
+				ID:          1,
+				Version:     1,
+				Name:        "demo",
+				TenantID:    strings.Repeat("t", 65),
+				TriggerType: TriggerTypeManual,
+				HandlerType: "http",
+			},
+			wantField:   "tenant_id",
+			wantMessage: "must be <= 64 characters",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := NormalizeUpdate(time.Now().UTC(), tt.input)
+			if err == nil {
+				t.Fatalf("expected validation error, got nil")
+			}
+			if !IsValidationError(err) {
+				t.Fatalf("expected validation error, got %T", err)
+			}
+
+			var validationErr *ValidationError
+			if !AsValidationError(err, &validationErr) {
+				t.Fatalf("expected error to unwrap as ValidationError")
+			}
+			if validationErr.Field != tt.wantField {
+				t.Fatalf("expected field=%q, got %q", tt.wantField, validationErr.Field)
+			}
+			if validationErr.Message != tt.wantMessage {
+				t.Fatalf("expected message=%q, got %q", tt.wantMessage, validationErr.Message)
+			}
+		})
+	}
+}

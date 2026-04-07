@@ -51,6 +51,9 @@ func TestJobRepository_Create(t *testing.T) {
 	if out.Status != "active" {
 		t.Fatalf("expected status=active, got %q", out.Status)
 	}
+	if out.Version != 1 {
+		t.Fatalf("expected version=1, got %d", out.Version)
+	}
 	if out.NextRunAt == nil {
 		t.Fatalf("expected next_run_at to be set for cron job")
 	}

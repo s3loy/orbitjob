@@ -46,7 +46,7 @@ func (r *JobRepository) Create(ctx context.Context, in domainjob.CreateSpec) (do
 						$1, $2, $3, $4, $5, $6, $7::jsonb,
 						$8, $9, $10, $11, $12, $13, $14
 				)
-                RETURNING id, name, tenant_id, status, next_run_at, created_at, updated_at
+                RETURNING id, name, tenant_id, status, version, next_run_at, created_at, updated_at
         `,
 		in.Name,
 		in.TenantID,
@@ -67,6 +67,7 @@ func (r *JobRepository) Create(ctx context.Context, in domainjob.CreateSpec) (do
 		&out.Name,
 		&out.TenantID,
 		&out.Status,
+		&out.Version,
 		&nextRunAt,
 		&out.CreatedAt,
 		&out.UpdatedAt,

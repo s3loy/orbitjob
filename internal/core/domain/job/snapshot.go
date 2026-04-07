@@ -8,6 +8,7 @@ type Snapshot struct {
 	Name     string `json:"name"`
 	TenantID string `json:"tenant_id"`
 	Status   string `json:"status"`
+	Version  int    `json:"version"`
 
 	NextRunAt *time.Time `json:"next_run_at"`
 	CreatedAt time.Time  `json:"created_at"`
