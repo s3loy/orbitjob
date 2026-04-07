@@ -24,6 +24,10 @@ type getJobUseCase interface {
 	Get(ctx context.Context, in query.GetInput) (query.GetItem, error)
 }
 
+type updateJobUseCase interface {
+	Update(ctx context.Context, in command.UpdateInput) (command.UpdateResult, error)
+}
+
 type jobListResponse struct {
 	Items []query.ListItem `json:"items"`
 }
@@ -33,17 +37,25 @@ type Handler struct {
 	createJobUC createJobUseCase
 	listJobsUC  listJobsUseCase
 	getJobUC    getJobUseCase
+	updateJobUC updateJobUseCase
 }
 
 func NewHandler(
 	createJobUC createJobUseCase,
 	listJobsUC listJobsUseCase,
 	getJobUC getJobUseCase,
+	updateJobUC ...updateJobUseCase,
 ) *Handler {
+	var updateUC updateJobUseCase
+	if len(updateJobUC) > 0 {
+		updateUC = updateJobUC[0]
+	}
+
 	return &Handler{
 		createJobUC: createJobUC,
 		listJobsUC:  listJobsUC,
 		getJobUC:    getJobUC,
+		updateJobUC: updateUC,
 	}
 }
 
@@ -56,6 +68,9 @@ func (h *Handler) Register(r gin.IRouter) {
 	}
 	if h.getJobUC != nil {
 		v1.GET("/jobs/:id", h.GetJob)
+	}
+	if h.updateJobUC != nil {
+		v1.PUT("/jobs/:id", h.UpdateJob)
 	}
 	if h.createJobUC != nil {
 		v1.POST("/jobs", h.CreateJob)
@@ -137,6 +152,55 @@ func (h *Handler) GetJob(c *gin.Context) {
 		_ = c.Error(err)
 		c.JSON(stdhttp.StatusInternalServerError, gin.H{"error": apiErr})
 		return
+	}
+
+	c.JSON(stdhttp.StatusOK, out)
+}
+
+// UpdateJob handles mutable job updates.
+func (h *Handler) UpdateJob(c *gin.Context) {
+	var pathReq struct {
+		ID int64 `uri:"id" binding:"required,min=1"`
+	}
+	if err := c.ShouldBindUri(&pathReq); err != nil {
+		c.JSON(stdhttp.StatusBadRequest, gin.H{"error": toBindAPIError(err)})
+		return
+	}
+	req := UpdateJobRequest{
+		ID:       pathReq.ID,
+		TenantID: c.Query("tenant_id"),
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(stdhttp.StatusBadRequest, gin.H{"error": toBindAPIError(err)})
+		return
+	}
+
+	actorID, err := requiredActorID(c)
+	if err != nil {
+		c.JSON(stdhttp.StatusBadRequest, gin.H{"error": toAPIError(err)})
+		return
+	}
+
+	out, err := h.updateJobUC.Update(c.Request.Context(), req.ToUpdateInput(actorID))
+	if err != nil {
+		if validation.Is(err) {
+			c.JSON(stdhttp.StatusBadRequest, gin.H{"error": toAPIError(err)})
+			return
+		}
+
+		apiErr := toAPIError(err)
+		switch apiErr.Code {
+		case ErrCodeNotFound:
+			c.JSON(stdhttp.StatusNotFound, gin.H{"error": apiErr})
+			return
+		case ErrCodeConflict:
+			c.JSON(stdhttp.StatusConflict, gin.H{"error": apiErr})
+			return
+		default:
+			_ = c.Error(err)
+			c.JSON(stdhttp.StatusInternalServerError, gin.H{"error": apiErr})
+			return
+		}
 	}
 
 	c.JSON(stdhttp.StatusOK, out)
