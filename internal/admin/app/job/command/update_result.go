@@ -1,9 +1,9 @@
-package job
+package command
 
 import "time"
 
-// Snapshot is the persisted job state returned by the core write side.
-type Snapshot struct {
+// UpdateResult is the control-plane snapshot returned after updating a job.
+type UpdateResult struct {
 	ID       int64  `json:"id"`
 	Name     string `json:"name"`
 	TenantID string `json:"tenant_id"`
