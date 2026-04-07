@@ -21,6 +21,8 @@ jobs:
     name: Go CI
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
     steps:
       - name: Checkout
@@ -46,3 +48,13 @@ jobs:
 
       - name: Print coverage summary
         run: go tool cover -func=coverage.out
+
+      - name: Upload coverage to Codecov
+        if: ${{ env.CODECOV_TOKEN != '' }}
+        uses: codecov/codecov-action@v5.5.4
+        with:
+          files: coverage.out
+          flags: unittests
+          name: orbitjob-go-ci
+          token: ${{ env.CODECOV_TOKEN }}
+          verbose: true
