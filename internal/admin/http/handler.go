@@ -69,7 +69,7 @@ func (h *Handler) Register(r gin.IRouter) {
 	if h.getJobUC != nil {
 		v1.GET("/jobs/:id", h.GetJob)
 	}
-	if h.updateJobUC != nil {
+	if h.updateJobUC != nil && h.getJobUC != nil {
 		v1.PUT("/jobs/:id", h.UpdateJob)
 	}
 	if h.createJobUC != nil {
@@ -181,7 +181,28 @@ func (h *Handler) UpdateJob(c *gin.Context) {
 		return
 	}
 
-	out, err := h.updateJobUC.Update(c.Request.Context(), req.ToUpdateInput(actorID))
+	current, err := h.getJobUC.Get(c.Request.Context(), query.GetInput{
+		ID:       req.ID,
+		TenantID: req.TenantID,
+	})
+	if err != nil {
+		if validation.Is(err) {
+			c.JSON(stdhttp.StatusBadRequest, gin.H{"error": toAPIError(err)})
+			return
+		}
+
+		apiErr := toAPIError(err)
+		if apiErr.Code == ErrCodeNotFound {
+			c.JSON(stdhttp.StatusNotFound, gin.H{"error": apiErr})
+			return
+		}
+
+		_ = c.Error(err)
+		c.JSON(stdhttp.StatusInternalServerError, gin.H{"error": apiErr})
+		return
+	}
+
+	out, err := h.updateJobUC.Update(c.Request.Context(), req.ToUpdateInput(current, actorID))
 	if err != nil {
 		if validation.Is(err) {
 			c.JSON(stdhttp.StatusBadRequest, gin.H{"error": toAPIError(err)})

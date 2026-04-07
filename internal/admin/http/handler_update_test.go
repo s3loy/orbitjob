@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	command "orbitjob/internal/admin/app/job/command"
+	query "orbitjob/internal/admin/app/job/query"
 	domainjob "orbitjob/internal/core/domain/job"
 	"orbitjob/internal/domain/resource"
 	"orbitjob/internal/domain/validation"
@@ -34,10 +35,36 @@ func (s *stubUpdateJobUseCase) Update(
 	return s.out, s.err
 }
 
+func currentJobForUpdateTests() query.GetItem {
+	cronExpr := "0 1 * * *"
+
+	return query.GetItem{
+		ID:                   42,
+		Name:                 "legacy-report",
+		TenantID:             "tenant-a",
+		Version:              4,
+		TriggerType:          domainjob.TriggerTypeCron,
+		CronExpr:             &cronExpr,
+		Timezone:             "Asia/Shanghai",
+		HandlerType:          "http",
+		HandlerPayload:       map[string]any{"url": "https://example.com/legacy"},
+		TimeoutSec:           300,
+		RetryLimit:           5,
+		RetryBackoffSec:      20,
+		RetryBackoffStrategy: domainjob.RetryBackoffExponential,
+		ConcurrencyPolicy:    domainjob.ConcurrencyForbid,
+		MisfirePolicy:        domainjob.MisfireFireNow,
+		Status:               "active",
+	}
+}
+
 func TestHandler_RegisterAndUpdateJob(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	createdAt := time.Date(2026, 4, 7, 0, 0, 0, 0, time.UTC)
+	getUseCase := &stubGetJobUseCase{
+		out: currentJobForUpdateTests(),
+	}
 	useCase := &stubUpdateJobUseCase{
 		out: command.UpdateResult{
 			ID:        42,
@@ -50,15 +77,13 @@ func TestHandler_RegisterAndUpdateJob(t *testing.T) {
 		},
 	}
 
-	handler := NewHandler(nil, nil, nil, useCase)
+	handler := NewHandler(nil, nil, getUseCase, useCase)
 	router := gin.New()
 	handler.Register(router)
 
 	body := `{
 		"version": 4,
-		"name":"nightly-report",
-		"trigger_type":"manual",
-		"handler_type":"http"
+		"name":"nightly-report"
 	}`
 	req := httptest.NewRequest(stdhttp.MethodPut, "/api/v1/jobs/42?tenant_id=tenant-a",
 		bytes.NewBufferString(body))
@@ -74,6 +99,9 @@ func TestHandler_RegisterAndUpdateJob(t *testing.T) {
 	if !useCase.called {
 		t.Fatalf("expected use case to be called")
 	}
+	if !getUseCase.called {
+		t.Fatalf("expected get use case to be called")
+	}
 	if useCase.in.ID != 42 {
 		t.Fatalf("expected id=%d, got %d", 42, useCase.in.ID)
 	}
@@ -86,8 +114,23 @@ func TestHandler_RegisterAndUpdateJob(t *testing.T) {
 	if useCase.in.Version != 4 {
 		t.Fatalf("expected version=%d, got %d", 4, useCase.in.Version)
 	}
-	if useCase.in.TriggerType != domainjob.TriggerTypeManual {
-		t.Fatalf("expected trigger_type=%q, got %q", domainjob.TriggerTypeManual, useCase.in.TriggerType)
+	if useCase.in.Name != "nightly-report" {
+		t.Fatalf("expected name=%q, got %q", "nightly-report", useCase.in.Name)
+	}
+	if useCase.in.TriggerType != domainjob.TriggerTypeCron {
+		t.Fatalf("expected trigger_type=%q, got %q", domainjob.TriggerTypeCron, useCase.in.TriggerType)
+	}
+	if useCase.in.TimeoutSec != 300 {
+		t.Fatalf("expected timeout_sec=%d, got %d", 300, useCase.in.TimeoutSec)
+	}
+	if useCase.in.RetryBackoffStrategy != domainjob.RetryBackoffExponential {
+		t.Fatalf("expected retry_backoff_strategy=%q, got %q", domainjob.RetryBackoffExponential, useCase.in.RetryBackoffStrategy)
+	}
+	if useCase.in.ConcurrencyPolicy != domainjob.ConcurrencyForbid {
+		t.Fatalf("expected concurrency_policy=%q, got %q", domainjob.ConcurrencyForbid, useCase.in.ConcurrencyPolicy)
+	}
+	if useCase.in.HandlerPayload["url"] != "https://example.com/legacy" {
+		t.Fatalf("expected existing handler payload to be preserved")
 	}
 
 	var out command.UpdateResult
@@ -102,8 +145,9 @@ func TestHandler_RegisterAndUpdateJob(t *testing.T) {
 func TestHandler_UpdateJob_BindError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
+	getUseCase := &stubGetJobUseCase{}
 	useCase := &stubUpdateJobUseCase{}
-	handler := NewHandler(nil, nil, nil, useCase)
+	handler := NewHandler(nil, nil, getUseCase, useCase)
 	router := gin.New()
 	handler.Register(router)
 
@@ -121,13 +165,17 @@ func TestHandler_UpdateJob_BindError(t *testing.T) {
 	if useCase.called {
 		t.Fatalf("expected use case not to be called on bind error")
 	}
+	if getUseCase.called {
+		t.Fatalf("expected get use case not to be called on bind error")
+	}
 }
 
 func TestHandler_UpdateJob_MissingActor(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
+	getUseCase := &stubGetJobUseCase{}
 	useCase := &stubUpdateJobUseCase{}
-	handler := NewHandler(nil, nil, nil, useCase)
+	handler := NewHandler(nil, nil, getUseCase, useCase)
 	router := gin.New()
 	handler.Register(router)
 
@@ -150,18 +198,24 @@ func TestHandler_UpdateJob_MissingActor(t *testing.T) {
 	if useCase.called {
 		t.Fatalf("expected use case not to be called when actor is missing")
 	}
+	if getUseCase.called {
+		t.Fatalf("expected get use case not to be called when actor is missing")
+	}
 }
 
 func TestHandler_UpdateJob_ValidationError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
+	getUseCase := &stubGetJobUseCase{
+		out: currentJobForUpdateTests(),
+	}
 	useCase := &stubUpdateJobUseCase{
 		err: &validation.Error{
 			Field:   "cron_expr",
 			Message: "is required for cron jobs",
 		},
 	}
-	handler := NewHandler(nil, nil, nil, useCase)
+	handler := NewHandler(nil, nil, getUseCase, useCase)
 	router := gin.New()
 	handler.Register(router)
 
@@ -187,13 +241,14 @@ func TestHandler_UpdateJob_ValidationError(t *testing.T) {
 func TestHandler_UpdateJob_NotFound(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	useCase := &stubUpdateJobUseCase{
+	getUseCase := &stubGetJobUseCase{
 		err: &resource.NotFoundError{
 			Resource: "job",
 			ID:       42,
 		},
 	}
-	handler := NewHandler(nil, nil, nil, useCase)
+	useCase := &stubUpdateJobUseCase{}
+	handler := NewHandler(nil, nil, getUseCase, useCase)
 	router := gin.New()
 	handler.Register(router)
 
@@ -214,11 +269,17 @@ func TestHandler_UpdateJob_NotFound(t *testing.T) {
 	if resp.Code != stdhttp.StatusNotFound {
 		t.Fatalf("expected status=%d, got %d", stdhttp.StatusNotFound, resp.Code)
 	}
+	if useCase.called {
+		t.Fatalf("expected update use case not to be called when current job is missing")
+	}
 }
 
 func TestHandler_UpdateJob_Conflict(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
+	getUseCase := &stubGetJobUseCase{
+		out: currentJobForUpdateTests(),
+	}
 	useCase := &stubUpdateJobUseCase{
 		err: &resource.ConflictError{
 			Resource: "job",
@@ -226,7 +287,7 @@ func TestHandler_UpdateJob_Conflict(t *testing.T) {
 			Message:  "stale job version",
 		},
 	}
-	handler := NewHandler(nil, nil, nil, useCase)
+	handler := NewHandler(nil, nil, getUseCase, useCase)
 	router := gin.New()
 	handler.Register(router)
 
@@ -252,10 +313,13 @@ func TestHandler_UpdateJob_Conflict(t *testing.T) {
 func TestHandler_UpdateJob_InternalError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
+	getUseCase := &stubGetJobUseCase{
+		out: currentJobForUpdateTests(),
+	}
 	useCase := &stubUpdateJobUseCase{
 		err: errors.New("update job: db down"),
 	}
-	handler := NewHandler(nil, nil, nil, useCase)
+	handler := NewHandler(nil, nil, getUseCase, useCase)
 	router := gin.New()
 	handler.Register(router)
 

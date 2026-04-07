@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	command "orbitjob/internal/admin/app/job/command"
+	query "orbitjob/internal/admin/app/job/query"
 	adminhttp "orbitjob/internal/admin/http"
 
 	"github.com/gin-gonic/gin"
@@ -32,6 +33,25 @@ func (s *stubUpdateJobUseCase) Update(
 func TestNewRouter_UpdateJobRoute(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
+	getUC := &stubGetJobUseCase{
+		out: query.GetItem{
+			ID:                   42,
+			Name:                 "legacy-report",
+			TenantID:             "default",
+			Version:              4,
+			TriggerType:          "manual",
+			Timezone:             "UTC",
+			HandlerType:          "http",
+			HandlerPayload:       map[string]any{"url": "https://example.com/hook"},
+			TimeoutSec:           60,
+			RetryLimit:           0,
+			RetryBackoffSec:      0,
+			RetryBackoffStrategy: "fixed",
+			ConcurrencyPolicy:    "allow",
+			MisfirePolicy:        "skip",
+			Status:               "active",
+		},
+	}
 	updateUC := &stubUpdateJobUseCase{
 		out: command.UpdateResult{
 			ID:      42,
@@ -41,14 +61,12 @@ func TestNewRouter_UpdateJobRoute(t *testing.T) {
 		},
 	}
 
-	handler := adminhttp.NewHandler(nil, nil, nil, updateUC)
+	handler := adminhttp.NewHandler(nil, nil, getUC, updateUC)
 	router := newRouter(handler)
 
 	body := `{
 		"version": 4,
-		"name":"nightly-report",
-		"trigger_type":"manual",
-		"handler_type":"http"
+		"name":"nightly-report"
 	}`
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/jobs/42?tenant_id=default",
 		bytes.NewBufferString(body))

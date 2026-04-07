@@ -107,26 +107,35 @@ func TestGetJobRequest_ToGetInput(t *testing.T) {
 
 func TestUpdateJobRequest_ToUpdateInput(t *testing.T) {
 	cronExpr := "*/15 * * * *"
+	name := "nightly-report"
+	timeoutSec := 120
 
 	req := UpdateJobRequest{
-		ID:                   42,
-		TenantID:             "tenant-a",
-		Version:              7,
-		Name:                 "nightly-report",
-		TriggerType:          "cron",
-		CronExpr:             &cronExpr,
-		Timezone:             "Asia/Shanghai",
-		HandlerType:          "http",
-		HandlerPayload:       map[string]any{"url": "https://example.com/hook"},
-		TimeoutSec:           120,
-		RetryLimit:           3,
-		RetryBackoffSec:      10,
-		RetryBackoffStrategy: "exponential",
-		ConcurrencyPolicy:    "forbid",
-		MisfirePolicy:        "fire_now",
+		ID:         42,
+		TenantID:   "tenant-a",
+		Version:    7,
+		Name:       &name,
+		CronExpr:   &cronExpr,
+		TimeoutSec: &timeoutSec,
 	}
 
-	got := req.ToUpdateInput("control-plane-user")
+	current := query.GetItem{
+		ID:                   42,
+		TenantID:             "tenant-a",
+		Name:                 "old-name",
+		TriggerType:          "manual",
+		Timezone:             "UTC",
+		HandlerType:          "worker",
+		HandlerPayload:       map[string]any{"queue": "jobs"},
+		TimeoutSec:           60,
+		RetryLimit:           3,
+		RetryBackoffSec:      10,
+		RetryBackoffStrategy: "fixed",
+		ConcurrencyPolicy:    "allow",
+		MisfirePolicy:        "skip",
+	}
+
+	got := req.ToUpdateInput(current, "control-plane-user")
 
 	if got.ID != req.ID {
 		t.Fatalf("expected id=%d, got %d", req.ID, got.ID)
@@ -140,10 +149,56 @@ func TestUpdateJobRequest_ToUpdateInput(t *testing.T) {
 	if got.Version != req.Version {
 		t.Fatalf("expected version=%d, got %d", req.Version, got.Version)
 	}
-	if got.CronExpr != req.CronExpr {
-		t.Fatalf("expected cron_expr pointer to be preserved")
+	if got.Name != name {
+		t.Fatalf("expected name=%q, got %q", name, got.Name)
 	}
-	if got.HandlerPayload["url"] != "https://example.com/hook" {
-		t.Fatalf("expected handler payload url to round-trip")
+	if got.TriggerType != current.TriggerType {
+		t.Fatalf("expected trigger_type=%q, got %q", current.TriggerType, got.TriggerType)
+	}
+	if got.CronExpr == nil || *got.CronExpr != cronExpr {
+		t.Fatalf("expected cron_expr=%q, got %+v", cronExpr, got.CronExpr)
+	}
+	if got.TimeoutSec != timeoutSec {
+		t.Fatalf("expected timeout_sec=%d, got %d", timeoutSec, got.TimeoutSec)
+	}
+	if got.HandlerType != current.HandlerType {
+		t.Fatalf("expected handler_type=%q, got %q", current.HandlerType, got.HandlerType)
+	}
+	if got.HandlerPayload["queue"] != "jobs" {
+		t.Fatalf("expected handler payload queue to be preserved")
+	}
+	if got.ConcurrencyPolicy != current.ConcurrencyPolicy {
+		t.Fatalf("expected concurrency_policy=%q, got %q", current.ConcurrencyPolicy, got.ConcurrencyPolicy)
+	}
+}
+
+func TestUpdateJobRequest_ToUpdateInputSwitchingToManualClearsCron(t *testing.T) {
+	triggerType := "manual"
+	currentCron := "*/15 * * * *"
+
+	req := UpdateJobRequest{
+		ID:          42,
+		TenantID:    "tenant-a",
+		Version:     7,
+		TriggerType: &triggerType,
+	}
+
+	current := query.GetItem{
+		ID:          42,
+		TenantID:    "tenant-a",
+		Name:        "nightly-report",
+		TriggerType: "cron",
+		CronExpr:    &currentCron,
+		Timezone:    "Asia/Shanghai",
+		HandlerType: "http",
+	}
+
+	got := req.ToUpdateInput(current, "control-plane-user")
+
+	if got.TriggerType != triggerType {
+		t.Fatalf("expected trigger_type=%q, got %q", triggerType, got.TriggerType)
+	}
+	if got.CronExpr != nil {
+		t.Fatalf("expected cron_expr to be cleared when switching to manual")
 	}
 }
