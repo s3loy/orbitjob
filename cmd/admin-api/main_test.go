@@ -85,7 +85,7 @@ func TestNewRouter_CreateJobRoute(t *testing.T) {
 		},
 	}
 
-	handler := adminhttp.NewHandler(createUC, nil, nil)
+	handler := adminhttp.NewHandler(createUC, nil, nil, nil, nil)
 	router := newRouter(handler)
 
 	body := `{
@@ -134,7 +134,7 @@ func TestNewRouter_ListJobsRoute(t *testing.T) {
 		},
 	}
 
-	handler := adminhttp.NewHandler(nil, listUC, nil)
+	handler := adminhttp.NewHandler(nil, listUC, nil, nil, nil)
 	router := newRouter(handler)
 
 	req := httptest.NewRequest(http.MethodGet,
@@ -187,7 +187,7 @@ func TestNewRouter_GetJobRoute(t *testing.T) {
 		},
 	}
 
-	handler := adminhttp.NewHandler(nil, nil, getUC)
+	handler := adminhttp.NewHandler(nil, nil, getUC, nil, nil)
 	router := newRouter(handler)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/1?tenant_id=default", nil)

@@ -61,7 +61,7 @@ func TestNewRouter_UpdateJobRoute(t *testing.T) {
 		},
 	}
 
-	handler := adminhttp.NewHandler(nil, nil, getUC, updateUC)
+	handler := adminhttp.NewHandler(nil, nil, getUC, updateUC, nil)
 	router := newRouter(handler)
 
 	body := `{

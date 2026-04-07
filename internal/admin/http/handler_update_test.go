@@ -77,7 +77,7 @@ func TestHandler_RegisterAndUpdateJob(t *testing.T) {
 		},
 	}
 
-	handler := NewHandler(nil, nil, getUseCase, useCase)
+	handler := NewHandler(nil, nil, getUseCase, useCase, nil)
 	router := gin.New()
 	handler.Register(router)
 
@@ -147,7 +147,7 @@ func TestHandler_UpdateJob_BindError(t *testing.T) {
 
 	getUseCase := &stubGetJobUseCase{}
 	useCase := &stubUpdateJobUseCase{}
-	handler := NewHandler(nil, nil, getUseCase, useCase)
+	handler := NewHandler(nil, nil, getUseCase, useCase, nil)
 	router := gin.New()
 	handler.Register(router)
 
@@ -175,7 +175,7 @@ func TestHandler_UpdateJob_MissingActor(t *testing.T) {
 
 	getUseCase := &stubGetJobUseCase{}
 	useCase := &stubUpdateJobUseCase{}
-	handler := NewHandler(nil, nil, getUseCase, useCase)
+	handler := NewHandler(nil, nil, getUseCase, useCase, nil)
 	router := gin.New()
 	handler.Register(router)
 
@@ -215,7 +215,7 @@ func TestHandler_UpdateJob_ValidationError(t *testing.T) {
 			Message: "is required for cron jobs",
 		},
 	}
-	handler := NewHandler(nil, nil, getUseCase, useCase)
+	handler := NewHandler(nil, nil, getUseCase, useCase, nil)
 	router := gin.New()
 	handler.Register(router)
 
@@ -248,7 +248,7 @@ func TestHandler_UpdateJob_NotFound(t *testing.T) {
 		},
 	}
 	useCase := &stubUpdateJobUseCase{}
-	handler := NewHandler(nil, nil, getUseCase, useCase)
+	handler := NewHandler(nil, nil, getUseCase, useCase, nil)
 	router := gin.New()
 	handler.Register(router)
 
@@ -287,7 +287,7 @@ func TestHandler_UpdateJob_Conflict(t *testing.T) {
 			Message:  "stale job version",
 		},
 	}
-	handler := NewHandler(nil, nil, getUseCase, useCase)
+	handler := NewHandler(nil, nil, getUseCase, useCase, nil)
 	router := gin.New()
 	handler.Register(router)
 
@@ -319,7 +319,7 @@ func TestHandler_UpdateJob_InternalError(t *testing.T) {
 	useCase := &stubUpdateJobUseCase{
 		err: errors.New("update job: db down"),
 	}
-	handler := NewHandler(nil, nil, getUseCase, useCase)
+	handler := NewHandler(nil, nil, getUseCase, useCase, nil)
 	router := gin.New()
 	handler.Register(router)
 

@@ -81,9 +81,10 @@ func main() {
 	readRepo := adminpostgres.NewJobRepository(db)
 	createJobUC := command.NewCreateJobUseCase(writeRepo)
 	updateJobUC := command.NewUpdateJobUseCase(writeRepo)
+	changeStatusUC := command.NewChangeStatusUseCase(readRepo, writeRepo)
 	listJobsUC := query.NewListJobsUseCase(readRepo)
 	getJobUC := query.NewGetJobUseCase(readRepo)
-	handler := adminhttp.NewHandler(createJobUC, listJobsUC, getJobUC, updateJobUC)
+	handler := adminhttp.NewHandler(createJobUC, listJobsUC, getJobUC, updateJobUC, changeStatusUC)
 
 	if err := newRouter(handler).Run(":8080"); err != nil {
 		log.Fatal(err)

@@ -73,7 +73,7 @@ func TestHandler_RegisterAndCreateJob(t *testing.T) {
 		},
 	}
 
-	handler := NewHandler(useCase, nil, nil)
+	handler := NewHandler(useCase, nil, nil, nil, nil)
 	router := gin.New()
 	handler.Register(router)
 
@@ -145,7 +145,7 @@ func TestHandler_RegisterAndListJobs(t *testing.T) {
 		},
 	}
 
-	handler := NewHandler(nil, useCase, nil)
+	handler := NewHandler(nil, useCase, nil, nil, nil)
 	router := gin.New()
 	handler.Register(router)
 
@@ -224,7 +224,7 @@ func TestHandler_RegisterAndGetJob(t *testing.T) {
 		},
 	}
 
-	handler := NewHandler(nil, nil, useCase)
+	handler := NewHandler(nil, nil, useCase, nil, nil)
 	router := gin.New()
 	handler.Register(router)
 
@@ -262,7 +262,7 @@ func TestHandler_CreateJob_BindError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	useCase := &stubCreateJobUseCase{}
-	handler := NewHandler(useCase, nil, nil)
+	handler := NewHandler(useCase, nil, nil, nil, nil)
 	router := gin.New()
 	handler.Register(router)
 
@@ -306,7 +306,7 @@ func TestHandler_ListJobs_BindError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	useCase := &stubListJobsUseCase{}
-	handler := NewHandler(nil, useCase, nil)
+	handler := NewHandler(nil, useCase, nil, nil, nil)
 	router := gin.New()
 	handler.Register(router)
 
@@ -348,7 +348,7 @@ func TestHandler_GetJob_BindError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	useCase := &stubGetJobUseCase{}
-	handler := NewHandler(nil, nil, useCase)
+	handler := NewHandler(nil, nil, useCase, nil, nil)
 	router := gin.New()
 	handler.Register(router)
 
@@ -374,7 +374,7 @@ func TestHandler_CreateJob_UseCaseError(t *testing.T) {
 			Message: "invalid cron_expr",
 		},
 	}
-	handler := NewHandler(useCase, nil, nil)
+	handler := NewHandler(useCase, nil, nil, nil, nil)
 	router := gin.New()
 	handler.Register(router)
 
@@ -408,7 +408,7 @@ func TestHandler_ListJobs_UseCaseError(t *testing.T) {
 			Message: "must be <= 64 characters",
 		},
 	}
-	handler := NewHandler(nil, useCase, nil)
+	handler := NewHandler(nil, useCase, nil, nil, nil)
 	router := gin.New()
 	handler.Register(router)
 
@@ -434,7 +434,7 @@ func TestHandler_GetJob_ValidationError(t *testing.T) {
 			Message: "must be <= 64 characters",
 		},
 	}
-	handler := NewHandler(nil, nil, useCase)
+	handler := NewHandler(nil, nil, useCase, nil, nil)
 	router := gin.New()
 	handler.Register(router)
 
@@ -457,7 +457,7 @@ func TestHandler_CreateJob_InternalError(t *testing.T) {
 	useCase := &stubCreateJobUseCase{
 		err: errors.New("insert job: db down"),
 	}
-	handler := NewHandler(useCase, nil, nil)
+	handler := NewHandler(useCase, nil, nil, nil, nil)
 	router := gin.New()
 	handler.Register(router)
 
@@ -488,7 +488,7 @@ func TestHandler_ListJobs_InternalError(t *testing.T) {
 	useCase := &stubListJobsUseCase{
 		err: errors.New("query job list: db down"),
 	}
-	handler := NewHandler(nil, useCase, nil)
+	handler := NewHandler(nil, useCase, nil, nil, nil)
 	router := gin.New()
 	handler.Register(router)
 
@@ -514,7 +514,7 @@ func TestHandler_GetJob_NotFound(t *testing.T) {
 			ID:       42,
 		},
 	}
-	handler := NewHandler(nil, nil, useCase)
+	handler := NewHandler(nil, nil, useCase, nil, nil)
 	router := gin.New()
 	handler.Register(router)
 
@@ -534,7 +534,7 @@ func TestHandler_GetJob_InternalError(t *testing.T) {
 	useCase := &stubGetJobUseCase{
 		err: errors.New("query job detail: db down"),
 	}
-	handler := NewHandler(nil, nil, useCase)
+	handler := NewHandler(nil, nil, useCase, nil, nil)
 	router := gin.New()
 	handler.Register(router)
 
@@ -560,7 +560,7 @@ func TestHandler_CreateJob_ValidationErrorResponseFormat(t *testing.T) {
 			Message: "is required for cron jobs",
 		},
 	}
-	handler := NewHandler(uc, nil, nil)
+	handler := NewHandler(uc, nil, nil, nil, nil)
 	router := gin.New()
 	handler.Register(router)
 
@@ -606,7 +606,7 @@ func TestHandler_CreateJob_InternalErrorResponseFormat(t *testing.T) {
 	uc := &stubCreateJobUseCase{
 		err: errors.New("insert job: db down"),
 	}
-	handler := NewHandler(uc, nil, nil)
+	handler := NewHandler(uc, nil, nil, nil, nil)
 	router := gin.New()
 	handler.Register(router)
 
