@@ -104,3 +104,46 @@ func TestGetJobRequest_ToGetInput(t *testing.T) {
 		t.Fatalf("expected tenant_id=%q, got %q", req.TenantID, got.TenantID)
 	}
 }
+
+func TestUpdateJobRequest_ToUpdateInput(t *testing.T) {
+	cronExpr := "*/15 * * * *"
+
+	req := UpdateJobRequest{
+		ID:                   42,
+		TenantID:             "tenant-a",
+		Version:              7,
+		Name:                 "nightly-report",
+		TriggerType:          "cron",
+		CronExpr:             &cronExpr,
+		Timezone:             "Asia/Shanghai",
+		HandlerType:          "http",
+		HandlerPayload:       map[string]any{"url": "https://example.com/hook"},
+		TimeoutSec:           120,
+		RetryLimit:           3,
+		RetryBackoffSec:      10,
+		RetryBackoffStrategy: "exponential",
+		ConcurrencyPolicy:    "forbid",
+		MisfirePolicy:        "fire_now",
+	}
+
+	got := req.ToUpdateInput("control-plane-user")
+
+	if got.ID != req.ID {
+		t.Fatalf("expected id=%d, got %d", req.ID, got.ID)
+	}
+	if got.TenantID != req.TenantID {
+		t.Fatalf("expected tenant_id=%q, got %q", req.TenantID, got.TenantID)
+	}
+	if got.ChangedBy != "control-plane-user" {
+		t.Fatalf("expected changed_by=%q, got %q", "control-plane-user", got.ChangedBy)
+	}
+	if got.Version != req.Version {
+		t.Fatalf("expected version=%d, got %d", req.Version, got.Version)
+	}
+	if got.CronExpr != req.CronExpr {
+		t.Fatalf("expected cron_expr pointer to be preserved")
+	}
+	if got.HandlerPayload["url"] != "https://example.com/hook" {
+		t.Fatalf("expected handler payload url to round-trip")
+	}
+}

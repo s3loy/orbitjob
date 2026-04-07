@@ -13,6 +13,7 @@ type ErrorCode string
 const (
 	ErrCodeValidation ErrorCode = "VALIDATION_ERROR"
 	ErrCodeNotFound   ErrorCode = "NOT_FOUND"
+	ErrCodeConflict   ErrorCode = "CONFLICT"
 	ErrCodeInternal   ErrorCode = "INTERNAL_ERROR"
 )
 
@@ -47,6 +48,24 @@ func toAPIError(err error) APIError {
 			Code:    ErrCodeNotFound,
 			Message: "resource not found",
 			Field:   ne.Resource,
+		}
+	}
+
+	var ce *resource.ConflictError
+	if errors.As(err, &ce) {
+		field := ce.Field
+		if field == "" {
+			field = ce.Resource
+		}
+		message := ce.Message
+		if message == "" {
+			message = "resource conflict"
+		}
+
+		return APIError{
+			Code:    ErrCodeConflict,
+			Message: message,
+			Field:   field,
 		}
 	}
 

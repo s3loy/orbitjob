@@ -22,3 +22,22 @@ func TestToAPIError_NotFound(t *testing.T) {
 		t.Fatalf("expected field=%q, got %q", "job", got.Field)
 	}
 }
+
+func TestToAPIError_Conflict(t *testing.T) {
+	got := toAPIError(&resource.ConflictError{
+		Resource: "job",
+		ID:       42,
+		Field:    "version",
+		Message:  "stale job version",
+	})
+
+	if got.Code != ErrCodeConflict {
+		t.Fatalf("expected code=%q, got %q", ErrCodeConflict, got.Code)
+	}
+	if got.Message != "stale job version" {
+		t.Fatalf("expected message=%q, got %q", "stale job version", got.Message)
+	}
+	if got.Field != "version" {
+		t.Fatalf("expected field=%q, got %q", "version", got.Field)
+	}
+}
