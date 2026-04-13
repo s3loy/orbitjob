@@ -17,7 +17,9 @@ func (r *JobRepository) List(ctx context.Context, in query.ListInput) (_ []query
                     id,
                     name,
                     tenant_id,
+                    priority,
                     trigger_type,
+                    partition_key,
                     cron_expr,
                     timezone,
                     handler_type,
@@ -81,6 +83,7 @@ type rowScanner interface {
 
 func scanJobListItem(scanner rowScanner) (query.ListItem, error) {
 	var out query.ListItem
+	var partitionKey sql.NullString
 	var cronExpr sql.NullString
 	var timezone string
 	var nextRunAt sql.NullTime
@@ -90,7 +93,9 @@ func scanJobListItem(scanner rowScanner) (query.ListItem, error) {
 		&out.ID,
 		&out.Name,
 		&out.TenantID,
+		&out.Priority,
 		&out.TriggerType,
+		&partitionKey,
 		&cronExpr,
 		&timezone,
 		&out.HandlerType,
@@ -106,6 +111,7 @@ func scanJobListItem(scanner rowScanner) (query.ListItem, error) {
 		return query.ListItem{}, fmt.Errorf("scan job list item: %w", err)
 	}
 
+	out.PartitionKey = nullStringPtr(partitionKey)
 	out.NextRunAt = nullTimePtr(nextRunAt)
 	out.LastScheduledAt = nullTimePtr(lastScheduledAt)
 	out.ScheduleSummary = query.BuildScheduleSummary(

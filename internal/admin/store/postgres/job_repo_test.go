@@ -25,22 +25,26 @@ func TestJobRepository_List(t *testing.T) {
 	activeNextRunAt := now.Add(10 * time.Minute).Truncate(time.Second)
 
 	activeJobID := insertTestJob(t, db, testJobSeed{
-		Name:        fmt.Sprintf("active-job-%d", now.UnixNano()),
-		TenantID:    tenantID,
-		TriggerType: triggerTypeCron,
-		CronExpr:    stringPtr("*/10 * * * *"),
-		Timezone:    "Asia/Shanghai",
-		HandlerType: "http",
-		Status:      query.StatusActive,
-		NextRunAt:   &activeNextRunAt,
+		Name:         fmt.Sprintf("active-job-%d", now.UnixNano()),
+		TenantID:     tenantID,
+		Priority:     7,
+		PartitionKey: stringPtr("tenant-a:etl"),
+		TriggerType:  triggerTypeCron,
+		CronExpr:     stringPtr("*/10 * * * *"),
+		Timezone:     "Asia/Shanghai",
+		HandlerType:  "http",
+		Status:       query.StatusActive,
+		NextRunAt:    &activeNextRunAt,
 	})
 	pausedJobID := insertTestJob(t, db, testJobSeed{
-		Name:        fmt.Sprintf("paused-job-%d", now.UnixNano()),
-		TenantID:    tenantID,
-		TriggerType: triggerTypeManual,
-		Timezone:    "UTC",
-		HandlerType: "http",
-		Status:      query.StatusPaused,
+		Name:         fmt.Sprintf("paused-job-%d", now.UnixNano()),
+		TenantID:     tenantID,
+		Priority:     1,
+		PartitionKey: stringPtr("tenant-a:ops"),
+		TriggerType:  triggerTypeManual,
+		Timezone:     "UTC",
+		HandlerType:  "http",
+		Status:       query.StatusPaused,
 	})
 
 	allItems, err := readRepo.List(ctx, query.ListInput{
@@ -63,6 +67,12 @@ func TestJobRepository_List(t *testing.T) {
 	if allItems[0].ScheduleSummary != "manual" {
 		t.Fatalf("expected manual summary, got %q", allItems[0].ScheduleSummary)
 	}
+	if allItems[0].Priority != 1 {
+		t.Fatalf("expected paused priority=%d, got %d", 1, allItems[0].Priority)
+	}
+	if allItems[0].PartitionKey == nil || *allItems[0].PartitionKey != "tenant-a:ops" {
+		t.Fatalf("expected paused partition_key=%q, got %+v", "tenant-a:ops", allItems[0].PartitionKey)
+	}
 
 	if allItems[1].ID != activeJobID {
 		t.Fatalf("expected second item id=%d, got %d", activeJobID, allItems[1].ID)
@@ -75,6 +85,12 @@ func TestJobRepository_List(t *testing.T) {
 	}
 	if allItems[1].HandlerType != "http" {
 		t.Fatalf("expected handler_type=%q, got %q", "http", allItems[1].HandlerType)
+	}
+	if allItems[1].Priority != 7 {
+		t.Fatalf("expected active priority=%d, got %d", 7, allItems[1].Priority)
+	}
+	if allItems[1].PartitionKey == nil || *allItems[1].PartitionKey != "tenant-a:etl" {
+		t.Fatalf("expected active partition_key=%q, got %+v", "tenant-a:etl", allItems[1].PartitionKey)
 	}
 	if allItems[1].NextRunAt == nil {
 		t.Fatalf("expected next_run_at to be set for cron job")
@@ -113,6 +129,8 @@ func TestJobRepository_Get(t *testing.T) {
 	jobID := insertTestJob(t, db, testJobSeed{
 		Name:                 fmt.Sprintf("detail-job-%d", now.UnixNano()),
 		TenantID:             tenantID,
+		Priority:             11,
+		PartitionKey:         stringPtr("tenant-a:reports"),
 		TriggerType:          triggerTypeCron,
 		CronExpr:             stringPtr("*/5 * * * *"),
 		Timezone:             "Asia/Shanghai",
@@ -142,6 +160,12 @@ func TestJobRepository_Get(t *testing.T) {
 	}
 	if item.Version != 1 {
 		t.Fatalf("expected version=%d, got %d", 1, item.Version)
+	}
+	if item.Priority != 11 {
+		t.Fatalf("expected priority=%d, got %d", 11, item.Priority)
+	}
+	if item.PartitionKey == nil || *item.PartitionKey != "tenant-a:reports" {
+		t.Fatalf("expected partition_key=%q, got %+v", "tenant-a:reports", item.PartitionKey)
 	}
 	if item.CronExpr == nil || *item.CronExpr != "*/5 * * * *" {
 		t.Fatalf("expected cron_expr to be loaded, got %v", item.CronExpr)
@@ -223,6 +247,8 @@ func TestJobRepository_GetHidesDeletedJob(t *testing.T) {
 type testJobSeed struct {
 	Name                 string
 	TenantID             string
+	Priority             int
+	PartitionKey         *string
 	TriggerType          string
 	CronExpr             *string
 	Timezone             string
@@ -277,6 +303,8 @@ func insertTestJob(t *testing.T, db *sql.DB, in testJobSeed) int64 {
 		INSERT INTO jobs (
 			name,
 			tenant_id,
+			priority,
+			partition_key,
 			trigger_type,
 			cron_expr,
 			timezone,
@@ -293,13 +321,15 @@ func insertTestJob(t *testing.T, db *sql.DB, in testJobSeed) int64 {
 			last_scheduled_at
 		)
 		VALUES (
-			$1, $2, $3, $4, $5, $6, $7::jsonb,
-			$8, $9, $10, $11, $12, $13, $14, $15, $16
+			$1, $2, $3, $4, $5, $6, $7, $8::jsonb,
+			$9, $10, $11, $12, $13, $14, $15, $16, $17, $18
 		)
 		RETURNING id
 	`,
 		in.Name,
 		in.TenantID,
+		in.Priority,
+		in.PartitionKey,
 		in.TriggerType,
 		in.CronExpr,
 		in.Timezone,

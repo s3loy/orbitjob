@@ -21,9 +21,11 @@ func TestJobRepository_Update(t *testing.T) {
 
 	now := time.Now().UTC().Truncate(time.Second)
 	cronExpr := "*/15 * * * *"
+	partitionKey := "tenant-update:batch"
 	jobID := seedJob(t, db, seedJobInput{
 		Name:        "old-name",
 		TenantID:    "tenant-update",
+		Priority:    1,
 		TriggerType: domainjob.TriggerTypeManual,
 		Timezone:    "UTC",
 		HandlerType: "http",
@@ -34,6 +36,8 @@ func TestJobRepository_Update(t *testing.T) {
 		TenantID:             "tenant-update",
 		Version:              1,
 		Name:                 "nightly-report",
+		Priority:             9,
+		PartitionKey:         &partitionKey,
 		TriggerType:          domainjob.TriggerTypeCron,
 		CronExpr:             &cronExpr,
 		Timezone:             "Asia/Shanghai",
@@ -69,21 +73,25 @@ func TestJobRepository_Update(t *testing.T) {
 	}
 
 	var (
-		storedName        string
-		storedVersion     int
-		storedCronExpr    sql.NullString
-		storedTimezone    string
-		storedHandlerType string
-		storedAuditCount  int
+		storedName         string
+		storedVersion      int
+		storedPriority     int
+		storedPartitionKey sql.NullString
+		storedCronExpr     sql.NullString
+		storedTimezone     string
+		storedHandlerType  string
+		storedAuditCount   int
 	)
 
 	err = db.QueryRowContext(context.Background(), `
-		SELECT name, version, cron_expr, timezone, handler_type
+		SELECT name, version, priority, partition_key, cron_expr, timezone, handler_type
 		FROM jobs
 		WHERE tenant_id = $1 AND id = $2
 	`, "tenant-update", jobID).Scan(
 		&storedName,
 		&storedVersion,
+		&storedPriority,
+		&storedPartitionKey,
 		&storedCronExpr,
 		&storedTimezone,
 		&storedHandlerType,
@@ -96,6 +104,12 @@ func TestJobRepository_Update(t *testing.T) {
 	}
 	if storedVersion != 2 {
 		t.Fatalf("expected stored version=%d, got %d", 2, storedVersion)
+	}
+	if storedPriority != 9 {
+		t.Fatalf("expected stored priority=%d, got %d", 9, storedPriority)
+	}
+	if !storedPartitionKey.Valid || storedPartitionKey.String != partitionKey {
+		t.Fatalf("expected stored partition_key=%q, got %+v", partitionKey, storedPartitionKey)
 	}
 	if !storedCronExpr.Valid || storedCronExpr.String != cronExpr {
 		t.Fatalf("expected stored cron_expr=%q, got %+v", cronExpr, storedCronExpr)
@@ -211,6 +225,7 @@ func TestJobRepository_UpdateRollsBackWhenAuditInsertFails(t *testing.T) {
 type seedJobInput struct {
 	Name        string
 	TenantID    string
+	Priority    int
 	TriggerType string
 	CronExpr    *string
 	Timezone    string
@@ -225,16 +240,18 @@ func seedJob(t *testing.T, db *sql.DB, in seedJobInput) int64 {
 		INSERT INTO jobs (
 			name,
 			tenant_id,
+			priority,
 			trigger_type,
 			cron_expr,
 			timezone,
 			handler_type
 		)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING id
 	`,
 		in.Name,
 		in.TenantID,
+		in.Priority,
 		in.TriggerType,
 		in.CronExpr,
 		in.Timezone,

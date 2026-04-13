@@ -4,6 +4,7 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 
@@ -17,13 +18,16 @@ func TestJobRepository_Create(t *testing.T) {
 
 	now := time.Now().UTC()
 	cron := "*/5 * * * *"
+	partitionKey := "tenant-default:video"
 	input := domainjob.CreateInput{
-		Name:        "demo-job",
-		TenantID:    "default",
-		TriggerType: domainjob.TriggerTypeCron,
-		CronExpr:    &cron,
-		Timezone:    "UTC",
-		HandlerType: "http",
+		Name:         "demo-job",
+		TenantID:     "default",
+		Priority:     4,
+		PartitionKey: &partitionKey,
+		TriggerType:  domainjob.TriggerTypeCron,
+		CronExpr:     &cron,
+		Timezone:     "UTC",
+		HandlerType:  "http",
 		HandlerPayload: map[string]any{
 			"url": "https://example.com/hook",
 		},
@@ -62,5 +66,24 @@ func TestJobRepository_Create(t *testing.T) {
 	}
 	if out.UpdatedAt.IsZero() {
 		t.Fatalf("expected updated_at to be set")
+	}
+
+	var (
+		storedPriority     int
+		storedPartitionKey sql.NullString
+	)
+	err = db.QueryRowContext(context.Background(), `
+		SELECT priority, partition_key
+		FROM jobs
+		WHERE tenant_id = $1 AND id = $2
+	`, input.TenantID, out.ID).Scan(&storedPriority, &storedPartitionKey)
+	if err != nil {
+		t.Fatalf("reload job: %v", err)
+	}
+	if storedPriority != 4 {
+		t.Fatalf("expected stored priority=%d, got %d", 4, storedPriority)
+	}
+	if !storedPartitionKey.Valid || storedPartitionKey.String != partitionKey {
+		t.Fatalf("expected stored partition_key=%q, got %+v", partitionKey, storedPartitionKey)
 	}
 }

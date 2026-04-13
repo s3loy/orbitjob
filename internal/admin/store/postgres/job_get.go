@@ -20,7 +20,9 @@ func (r *JobRepository) Get(ctx context.Context, in query.GetInput) (query.GetIt
 			name,
 			tenant_id,
 			version,
+			priority,
 			trigger_type,
+			partition_key,
 			cron_expr,
 			timezone,
 			handler_type,
@@ -67,6 +69,7 @@ func (r *JobRepository) Get(ctx context.Context, in query.GetInput) (query.GetIt
 
 func scanJobGetItem(scanner rowScanner) (query.GetItem, error) {
 	var out query.GetItem
+	var partitionKey sql.NullString
 	var cronExpr sql.NullString
 	var nextRunAt sql.NullTime
 	var lastScheduledAt sql.NullTime
@@ -77,7 +80,9 @@ func scanJobGetItem(scanner rowScanner) (query.GetItem, error) {
 		&out.Name,
 		&out.TenantID,
 		&out.Version,
+		&out.Priority,
 		&out.TriggerType,
+		&partitionKey,
 		&cronExpr,
 		&out.Timezone,
 		&out.HandlerType,
@@ -98,6 +103,7 @@ func scanJobGetItem(scanner rowScanner) (query.GetItem, error) {
 		return query.GetItem{}, err
 	}
 
+	out.PartitionKey = nullStringPtr(partitionKey)
 	out.CronExpr = nullStringPtr(cronExpr)
 	out.NextRunAt = nullTimePtr(nextRunAt)
 	out.LastScheduledAt = nullTimePtr(lastScheduledAt)
