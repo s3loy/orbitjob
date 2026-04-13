@@ -13,13 +13,15 @@ type ListItem struct {
 	ID       int64  `json:"id"`
 	Name     string `json:"name"`
 	TenantID string `json:"tenant_id"`
+	Priority int    `json:"priority"`
 
-	TriggerType       string `json:"trigger_type"`
-	ScheduleSummary   string `json:"schedule_summary"`
-	HandlerType       string `json:"handler_type"`
-	ConcurrencyPolicy string `json:"concurrency_policy"`
-	MisfirePolicy     string `json:"misfire_policy"`
-	Status            string `json:"status"`
+	TriggerType       string  `json:"trigger_type"`
+	PartitionKey      *string `json:"partition_key"`
+	ScheduleSummary   string  `json:"schedule_summary"`
+	HandlerType       string  `json:"handler_type"`
+	ConcurrencyPolicy string  `json:"concurrency_policy"`
+	MisfirePolicy     string  `json:"misfire_policy"`
+	Status            string  `json:"status"`
 
 	NextRunAt       *time.Time `json:"next_run_at"`
 	LastScheduledAt *time.Time `json:"last_scheduled_at"`

@@ -79,6 +79,8 @@ func TestHandler_RegisterAndCreateJob(t *testing.T) {
 
 	body := `{
                 "name":"demo-job",
+                "priority":7,
+                "partition_key":"tenant-a:video",
                 "trigger_type":"manual",
                 "handler_type":"http",
                 "handler_payload":{"url":"https://example.com/hook"}
@@ -105,6 +107,12 @@ func TestHandler_RegisterAndCreateJob(t *testing.T) {
 		t.Fatalf("expected input trigger_type=%q, got %q", domainjob.TriggerTypeManual,
 			useCase.in.TriggerType)
 	}
+	if useCase.in.Priority != 7 {
+		t.Fatalf("expected input priority=%d, got %d", 7, useCase.in.Priority)
+	}
+	if useCase.in.PartitionKey == nil || *useCase.in.PartitionKey != "tenant-a:video" {
+		t.Fatalf("expected input partition_key=%q, got %+v", "tenant-a:video", useCase.in.PartitionKey)
+	}
 	if useCase.in.HandlerType != "http" {
 		t.Fatalf("expected input handler_type=%q, got %q", "http", useCase.in.HandlerType)
 	}
@@ -129,10 +137,15 @@ func TestHandler_RegisterAndListJobs(t *testing.T) {
 	useCase := &stubListJobsUseCase{
 		out: []query.ListItem{
 			{
-				ID:                1,
-				Name:              "demo-job",
-				TenantID:          "tenant-a",
-				TriggerType:       domainjob.TriggerTypeCron,
+				ID:          1,
+				Name:        "demo-job",
+				TenantID:    "tenant-a",
+				Priority:    3,
+				TriggerType: domainjob.TriggerTypeCron,
+				PartitionKey: func() *string {
+					value := "tenant-a:analytics"
+					return &value
+				}(),
 				ScheduleSummary:   "cron: */5 * * * * (UTC)",
 				HandlerType:       "http",
 				ConcurrencyPolicy: domainjob.ConcurrencyAllow,
@@ -185,6 +198,12 @@ func TestHandler_RegisterAndListJobs(t *testing.T) {
 	if out.Items[0].ID != 1 {
 		t.Fatalf("expected response id=%d, got %d", 1, out.Items[0].ID)
 	}
+	if out.Items[0].Priority != 3 {
+		t.Fatalf("expected priority=%d, got %d", 3, out.Items[0].Priority)
+	}
+	if out.Items[0].PartitionKey == nil || *out.Items[0].PartitionKey != "tenant-a:analytics" {
+		t.Fatalf("expected partition_key=%q, got %+v", "tenant-a:analytics", out.Items[0].PartitionKey)
+	}
 	if out.Items[0].ScheduleSummary != "cron: */5 * * * * (UTC)" {
 		t.Fatalf("expected schedule_summary=%q, got %q",
 			"cron: */5 * * * * (UTC)", out.Items[0].ScheduleSummary)
@@ -200,11 +219,16 @@ func TestHandler_RegisterAndGetJob(t *testing.T) {
 	createdAt := time.Date(2026, 3, 22, 1, 0, 0, 0, time.UTC)
 	useCase := &stubGetJobUseCase{
 		out: query.GetItem{
-			ID:                   1,
-			Name:                 "demo-job",
-			TenantID:             "tenant-a",
-			Version:              2,
-			TriggerType:          domainjob.TriggerTypeCron,
+			ID:          1,
+			Name:        "demo-job",
+			TenantID:    "tenant-a",
+			Version:     2,
+			Priority:    6,
+			TriggerType: domainjob.TriggerTypeCron,
+			PartitionKey: func() *string {
+				value := "tenant-a:batch"
+				return &value
+			}(),
 			CronExpr:             &cronExpr,
 			Timezone:             "UTC",
 			ScheduleSummary:      "cron: */5 * * * * (UTC)",
@@ -252,6 +276,12 @@ func TestHandler_RegisterAndGetJob(t *testing.T) {
 	}
 	if out.Version != 2 {
 		t.Fatalf("expected version=%d, got %d", 2, out.Version)
+	}
+	if out.Priority != 6 {
+		t.Fatalf("expected priority=%d, got %d", 6, out.Priority)
+	}
+	if out.PartitionKey == nil || *out.PartitionKey != "tenant-a:batch" {
+		t.Fatalf("expected partition_key=%q, got %+v", "tenant-a:batch", out.PartitionKey)
 	}
 	if out.ScheduleSummary != "cron: */5 * * * * (UTC)" {
 		t.Fatalf("expected schedule_summary=%q, got %q", "cron: */5 * * * * (UTC)", out.ScheduleSummary)
