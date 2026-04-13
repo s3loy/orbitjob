@@ -14,6 +14,8 @@ func NormalizeUpdate(now time.Time, in UpdateInput) (UpdateSpec, error) {
 	createSpec, err := NormalizeCreate(now, CreateInput{
 		Name:                 in.Name,
 		TenantID:             in.TenantID,
+		Priority:             in.Priority,
+		PartitionKey:         in.PartitionKey,
 		TriggerType:          in.TriggerType,
 		CronExpr:             in.CronExpr,
 		Timezone:             in.Timezone,

@@ -24,6 +24,8 @@ const (
 type CreateInput struct {
 	Name                 string
 	TenantID             string
+	Priority             int
+	PartitionKey         *string
 	TriggerType          string
 	CronExpr             *string
 	Timezone             string

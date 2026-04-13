@@ -38,6 +38,16 @@ func NormalizeCreate(now time.Time, in CreateInput) (CreateSpec, error) {
 		return CreateSpec{}, validationError("tenant_id", "must be <= 64 characters")
 	}
 
+	priority := in.Priority
+	if priority < 0 {
+		return CreateSpec{}, validationError("priority", "must be >= 0")
+	}
+
+	partitionKey, err := normalizeOptionalString(in.PartitionKey, "partition_key", 64)
+	if err != nil {
+		return CreateSpec{}, err
+	}
+
 	timezone := strings.TrimSpace(in.Timezone)
 	if timezone == "" {
 		timezone = DefaultTimezone
@@ -132,6 +142,8 @@ func NormalizeCreate(now time.Time, in CreateInput) (CreateSpec, error) {
 	return CreateSpec{
 		Name:                 name,
 		TenantID:             tenantID,
+		Priority:             priority,
+		PartitionKey:         partitionKey,
 		TriggerType:          triggerType,
 		CronExpr:             cronExpr,
 		Timezone:             timezone,
@@ -182,4 +194,20 @@ func validateHandlerPayload(in map[string]any) error {
 	}
 
 	return nil
+}
+
+func normalizeOptionalString(in *string, field string, maxLen int) (*string, error) {
+	if in == nil {
+		return nil, nil
+	}
+
+	value := strings.TrimSpace(*in)
+	if value == "" {
+		return nil, nil
+	}
+	if len(value) > maxLen {
+		return nil, validationErrorf(field, "must be <= %d characters", maxLen)
+	}
+
+	return &value, nil
 }
