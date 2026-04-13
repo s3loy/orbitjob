@@ -35,3 +35,5 @@ go.work.sum
 .gomodcache/
 .golangci-cache/
 .worktrees/
+
+docs/superpowers/

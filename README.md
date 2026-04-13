@@ -154,6 +154,7 @@ go test -tags integration ./internal/admin/store/postgres ./internal/core/store/
 | [`README.md`](./README.md) | 中文总览与开发参考 |
 | [`README.en.md`](./README.en.md) | English overview |
 | [`docs/job-lifecycle.md`](./docs/job-lifecycle.md) | Job 状态流转与接口约束 |
+| [`docs/execution-plane.md`](./docs/execution-plane.md) | Execution plane 契约与基础语义 |
 
 ## License
 
