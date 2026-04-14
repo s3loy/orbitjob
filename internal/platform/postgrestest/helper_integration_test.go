@@ -21,106 +21,29 @@ const (
 )
 
 func TestApplySchemaWaitsForSharedDatabaseLock(t *testing.T) {
-	if err := config.LoadDotenv(); err != nil {
-		t.Fatalf("LoadDotenv() error = %v", err)
-	}
-
-	dsn := os.Getenv("TEST_DATABASE_DSN")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_DSN is not set")
-	}
-	dsn, _, err := packageDSN(dsn)
-	if err != nil {
-		t.Fatalf("packageDSN() error = %v", err)
-	}
-
-	holderDB, err := open(dsn)
-	if err != nil {
-		t.Fatalf("open holder db: %v", err)
-	}
-	t.Cleanup(func() { _ = holderDB.Close() })
-
-	observerDB, err := open(dsn)
-	if err != nil {
-		t.Fatalf("open observer db: %v", err)
-	}
-	t.Cleanup(func() { _ = observerDB.Close() })
+	dsn := packageTestDSN(t)
+	holderDB := openTestDB(t, dsn, "holder")
+	observerDB := openTestDB(t, dsn, "observer")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	holderConn, err := holderDB.Conn(ctx)
-	if err != nil {
-		t.Fatalf("holder Conn() error = %v", err)
-	}
-	t.Cleanup(func() { _ = holderConn.Close() })
+	holderConn := openTestConn(t, holderDB, ctx, "holder")
+	unlock := mustAcquireAdvisoryLock(t, holderConn, expectedLockClassID, expectedLockObjectID)
+	t.Cleanup(unlock)
 
-	if _, err := holderConn.ExecContext(ctx,
-		`SELECT pg_advisory_lock($1, $2)`,
-		expectedLockClassID,
-		expectedLockObjectID,
-	); err != nil {
-		t.Fatalf("pg_advisory_lock() error = %v", err)
-	}
-
-	locked := true
-	t.Cleanup(func() {
-		if !locked {
-			return
-		}
-		unlockCtx, unlockCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer unlockCancel()
-		if _, err := holderConn.ExecContext(unlockCtx,
-			`SELECT pg_advisory_unlock($1, $2)`,
-			expectedLockClassID,
-			expectedLockObjectID,
-		); err != nil {
-			t.Fatalf("pg_advisory_unlock() error = %v", err)
-		}
-	})
-
-	done := make(chan error, 1)
-	go func() {
-		done <- withAdvisoryLock(
-			dsn,
-			sharedSchemaLockClassID,
-			sharedSchemaLockObjectID,
-			func(db *sql.DB) error {
-				return applySchemaWithDB(dsn, db)
-			},
-		)
-	}()
+	done := runSchemaApply(t, dsn)
 
 	waiting, err := waitForWaitingLock(ctx, observerDB, expectedLockClassID, expectedLockObjectID)
 	if err != nil {
 		t.Fatalf("waitForWaitingLock() error = %v", err)
 	}
 	if !waiting {
-		select {
-		case err := <-done:
-			t.Fatalf("schema setup finished before waiting on shared database lock: %v", err)
-		default:
-			t.Fatalf("schema setup did not request the shared database lock")
-		}
+		failWaitingForSharedLock(t, done)
 	}
 
-	if _, err := holderConn.ExecContext(ctx,
-		`SELECT pg_advisory_unlock($1, $2)`,
-		expectedLockClassID,
-		expectedLockObjectID,
-	); err != nil {
-		t.Fatalf("pg_advisory_unlock() error = %v", err)
-	}
-	locked = false
-
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("schema setup error = %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("schema setup did not finish after releasing the shared database lock")
-	}
+	unlock()
+	assertSchemaApplyFinished(t, done)
 }
 
 func TestOpenIsolatesParallelTests(t *testing.T) {
@@ -236,4 +159,123 @@ func waitForWaitingLock(parent context.Context, db *sql.DB, classID, objectID in
 	}
 
 	return false, nil
+}
+
+func packageTestDSN(t *testing.T) string {
+	t.Helper()
+
+	if err := config.LoadDotenv(); err != nil {
+		t.Fatalf("LoadDotenv() error = %v", err)
+	}
+
+	dsn := os.Getenv("TEST_DATABASE_DSN")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_DSN is not set")
+	}
+
+	packagedDSN, _, err := packageDSN(dsn)
+	if err != nil {
+		t.Fatalf("packageDSN() error = %v", err)
+	}
+
+	return packagedDSN
+}
+
+func openTestDB(t *testing.T, dsn string, name string) *sql.DB {
+	t.Helper()
+
+	db, err := open(dsn)
+	if err != nil {
+		t.Fatalf("open %s db: %v", name, err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	return db
+}
+
+func openTestConn(t *testing.T, db *sql.DB, ctx context.Context, name string) *sql.Conn {
+	t.Helper()
+
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("%s Conn() error = %v", name, err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+
+	return conn
+}
+
+func mustAcquireAdvisoryLock(t *testing.T, conn *sql.Conn, classID int, objectID int) func() {
+	t.Helper()
+
+	lockCtx, lockCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer lockCancel()
+
+	if _, err := conn.ExecContext(lockCtx,
+		`SELECT pg_advisory_lock($1, $2)`,
+		classID,
+		objectID,
+	); err != nil {
+		t.Fatalf("pg_advisory_lock() error = %v", err)
+	}
+
+	locked := true
+	return func() {
+		if !locked {
+			return
+		}
+
+		locked = false
+		unlockCtx, unlockCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer unlockCancel()
+		if _, err := conn.ExecContext(unlockCtx,
+			`SELECT pg_advisory_unlock($1, $2)`,
+			classID,
+			objectID,
+		); err != nil {
+			t.Fatalf("pg_advisory_unlock() error = %v", err)
+		}
+	}
+}
+
+func runSchemaApply(t *testing.T, dsn string) <-chan error {
+	t.Helper()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- withAdvisoryLock(
+			dsn,
+			sharedSchemaLockClassID,
+			sharedSchemaLockObjectID,
+			func(db *sql.DB) error {
+				return applySchemaWithDB(dsn, db)
+			},
+		)
+	}()
+
+	return done
+}
+
+func failWaitingForSharedLock(t *testing.T, done <-chan error) {
+	t.Helper()
+
+	select {
+	case err := <-done:
+		t.Fatalf("schema setup finished before waiting on shared database lock: %v", err)
+	default:
+		t.Fatalf("schema setup did not request the shared database lock")
+	}
+}
+
+func assertSchemaApplyFinished(t *testing.T, done <-chan error) {
+	t.Helper()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("schema setup error = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("schema setup did not finish after releasing the shared database lock")
+	}
 }

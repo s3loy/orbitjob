@@ -121,85 +121,17 @@ func TestJobRepository_Get(t *testing.T) {
 	readRepo := NewJobRepository(db)
 	ctx := context.Background()
 
-	now := time.Now().UTC().Truncate(time.Second)
-	tenantID := fmt.Sprintf("tenant-get-%d", now.UnixNano())
-	nextRunAt := now.Add(5 * time.Minute)
-	lastScheduledAt := now.Add(-2 * time.Minute)
-
-	jobID := insertTestJob(t, db, testJobSeed{
-		Name:                 fmt.Sprintf("detail-job-%d", now.UnixNano()),
-		TenantID:             tenantID,
-		Priority:             11,
-		PartitionKey:         stringPtr("tenant-a:reports"),
-		TriggerType:          triggerTypeCron,
-		CronExpr:             stringPtr("*/5 * * * *"),
-		Timezone:             "Asia/Shanghai",
-		HandlerType:          "http",
-		HandlerPayload:       `{"url":"https://example.com/hook"}`,
-		TimeoutSec:           120,
-		RetryLimit:           3,
-		RetryBackoffSec:      15,
-		RetryBackoffStrategy: "exponential",
-		ConcurrencyPolicy:    "forbid",
-		MisfirePolicy:        "fire_now",
-		Status:               query.StatusActive,
-		NextRunAt:            &nextRunAt,
-		LastScheduledAt:      &lastScheduledAt,
-	})
+	seeded := seedJobForGetTest(t, db)
 
 	item, err := readRepo.Get(ctx, query.GetInput{
-		ID:       jobID,
-		TenantID: tenantID,
+		ID:       seeded.jobID,
+		TenantID: seeded.tenantID,
 	})
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
 
-	if item.ID != jobID {
-		t.Fatalf("expected id=%d, got %d", jobID, item.ID)
-	}
-	if item.Version != 1 {
-		t.Fatalf("expected version=%d, got %d", 1, item.Version)
-	}
-	if item.Priority != 11 {
-		t.Fatalf("expected priority=%d, got %d", 11, item.Priority)
-	}
-	if item.PartitionKey == nil || *item.PartitionKey != "tenant-a:reports" {
-		t.Fatalf("expected partition_key=%q, got %+v", "tenant-a:reports", item.PartitionKey)
-	}
-	if item.CronExpr == nil || *item.CronExpr != "*/5 * * * *" {
-		t.Fatalf("expected cron_expr to be loaded, got %v", item.CronExpr)
-	}
-	if item.ScheduleSummary != "cron: */5 * * * * (Asia/Shanghai)" {
-		t.Fatalf("unexpected schedule summary: %q", item.ScheduleSummary)
-	}
-	if item.TimeoutSec != 120 {
-		t.Fatalf("expected timeout_sec=%d, got %d", 120, item.TimeoutSec)
-	}
-	if item.RetryLimit != 3 {
-		t.Fatalf("expected retry_limit=%d, got %d", 3, item.RetryLimit)
-	}
-	if item.RetryBackoffSec != 15 {
-		t.Fatalf("expected retry_backoff_sec=%d, got %d", 15, item.RetryBackoffSec)
-	}
-	if item.RetryBackoffStrategy != "exponential" {
-		t.Fatalf("expected retry_backoff_strategy=%q, got %q", "exponential", item.RetryBackoffStrategy)
-	}
-	if item.ConcurrencyPolicy != "forbid" {
-		t.Fatalf("expected concurrency_policy=%q, got %q", "forbid", item.ConcurrencyPolicy)
-	}
-	if item.MisfirePolicy != "fire_now" {
-		t.Fatalf("expected misfire_policy=%q, got %q", "fire_now", item.MisfirePolicy)
-	}
-	if item.HandlerPayload["url"] != "https://example.com/hook" {
-		t.Fatalf("expected handler_payload.url to be loaded, got %#v", item.HandlerPayload["url"])
-	}
-	if item.NextRunAt == nil || !item.NextRunAt.Equal(nextRunAt) {
-		t.Fatalf("expected next_run_at=%v, got %v", nextRunAt, item.NextRunAt)
-	}
-	if item.LastScheduledAt == nil || !item.LastScheduledAt.Equal(lastScheduledAt) {
-		t.Fatalf("expected last_scheduled_at=%v, got %v", lastScheduledAt, item.LastScheduledAt)
-	}
+	assertLoadedJobDetail(t, item, seeded)
 }
 
 func TestJobRepository_GetHidesDeletedJob(t *testing.T) {
@@ -263,6 +195,13 @@ type testJobSeed struct {
 	Status               string
 	NextRunAt            *time.Time
 	LastScheduledAt      *time.Time
+}
+
+type getJobSeed struct {
+	jobID           int64
+	tenantID        string
+	nextRunAt       time.Time
+	lastScheduledAt time.Time
 }
 
 const (
@@ -350,6 +289,105 @@ func insertTestJob(t *testing.T, db *sql.DB, in testJobSeed) int64 {
 	}
 
 	return id
+}
+
+func seedJobForGetTest(t *testing.T, db *sql.DB) getJobSeed {
+	t.Helper()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	tenantID := fmt.Sprintf("tenant-get-%d", now.UnixNano())
+	nextRunAt := now.Add(5 * time.Minute)
+	lastScheduledAt := now.Add(-2 * time.Minute)
+
+	jobID := insertTestJob(t, db, testJobSeed{
+		Name:                 fmt.Sprintf("detail-job-%d", now.UnixNano()),
+		TenantID:             tenantID,
+		Priority:             11,
+		PartitionKey:         stringPtr("tenant-a:reports"),
+		TriggerType:          triggerTypeCron,
+		CronExpr:             stringPtr("*/5 * * * *"),
+		Timezone:             "Asia/Shanghai",
+		HandlerType:          "http",
+		HandlerPayload:       `{"url":"https://example.com/hook"}`,
+		TimeoutSec:           120,
+		RetryLimit:           3,
+		RetryBackoffSec:      15,
+		RetryBackoffStrategy: "exponential",
+		ConcurrencyPolicy:    "forbid",
+		MisfirePolicy:        "fire_now",
+		Status:               query.StatusActive,
+		NextRunAt:            &nextRunAt,
+		LastScheduledAt:      &lastScheduledAt,
+	})
+
+	return getJobSeed{
+		jobID:           jobID,
+		tenantID:        tenantID,
+		nextRunAt:       nextRunAt,
+		lastScheduledAt: lastScheduledAt,
+	}
+}
+
+func assertLoadedJobDetail(t *testing.T, item query.GetItem, want getJobSeed) {
+	t.Helper()
+
+	assertLoadedJobIdentity(t, item, want)
+	assertLoadedJobExecution(t, item, want)
+}
+
+func assertLoadedJobIdentity(t *testing.T, item query.GetItem, want getJobSeed) {
+	t.Helper()
+
+	if item.ID != want.jobID {
+		t.Fatalf("expected id=%d, got %d", want.jobID, item.ID)
+	}
+	if item.Version != 1 {
+		t.Fatalf("expected version=%d, got %d", 1, item.Version)
+	}
+	if item.Priority != 11 {
+		t.Fatalf("expected priority=%d, got %d", 11, item.Priority)
+	}
+	if item.PartitionKey == nil || *item.PartitionKey != "tenant-a:reports" {
+		t.Fatalf("expected partition_key=%q, got %+v", "tenant-a:reports", item.PartitionKey)
+	}
+	if item.CronExpr == nil || *item.CronExpr != "*/5 * * * *" {
+		t.Fatalf("expected cron_expr to be loaded, got %v", item.CronExpr)
+	}
+	if item.ScheduleSummary != "cron: */5 * * * * (Asia/Shanghai)" {
+		t.Fatalf("unexpected schedule summary: %q", item.ScheduleSummary)
+	}
+	if item.TimeoutSec != 120 {
+		t.Fatalf("expected timeout_sec=%d, got %d", 120, item.TimeoutSec)
+	}
+}
+
+func assertLoadedJobExecution(t *testing.T, item query.GetItem, want getJobSeed) {
+	t.Helper()
+
+	if item.RetryLimit != 3 {
+		t.Fatalf("expected retry_limit=%d, got %d", 3, item.RetryLimit)
+	}
+	if item.RetryBackoffSec != 15 {
+		t.Fatalf("expected retry_backoff_sec=%d, got %d", 15, item.RetryBackoffSec)
+	}
+	if item.RetryBackoffStrategy != "exponential" {
+		t.Fatalf("expected retry_backoff_strategy=%q, got %q", "exponential", item.RetryBackoffStrategy)
+	}
+	if item.ConcurrencyPolicy != "forbid" {
+		t.Fatalf("expected concurrency_policy=%q, got %q", "forbid", item.ConcurrencyPolicy)
+	}
+	if item.MisfirePolicy != "fire_now" {
+		t.Fatalf("expected misfire_policy=%q, got %q", "fire_now", item.MisfirePolicy)
+	}
+	if item.HandlerPayload["url"] != "https://example.com/hook" {
+		t.Fatalf("expected handler_payload.url to be loaded, got %#v", item.HandlerPayload["url"])
+	}
+	if item.NextRunAt == nil || !item.NextRunAt.Equal(want.nextRunAt) {
+		t.Fatalf("expected next_run_at=%v, got %v", want.nextRunAt, item.NextRunAt)
+	}
+	if item.LastScheduledAt == nil || !item.LastScheduledAt.Equal(want.lastScheduledAt) {
+		t.Fatalf("expected last_scheduled_at=%v, got %v", want.lastScheduledAt, item.LastScheduledAt)
+	}
 }
 
 func stringPtr(s string) *string {

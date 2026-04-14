@@ -19,119 +19,17 @@ func TestJobRepository_Update(t *testing.T) {
 	db := postgrestest.Open(t)
 	repo := NewJobRepository(db)
 
-	now := time.Now().UTC().Truncate(time.Second)
-	cronExpr := "*/15 * * * *"
-	partitionKey := "tenant-update:batch"
-	jobID := seedJob(t, db, seedJobInput{
-		Name:        "old-name",
-		TenantID:    "tenant-update",
-		Priority:    1,
-		TriggerType: domainjob.TriggerTypeManual,
-		Timezone:    "UTC",
-		HandlerType: "http",
-	})
-
-	spec, err := domainjob.NormalizeUpdate(now, domainjob.UpdateInput{
-		ID:                   jobID,
-		TenantID:             "tenant-update",
-		Version:              1,
-		Name:                 "nightly-report",
-		Priority:             9,
-		PartitionKey:         &partitionKey,
-		TriggerType:          domainjob.TriggerTypeCron,
-		CronExpr:             &cronExpr,
-		Timezone:             "Asia/Shanghai",
-		HandlerType:          "http",
-		HandlerPayload:       map[string]any{"url": "https://example.com/hook"},
-		TimeoutSec:           120,
-		RetryLimit:           3,
-		RetryBackoffSec:      10,
-		RetryBackoffStrategy: domainjob.RetryBackoffExponential,
-		ConcurrencyPolicy:    domainjob.ConcurrencyForbid,
-		MisfirePolicy:        domainjob.MisfireFireNow,
-	})
-	if err != nil {
-		t.Fatalf("NormalizeUpdate() error = %v", err)
-	}
+	fixture := seedUpdateJobFixture(t, db)
+	spec := normalizeUpdateSpecForTest(t, fixture)
 
 	out, err := repo.Update(context.Background(), spec, "control-plane-user")
 	if err != nil {
 		t.Fatalf("Update() error = %v", err)
 	}
 
-	if out.ID != jobID {
-		t.Fatalf("expected id=%d, got %d", jobID, out.ID)
-	}
-	if out.Name != "nightly-report" {
-		t.Fatalf("expected name=%q, got %q", "nightly-report", out.Name)
-	}
-	if out.Version != 2 {
-		t.Fatalf("expected version=%d, got %d", 2, out.Version)
-	}
-	if out.NextRunAt == nil {
-		t.Fatalf("expected next_run_at to be set")
-	}
-
-	var (
-		storedName         string
-		storedVersion      int
-		storedPriority     int
-		storedPartitionKey sql.NullString
-		storedCronExpr     sql.NullString
-		storedTimezone     string
-		storedHandlerType  string
-		storedAuditCount   int
-	)
-
-	err = db.QueryRowContext(context.Background(), `
-		SELECT name, version, priority, partition_key, cron_expr, timezone, handler_type
-		FROM jobs
-		WHERE tenant_id = $1 AND id = $2
-	`, "tenant-update", jobID).Scan(
-		&storedName,
-		&storedVersion,
-		&storedPriority,
-		&storedPartitionKey,
-		&storedCronExpr,
-		&storedTimezone,
-		&storedHandlerType,
-	)
-	if err != nil {
-		t.Fatalf("reload job: %v", err)
-	}
-	if storedName != "nightly-report" {
-		t.Fatalf("expected stored name=%q, got %q", "nightly-report", storedName)
-	}
-	if storedVersion != 2 {
-		t.Fatalf("expected stored version=%d, got %d", 2, storedVersion)
-	}
-	if storedPriority != 9 {
-		t.Fatalf("expected stored priority=%d, got %d", 9, storedPriority)
-	}
-	if !storedPartitionKey.Valid || storedPartitionKey.String != partitionKey {
-		t.Fatalf("expected stored partition_key=%q, got %+v", partitionKey, storedPartitionKey)
-	}
-	if !storedCronExpr.Valid || storedCronExpr.String != cronExpr {
-		t.Fatalf("expected stored cron_expr=%q, got %+v", cronExpr, storedCronExpr)
-	}
-	if storedTimezone != "Asia/Shanghai" {
-		t.Fatalf("expected stored timezone=%q, got %q", "Asia/Shanghai", storedTimezone)
-	}
-	if storedHandlerType != "http" {
-		t.Fatalf("expected stored handler_type=%q, got %q", "http", storedHandlerType)
-	}
-
-	err = db.QueryRowContext(context.Background(), `
-		SELECT count(*)
-		FROM job_change_audits
-		WHERE tenant_id = $1 AND job_id = $2 AND action = 'update' AND changed_by = $3
-	`, "tenant-update", jobID, "control-plane-user").Scan(&storedAuditCount)
-	if err != nil {
-		t.Fatalf("count audits: %v", err)
-	}
-	if storedAuditCount != 1 {
-		t.Fatalf("expected 1 audit row, got %d", storedAuditCount)
-	}
+	assertUpdatedJobResult(t, out, fixture.jobID)
+	assertStoredUpdatedJob(t, loadStoredUpdatedJob(t, db, fixture.tenantID, fixture.jobID), fixture)
+	assertUpdateAuditCount(t, db, fixture.tenantID, fixture.jobID, "control-plane-user", 1)
 }
 
 func TestJobRepository_UpdateVersionConflict(t *testing.T) {
@@ -232,6 +130,24 @@ type seedJobInput struct {
 	HandlerType string
 }
 
+type updateJobFixture struct {
+	now          time.Time
+	jobID        int64
+	tenantID     string
+	cronExpr     string
+	partitionKey string
+}
+
+type storedUpdatedJob struct {
+	name         string
+	version      int
+	priority     int
+	partitionKey sql.NullString
+	cronExpr     sql.NullString
+	timezone     string
+	handlerType  string
+}
+
 func seedJob(t *testing.T, db *sql.DB, in seedJobInput) int64 {
 	t.Helper()
 
@@ -262,4 +178,140 @@ func seedJob(t *testing.T, db *sql.DB, in seedJobInput) int64 {
 	}
 
 	return id
+}
+
+func seedUpdateJobFixture(t *testing.T, db *sql.DB) updateJobFixture {
+	t.Helper()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	fixture := updateJobFixture{
+		now:          now,
+		tenantID:     "tenant-update",
+		cronExpr:     "*/15 * * * *",
+		partitionKey: "tenant-update:batch",
+	}
+
+	fixture.jobID = seedJob(t, db, seedJobInput{
+		Name:        "old-name",
+		TenantID:    fixture.tenantID,
+		Priority:    1,
+		TriggerType: domainjob.TriggerTypeManual,
+		Timezone:    "UTC",
+		HandlerType: "http",
+	})
+
+	return fixture
+}
+
+func normalizeUpdateSpecForTest(t *testing.T, fixture updateJobFixture) domainjob.UpdateSpec {
+	t.Helper()
+
+	spec, err := domainjob.NormalizeUpdate(fixture.now, domainjob.UpdateInput{
+		ID:                   fixture.jobID,
+		TenantID:             fixture.tenantID,
+		Version:              1,
+		Name:                 "nightly-report",
+		Priority:             9,
+		PartitionKey:         &fixture.partitionKey,
+		TriggerType:          domainjob.TriggerTypeCron,
+		CronExpr:             &fixture.cronExpr,
+		Timezone:             "Asia/Shanghai",
+		HandlerType:          "http",
+		HandlerPayload:       map[string]any{"url": "https://example.com/hook"},
+		TimeoutSec:           120,
+		RetryLimit:           3,
+		RetryBackoffSec:      10,
+		RetryBackoffStrategy: domainjob.RetryBackoffExponential,
+		ConcurrencyPolicy:    domainjob.ConcurrencyForbid,
+		MisfirePolicy:        domainjob.MisfireFireNow,
+	})
+	if err != nil {
+		t.Fatalf("NormalizeUpdate() error = %v", err)
+	}
+
+	return spec
+}
+
+func assertUpdatedJobResult(t *testing.T, out domainjob.Snapshot, jobID int64) {
+	t.Helper()
+
+	if out.ID != jobID {
+		t.Fatalf("expected id=%d, got %d", jobID, out.ID)
+	}
+	if out.Name != "nightly-report" {
+		t.Fatalf("expected name=%q, got %q", "nightly-report", out.Name)
+	}
+	if out.Version != 2 {
+		t.Fatalf("expected version=%d, got %d", 2, out.Version)
+	}
+	if out.NextRunAt == nil {
+		t.Fatalf("expected next_run_at to be set")
+	}
+}
+
+func loadStoredUpdatedJob(t *testing.T, db *sql.DB, tenantID string, jobID int64) storedUpdatedJob {
+	t.Helper()
+
+	var stored storedUpdatedJob
+	err := db.QueryRowContext(context.Background(), `
+		SELECT name, version, priority, partition_key, cron_expr, timezone, handler_type
+		FROM jobs
+		WHERE tenant_id = $1 AND id = $2
+	`, tenantID, jobID).Scan(
+		&stored.name,
+		&stored.version,
+		&stored.priority,
+		&stored.partitionKey,
+		&stored.cronExpr,
+		&stored.timezone,
+		&stored.handlerType,
+	)
+	if err != nil {
+		t.Fatalf("reload job: %v", err)
+	}
+
+	return stored
+}
+
+func assertStoredUpdatedJob(t *testing.T, stored storedUpdatedJob, fixture updateJobFixture) {
+	t.Helper()
+
+	if stored.name != "nightly-report" {
+		t.Fatalf("expected stored name=%q, got %q", "nightly-report", stored.name)
+	}
+	if stored.version != 2 {
+		t.Fatalf("expected stored version=%d, got %d", 2, stored.version)
+	}
+	if stored.priority != 9 {
+		t.Fatalf("expected stored priority=%d, got %d", 9, stored.priority)
+	}
+	if !stored.partitionKey.Valid || stored.partitionKey.String != fixture.partitionKey {
+		t.Fatalf("expected stored partition_key=%q, got %+v", fixture.partitionKey, stored.partitionKey)
+	}
+	if !stored.cronExpr.Valid || stored.cronExpr.String != fixture.cronExpr {
+		t.Fatalf("expected stored cron_expr=%q, got %+v", fixture.cronExpr, stored.cronExpr)
+	}
+	if stored.timezone != "Asia/Shanghai" {
+		t.Fatalf("expected stored timezone=%q, got %q", "Asia/Shanghai", stored.timezone)
+	}
+	if stored.handlerType != "http" {
+		t.Fatalf("expected stored handler_type=%q, got %q", "http", stored.handlerType)
+	}
+}
+
+func assertUpdateAuditCount(t *testing.T, db *sql.DB, tenantID string, jobID int64, changedBy string, want int) {
+	t.Helper()
+
+	var count int
+	err := db.QueryRowContext(context.Background(), `
+		SELECT count(*)
+		FROM job_change_audits
+		WHERE tenant_id = $1 AND job_id = $2 AND action = 'update' AND changed_by = $3
+	`, tenantID, jobID, changedBy).Scan(&count)
+	if err != nil {
+		t.Fatalf("count audits: %v", err)
+	}
+	if count != want {
+		t.Fatalf("expected %d audit row, got %d", want, count)
+	}
 }

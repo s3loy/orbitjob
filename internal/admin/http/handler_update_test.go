@@ -77,61 +77,23 @@ func TestHandler_RegisterAndUpdateJob(t *testing.T) {
 		},
 	}
 
-	handler := NewHandler(nil, nil, getUseCase, useCase, nil)
-	router := gin.New()
-	handler.Register(router)
+	router := newUpdateTestRouter(getUseCase, useCase)
 
-	body := `{
+	resp := performUpdateJobRequest(
+		router,
+		"/api/v1/jobs/42?tenant_id=tenant-a",
+		`{
 		"version": 4,
 		"name":"nightly-report"
-	}`
-	req := httptest.NewRequest(stdhttp.MethodPut, "/api/v1/jobs/42?tenant_id=tenant-a",
-		bytes.NewBufferString(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(actorIDHeader, "control-plane-user")
-	resp := httptest.NewRecorder()
-
-	router.ServeHTTP(resp, req)
+	}`,
+		"control-plane-user",
+	)
 
 	if resp.Code != stdhttp.StatusOK {
 		t.Fatalf("expected status=%d, got %d, body=%s", stdhttp.StatusOK, resp.Code, resp.Body.String())
 	}
-	if !useCase.called {
-		t.Fatalf("expected use case to be called")
-	}
-	if !getUseCase.called {
-		t.Fatalf("expected get use case to be called")
-	}
-	if useCase.in.ID != 42 {
-		t.Fatalf("expected id=%d, got %d", 42, useCase.in.ID)
-	}
-	if useCase.in.TenantID != "tenant-a" {
-		t.Fatalf("expected tenant_id=%q, got %q", "tenant-a", useCase.in.TenantID)
-	}
-	if useCase.in.ChangedBy != "control-plane-user" {
-		t.Fatalf("expected changed_by=%q, got %q", "control-plane-user", useCase.in.ChangedBy)
-	}
-	if useCase.in.Version != 4 {
-		t.Fatalf("expected version=%d, got %d", 4, useCase.in.Version)
-	}
-	if useCase.in.Name != "nightly-report" {
-		t.Fatalf("expected name=%q, got %q", "nightly-report", useCase.in.Name)
-	}
-	if useCase.in.TriggerType != domainjob.TriggerTypeCron {
-		t.Fatalf("expected trigger_type=%q, got %q", domainjob.TriggerTypeCron, useCase.in.TriggerType)
-	}
-	if useCase.in.TimeoutSec != 300 {
-		t.Fatalf("expected timeout_sec=%d, got %d", 300, useCase.in.TimeoutSec)
-	}
-	if useCase.in.RetryBackoffStrategy != domainjob.RetryBackoffExponential {
-		t.Fatalf("expected retry_backoff_strategy=%q, got %q", domainjob.RetryBackoffExponential, useCase.in.RetryBackoffStrategy)
-	}
-	if useCase.in.ConcurrencyPolicy != domainjob.ConcurrencyForbid {
-		t.Fatalf("expected concurrency_policy=%q, got %q", domainjob.ConcurrencyForbid, useCase.in.ConcurrencyPolicy)
-	}
-	if useCase.in.HandlerPayload["url"] != "https://example.com/legacy" {
-		t.Fatalf("expected existing handler payload to be preserved")
-	}
+	assertUpdateCalled(t, getUseCase, useCase)
+	assertUpdateInput(t, useCase.in)
 
 	var out command.UpdateResult
 	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
@@ -139,6 +101,71 @@ func TestHandler_RegisterAndUpdateJob(t *testing.T) {
 	}
 	if out.Version != 5 {
 		t.Fatalf("expected response version=%d, got %d", 5, out.Version)
+	}
+}
+
+func newUpdateTestRouter(getUseCase *stubGetJobUseCase, useCase *stubUpdateJobUseCase) *gin.Engine {
+	handler := NewHandler(nil, nil, getUseCase, useCase, nil)
+	router := gin.New()
+	handler.Register(router)
+	return router
+}
+
+func performUpdateJobRequest(router *gin.Engine, path string, body string, actorID string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(stdhttp.MethodPut, path, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	if actorID != "" {
+		req.Header.Set(actorIDHeader, actorID)
+	}
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+	return resp
+}
+
+func assertUpdateCalled(t *testing.T, getUseCase *stubGetJobUseCase, useCase *stubUpdateJobUseCase) {
+	t.Helper()
+
+	if !useCase.called {
+		t.Fatalf("expected use case to be called")
+	}
+	if !getUseCase.called {
+		t.Fatalf("expected get use case to be called")
+	}
+}
+
+func assertUpdateInput(t *testing.T, in command.UpdateInput) {
+	t.Helper()
+
+	if in.ID != 42 {
+		t.Fatalf("expected id=%d, got %d", 42, in.ID)
+	}
+	if in.TenantID != "tenant-a" {
+		t.Fatalf("expected tenant_id=%q, got %q", "tenant-a", in.TenantID)
+	}
+	if in.ChangedBy != "control-plane-user" {
+		t.Fatalf("expected changed_by=%q, got %q", "control-plane-user", in.ChangedBy)
+	}
+	if in.Version != 4 {
+		t.Fatalf("expected version=%d, got %d", 4, in.Version)
+	}
+	if in.Name != "nightly-report" {
+		t.Fatalf("expected name=%q, got %q", "nightly-report", in.Name)
+	}
+	if in.TriggerType != domainjob.TriggerTypeCron {
+		t.Fatalf("expected trigger_type=%q, got %q", domainjob.TriggerTypeCron, in.TriggerType)
+	}
+	if in.TimeoutSec != 300 {
+		t.Fatalf("expected timeout_sec=%d, got %d", 300, in.TimeoutSec)
+	}
+	if in.RetryBackoffStrategy != domainjob.RetryBackoffExponential {
+		t.Fatalf("expected retry_backoff_strategy=%q, got %q", domainjob.RetryBackoffExponential, in.RetryBackoffStrategy)
+	}
+	if in.ConcurrencyPolicy != domainjob.ConcurrencyForbid {
+		t.Fatalf("expected concurrency_policy=%q, got %q", domainjob.ConcurrencyForbid, in.ConcurrencyPolicy)
+	}
+	if in.HandlerPayload["url"] != "https://example.com/legacy" {
+		t.Fatalf("expected existing handler payload to be preserved")
 	}
 }
 
