@@ -8,11 +8,13 @@ import (
 
 // CreateJobRequest defines the HTTP payload for creating a job.
 type CreateJobRequest struct {
-	Name        string  `json:"name" binding:"required,max=128"`
-	TenantID    string  `json:"tenant_id"`
-	TriggerType string  `json:"trigger_type" binding:"required,oneof=cron manual"`
-	CronExpr    *string `json:"cron_expr"`
-	Timezone    string  `json:"timezone"`
+	Name         string  `json:"name" binding:"required,max=128"`
+	TenantID     string  `json:"tenant_id"`
+	Priority     int     `json:"priority" binding:"omitempty,min=0"`
+	PartitionKey *string `json:"partition_key" binding:"omitempty,max=64"`
+	TriggerType  string  `json:"trigger_type" binding:"required,oneof=cron manual"`
+	CronExpr     *string `json:"cron_expr"`
+	Timezone     string  `json:"timezone"`
 
 	HandlerType    string         `json:"handler_type" binding:"required,max=32"`
 	HandlerPayload map[string]any `json:"handler_payload"`
@@ -30,6 +32,8 @@ func (r CreateJobRequest) ToCreateInput() command.CreateInput {
 	return command.CreateInput{
 		Name:                 r.Name,
 		TenantID:             r.TenantID,
+		Priority:             r.Priority,
+		PartitionKey:         r.PartitionKey,
 		TriggerType:          r.TriggerType,
 		CronExpr:             r.CronExpr,
 		Timezone:             r.Timezone,
@@ -82,10 +86,12 @@ type UpdateJobRequest struct {
 	TenantID string
 	Version  int `json:"version" binding:"required,min=1"`
 
-	Name        *string `json:"name" binding:"omitempty,max=128"`
-	TriggerType *string `json:"trigger_type" binding:"omitempty,oneof=cron manual"`
-	CronExpr    *string `json:"cron_expr"`
-	Timezone    *string `json:"timezone"`
+	Name         *string `json:"name" binding:"omitempty,max=128"`
+	Priority     *int    `json:"priority" binding:"omitempty,min=0"`
+	PartitionKey *string `json:"partition_key" binding:"omitempty,max=64"`
+	TriggerType  *string `json:"trigger_type" binding:"omitempty,oneof=cron manual"`
+	CronExpr     *string `json:"cron_expr"`
+	Timezone     *string `json:"timezone"`
 
 	HandlerType    *string        `json:"handler_type" binding:"omitempty,max=32"`
 	HandlerPayload map[string]any `json:"handler_payload"`
@@ -122,6 +128,11 @@ func (r UpdateJobRequest) ToUpdateInput(current query.GetItem, changedBy string)
 		triggerType = *r.TriggerType
 	}
 
+	partitionKey := cloneOptionalString(current.PartitionKey)
+	if r.PartitionKey != nil {
+		partitionKey = cloneOptionalString(r.PartitionKey)
+	}
+
 	cronExpr := cloneOptionalString(current.CronExpr)
 	if r.CronExpr != nil {
 		cronExpr = cloneOptionalString(r.CronExpr)
@@ -136,6 +147,8 @@ func (r UpdateJobRequest) ToUpdateInput(current query.GetItem, changedBy string)
 		ChangedBy:            changedBy,
 		Version:              r.Version,
 		Name:                 stringValueOrDefault(r.Name, current.Name),
+		Priority:             intValueOrDefault(r.Priority, current.Priority),
+		PartitionKey:         partitionKey,
 		TriggerType:          triggerType,
 		CronExpr:             cronExpr,
 		Timezone:             stringValueOrDefault(r.Timezone, current.Timezone),

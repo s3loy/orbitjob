@@ -24,6 +24,12 @@ func TestNormalizeCreate_ManualDefaults(t *testing.T) {
 	if out.TenantID != DefaultTenantID {
 		t.Fatalf("expected tenant_id=%q, got %q", DefaultTenantID, out.TenantID)
 	}
+	if out.Priority != 0 {
+		t.Fatalf("expected priority=0, got %d", out.Priority)
+	}
+	if out.PartitionKey != nil {
+		t.Fatalf("expected partition_key=nil, got %v", *out.PartitionKey)
+	}
 	if out.Timezone != DefaultTimezone {
 		t.Fatalf("expected timezone=%q, got %q", DefaultTimezone, out.Timezone)
 	}
@@ -94,6 +100,29 @@ func TestNormalizeCreate_CopiesTopLevelHandlerPayload(t *testing.T) {
 
 	if got := out.HandlerPayload["url"]; got != "https://example.com/hook" {
 		t.Fatalf("expected cloned top-level payload value to stay unchanged, got %#v", got)
+	}
+}
+
+func TestNormalizeCreate_NormalizesPartitionKey(t *testing.T) {
+	now := time.Date(2026, 3, 18, 0, 0, 0, 0, time.UTC)
+	partitionKey := "  shard-a  "
+
+	out, err := NormalizeCreate(now, CreateInput{
+		Name:         "demo-job",
+		TriggerType:  TriggerTypeManual,
+		HandlerType:  "http",
+		Priority:     9,
+		PartitionKey: &partitionKey,
+	})
+	if err != nil {
+		t.Fatalf("NormalizeCreate() error = %v", err)
+	}
+
+	if out.Priority != 9 {
+		t.Fatalf("expected priority=%d, got %d", 9, out.Priority)
+	}
+	if out.PartitionKey == nil || *out.PartitionKey != "shard-a" {
+		t.Fatalf("expected partition_key=%q, got %+v", "shard-a", out.PartitionKey)
 	}
 }
 
@@ -172,6 +201,27 @@ func TestNormalizeCreate_InvalidInput(t *testing.T) {
 				return in
 			}(),
 			wantField:   "tenant_id",
+			wantMessage: "must be <= 64 characters",
+		},
+		{
+			name: "negative priority",
+			input: func() CreateInput {
+				in := base
+				in.Priority = -1
+				return in
+			}(),
+			wantField:   "priority",
+			wantMessage: "must be >= 0",
+		},
+		{
+			name: "partition key too long",
+			input: func() CreateInput {
+				in := base
+				value := strings.Repeat("p", 65)
+				in.PartitionKey = &value
+				return in
+			}(),
+			wantField:   "partition_key",
 			wantMessage: "must be <= 64 characters",
 		},
 		{

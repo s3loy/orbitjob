@@ -6,6 +6,8 @@ import "time"
 type CreateSpec struct {
 	Name                 string
 	TenantID             string
+	Priority             int
+	PartitionKey         *string
 	TriggerType          string
 	CronExpr             *string
 	Timezone             string

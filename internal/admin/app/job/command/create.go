@@ -38,6 +38,8 @@ func (uc *CreateJobUseCase) Create(ctx context.Context, in CreateInput) (CreateR
 	spec, err := domainjob.NormalizeCreate(uc.clock.Now(), domainjob.CreateInput{
 		Name:                 in.Name,
 		TenantID:             in.TenantID,
+		Priority:             in.Priority,
+		PartitionKey:         in.PartitionKey,
 		TriggerType:          in.TriggerType,
 		CronExpr:             in.CronExpr,
 		Timezone:             in.Timezone,

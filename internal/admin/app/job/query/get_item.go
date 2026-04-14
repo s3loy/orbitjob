@@ -8,8 +8,10 @@ type GetItem struct {
 	Name     string `json:"name"`
 	TenantID string `json:"tenant_id"`
 	Version  int    `json:"version"`
+	Priority int    `json:"priority"`
 
 	TriggerType          string         `json:"trigger_type"`
+	PartitionKey         *string        `json:"partition_key"`
 	CronExpr             *string        `json:"cron_expr"`
 	Timezone             string         `json:"timezone"`
 	ScheduleSummary      string         `json:"schedule_summary"`

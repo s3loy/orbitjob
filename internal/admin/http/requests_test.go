@@ -8,10 +8,13 @@ import (
 
 func TestCreateJobRequest_ToCreateInput(t *testing.T) {
 	cronExpr := "*/5 * * * *"
+	partitionKey := "tenant-a:video"
 
 	req := CreateJobRequest{
 		Name:                 "demo-job",
 		TenantID:             "tenant-a",
+		Priority:             8,
+		PartitionKey:         &partitionKey,
 		TriggerType:          "cron",
 		CronExpr:             &cronExpr,
 		Timezone:             "Asia/Shanghai",
@@ -32,6 +35,12 @@ func TestCreateJobRequest_ToCreateInput(t *testing.T) {
 	}
 	if got.TenantID != req.TenantID {
 		t.Fatalf("expected tenant_id=%q, got %q", req.TenantID, got.TenantID)
+	}
+	if got.Priority != req.Priority {
+		t.Fatalf("expected priority=%d, got %d", req.Priority, got.Priority)
+	}
+	if got.PartitionKey != req.PartitionKey {
+		t.Fatalf("expected partition_key pointer to be preserved")
 	}
 	if got.TriggerType != req.TriggerType {
 		t.Fatalf("expected trigger_type=%q, got %q", req.TriggerType, got.TriggerType)
@@ -111,10 +120,18 @@ func TestUpdateJobRequest_ToUpdateInput(t *testing.T) {
 	timeoutSec := 120
 
 	req := UpdateJobRequest{
-		ID:         42,
-		TenantID:   "tenant-a",
-		Version:    7,
-		Name:       &name,
+		ID:       42,
+		TenantID: "tenant-a",
+		Version:  7,
+		Name:     &name,
+		Priority: func() *int {
+			value := 11
+			return &value
+		}(),
+		PartitionKey: func() *string {
+			value := "shard-blue"
+			return &value
+		}(),
 		CronExpr:   &cronExpr,
 		TimeoutSec: &timeoutSec,
 	}
@@ -123,6 +140,7 @@ func TestUpdateJobRequest_ToUpdateInput(t *testing.T) {
 		ID:                   42,
 		TenantID:             "tenant-a",
 		Name:                 "old-name",
+		Priority:             5,
 		TriggerType:          "manual",
 		Timezone:             "UTC",
 		HandlerType:          "worker",
@@ -151,6 +169,12 @@ func TestUpdateJobRequest_ToUpdateInput(t *testing.T) {
 	}
 	if got.Name != name {
 		t.Fatalf("expected name=%q, got %q", name, got.Name)
+	}
+	if got.Priority != 11 {
+		t.Fatalf("expected priority=%d, got %d", 11, got.Priority)
+	}
+	if got.PartitionKey == nil || *got.PartitionKey != "shard-blue" {
+		t.Fatalf("expected partition_key=%q, got %+v", "shard-blue", got.PartitionKey)
 	}
 	if got.TriggerType != current.TriggerType {
 		t.Fatalf("expected trigger_type=%q, got %q", current.TriggerType, got.TriggerType)
@@ -187,10 +211,15 @@ func TestUpdateJobRequest_ToUpdateInputSwitchingToManualClearsCron(t *testing.T)
 		ID:          42,
 		TenantID:    "tenant-a",
 		Name:        "nightly-report",
+		Priority:    4,
 		TriggerType: "cron",
 		CronExpr:    &currentCron,
 		Timezone:    "Asia/Shanghai",
 		HandlerType: "http",
+		PartitionKey: func() *string {
+			value := "shard-green"
+			return &value
+		}(),
 	}
 
 	got := req.ToUpdateInput(current, "control-plane-user")

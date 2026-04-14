@@ -29,6 +29,8 @@ func (r *JobRepository) Create(ctx context.Context, in domainjob.CreateSpec) (do
 				INSERT INTO jobs (
 						name,
 						tenant_id,
+						priority,
+						partition_key,
 						trigger_type,
 						cron_expr,
 						timezone,
@@ -43,13 +45,15 @@ func (r *JobRepository) Create(ctx context.Context, in domainjob.CreateSpec) (do
 						next_run_at
                 )
                 VALUES (
-						$1, $2, $3, $4, $5, $6, $7::jsonb,
-						$8, $9, $10, $11, $12, $13, $14
+						$1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb,
+						$10, $11, $12, $13, $14, $15, $16
 				)
                 RETURNING id, name, tenant_id, status, version, next_run_at, created_at, updated_at
         `,
 		in.Name,
 		in.TenantID,
+		in.Priority,
+		in.PartitionKey,
 		in.TriggerType,
 		in.CronExpr,
 		in.Timezone,

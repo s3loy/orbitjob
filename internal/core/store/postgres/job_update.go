@@ -44,28 +44,32 @@ func (r *JobRepository) Update(
 	err = tx.QueryRowContext(ctx, `
 		UPDATE jobs
 		SET name = $3,
-		    trigger_type = $4,
-		    cron_expr = $5,
-		    timezone = $6,
-		    handler_type = $7,
-		    handler_payload = $8::jsonb,
-		    timeout_sec = $9,
-		    retry_limit = $10,
-		    retry_backoff_sec = $11,
-		    retry_backoff_strategy = $12,
-		    concurrency_policy = $13,
-		    misfire_policy = $14,
-		    next_run_at = $15,
+		    priority = $4,
+		    partition_key = $5,
+		    trigger_type = $6,
+		    cron_expr = $7,
+		    timezone = $8,
+		    handler_type = $9,
+		    handler_payload = $10::jsonb,
+		    timeout_sec = $11,
+		    retry_limit = $12,
+		    retry_backoff_sec = $13,
+		    retry_backoff_strategy = $14,
+		    concurrency_policy = $15,
+		    misfire_policy = $16,
+		    next_run_at = $17,
 		    version = version + 1
 		WHERE tenant_id = $1
 		  AND id = $2
-		  AND version = $16
+		  AND version = $18
 		  AND deleted_at IS NULL
 		RETURNING id, name, tenant_id, status, version, next_run_at, created_at, updated_at
 	`,
 		in.TenantID,
 		in.ID,
 		in.Name,
+		in.Priority,
+		in.PartitionKey,
 		in.TriggerType,
 		in.CronExpr,
 		in.Timezone,
@@ -167,6 +171,8 @@ func buildUpdateDiffPayload(in domainjob.UpdateSpec) map[string]any {
 		"from_version":           in.Version,
 		"to_version":             in.Version + 1,
 		"name":                   in.Name,
+		"priority":               in.Priority,
+		"partition_key":          in.PartitionKey,
 		"trigger_type":           in.TriggerType,
 		"cron_expr":              in.CronExpr,
 		"timezone":               in.Timezone,

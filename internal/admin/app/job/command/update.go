@@ -28,6 +28,8 @@ func (uc *UpdateJobUseCase) Update(ctx context.Context, in UpdateInput) (UpdateR
 		TenantID:             in.TenantID,
 		Version:              in.Version,
 		Name:                 in.Name,
+		Priority:             in.Priority,
+		PartitionKey:         in.PartitionKey,
 		TriggerType:          in.TriggerType,
 		CronExpr:             in.CronExpr,
 		Timezone:             in.Timezone,

@@ -61,6 +61,31 @@ func TestNormalizeUpdate_CronJobComputesNextRunAt(t *testing.T) {
 	}
 }
 
+func TestNormalizeUpdate_TracksRoutingFields(t *testing.T) {
+	now := time.Date(2026, 4, 7, 0, 58, 0, 0, time.UTC)
+	partitionKey := " shard-b "
+
+	spec, err := NormalizeUpdate(now, UpdateInput{
+		ID:           7,
+		Version:      2,
+		Name:         "daily-report",
+		TenantID:     "tenant-a",
+		Priority:     12,
+		PartitionKey: &partitionKey,
+		TriggerType:  TriggerTypeManual,
+		HandlerType:  "http",
+	})
+	if err != nil {
+		t.Fatalf("NormalizeUpdate() error = %v", err)
+	}
+	if spec.Priority != 12 {
+		t.Fatalf("expected priority=%d, got %d", 12, spec.Priority)
+	}
+	if spec.PartitionKey == nil || *spec.PartitionKey != "shard-b" {
+		t.Fatalf("expected partition_key=%q, got %+v", "shard-b", spec.PartitionKey)
+	}
+}
+
 func TestNormalizeUpdate_InvalidInputReturnsValidationError(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -87,6 +112,20 @@ func TestNormalizeUpdate_InvalidInputReturnsValidationError(t *testing.T) {
 			wantMessage: "must be >= 1",
 		},
 		{
+			name: "priority less than zero",
+			input: UpdateInput{
+				ID:          1,
+				Version:     1,
+				Name:        "demo",
+				TenantID:    "tenant-a",
+				Priority:    -1,
+				TriggerType: TriggerTypeManual,
+				HandlerType: "http",
+			},
+			wantField:   "priority",
+			wantMessage: "must be >= 0",
+		},
+		{
 			name: "tenant too long",
 			input: UpdateInput{
 				ID:          1,
@@ -97,6 +136,23 @@ func TestNormalizeUpdate_InvalidInputReturnsValidationError(t *testing.T) {
 				HandlerType: "http",
 			},
 			wantField:   "tenant_id",
+			wantMessage: "must be <= 64 characters",
+		},
+		{
+			name: "partition key too long",
+			input: UpdateInput{
+				ID:          1,
+				Version:     1,
+				Name:        "demo",
+				TenantID:    "tenant-a",
+				TriggerType: TriggerTypeManual,
+				HandlerType: "http",
+				PartitionKey: func() *string {
+					value := strings.Repeat("p", 65)
+					return &value
+				}(),
+			},
+			wantField:   "partition_key",
 			wantMessage: "must be <= 64 characters",
 		},
 	}

@@ -154,6 +154,7 @@ go test -tags integration ./internal/admin/store/postgres ./internal/core/store/
 | [`README.md`](./README.md) | Chinese overview and developer reference |
 | [`README.en.md`](./README.en.md) | English overview |
 | [`docs/job-lifecycle.en.md`](./docs/job-lifecycle.en.md) | Job lifecycle and endpoint rules |
+| [`docs/execution-plane.en.md`](./docs/execution-plane.en.md) | Execution-plane contract and foundation semantics |
 
 ## License
 
