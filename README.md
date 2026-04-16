@@ -50,6 +50,7 @@ Job 生命周期与状态流转见 [docs/job-lifecycle.md](./docs/job-lifecycle.
 | Method | Path | 功能 | 输入 | 备注 |
 | --- | --- | --- | --- | --- |
 | `GET` | `/healthz` | 健康检查 | 无 | 返回服务存活状态 |
+| `GET` | `/openapi.json` | OpenAPI 文档 | 无 | 代码生成的实时 API 契约 |
 | `GET` | `/metrics` | Prometheus 指标 | 无 | 暴露 metrics handler |
 | `POST` | `/api/v1/jobs` | 创建 job | JSON body | 创建型接口 |
 | `GET` | `/api/v1/jobs` | 查询 job 列表 | Query: `tenant_id`, `status`, `limit`, `offset` | `status` 仅支持 `active` / `paused` |
@@ -116,6 +117,22 @@ TEST_DATABASE_DSN=postgres://postgres:password@127.0.0.1:5432/orbitjob_test?sslm
 
 ```bash
 go run ./cmd/admin-api
+```
+
+### OpenAPI（Code-first）
+
+仓库内提交的契约文件：`api/openapi.yaml`
+
+重新生成：
+
+```bash
+go run ./cmd/openapi-gen -out api/openapi.yaml
+```
+
+校验是否漂移（CI 同款命令）：
+
+```bash
+go run ./cmd/openapi-gen -check -out api/openapi.yaml
 ```
 
 ### 测试

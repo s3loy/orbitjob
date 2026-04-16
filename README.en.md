@@ -50,6 +50,7 @@ Job lifecycle and state transitions are documented in [docs/job-lifecycle.en.md]
 | Method | Path | Function | Input | Notes |
 | --- | --- | --- | --- | --- |
 | `GET` | `/healthz` | health check | none | returns service liveness |
+| `GET` | `/openapi.json` | OpenAPI document | none | live code-generated API contract |
 | `GET` | `/metrics` | Prometheus metrics | none | exposes metrics handler |
 | `POST` | `/api/v1/jobs` | create a job | JSON body | mutating endpoint |
 | `GET` | `/api/v1/jobs` | list jobs | Query: `tenant_id`, `status`, `limit`, `offset` | `status` supports `active` / `paused` only |
@@ -116,6 +117,22 @@ Common variables:
 
 ```bash
 go run ./cmd/admin-api
+```
+
+### OpenAPI (Code-first)
+
+Committed contract file: `api/openapi.yaml`
+
+Regenerate:
+
+```bash
+go run ./cmd/openapi-gen -out api/openapi.yaml
+```
+
+Check for drift (same command used in CI):
+
+```bash
+go run ./cmd/openapi-gen -check -out api/openapi.yaml
 ```
 
 ### Test

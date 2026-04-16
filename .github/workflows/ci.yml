@@ -43,6 +43,9 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Verify OpenAPI spec is up to date
+        run: go run ./cmd/openapi-gen -check -out api/openapi.yaml
+
       - name: Test with coverage
         run: go test -coverprofile=coverage.out ./...
 
