@@ -72,6 +72,18 @@ type GetJobRequest struct {
 	TenantID string `form:"tenant_id" binding:"omitempty,max=64"`
 }
 
+type jobIDURI struct {
+	ID int64 `uri:"id" binding:"required,min=1"`
+}
+
+type tenantQueryRequest struct {
+	TenantID string `form:"tenant_id" binding:"omitempty,max=64"`
+}
+
+type actorIDHeaderRequest struct {
+	ActorID string `header:"X-Actor-ID" binding:"required,max=128"`
+}
+
 // ToGetInput converts the HTTP route and query parameters into a control-plane query input.
 func (r GetJobRequest) ToGetInput() query.GetInput {
 	return query.GetInput{

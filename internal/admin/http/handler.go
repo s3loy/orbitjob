@@ -37,6 +37,10 @@ type jobListResponse struct {
 	Items []query.ListItem `json:"items"`
 }
 
+type errorResponse struct {
+	Error APIError `json:"error"`
+}
+
 // Handler wires HTTP endpoints to application use cases.
 type Handler struct {
 	createJobUC createJobUseCase
@@ -64,23 +68,12 @@ func NewHandler(
 
 // Register mounts HTTP routes for the admin API.
 func (h *Handler) Register(r gin.IRouter) {
-	v1 := r.Group("/api/v1")
-
-	if h.listJobsUC != nil {
-		v1.GET("/jobs", h.ListJobs)
-	}
-	if h.getJobUC != nil {
-		v1.GET("/jobs/:id", h.GetJob)
-	}
-	if h.updateJobUC != nil && h.getJobUC != nil {
-		v1.PUT("/jobs/:id", h.UpdateJob)
-	}
-	if h.statusJobUC != nil {
-		v1.POST("/jobs/:id/pause", h.PauseJob)
-		v1.POST("/jobs/:id/resume", h.ResumeJob)
-	}
-	if h.createJobUC != nil {
-		v1.POST("/jobs", h.CreateJob)
+	v1 := r.Group(adminAPIPrefix)
+	for _, route := range adminAPIRoutes() {
+		if route.enabled != nil && !route.enabled(h) {
+			continue
+		}
+		route.register(v1, h)
 	}
 }
 
@@ -88,19 +81,19 @@ func (h *Handler) Register(r gin.IRouter) {
 func (h *Handler) CreateJob(c *gin.Context) {
 	var req CreateJobRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(stdhttp.StatusBadRequest, gin.H{"error": toBindAPIError(err)})
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
 	out, err := h.createJobUC.Create(c.Request.Context(), req.ToCreateInput())
 	if err != nil {
 		if validation.Is(err) {
-			c.JSON(stdhttp.StatusBadRequest, gin.H{"error": toAPIError(err)})
+			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
 			return
 		}
 
 		_ = c.Error(err)
-		c.JSON(stdhttp.StatusInternalServerError, gin.H{"error": toAPIError(err)})
+		writeAPIError(c, stdhttp.StatusInternalServerError, toAPIError(err))
 		return
 	}
 
@@ -111,19 +104,19 @@ func (h *Handler) CreateJob(c *gin.Context) {
 func (h *Handler) ListJobs(c *gin.Context) {
 	var req ListJobsRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
-		c.JSON(stdhttp.StatusBadRequest, gin.H{"error": toBindAPIError(err)})
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
 	out, err := h.listJobsUC.List(c.Request.Context(), req.ToListInput())
 	if err != nil {
 		if validation.Is(err) {
-			c.JSON(stdhttp.StatusBadRequest, gin.H{"error": toAPIError(err)})
+			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
 			return
 		}
 
 		_ = c.Error(err)
-		c.JSON(stdhttp.StatusInternalServerError, gin.H{"error": toAPIError(err)})
+		writeAPIError(c, stdhttp.StatusInternalServerError, toAPIError(err))
 		return
 	}
 
@@ -136,28 +129,28 @@ func (h *Handler) ListJobs(c *gin.Context) {
 func (h *Handler) GetJob(c *gin.Context) {
 	var req GetJobRequest
 	if err := c.ShouldBindUri(&req); err != nil {
-		c.JSON(stdhttp.StatusBadRequest, gin.H{"error": toBindAPIError(err)})
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 	if err := c.ShouldBindQuery(&req); err != nil {
-		c.JSON(stdhttp.StatusBadRequest, gin.H{"error": toBindAPIError(err)})
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
 	out, err := h.getJobUC.Get(c.Request.Context(), req.ToGetInput())
 	if err != nil {
 		if validation.Is(err) {
-			c.JSON(stdhttp.StatusBadRequest, gin.H{"error": toAPIError(err)})
+			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
 			return
 		}
 		apiErr := toAPIError(err)
 		if apiErr.Code == ErrCodeNotFound {
-			c.JSON(stdhttp.StatusNotFound, gin.H{"error": apiErr})
+			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
 			return
 		}
 
 		_ = c.Error(err)
-		c.JSON(stdhttp.StatusInternalServerError, gin.H{"error": apiErr})
+		writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
 		return
 	}
 
@@ -166,25 +159,30 @@ func (h *Handler) GetJob(c *gin.Context) {
 
 // UpdateJob handles mutable job updates.
 func (h *Handler) UpdateJob(c *gin.Context) {
-	var pathReq struct {
-		ID int64 `uri:"id" binding:"required,min=1"`
-	}
+	var pathReq jobIDURI
 	if err := c.ShouldBindUri(&pathReq); err != nil {
-		c.JSON(stdhttp.StatusBadRequest, gin.H{"error": toBindAPIError(err)})
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
+
+	var tenantReq tenantQueryRequest
+	if err := c.ShouldBindQuery(&tenantReq); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
 	req := UpdateJobRequest{
 		ID:       pathReq.ID,
-		TenantID: c.Query("tenant_id"),
+		TenantID: tenantReq.TenantID,
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(stdhttp.StatusBadRequest, gin.H{"error": toBindAPIError(err)})
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
 	actorID, err := requiredActorID(c)
 	if err != nil {
-		c.JSON(stdhttp.StatusBadRequest, gin.H{"error": toAPIError(err)})
+		writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
 		return
 	}
 
@@ -194,39 +192,39 @@ func (h *Handler) UpdateJob(c *gin.Context) {
 	})
 	if err != nil {
 		if validation.Is(err) {
-			c.JSON(stdhttp.StatusBadRequest, gin.H{"error": toAPIError(err)})
+			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
 			return
 		}
 
 		apiErr := toAPIError(err)
 		if apiErr.Code == ErrCodeNotFound {
-			c.JSON(stdhttp.StatusNotFound, gin.H{"error": apiErr})
+			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
 			return
 		}
 
 		_ = c.Error(err)
-		c.JSON(stdhttp.StatusInternalServerError, gin.H{"error": apiErr})
+		writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
 		return
 	}
 
 	out, err := h.updateJobUC.Update(c.Request.Context(), req.ToUpdateInput(current, actorID))
 	if err != nil {
 		if validation.Is(err) {
-			c.JSON(stdhttp.StatusBadRequest, gin.H{"error": toAPIError(err)})
+			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
 			return
 		}
 
 		apiErr := toAPIError(err)
 		switch apiErr.Code {
 		case ErrCodeNotFound:
-			c.JSON(stdhttp.StatusNotFound, gin.H{"error": apiErr})
+			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
 			return
 		case ErrCodeConflict:
-			c.JSON(stdhttp.StatusConflict, gin.H{"error": apiErr})
+			writeAPIError(c, stdhttp.StatusConflict, apiErr)
 			return
 		default:
 			_ = c.Error(err)
-			c.JSON(stdhttp.StatusInternalServerError, gin.H{"error": apiErr})
+			writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
 			return
 		}
 	}
@@ -250,26 +248,30 @@ const (
 )
 
 func (h *Handler) changeJobStatus(c *gin.Context, action string) {
-	var pathReq struct {
-		ID int64 `uri:"id" binding:"required,min=1"`
-	}
+	var pathReq jobIDURI
 	if err := c.ShouldBindUri(&pathReq); err != nil {
-		c.JSON(stdhttp.StatusBadRequest, gin.H{"error": toBindAPIError(err)})
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	var tenantReq tenantQueryRequest
+	if err := c.ShouldBindQuery(&tenantReq); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
 	req := ChangeStatusRequest{
 		ID:       pathReq.ID,
-		TenantID: c.Query("tenant_id"),
+		TenantID: tenantReq.TenantID,
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(stdhttp.StatusBadRequest, gin.H{"error": toBindAPIError(err)})
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
 	actorID, err := requiredActorID(c)
 	if err != nil {
-		c.JSON(stdhttp.StatusBadRequest, gin.H{"error": toAPIError(err)})
+		writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
 		return
 	}
 
@@ -282,29 +284,35 @@ func (h *Handler) changeJobStatus(c *gin.Context, action string) {
 	case domainResume:
 		out, err = h.statusJobUC.Resume(c.Request.Context(), req.ToChangeStatusInput(actorID))
 	default:
-		c.JSON(stdhttp.StatusInternalServerError, gin.H{"error": toAPIError(validation.New("action", "unsupported status action"))})
+		writeAPIError(c, stdhttp.StatusInternalServerError, toAPIError(validation.New("action", "unsupported status action")))
 		return
 	}
 	if err != nil {
 		if validation.Is(err) {
-			c.JSON(stdhttp.StatusBadRequest, gin.H{"error": toAPIError(err)})
+			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
 			return
 		}
 
 		apiErr := toAPIError(err)
 		switch apiErr.Code {
 		case ErrCodeNotFound:
-			c.JSON(stdhttp.StatusNotFound, gin.H{"error": apiErr})
+			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
 			return
 		case ErrCodeConflict:
-			c.JSON(stdhttp.StatusConflict, gin.H{"error": apiErr})
+			writeAPIError(c, stdhttp.StatusConflict, apiErr)
 			return
 		default:
 			_ = c.Error(err)
-			c.JSON(stdhttp.StatusInternalServerError, gin.H{"error": apiErr})
+			writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
 			return
 		}
 	}
 
 	c.JSON(stdhttp.StatusOK, out)
+}
+
+func writeAPIError(c *gin.Context, statusCode int, apiErr APIError) {
+	c.JSON(statusCode, errorResponse{
+		Error: apiErr,
+	})
 }
