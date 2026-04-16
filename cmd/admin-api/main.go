@@ -41,6 +41,10 @@ func newRouter(handler *adminhttp.Handler) *gin.Engine {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
+	r.GET("/openapi.json", func(c *gin.Context) {
+		c.JSON(http.StatusOK, adminhttp.ServiceOpenAPIDocument())
+	})
+
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	if handler != nil {
