@@ -9,12 +9,12 @@ import (
 // CreateJobRequest defines the HTTP payload for creating a job.
 type CreateJobRequest struct {
 	Name         string  `json:"name" binding:"required,max=128"`
-	TenantID     string  `json:"tenant_id"`
+	TenantID     string  `json:"tenant_id" binding:"omitempty,max=64"`
 	Priority     int     `json:"priority" binding:"omitempty,min=0"`
 	PartitionKey *string `json:"partition_key" binding:"omitempty,max=64"`
 	TriggerType  string  `json:"trigger_type" binding:"required,oneof=cron manual"`
 	CronExpr     *string `json:"cron_expr"`
-	Timezone     string  `json:"timezone"`
+	Timezone     string  `json:"timezone" binding:"omitempty,max=64"`
 
 	HandlerType    string         `json:"handler_type" binding:"required,max=32"`
 	HandlerPayload map[string]any `json:"handler_payload"`
@@ -103,7 +103,7 @@ type UpdateJobRequest struct {
 	PartitionKey *string `json:"partition_key" binding:"omitempty,max=64"`
 	TriggerType  *string `json:"trigger_type" binding:"omitempty,oneof=cron manual"`
 	CronExpr     *string `json:"cron_expr"`
-	Timezone     *string `json:"timezone"`
+	Timezone     *string `json:"timezone" binding:"omitempty,max=64"`
 
 	HandlerType    *string        `json:"handler_type" binding:"omitempty,max=32"`
 	HandlerPayload map[string]any `json:"handler_payload"`

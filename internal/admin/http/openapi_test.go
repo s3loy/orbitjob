@@ -81,6 +81,12 @@ func TestHandler_OpenAPIDocument(t *testing.T) {
 	if got := createSchema.Properties["timezone"].Default; got != "UTC" {
 		t.Fatalf("expected timezone default=%q, got %+v", "UTC", got)
 	}
+	if got := createSchema.Properties["tenant_id"].MaxLength; got == nil || *got != 64 {
+		t.Fatalf("expected tenant_id maxLength=%d, got %+v", 64, got)
+	}
+	if got := createSchema.Properties["timezone"].MaxLength; got == nil || *got != 64 {
+		t.Fatalf("expected timezone maxLength=%d, got %+v", 64, got)
+	}
 	if got := createSchema.Properties["timeout_sec"].Default; got != 60 {
 		t.Fatalf("expected timeout_sec default=%d, got %+v", 60, got)
 	}

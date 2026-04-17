@@ -13,35 +13,55 @@ import (
 	adminhttp "orbitjob/internal/admin/http"
 )
 
+var jsonToYAML = yaml.JSONToYAML
+
+var renderOpenAPIYAMLFn = renderOpenAPIYAML
+
+var verifySpecFn = verifySpec
+
+var writeSpecFn = writeSpec
+
+var exitFn = os.Exit
+
 func main() {
+	err := run(os.Args[1:])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		exitFn(1)
+	}
+}
+
+func run(args []string) error {
 	var outPath string
 	var check bool
 
-	flag.StringVar(&outPath, "out", "api/openapi.yaml", "path to write OpenAPI YAML")
-	flag.BoolVar(&check, "check", false, "fail when generated OpenAPI YAML differs from checked-in file")
-	flag.Parse()
+	fs := flag.NewFlagSet("openapi-gen", flag.ContinueOnError)
+	fs.StringVar(&outPath, "out", "api/openapi.yaml", "path to write OpenAPI YAML")
+	fs.BoolVar(&check, "check", false, "fail when generated OpenAPI YAML differs from checked-in file")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 
-	rendered, err := renderOpenAPIYAML(adminhttp.ServiceOpenAPIDocument())
+	rendered, err := renderOpenAPIYAMLFn(adminhttp.ServiceOpenAPIDocument())
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "render openapi yaml: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("render openapi yaml: %w", err)
 	}
 
 	outPath = filepath.Clean(outPath)
 	if check {
-		if err := verifySpec(outPath, rendered); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+		if err := verifySpecFn(outPath, rendered); err != nil {
+			return err
 		}
 		fmt.Printf("openapi is up to date: %s\n", outPath)
-		return
+		return nil
 	}
 
-	if err := writeSpec(outPath, rendered); err != nil {
-		fmt.Fprintf(os.Stderr, "write openapi yaml: %v\n", err)
-		os.Exit(1)
+	if err := writeSpecFn(outPath, rendered); err != nil {
+		return fmt.Errorf("write openapi yaml: %w", err)
 	}
 	fmt.Printf("wrote openapi yaml: %s\n", outPath)
+
+	return nil
 }
 
 func renderOpenAPIYAML(doc adminhttp.OpenAPIDocument) ([]byte, error) {
@@ -50,7 +70,7 @@ func renderOpenAPIYAML(doc adminhttp.OpenAPIDocument) ([]byte, error) {
 		return nil, fmt.Errorf("marshal openapi json: %w", err)
 	}
 
-	yamlBytes, err := yaml.JSONToYAML(jsonBytes)
+	yamlBytes, err := jsonToYAML(jsonBytes)
 	if err != nil {
 		return nil, fmt.Errorf("convert json to yaml: %w", err)
 	}
