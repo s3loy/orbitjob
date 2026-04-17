@@ -1,0 +1,972 @@
+openapi: 3.0.3
+info:
+  title: OrbitJob API
+  version: 0.1.0
+  description: Code-first OpenAPI document generated from OrbitJob HTTP route metadata and DTOs.
+paths:
+  /api/v1/jobs:
+    get:
+      operationId: listJobs
+      summary: List jobs
+      description: List jobs for one tenant. tenant_id defaults to "default" and limit defaults to 50 when omitted.
+      tags:
+      - Jobs
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: tenant_id
+        in: query
+        schema:
+          type: string
+          default: default
+          maxLength: 64
+      - name: status
+        in: query
+        schema:
+          type: string
+          enum:
+          - active
+          - paused
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          default: 50
+          minimum: 1
+          maximum: 100
+      - name: offset
+        in: query
+        schema:
+          type: integer
+          default: 0
+          minimum: 0
+      responses:
+        "200":
+          description: Job list
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobListResponse"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: createJob
+      summary: Create one job
+      description: Create a job definition. cron_expr is required when trigger_type=cron, and must be empty when trigger_type=manual.
+      tags:
+      - Jobs
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateJobRequest"
+      responses:
+        "201":
+          description: Created job
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateResult"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/jobs/{id}:
+    get:
+      operationId: getJob
+      summary: Get one job
+      description: Get one job by id. tenant_id defaults to "default" when omitted.
+      tags:
+      - Jobs
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      - name: tenant_id
+        in: query
+        schema:
+          type: string
+          default: default
+          maxLength: 64
+      responses:
+        "200":
+          description: Job detail
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetItem"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Job not found
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      operationId: updateJob
+      summary: Update one job
+      description: "Merge-style update: unspecified fields keep existing values. When trigger_type is changed to manual without cron_expr, existing cron_expr is cleared."
+      tags:
+      - Jobs
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      - name: tenant_id
+        in: query
+        schema:
+          type: string
+          default: default
+          maxLength: 64
+      - name: X-Actor-ID
+        in: header
+        required: true
+        schema:
+          type: string
+          maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateJobRequest"
+      responses:
+        "200":
+          description: Updated job
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateResult"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Job not found
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Version conflict
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/jobs/{id}/pause:
+    post:
+      operationId: pauseJob
+      summary: Pause one job
+      description: Pause an active job definition using optimistic locking by version.
+      tags:
+      - Jobs
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      - name: tenant_id
+        in: query
+        schema:
+          type: string
+          default: default
+          maxLength: 64
+      - name: X-Actor-ID
+        in: header
+        required: true
+        schema:
+          type: string
+          maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangeStatusRequest"
+      responses:
+        "200":
+          description: Paused job
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChangeStatusResult"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Job not found
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Version conflict
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/jobs/{id}/resume:
+    post:
+      operationId: resumeJob
+      summary: Resume one job
+      description: Resume a paused job definition using optimistic locking by version.
+      tags:
+      - Jobs
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      - name: tenant_id
+        in: query
+        schema:
+          type: string
+          default: default
+          maxLength: 64
+      - name: X-Actor-ID
+        in: header
+        required: true
+        schema:
+          type: string
+          maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangeStatusRequest"
+      responses:
+        "200":
+          description: Resumed job
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChangeStatusResult"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Job not found
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Version conflict
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /healthz:
+    get:
+      operationId: getHealthz
+      summary: Health check
+      description: Liveness probe endpoint. Returns HTTP 200 when service is up.
+      tags:
+      - System
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      responses:
+        "200":
+          description: Service is healthy
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthzResponse"
+  /metrics:
+    get:
+      operationId: getMetrics
+      summary: Prometheus metrics
+      description: Prometheus scrape endpoint in text exposition format.
+      tags:
+      - System
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      responses:
+        "200":
+          description: Metrics payload
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            text/plain:
+              schema:
+                type: string
+  /openapi.json:
+    get:
+      operationId: getOpenAPIDocument
+      summary: OpenAPI document
+      description: Machine-readable OpenAPI 3 document generated from code-first route metadata.
+      tags:
+      - System
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      responses:
+        "200":
+          description: OpenAPI 3 document
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+components:
+  schemas:
+    APIError:
+      type: object
+      properties:
+        code:
+          type: string
+        field:
+          type: string
+        message:
+          type: string
+      required:
+      - code
+      - message
+    ChangeStatusRequest:
+      type: object
+      properties:
+        version:
+          type: integer
+          minimum: 1
+      required:
+      - version
+    ChangeStatusResult:
+      type: object
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        next_run_at:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+        tenant_id:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+        version:
+          type: integer
+      required:
+      - id
+      - name
+      - tenant_id
+      - status
+      - version
+      - created_at
+      - updated_at
+    CreateJobRequest:
+      type: object
+      properties:
+        concurrency_policy:
+          type: string
+          enum:
+          - allow
+          - forbid
+          - replace
+          default: allow
+        cron_expr:
+          type: string
+          description: Required when trigger_type=cron; must be empty when trigger_type=manual.
+          nullable: true
+        handler_payload:
+          type: object
+          additionalProperties: true
+        handler_type:
+          type: string
+          maxLength: 32
+        misfire_policy:
+          type: string
+          enum:
+          - skip
+          - fire_now
+          - catch_up
+          default: skip
+        name:
+          type: string
+          maxLength: 128
+        partition_key:
+          type: string
+          nullable: true
+          maxLength: 64
+        priority:
+          type: integer
+          minimum: 0
+        retry_backoff_sec:
+          type: integer
+          minimum: 0
+        retry_backoff_strategy:
+          type: string
+          enum:
+          - fixed
+          - exponential
+          default: fixed
+        retry_limit:
+          type: integer
+          minimum: 0
+        tenant_id:
+          type: string
+          default: default
+          maxLength: 64
+        timeout_sec:
+          type: integer
+          default: 60
+          minimum: 1
+        timezone:
+          type: string
+          default: UTC
+          maxLength: 64
+        trigger_type:
+          type: string
+          enum:
+          - cron
+          - manual
+      required:
+      - name
+      - trigger_type
+      - handler_type
+    CreateResult:
+      type: object
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        next_run_at:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+        tenant_id:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+      required:
+      - id
+      - name
+      - tenant_id
+      - status
+      - created_at
+      - updated_at
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          $ref: "#/components/schemas/APIError"
+      required:
+      - error
+    GetItem:
+      type: object
+      properties:
+        concurrency_policy:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        cron_expr:
+          type: string
+          nullable: true
+        handler_payload:
+          type: object
+          additionalProperties: true
+        handler_type:
+          type: string
+        id:
+          type: integer
+          format: int64
+        last_scheduled_at:
+          type: string
+          format: date-time
+          nullable: true
+        misfire_policy:
+          type: string
+        name:
+          type: string
+        next_run_at:
+          type: string
+          format: date-time
+          nullable: true
+        partition_key:
+          type: string
+          nullable: true
+        priority:
+          type: integer
+        retry_backoff_sec:
+          type: integer
+        retry_backoff_strategy:
+          type: string
+        retry_limit:
+          type: integer
+        schedule_summary:
+          type: string
+        status:
+          type: string
+        tenant_id:
+          type: string
+        timeout_sec:
+          type: integer
+        timezone:
+          type: string
+        trigger_type:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+        version:
+          type: integer
+      required:
+      - id
+      - name
+      - tenant_id
+      - version
+      - priority
+      - trigger_type
+      - timezone
+      - schedule_summary
+      - handler_type
+      - handler_payload
+      - timeout_sec
+      - retry_limit
+      - retry_backoff_sec
+      - retry_backoff_strategy
+      - concurrency_policy
+      - misfire_policy
+      - status
+      - created_at
+      - updated_at
+    HealthzResponse:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+      - status
+    JobListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ListItem"
+      required:
+      - items
+    ListItem:
+      type: object
+      properties:
+        concurrency_policy:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        handler_type:
+          type: string
+        id:
+          type: integer
+          format: int64
+        last_scheduled_at:
+          type: string
+          format: date-time
+          nullable: true
+        misfire_policy:
+          type: string
+        name:
+          type: string
+        next_run_at:
+          type: string
+          format: date-time
+          nullable: true
+        partition_key:
+          type: string
+          nullable: true
+        priority:
+          type: integer
+        schedule_summary:
+          type: string
+        status:
+          type: string
+        tenant_id:
+          type: string
+        trigger_type:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+      required:
+      - id
+      - name
+      - tenant_id
+      - priority
+      - trigger_type
+      - schedule_summary
+      - handler_type
+      - concurrency_policy
+      - misfire_policy
+      - status
+      - created_at
+      - updated_at
+    UpdateJobRequest:
+      type: object
+      properties:
+        concurrency_policy:
+          type: string
+          enum:
+          - allow
+          - forbid
+          - replace
+          nullable: true
+        cron_expr:
+          type: string
+          nullable: true
+        handler_payload:
+          type: object
+          additionalProperties: true
+        handler_type:
+          type: string
+          nullable: true
+          maxLength: 32
+        misfire_policy:
+          type: string
+          enum:
+          - skip
+          - fire_now
+          - catch_up
+          nullable: true
+        name:
+          type: string
+          nullable: true
+          maxLength: 128
+        partition_key:
+          type: string
+          nullable: true
+          maxLength: 64
+        priority:
+          type: integer
+          nullable: true
+          minimum: 0
+        retry_backoff_sec:
+          type: integer
+          nullable: true
+          minimum: 0
+        retry_backoff_strategy:
+          type: string
+          enum:
+          - fixed
+          - exponential
+          nullable: true
+        retry_limit:
+          type: integer
+          nullable: true
+          minimum: 0
+        timeout_sec:
+          type: integer
+          nullable: true
+          minimum: 1
+        timezone:
+          type: string
+          nullable: true
+          maxLength: 64
+        trigger_type:
+          type: string
+          enum:
+          - cron
+          - manual
+          nullable: true
+        version:
+          type: integer
+          minimum: 1
+      required:
+      - version
+    UpdateResult:
+      type: object
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        next_run_at:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+        tenant_id:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+        version:
+          type: integer
+      required:
+      - id
+      - name
+      - tenant_id
+      - status
+      - version
+      - created_at
+      - updated_at
