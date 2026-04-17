@@ -663,6 +663,7 @@ components:
         tenant_id:
           type: string
           default: default
+          maxLength: 64
         timeout_sec:
           type: integer
           default: 60
@@ -670,6 +671,7 @@ components:
         timezone:
           type: string
           default: UTC
+          maxLength: 64
         trigger_type:
           type: string
           enum:
@@ -924,6 +926,7 @@ components:
         timezone:
           type: string
           nullable: true
+          maxLength: 64
         trigger_type:
           type: string
           enum:

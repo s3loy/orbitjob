@@ -115,6 +115,11 @@ func TestSchemaForType_MapVariantsAndAnonymousName(t *testing.T) {
 func TestStructSchema_RequestAndResponseModes(t *testing.T) {
 	registry := newSchemaRegistry()
 
+	model := responseSchemaModel{hidden: "internal-only"}
+	if model.hidden == "" {
+		t.Fatalf("expected hidden field assignment to be preserved in local test model")
+	}
+
 	request := registry.structSchema(reflect.TypeOf(requestSchemaModel{}), schemaModeRequest)
 	if !containsString(request.Required, "name") {
 		t.Fatalf("expected request required fields to include name, got %+v", request.Required)
