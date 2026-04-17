@@ -24,7 +24,7 @@ type responseSchemaModel struct {
 	Name      string  `json:"name"`
 	Optional  *string `json:"optional"`
 	OmitEmpty string  `json:"omit_empty,omitempty"`
-	hidden    string  `json:"hidden"`
+	hidden    string
 }
 
 func TestBuildOpenAPIDocument_SkipsDisabledAdminRoutes(t *testing.T) {
