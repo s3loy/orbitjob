@@ -81,6 +81,44 @@ func TestSchedulerRepository_ScheduleOneDueCron_SkipMisfire(t *testing.T) {
 	assertJobCursorAdvanced(t, db, "tenant-scheduler-skip", jobID, now, false, time.Time{})
 }
 
+func TestSchedulerRepository_ScheduleOneDueCron_CatchUpMisfire(t *testing.T) {
+	db := postgrestest.Open(t)
+	repo := NewSchedulerRepository(db)
+	now := time.Now().UTC().Truncate(time.Second)
+	missedSlot := now.Add(-time.Minute)
+
+	jobID := seedDueCronJob(t, db, dueJobSeed{
+		TenantID:      "tenant-scheduler-catch-up",
+		Name:          "cron-catch-up",
+		Priority:      6,
+		RetryLimit:    3,
+		CronExpr:      "*/5 * * * *",
+		Timezone:      "UTC",
+		MisfirePolicy: domainjob.MisfireCatchUp,
+		NextRunAt:     missedSlot,
+	})
+
+	result, found, err := repo.ScheduleOneDueCron(context.Background(), now, schedule.DecideSchedule)
+	if err != nil {
+		t.Fatalf("ScheduleOneDueCron() error = %v", err)
+	}
+	if !found {
+		t.Fatalf("expected found=true")
+	}
+	if !result.Created {
+		t.Fatalf("expected Created=true for catch_up misfire")
+	}
+	if result.JobID != jobID {
+		t.Fatalf("expected job_id=%d, got %d", jobID, result.JobID)
+	}
+	if result.RunID == "" {
+		t.Fatalf("expected run_id to be set")
+	}
+
+	assertScheduledInstance(t, db, "tenant-scheduler-catch-up", jobID, missedSlot, 6, 4, result.RunID)
+	assertJobCursorAdvanced(t, db, "tenant-scheduler-catch-up", jobID, now, true, missedSlot)
+}
+
 func TestSchedulerRepository_ScheduleOneDueCron_NoCandidate(t *testing.T) {
 	db := postgrestest.Open(t)
 	repo := NewSchedulerRepository(db)
@@ -261,8 +299,8 @@ func assertJobCursorAdvanced(
 	t.Helper()
 
 	var (
-		nextRunAt      sql.NullTime
-		lastScheduled  sql.NullTime
+		nextRunAt     sql.NullTime
+		lastScheduled sql.NullTime
 	)
 
 	err := db.QueryRowContext(context.Background(), `
