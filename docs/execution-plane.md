@@ -11,7 +11,9 @@
 - `priority` / `partition_key` 已打通到 job definition 代码路径
 - `job_instances` create / claim-next-runnable 已有 domain + repository + tests
 - `workers` heartbeat / lease upsert 已有 domain + repository + tests
-- scheduler MVP：`cmd/scheduler` + `core/app/schedule` + `SchedulerRepository.ScheduleOneDueCron`
+- scheduler MVP tick loop 已落地（`cmd/scheduler` + `core/app/schedule` + `SchedulerRepository`）
+- 确定性 misfire 策略评估器（skip / fire_now / catch_up）
+- 原子调度事务（claim + insert instance + update cursor in one tx）
 
 未实现（runtime）：
 
@@ -29,7 +31,6 @@
 
 本阶段**不**包含：
 
-- 完整 scheduler 扫描循环
 - 完整 worker 执行器
 - 超时回收、失联重试、drain 编排的后台协调器
 
@@ -126,7 +127,7 @@ worker 通过单次 upsert 完成注册或 heartbeat：
 
 ## 后续工作
 
+- dispatcher / worker 主链路（claim → execute → result 回写）
 - scheduler 在生产配置下稳定运行与观测收敛
-- worker start / finish / retry / timeout 的完整 repository 动作
 - 过期 lease 的回收与重分配
 - manual trigger API 与 instance query API

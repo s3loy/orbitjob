@@ -11,7 +11,9 @@ Implemented (foundation):
 - `priority` and `partition_key` are wired through the job definition code path
 - `job_instances` create / claim-next-runnable have domain + repository + tests
 - `workers` heartbeat / lease upsert has domain + repository + tests
-- scheduler MVP: `cmd/scheduler` + `core/app/schedule` + `SchedulerRepository.ScheduleOneDueCron`
+- scheduler MVP tick loop landed (`cmd/scheduler` + `core/app/schedule` + `SchedulerRepository`)
+- deterministic misfire policy evaluator (skip / fire_now / catch_up)
+- atomic scheduling transaction (claim + insert instance + update cursor in one tx)
 
 Not implemented yet (runtime):
 
@@ -29,7 +31,6 @@ This phase only standardizes:
 
 This phase does **not** include:
 
-- a complete scheduler scanning loop
 - a complete worker runtime
 - background coordinators for timeout recovery, lease recovery, or drain orchestration
 
@@ -126,7 +127,7 @@ Additional constraints:
 
 ## Follow-up Work
 
+- dispatcher / worker main path (claim → execute → result write-back)
 - production-hardening and observability stabilization for scheduler MVP
-- full worker start / finish / retry / timeout repository actions
 - lease-expiry recovery and reassignment
 - manual trigger API and instance query API

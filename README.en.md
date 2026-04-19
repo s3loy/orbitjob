@@ -19,7 +19,7 @@ OrbitJob is a Go and PostgreSQL based job scheduling system. The repository curr
 | Read-side query | Implemented | list and detail queries live under `internal/admin/store/postgres` |
 | Execution foundation domain | Implemented | `internal/core/domain/instance` and `internal/core/domain/worker` |
 | Execution foundation persistence | Implemented | instance create/claim + worker heartbeat upsert |
-| Scheduler runtime (MVP) | In progress | `cmd/scheduler` + bounded batch tick are implemented |
+| Scheduler runtime (MVP) | Implemented (code landed, integration tests pending) | `cmd/scheduler` + bounded batch tick + misfire policy + atomic scheduling tx |
 | Worker execution | Not finished | worker / dispatch / leasing are still out of scope |
 
 ## Architecture
@@ -41,6 +41,10 @@ flowchart LR
     QueryUC --> ReadRepo
     CommandUC --> Domain["core/domain/job<br/>validation + status transition"]
     CommandUC --> WriteRepo
+
+    Scheduler["cmd/scheduler"] --> ScheduleUC["core/app/schedule<br/>policy + tick"]
+    ScheduleUC --> SchedulerRepo["core/store/postgres<br/>SchedulerRepository"]
+    SchedulerRepo --> DB
 ```
 
 Job lifecycle and state transitions are documented in [docs/job-lifecycle.en.md](./docs/job-lifecycle.en.md).
