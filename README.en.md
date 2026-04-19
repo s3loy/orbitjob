@@ -17,6 +17,8 @@ OrbitJob is a Go and PostgreSQL based job scheduling system. The repository curr
 | Job domain validation | Implemented | trigger, status, retry, concurrency, and misfire rules live under `internal/core/domain/job` |
 | Write-side persistence | Implemented | PostgreSQL + optimistic locking + audit |
 | Read-side query | Implemented | list and detail queries live under `internal/admin/store/postgres` |
+| Execution foundation domain | Implemented | `internal/core/domain/instance` and `internal/core/domain/worker` |
+| Execution foundation persistence | Implemented | instance create/claim + worker heartbeat upsert |
 | Scheduler runtime | Not finished | the repository is not yet a complete execution plane |
 | Worker execution | Not finished | worker / dispatch / leasing are still out of scope |
 
@@ -42,6 +44,8 @@ flowchart LR
 ```
 
 Job lifecycle and state transitions are documented in [docs/job-lifecycle.en.md](./docs/job-lifecycle.en.md).
+
+Execution-plane foundation contracts and scope are documented in [docs/execution-plane.en.md](./docs/execution-plane.en.md).
 
 ## HTTP API
 
@@ -155,11 +159,12 @@ go test -tags integration ./internal/admin/store/postgres ./internal/core/store/
 | Path | Purpose |
 | --- | --- |
 | `cmd/admin-api` | service entrypoint, middleware, router wiring |
+| `cmd/openapi-gen` | OpenAPI code-first generation and drift check tool |
 | `internal/admin/http` | HTTP handlers, request binding, error mapping |
 | `internal/admin/app/job` | control-plane query and command use cases |
 | `internal/admin/store/postgres` | read-side PostgreSQL repository |
-| `internal/core/domain/job` | job domain model, validation, and status transitions |
-| `internal/core/store/postgres` | write-side PostgreSQL repository |
+| `internal/core/domain` | job/instance/worker domain models and validation |
+| `internal/core/store/postgres` | write-side repositories for job/instance/worker |
 | `internal/domain` | shared validation and resource errors |
 | `internal/platform` | config, logger, metrics, and test helpers |
 | `db/migrations` | PostgreSQL schema, constraints, and triggers |

@@ -4,6 +4,12 @@
 
 本文档描述 OrbitJob 当前 control plane 中 job 的可见状态、允许的状态变更，以及对应的 HTTP 接口约束。
 
+## 当前实现状态（2026-04-19）
+
+- `pause` / `resume` 接口已在 `admin/http`、`admin/app/job/command`、`core/store/postgres` 全链路落地
+- 状态变更走 optimistic locking，并在同事务写入审计记录
+- `delete` 不在当前生命周期范围内
+
 ## 状态图
 
 ```mermaid

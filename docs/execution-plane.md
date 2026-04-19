@@ -4,6 +4,20 @@
 
 本文档定义 OrbitJob execution plane 的第一阶段契约，用于约束后续 `scheduler`、`dispatcher`、`worker` 的实现边界。本文档关注数据面与状态语义，不要求本阶段实现完整 runtime loop。
 
+## 当前实现状态（2026-04-19）
+
+已实现（foundation）：
+
+- `priority` / `partition_key` 已打通到 job definition 代码路径
+- `job_instances` create / claim-next-runnable 已有 domain + repository + tests
+- `workers` heartbeat / lease upsert 已有 domain + repository + tests
+
+未实现（runtime）：
+
+- scheduler 循环
+- dispatcher 进程
+- worker 执行器与完成回写闭环
+
 ## 范围
 
 本阶段只收口以下能力：

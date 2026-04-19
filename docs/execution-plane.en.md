@@ -4,6 +4,20 @@
 
 This document defines the first execution-plane contract for OrbitJob. It exists to constrain future `scheduler`, `dispatcher`, and `worker` implementations around the data model and lifecycle semantics without requiring a full runtime loop in this phase.
 
+## Current Implementation Status (2026-04-19)
+
+Implemented (foundation):
+
+- `priority` and `partition_key` are wired through the job definition code path
+- `job_instances` create / claim-next-runnable have domain + repository + tests
+- `workers` heartbeat / lease upsert has domain + repository + tests
+
+Not implemented yet (runtime):
+
+- scheduler loop
+- dispatcher process
+- worker executor and completion write-back loop
+
 ## Scope
 
 This phase only standardizes:

@@ -4,6 +4,12 @@
 
 This document describes the visible job states in the current OrbitJob control plane, the allowed transitions between them, and the corresponding HTTP endpoint rules.
 
+## Current Implementation Status (2026-04-19)
+
+- `pause` and `resume` are fully wired through `admin/http`, `admin/app/job/command`, and `core/store/postgres`
+- state changes use optimistic locking and write audit rows in the same transaction
+- `delete` is not part of the current lifecycle scope
+
 ## State Diagram
 
 ```mermaid
