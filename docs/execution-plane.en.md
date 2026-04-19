@@ -11,12 +11,13 @@ Implemented (foundation):
 - `priority` and `partition_key` are wired through the job definition code path
 - `job_instances` create / claim-next-runnable have domain + repository + tests
 - `workers` heartbeat / lease upsert has domain + repository + tests
+- scheduler MVP: `cmd/scheduler` + `core/app/schedule` + `SchedulerRepository.ScheduleOneDueCron`
 
 Not implemented yet (runtime):
 
-- scheduler loop
 - dispatcher process
 - worker executor and completion write-back loop
+- full scheduler-dispatcher-worker runtime closure
 
 ## Scope
 
@@ -125,7 +126,7 @@ Additional constraints:
 
 ## Follow-up Work
 
-- scheduler scanning over `jobs.next_run_at` and instance creation
+- production-hardening and observability stabilization for scheduler MVP
 - full worker start / finish / retry / timeout repository actions
 - lease-expiry recovery and reassignment
 - manual trigger API and instance query API

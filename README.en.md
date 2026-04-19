@@ -19,7 +19,7 @@ OrbitJob is a Go and PostgreSQL based job scheduling system. The repository curr
 | Read-side query | Implemented | list and detail queries live under `internal/admin/store/postgres` |
 | Execution foundation domain | Implemented | `internal/core/domain/instance` and `internal/core/domain/worker` |
 | Execution foundation persistence | Implemented | instance create/claim + worker heartbeat upsert |
-| Scheduler runtime | Not finished | the repository is not yet a complete execution plane |
+| Scheduler runtime (MVP) | In progress | `cmd/scheduler` + bounded batch tick are implemented |
 | Worker execution | Not finished | worker / dispatch / leasing are still out of scope |
 
 ## Architecture
@@ -116,11 +116,19 @@ Common variables:
 | `DATABASE_DSN` | database DSN used by `cmd/admin-api` |
 | `TEST_DATABASE_DSN` | database DSN used by integration tests |
 | `APP_ENV` | runtime and logging environment flag |
+| `SCHEDULER_BATCH_SIZE` | max due jobs handled per scheduler tick, default `100` |
+| `SCHEDULER_TICK_INTERVAL_SEC` | scheduler tick interval in seconds, default `5` |
 
 ### Run
 
 ```bash
 go run ./cmd/admin-api
+```
+
+Run scheduler (MVP):
+
+```bash
+go run ./cmd/scheduler
 ```
 
 ### OpenAPI (Code-first)
@@ -160,6 +168,7 @@ go test -tags integration ./internal/admin/store/postgres ./internal/core/store/
 | --- | --- |
 | `cmd/admin-api` | service entrypoint, middleware, router wiring |
 | `cmd/openapi-gen` | OpenAPI code-first generation and drift check tool |
+| `cmd/scheduler` | scheduler MVP entrypoint (batched due-job handling) |
 | `internal/admin/http` | HTTP handlers, request binding, error mapping |
 | `internal/admin/app/job` | control-plane query and command use cases |
 | `internal/admin/store/postgres` | read-side PostgreSQL repository |

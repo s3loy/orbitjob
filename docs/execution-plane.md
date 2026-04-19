@@ -11,12 +11,13 @@
 - `priority` / `partition_key` 已打通到 job definition 代码路径
 - `job_instances` create / claim-next-runnable 已有 domain + repository + tests
 - `workers` heartbeat / lease upsert 已有 domain + repository + tests
+- scheduler MVP：`cmd/scheduler` + `core/app/schedule` + `SchedulerRepository.ScheduleOneDueCron`
 
 未实现（runtime）：
 
-- scheduler 循环
 - dispatcher 进程
 - worker 执行器与完成回写闭环
+- scheduler 与 dispatcher/worker 的完整联动闭环
 
 ## 范围
 
@@ -125,7 +126,7 @@ worker 通过单次 upsert 完成注册或 heartbeat：
 
 ## 后续工作
 
-- scheduler 扫描 `jobs.next_run_at` 并创建 instance
+- scheduler 在生产配置下稳定运行与观测收敛
 - worker start / finish / retry / timeout 的完整 repository 动作
 - 过期 lease 的回收与重分配
 - manual trigger API 与 instance query API
