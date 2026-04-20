@@ -141,8 +141,9 @@ func claimOneDispatchCandidate(ctx context.Context, tx *sql.Tx, spec domaininsta
 		       AND retry_at <= $2
 		       AND attempt < max_attempt))
 		ORDER BY
-			greatest(priority,
-				priority + floor(extract(epoch from (now() - scheduled_at)) / 60)) DESC,
+			least(greatest(priority,
+				priority + floor(extract(epoch from (now() - scheduled_at)) / 60)),
+				priority + 60) DESC,
 			scheduled_at ASC, id ASC
 		FOR UPDATE SKIP LOCKED
 		LIMIT 1
@@ -213,6 +214,9 @@ func (r *DispatchRepository) RecoverLeaseOrphans(ctx context.Context, now time.T
 	if err != nil {
 		return 0, fmt.Errorf("recover lease orphans: %w", err)
 	}
-	n, _ := result.RowsAffected()
+	n, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("rows affected: %w", err)
+	}
 	return n, nil
 }
