@@ -116,7 +116,7 @@ func TestSchedulerRepository_ScheduleOneDueCron_CatchUpMisfire(t *testing.T) {
 	}
 
 	assertScheduledInstance(t, db, "tenant-scheduler-catch-up", jobID, missedSlot, 6, 4, result.RunID)
-	assertJobCursorAdvanced(t, db, "tenant-scheduler-catch-up", jobID, now, true, missedSlot)
+	assertJobCursorAdvanced(t, db, "tenant-scheduler-catch-up", jobID, missedSlot, true, missedSlot)
 }
 
 func TestSchedulerRepository_ScheduleOneDueCron_NoCandidate(t *testing.T) {
@@ -292,7 +292,7 @@ func assertJobCursorAdvanced(
 	db *sql.DB,
 	tenantID string,
 	jobID int64,
-	now time.Time,
+	nextRunAtMustBeAfter time.Time,
 	expectLastScheduled bool,
 	expectedLastScheduledAt time.Time,
 ) {
@@ -315,8 +315,8 @@ func assertJobCursorAdvanced(
 	if !nextRunAt.Valid {
 		t.Fatalf("expected next_run_at to be set")
 	}
-	if !nextRunAt.Time.After(now) {
-		t.Fatalf("expected next_run_at > now, got next_run_at=%s, now=%s", nextRunAt.Time, now)
+	if !nextRunAt.Time.After(nextRunAtMustBeAfter) {
+		t.Fatalf("expected next_run_at > %s, got next_run_at=%s", nextRunAtMustBeAfter, nextRunAt.Time)
 	}
 
 	if expectLastScheduled {
