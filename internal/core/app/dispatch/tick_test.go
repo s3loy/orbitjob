@@ -10,9 +10,11 @@ import (
 )
 
 type stubDispatcherRepo struct {
-	calls int
-	found []bool
-	errAt int
+	calls                int
+	found                []bool
+	errAt                int
+	recoverOrphansCalls  int
+	recoverOrphansErr    error
 }
 
 func (s *stubDispatcherRepo) DispatchOne(
@@ -30,6 +32,14 @@ func (s *stubDispatcherRepo) DispatchOne(
 		return domaininstance.Snapshot{}, false, nil
 	}
 	return domaininstance.Snapshot{}, s.found[i], nil
+}
+
+func (s *stubDispatcherRepo) RecoverLeaseOrphans(ctx context.Context, now time.Time) (int64, error) {
+	s.recoverOrphansCalls++
+	if s.recoverOrphansErr != nil {
+		return 0, s.recoverOrphansErr
+	}
+	return 0, nil
 }
 
 func makeTestClaimSpec() domaininstance.ClaimSpec {
@@ -94,5 +104,29 @@ func TestTickUseCase_RunBatch_LimitReached(t *testing.T) {
 	}
 	if repo.calls != 2 {
 		t.Fatalf("expected exactly 2 repo calls, got %d", repo.calls)
+	}
+}
+
+func TestTickUseCase_RunBatch_RecoversOrphansBeforeDispatch(t *testing.T) {
+	repo := &stubDispatcherRepo{found: []bool{true, false}, errAt: -1}
+	uc := NewTickUseCase(repo)
+	spec := makeTestClaimSpec()
+	_, err := uc.RunBatch(context.Background(), spec, 10)
+	if err != nil {
+		t.Fatalf("RunBatch() error = %v", err)
+	}
+	if repo.recoverOrphansCalls != 1 {
+		t.Fatalf("expected 1 RecoverLeaseOrphans call, got %d", repo.recoverOrphansCalls)
+	}
+}
+
+func TestTickUseCase_RunBatch_ReturnsErrorOnOrphanRecoveryFailure(t *testing.T) {
+	repo := &stubDispatcherRepo{found: []bool{true, false}, errAt: -1}
+	repo.recoverOrphansErr = errors.New("recover boom")
+	uc := NewTickUseCase(repo)
+	spec := makeTestClaimSpec()
+	_, err := uc.RunBatch(context.Background(), spec, 10)
+	if err == nil || !errors.Is(err, repo.recoverOrphansErr) {
+		t.Fatalf("expected orphan recovery error, got %v", err)
 	}
 }

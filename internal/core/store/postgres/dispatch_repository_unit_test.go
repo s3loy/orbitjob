@@ -459,3 +459,69 @@ func TestNewDispatchRepository(t *testing.T) {
 		t.Fatalf("expected repository to keep db reference")
 	}
 }
+
+func TestRecoverLeaseOrphans_Success(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewDispatchRepository(db)
+	now := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
+
+	mock.ExpectExec("UPDATE job_instances").
+		WithArgs(now).
+		WillReturnResult(sqlmock.NewResult(0, 3))
+
+	n, err := repo.RecoverLeaseOrphans(context.Background(), now)
+	if err != nil {
+		t.Fatalf("RecoverLeaseOrphans() error = %v", err)
+	}
+	if n != 3 {
+		t.Fatalf("expected n=3, got %d", n)
+	}
+}
+
+func TestRecoverLeaseOrphans_Error(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewDispatchRepository(db)
+	now := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
+
+	mock.ExpectExec("UPDATE job_instances").
+		WithArgs(now).
+		WillReturnError(errors.New("recover boom"))
+
+	_, err = repo.RecoverLeaseOrphans(context.Background(), now)
+	if err == nil || !strings.Contains(err.Error(), "recover lease orphans") {
+		t.Fatalf("expected recover lease orphans error, got %v", err)
+	}
+}
+
+func TestRecoverLeaseOrphans_NoOrphans(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewDispatchRepository(db)
+	now := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
+
+	mock.ExpectExec("UPDATE job_instances").
+		WithArgs(now).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	n, err := repo.RecoverLeaseOrphans(context.Background(), now)
+	if err != nil {
+		t.Fatalf("RecoverLeaseOrphans() error = %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("expected n=0, got %d", n)
+	}
+}

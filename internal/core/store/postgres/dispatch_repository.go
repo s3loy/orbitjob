@@ -53,11 +53,14 @@ func (r *DispatchRepository) DispatchOne(
 		return domaininstance.Snapshot{}, false, nil
 	}
 
-	// Step 2: Lookup job's concurrency_policy.
+	// Step 2: Lock job row and lookup concurrency_policy.
+	// FOR UPDATE prevents concurrent dispatchers for the same job from racing
+	// through the policy check + count + dispatch in parallel (forbid race).
 	var concurrencyPolicy string
 	err = tx.QueryRowContext(ctx, `
 		SELECT concurrency_policy FROM jobs
 		WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
+		FOR UPDATE
 	`, candidate.TenantID, candidate.JobID).Scan(&concurrencyPolicy)
 	if err != nil {
 		return domaininstance.Snapshot{}, false, fmt.Errorf("lookup concurrency policy: %w", err)
@@ -137,7 +140,10 @@ func claimOneDispatchCandidate(ctx context.Context, tx *sql.Tx, spec domaininsta
 		       AND retry_at IS NOT NULL
 		       AND retry_at <= $2
 		       AND attempt < max_attempt))
-		ORDER BY priority DESC, scheduled_at ASC, id ASC
+		ORDER BY
+			greatest(priority,
+				priority + floor(extract(epoch from (now() - scheduled_at)) / 60)) DESC,
+			scheduled_at ASC, id ASC
 		FOR UPDATE SKIP LOCKED
 		LIMIT 1
 	`, spec.TenantID, spec.Now)
@@ -189,4 +195,24 @@ func cancelRunningInstances(ctx context.Context, tx *sql.Tx, tenantID string, jo
 		return fmt.Errorf("cancel running instances: %w", err)
 	}
 	return nil
+}
+
+// RecoverLeaseOrphans reclaims dispatching instances whose lease has expired,
+// returning them to pending so they can be re-dispatched. This handles the case
+// where a dispatcher crashes after claiming but before the worker picks up.
+func (r *DispatchRepository) RecoverLeaseOrphans(ctx context.Context, now time.Time) (int64, error) {
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE job_instances
+		SET status = 'pending',
+		    worker_id = NULL,
+		    lease_expires_at = NULL,
+		    error_msg = 'orphaned: dispatcher lease expired'
+		WHERE status = 'dispatching'
+		  AND lease_expires_at < $1
+	`, now)
+	if err != nil {
+		return 0, fmt.Errorf("recover lease orphans: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	return n, nil
 }
