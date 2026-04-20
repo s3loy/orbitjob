@@ -2,37 +2,32 @@
 
 [返回 README](../README.md)
 
-本文档定义 OrbitJob execution plane 的第一阶段契约，用于约束后续 `scheduler`、`dispatcher`、`worker` 的实现边界。本文档关注数据面与状态语义，不要求本阶段实现完整 runtime loop。
+本文档定义 OrbitJob execution plane 的数据模型、状态语义与组件行为契约，为 scheduler、dispatcher、worker 之间的协作提供确定性规范。
 
-## 当前实现状态（2026-04-19）
+## 当前实现状态（2026-04-20）
 
-已实现（foundation）：
+**已实现：**
 
-- `priority` / `partition_key` 已打通到 job definition 代码路径
-- `job_instances` create / claim-next-runnable 已有 domain + repository + tests
-- `workers` heartbeat / lease upsert 已有 domain + repository + tests
-- scheduler MVP tick loop 已落地（`cmd/scheduler` + `core/app/schedule` + `SchedulerRepository`）
+- Job definition 中与执行路由相关的字段（`priority`、`partition_key`、`handler_type`、`handler_payload`）全链路打通
+- `job_instances` 的 create 与 claim 语义已落地，含 domain 模型、repository 与测试
+- `workers` 的 heartbeat 与 lease upsert 已落地，含 domain 模型、repository 与测试
+- Scheduler MVP tick loop（`cmd/scheduler` + `core/app/schedule` + `SchedulerRepository`）
 - 确定性 misfire 策略评估器（skip / fire_now / catch_up）
-- 原子调度事务（claim + insert instance + update cursor in one tx）
+- 原子调度事务（claim + insert instance + update cursor 在同一事务完成）
+- Dispatcher runtime（`cmd/dispatcher` + `core/app/dispatch`）：
+  - 原子 claim：`FOR UPDATE SKIP LOCKED` 防止重复分发
+  - Concurrency policy 纯函数决策：`DecideDispatch(input) -> dispatch / skip / replace`
+  - Priority aging：pending instance 按等待时长每分钟有效优先级 +1，上限 base priority + 60
+  - Lease expiry recovery：每轮 tick 开始前回收过期 lease 的孤儿 instance 至 pending
+  - Graceful shutdown：响应 SIGINT / SIGTERM 优雅退出
+  - 环境变量配置（`DISPATCHER_WORKER_ID` / `DISPATCHER_TENANT_ID` / `DISPATCHER_BATCH_SIZE` / `DISPATCHER_TICK_INTERVAL_SEC` / `DISPATCHER_LEASE_DURATION_SEC`）
 
-未实现（runtime）：
+**未实现：**
 
-- dispatcher 进程
-- worker 执行器与完成回写闭环
-- scheduler 与 dispatcher/worker 的完整联动闭环
-
-## 范围
-
-本阶段只收口以下能力：
-
-- `job definition` 中与执行路由相关的字段
-- `job_instances` 的创建与 claim 语义
-- `workers` 的注册 / heartbeat / lease 语义
-
-本阶段**不**包含：
-
-- 完整 worker 执行器
-- 超时回收、失联重试、drain 编排的后台协调器
+- Worker executor runtime（接收任务、执行、结果回写）
+- Manual trigger API
+- Instance query API
+- `job_instance_attempts` 完整写入链路
 
 ## 组件边界
 
@@ -40,21 +35,21 @@
 flowchart LR
     Control["Control Plane<br/>job definitions"] --> Scheduler["Scheduler"]
     Scheduler --> InstanceRepo["job_instances"]
-    Manual["Manual Trigger API<br/>future"] --> InstanceRepo
+    Manual["Manual Trigger API<br/>(planned)"] -.-> InstanceRepo
     Dispatcher["Dispatcher"] --> InstanceRepo
     Dispatcher --> WorkerRepo["workers"]
-    Worker["Worker"] --> WorkerRepo
-    Worker --> InstanceRepo
+    Worker["Worker<br/>(planned)"] -.-> WorkerRepo
+    Worker -.-> InstanceRepo
 ```
 
 ## Job Definition 路由字段
 
 | 字段 | 作用 |
 | --- | --- |
-| `priority` | dispatcher 选取 runnable instance 时的优先级，越大越优先 |
-| `partition_key` | 逻辑分片键，用于后续 worker 路由、队列分区或租户隔离 |
-| `handler_type` | 执行器类型，例如 `http` / `worker` |
-| `handler_payload` | 具体 handler 配置，worker 侧按 `handler_type` 解释 |
+| `priority` | 基础优先级，dispatcher 选取 runnable instance 时作为排序依据，值越大优先级越高 |
+| `partition_key` | 逻辑分片键，用于 worker 路由、队列分区或租户隔离 |
+| `handler_type` | 执行器类型标识（如 `http` / `worker`） |
+| `handler_payload` | 具体 handler 配置，worker 侧按 `handler_type` 解释并执行 |
 
 ## Job Instance 状态机
 
@@ -64,70 +59,127 @@ stateDiagram-v2
     pending --> dispatching: dispatcher claim
     retry_wait --> dispatching: retry eligible + dispatcher claim
     dispatching --> running: worker start
-    running --> success: worker success
-    running --> retry_wait: worker failed but retry remains
-    running --> failed: worker failed and no retry remains
-    running --> canceled: control action / recovery action
+    dispatching --> pending: lease expired (recovery)
+    running --> success: worker reports success
+    running --> retry_wait: worker reports failure, retries remaining
+    running --> failed: worker reports failure, no retries remaining
+    running --> canceled: replace policy / control action
 ```
 
 ## 状态语义
 
 | 状态 | 含义 |
 | --- | --- |
-| `pending` | 已生成但尚未被 dispatcher claim |
-| `dispatching` | dispatcher 已选中并写入 `worker_id` / `lease_expires_at`，等待 worker 接手 |
+| `pending` | 已创建，等待 dispatcher claim |
+| `dispatching` | dispatcher 已 claim 并分配 `worker_id` 与 `lease_expires_at`，等待 worker 接手执行 |
 | `running` | worker 已开始执行 |
-| `retry_wait` | 上一次 attempt 已结束，等待 `retry_at` 到达后重新进入 dispatch |
-| `success` | 终态，执行成功 |
-| `failed` | 终态，执行失败且无剩余重试 |
-| `canceled` | 终态，被控制动作或恢复动作取消 |
+| `retry_wait` | 上一次 attempt 已结束且仍有剩余重试次数，等待 `retry_at` 到达后重新进入 dispatch 队列 |
+| `success` | 终态 -- 执行成功 |
+| `failed` | 终态 -- 执行失败且无剩余重试 |
+| `canceled` | 终态 -- 被 replace policy 取消或由控制动作 / 恢复动作取消 |
 
-## Dispatcher Claim 规则
+## Dispatcher Claim 流程
 
-dispatcher claim runnable instance 时遵循以下规则：
+Dispatcher 每轮 tick 执行一个 bounded batch，流程分为两个阶段：
 
-| 项目 | 规则 |
+### 阶段一：Lease Expiry Recovery
+
+在开始正常 dispatch 之前，先回收所有 `status = 'dispatching'` 且 `lease_expires_at < now()` 的孤儿 instance，将其重置为 `pending`，清除 `worker_id` 和 `lease_expires_at`。这确保了 dispatcher 崩溃后不会丢失任务。
+
+### 阶段二：逐条 Dispatch
+
+对每条候选 instance，在单个数据库事务内依次完成：
+
+1. **锁定候选**：从 `job_instances` 中按优先级排序选取一条，使用 `FOR UPDATE SKIP LOCKED` 防止并发 claim
+2. **锁定 job 行**：对对应 `jobs` 行加 `FOR UPDATE` 锁，读取 `concurrency_policy`
+3. **统计运行数**：查询该 job 当前 `dispatching` + `running` 状态的 instance 数量
+4. **策略决策**：调用纯函数 `DecideDispatch(input)` 获得决策结果
+5. **执行决策**：根据结果执行 dispatch / skip / replace
+
+### 候选排序与 Priority Aging
+
+候选 instance 的选取排序为：
+
+```
+effective_priority DESC, scheduled_at ASC, id ASC
+```
+
+其中 effective priority 的计算方式：
+
+```
+effective_priority = min(base_priority + floor(minutes_since_scheduled), base_priority + 60)
+```
+
+即 pending instance 每等待一分钟，有效优先级自动 +1，上限为 base priority + 60。这一机制防止低优先级任务长时间饥饿。
+
+### 候选状态
+
+| 候选条件 | 规则 |
 | --- | --- |
-| 候选状态 | `pending`，或 `retry_wait` 且 `retry_at <= now()` 且 `attempt < max_attempt` |
-| 排序 | `priority DESC, scheduled_at ASC, id ASC` |
-| 并发控制 | 使用 `FOR UPDATE SKIP LOCKED` 避免重复 claim |
-| claim 结果 | 写入 `status='dispatching'`、`worker_id`、`lease_expires_at` |
-| retry claim | 从 `retry_wait` claim 时，`attempt = attempt + 1`，并清空 `retry_at`、`started_at`、`finished_at`、`result_code`、`error_msg` |
+| `pending` | 直接符合候选条件 |
+| `retry_wait` | 需满足 `retry_at <= now()` 且 `attempt < max_attempt` |
+
+### Claim 写入
+
+| 操作 | 说明 |
+| --- | --- |
+| 正常 claim | 设置 `status = 'dispatching'`、写入 `worker_id` 和 `lease_expires_at` |
+| 从 `retry_wait` claim | 在上述基础上 `attempt + 1`，清除 `retry_at`、`started_at`、`finished_at`、`result_code`、`error_msg` |
+
+## Concurrency Policy 决策
+
+dispatcher 在 claim 候选 instance 后、写入 dispatching 状态前，根据 job 的 `concurrency_policy` 字段执行策略决策：
+
+| 策略 | 条件 | 决策 |
+| --- | --- | --- |
+| `allow` | 任何情况 | dispatch -- 允许多实例并发运行 |
+| `forbid` | `running_count = 0` | dispatch |
+| `forbid` | `running_count > 0` | skip -- 候选 instance 保持 pending，等待下一轮 tick |
+| `replace` | `running_count = 0` | dispatch |
+| `replace` | `running_count > 0` | replace -- 先取消现有 dispatching/running instance，再 dispatch 新实例 |
+| 未知策略 | 任何情况 | 降级为 allow 行为 |
+
+决策逻辑实现为纯函数 `DecideDispatch`，无副作用，便于独立测试。
 
 ## Worker Heartbeat / Lease 规则
 
-worker 通过单次 upsert 完成注册或 heartbeat：
+Worker 通过单次 upsert 操作同时完成注册与心跳刷新：
 
 | 字段 | 规则 |
 | --- | --- |
-| `worker_id` | worker 稳定标识，tenant 内唯一 |
+| `worker_id` | worker 的稳定标识，在 tenant 内唯一 |
 | `status` | `online` / `offline` / `draining` |
-| `capacity` | `>= 1` |
-| `labels` | JSON object，供后续路由与调度过滤使用 |
-| `lease_expires_at` | heartbeat 时显式提供的新租约截止时间 |
+| `capacity` | 并发处理能力，必须 `>= 1` |
+| `labels` | JSON object，供路由与调度过滤使用 |
+| `lease_expires_at` | heartbeat 时由 worker 显式提供的新租约截止时间 |
 
 约束：
 
-- heartbeat 会刷新 `last_heartbeat_at`
-- 同一 `(tenant_id, worker_id)` 采用 upsert
-- `draining` worker 仍可保留心跳，但后续 dispatcher 是否继续分配由未来调度策略决定
+- heartbeat 刷新 `last_heartbeat_at`
+- 同一 `(tenant_id, worker_id)` 采用 upsert 语义
+- `draining` 状态的 worker 仍可维持心跳，dispatcher 是否继续分配由调度策略决定
 
-## Concurrency 与 Retry 边界
+## Retry 边界
 
-- `jobs.concurrency_policy` 仍属于 job definition 规则，未来 dispatcher 在 claim 前必须参考它
-- 本阶段只落持久化基础，不在代码中实现完整 `allow / forbid / replace` 行为
-- `job_instance_attempts` 保留为后续每次执行 attempt 的不可变 trail，本阶段不要求完整写入链路
+- `job_instance_attempts` 表保留为每次执行 attempt 的不可变审计记录，当前阶段尚未实现完整写入链路
+- 从 `retry_wait` 重新 claim 时，attempt 计数器在 SQL 层原子递增
 
-## 本阶段的完成标准
+## 代码位置
 
-- `priority` / `partition_key` 从 job definition schema 拉通到代码层
-- 可以创建 `job_instances`
-- dispatcher 可以按既定排序 claim runnable instance
-- worker 可以 upsert 自身 heartbeat 和 lease
+| 路径 | 作用 |
+| --- | --- |
+| `cmd/dispatcher/main.go` | Dispatcher 进程入口、配置加载与 tick loop |
+| `internal/core/app/dispatch/tick.go` | Dispatcher tick 用例：lease recovery + bounded batch |
+| `internal/core/domain/instance/dispatch.go` | `DecideDispatch` 纯函数与 concurrency policy 决策 |
+| `internal/core/store/postgres/dispatch_repository.go` | Dispatch 事务：候选选取、policy 查询、决策执行、lease 回收 |
+| `internal/core/domain/instance/claim.go` | `ClaimSpec` 与 claim 输入校验 |
+| `cmd/scheduler/main.go` | Scheduler 进程入口 |
+| `internal/core/app/schedule/` | Scheduler tick 用例与 misfire 策略 |
 
 ## 后续工作
 
-- dispatcher / worker 主链路（claim → execute → result 回写）
-- scheduler 在生产配置下稳定运行与观测收敛
-- 过期 lease 的回收与重分配
-- manual trigger API 与 instance query API
+- Worker executor runtime：接收 dispatching instance、执行、结果回写闭环
+- Manual trigger API：手动触发 job instance 的创建
+- Instance query API：instance 查询与列表接口
+- `job_instance_attempts` 完整 attempt trail 写入
+- 生产环境观测指标收敛与告警

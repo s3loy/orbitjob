@@ -7,20 +7,23 @@
 
 [中文](./README.md)
 
-OrbitJob is a Go and PostgreSQL based job scheduling system. The repository currently implements the control plane for job definitions, including create, read, update, pause, resume, domain validation, status transitions, audit logging, and persistence.
+OrbitJob is a job scheduling system built with Go and PostgreSQL, following a context-first modular monolith architecture. The current implementation covers the control plane (full CRUD and lifecycle management for job definitions), the scheduler (batched due-job scheduling with misfire policies), and the dispatcher (atomic instance claiming, concurrency policies, priority aging, and lease recovery).
 
 ## Project Status
 
 | Area | Status | Notes |
 | --- | --- | --- |
 | Control plane HTTP API | Implemented | `create / list / get / update / pause / resume` |
-| Job domain validation | Implemented | trigger, status, retry, concurrency, and misfire rules live under `internal/core/domain/job` |
+| Job domain validation | Implemented | trigger, status, retry, concurrency, and misfire rules under `internal/core/domain/job` |
 | Write-side persistence | Implemented | PostgreSQL + optimistic locking + audit |
-| Read-side query | Implemented | list and detail queries live under `internal/admin/store/postgres` |
+| Read-side query | Implemented | list and detail queries under `internal/admin/store/postgres` |
 | Execution foundation domain | Implemented | `internal/core/domain/instance` and `internal/core/domain/worker` |
 | Execution foundation persistence | Implemented | instance create/claim + worker heartbeat upsert |
-| Scheduler runtime (MVP) | Implemented (code landed, integration tests pending) | `cmd/scheduler` + bounded batch tick + misfire policy + atomic scheduling tx |
-| Worker execution | Not finished | worker / dispatch / leasing are still out of scope |
+| Scheduler runtime | Implemented | `cmd/scheduler` + bounded batch tick + misfire policy + atomic scheduling tx |
+| Dispatcher runtime | Implemented | `cmd/dispatcher` + atomic claim (`FOR UPDATE SKIP LOCKED`) + concurrency policy + priority aging + lease expiry recovery + graceful shutdown |
+| Worker executor | Not yet implemented | Worker executor and result write-back loop |
+| Manual trigger API | Not yet implemented | On-demand job trigger endpoint |
+| Instance query API | Not yet implemented | Instance listing and detail endpoint |
 
 ## Architecture
 
@@ -45,11 +48,15 @@ flowchart LR
     Scheduler["cmd/scheduler"] --> ScheduleUC["core/app/schedule<br/>policy + tick"]
     ScheduleUC --> SchedulerRepo["core/store/postgres<br/>SchedulerRepository"]
     SchedulerRepo --> DB
+
+    Dispatcher["cmd/dispatcher"] --> DispatchUC["core/app/dispatch<br/>tick use case"]
+    DispatchUC --> DispatchRepo["core/store/postgres<br/>DispatchRepository"]
+    DispatchRepo --> DB
 ```
 
 Job lifecycle and state transitions are documented in [docs/job-lifecycle.en.md](./docs/job-lifecycle.en.md).
 
-Execution-plane foundation contracts and scope are documented in [docs/execution-plane.en.md](./docs/execution-plane.en.md).
+Execution-plane contracts and scope are documented in [docs/execution-plane.en.md](./docs/execution-plane.en.md).
 
 ## HTTP API
 
@@ -57,24 +64,24 @@ Execution-plane foundation contracts and scope are documented in [docs/execution
 
 | Method | Path | Function | Input | Notes |
 | --- | --- | --- | --- | --- |
-| `GET` | `/healthz` | health check | none | returns service liveness |
-| `GET` | `/openapi.json` | OpenAPI document | none | live code-generated API contract |
-| `GET` | `/metrics` | Prometheus metrics | none | exposes metrics handler |
-| `POST` | `/api/v1/jobs` | create a job | JSON body | mutating endpoint |
-| `GET` | `/api/v1/jobs` | list jobs | Query: `tenant_id`, `status`, `limit`, `offset` | `status` supports `active` / `paused` only |
-| `GET` | `/api/v1/jobs/:id` | get one job | Path: `id`; Query: `tenant_id` | `id >= 1` |
-| `PUT` | `/api/v1/jobs/:id` | update job configuration | Path: `id`; Query: `tenant_id`; JSON body | merge-style update; requires `X-Actor-ID` |
-| `POST` | `/api/v1/jobs/:id/pause` | pause a job | Path: `id`; Query: `tenant_id`; JSON body: `version` | requires `X-Actor-ID` |
-| `POST` | `/api/v1/jobs/:id/resume` | resume a job | Path: `id`; Query: `tenant_id`; JSON body: `version` | requires `X-Actor-ID` |
+| `GET` | `/healthz` | Health check | none | Returns service liveness |
+| `GET` | `/openapi.json` | OpenAPI document | none | Live code-generated API contract |
+| `GET` | `/metrics` | Prometheus metrics | none | Exposes metrics handler |
+| `POST` | `/api/v1/jobs` | Create a job | JSON body | Mutating endpoint |
+| `GET` | `/api/v1/jobs` | List jobs | Query: `tenant_id`, `status`, `limit`, `offset` | `status` accepts `active` / `paused` only |
+| `GET` | `/api/v1/jobs/:id` | Get a job | Path: `id`; Query: `tenant_id` | `id >= 1` |
+| `PUT` | `/api/v1/jobs/:id` | Update job configuration | Path: `id`; Query: `tenant_id`; JSON body | Merge-style update; requires `X-Actor-ID` |
+| `POST` | `/api/v1/jobs/:id/pause` | Pause a job | Path: `id`; Query: `tenant_id`; JSON body: `version` | Requires `X-Actor-ID` |
+| `POST` | `/api/v1/jobs/:id/resume` | Resume a job | Path: `id`; Query: `tenant_id`; JSON body: `version` | Requires `X-Actor-ID` |
 
-### Mutating Request Rules
+### Mutating Request Conventions
 
 | Item | Notes |
 | --- | --- |
-| `X-Actor-ID` | required for mutating endpoints; written into audit records |
-| `X-Trace-ID` | optional; generated by the server when omitted and returned in the response header |
-| `version` | required for update, pause, and resume; used for optimistic locking |
-| Error mapping | validation returns `400`; missing resource returns `404`; version conflicts return `409`; unexpected errors return `500` |
+| `X-Actor-ID` | Required for mutating endpoints; recorded in audit trail |
+| `X-Trace-ID` | Optional; server generates one when omitted and returns it in the response header |
+| `version` | Required for update, pause, and resume; used for optimistic locking |
+| Error mapping | Validation errors return `400`; missing resources return `404`; version conflicts return `409`; unexpected errors return `500` |
 
 ### Update Semantics
 
@@ -82,10 +89,10 @@ Execution-plane foundation contracts and scope are documented in [docs/execution
 
 | Rule | Notes |
 | --- | --- |
-| Unspecified fields | keep current job values |
-| Specified fields | overwrite current job values |
-| `cron -> manual` | when switching to `manual` without explicitly sending `cron_expr`, the existing cron expression is cleared |
-| Persistence write | uses `jobs.version` for optimistic locking |
+| Unspecified fields | Retain the current job values |
+| Specified fields | Overwrite the current job values |
+| `cron -> manual` | When switching to `manual` without explicitly providing `cron_expr`, the existing cron expression is cleared |
+| Persistence write | Uses `jobs.version` for optimistic locking |
 
 ### Core Field Conventions
 
@@ -99,14 +106,25 @@ Execution-plane foundation contracts and scope are documented in [docs/execution
 
 ## Development
 
-### Requirements
+### Prerequisites
 
-- Go
+- Go 1.26+
 - PostgreSQL
+
+### Processes
+
+OrbitJob consists of multiple independent processes, each serving a distinct responsibility:
+
+| Process | Entrypoint | Description |
+| --- | --- | --- |
+| Admin API | `cmd/admin-api` | Control plane HTTP service for job CRUD and lifecycle management |
+| Scheduler | `cmd/scheduler` | Periodically scans for due jobs and creates instances (batch tick loop) |
+| Dispatcher | `cmd/dispatcher` | Atomically claims pending instances and assigns them to workers (`FOR UPDATE SKIP LOCKED`) |
+| OpenAPI Gen | `cmd/openapi-gen` | OpenAPI contract generation and drift detection tool |
 
 ### Environment Variables
 
-The current `.env.example` contains:
+The `.env.example` file contains:
 
 ```bash
 DATABASE_DSN=postgres://postgres:password@127.0.0.1:5432/orbitjob?sslmode=disable
@@ -115,24 +133,47 @@ TEST_DATABASE_DSN=postgres://postgres:password@127.0.0.1:5432/orbitjob_test?sslm
 
 Common variables:
 
-| Variable | Purpose |
-| --- | --- |
-| `DATABASE_DSN` | database DSN used by `cmd/admin-api` |
-| `TEST_DATABASE_DSN` | database DSN used by integration tests |
-| `APP_ENV` | runtime and logging environment flag |
-| `SCHEDULER_BATCH_SIZE` | max due jobs handled per scheduler tick, default `100` |
-| `SCHEDULER_TICK_INTERVAL_SEC` | scheduler tick interval in seconds, default `5` |
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `DATABASE_DSN` | Database connection string for `cmd/admin-api` | -- |
+| `TEST_DATABASE_DSN` | Database connection string for integration tests | -- |
+| `APP_ENV` | Runtime and logging environment identifier | -- |
 
-### Run
+Scheduler variables:
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `SCHEDULER_BATCH_SIZE` | Maximum due jobs per scheduler tick | `100` |
+| `SCHEDULER_TICK_INTERVAL_SEC` | Scheduler tick interval in seconds | `5` |
+
+Dispatcher variables:
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `DISPATCHER_WORKER_ID` | Target worker identifier (required) | -- |
+| `DISPATCHER_TENANT_ID` | Tenant identifier | `default` |
+| `DISPATCHER_BATCH_SIZE` | Maximum instances claimed per tick | `50` |
+| `DISPATCHER_TICK_INTERVAL_SEC` | Tick interval in seconds | `2` |
+| `DISPATCHER_LEASE_DURATION_SEC` | Lease duration in seconds | `30` |
+
+### Running
+
+Start the Admin API:
 
 ```bash
 go run ./cmd/admin-api
 ```
 
-Run scheduler (MVP):
+Start the Scheduler:
 
 ```bash
 go run ./cmd/scheduler
+```
+
+Start the Dispatcher:
+
+```bash
+DISPATCHER_WORKER_ID=worker-1 go run ./cmd/dispatcher
 ```
 
 ### OpenAPI (Code-first)
@@ -151,7 +192,7 @@ Check for drift (same command used in CI):
 go run ./cmd/openapi-gen -check -out api/openapi.yaml
 ```
 
-### Test
+### Testing
 
 Unit tests:
 
@@ -170,16 +211,19 @@ go test -tags integration ./internal/admin/store/postgres ./internal/core/store/
 
 | Path | Purpose |
 | --- | --- |
-| `cmd/admin-api` | service entrypoint, middleware, router wiring |
-| `cmd/openapi-gen` | OpenAPI code-first generation and drift check tool |
-| `cmd/scheduler` | scheduler MVP entrypoint (batched due-job handling) |
+| `cmd/admin-api` | Control plane service entrypoint, middleware, router wiring |
+| `cmd/scheduler` | Scheduler entrypoint (bounded batch tick + misfire policy) |
+| `cmd/dispatcher` | Dispatcher entrypoint (claim + dispatch + graceful shutdown) |
+| `cmd/openapi-gen` | OpenAPI code-first generation and drift detection tool |
 | `internal/admin/http` | HTTP handlers, request binding, error mapping |
-| `internal/admin/app/job` | control-plane query and command use cases |
-| `internal/admin/store/postgres` | read-side PostgreSQL repository |
-| `internal/core/domain` | job/instance/worker domain models and validation |
-| `internal/core/store/postgres` | write-side repositories for job/instance/worker |
-| `internal/domain` | shared validation and resource errors |
-| `internal/platform` | config, logger, metrics, and test helpers |
+| `internal/admin/app/job` | Control-plane query and command use cases |
+| `internal/admin/store/postgres` | Read-side PostgreSQL repository |
+| `internal/core/domain` | Job / instance / worker domain models and validation |
+| `internal/core/app/schedule` | Scheduler tick use case (policy + tick) |
+| `internal/core/app/dispatch` | Dispatcher tick use case |
+| `internal/core/store/postgres` | Write-side repositories (job / instance / worker / scheduler / dispatch) |
+| `internal/domain` | Shared validation and resource errors |
+| `internal/platform` | Config, logger, metrics, and test helpers |
 | `db/migrations` | PostgreSQL schema, constraints, and triggers |
 
 ## Documentation
@@ -188,7 +232,9 @@ go test -tags integration ./internal/admin/store/postgres ./internal/core/store/
 | --- | --- |
 | [`README.md`](./README.md) | Chinese overview and developer reference |
 | [`README.en.md`](./README.en.md) | English overview |
+| [`docs/job-lifecycle.md`](./docs/job-lifecycle.md) | Job lifecycle and endpoint rules (Chinese) |
 | [`docs/job-lifecycle.en.md`](./docs/job-lifecycle.en.md) | Job lifecycle and endpoint rules |
+| [`docs/execution-plane.md`](./docs/execution-plane.md) | Execution-plane contract and foundation semantics (Chinese) |
 | [`docs/execution-plane.en.md`](./docs/execution-plane.en.md) | Execution-plane contract and foundation semantics |
 
 ## License
