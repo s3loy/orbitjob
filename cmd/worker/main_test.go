@@ -73,6 +73,8 @@ func (s *stubHeartbeater) callCount() int {
 	return len(s.calls)
 }
 
+var _ = (&stubHeartbeater{}).callCount
+
 func (s *stubHeartbeater) lastStatus() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()

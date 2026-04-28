@@ -66,7 +66,7 @@ func (h *HTTPHandler) Execute(ctx context.Context, task execute.AssignedTask) ex
 			ErrorMsg:   err.Error(),
 		}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	statusCode := fmt.Sprintf("%d", resp.StatusCode)
 

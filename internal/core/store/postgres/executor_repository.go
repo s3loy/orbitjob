@@ -54,7 +54,7 @@ func (r *ExecutorRepository) FetchAssigned(
 	if err != nil {
 		return nil, fmt.Errorf("fetch assigned instances: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var tasks []execute.AssignedTask
 	for rows.Next() {
