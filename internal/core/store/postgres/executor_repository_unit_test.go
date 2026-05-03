@@ -34,7 +34,6 @@ var claimTaskColumns = []string{
 	"trace_id", "scheduled_at", "dispatched_at", "lease_expires_at",
 }
 
-var _ = strings.Contains // keep import
 
 // ---------------------------------------------------------------------------
 // ClaimNextDispatched

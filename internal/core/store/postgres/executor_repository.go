@@ -33,7 +33,7 @@ func (r *ExecutorRepository) ClaimNextDispatched(
 			SELECT id FROM job_instances
 			WHERE tenant_id = $1
 			  AND status = 'dispatched'
-			ORDER BY effective_priority DESC, scheduled_at ASC
+			ORDER BY effective_priority DESC, scheduled_at ASC, id ASC
 			LIMIT $2
 			FOR UPDATE SKIP LOCKED
 		),

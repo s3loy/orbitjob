@@ -19,8 +19,8 @@ type dispatcher interface {
 }
 
 // TickUseCase executes one bounded dispatcher batch.
-// At the start of each batch it refreshes effective priority and recovers
-// orphaned instances (dispatched+running) whose lease has expired.
+// At the start of each batch it recovers orphaned instances, then refreshes
+// effective priority (including recovered pending instances) before dispatching.
 type TickUseCase struct {
 	repo dispatcher
 }
@@ -30,21 +30,20 @@ func NewTickUseCase(repo dispatcher) *TickUseCase {
 }
 
 // RunBatch dispatches at most limit eligible instances in one tick.
-// It first refreshes effective priority, then recovers orphaned dispatched
-// and running instances before attempting normal dispatch.
 func (uc *TickUseCase) RunBatch(ctx context.Context, spec domaininstance.ClaimSpec, limit int) (int, error) {
 	if limit < 1 {
 		limit = 1
 	}
 
+	// Recover orphans first so recovered pending instances get effective_priority
+	// recomputed by the subsequent refresh.
+	if _, _, err := uc.repo.RecoverLeaseOrphans(ctx, spec.Now); err != nil {
+		return 0, fmt.Errorf("recover lease orphans: %w", err)
+	}
+
 	// Refresh effective_priority for all pending/retry_wait instances.
 	if _, err := uc.repo.RefreshEffectivePriority(ctx, spec.Now); err != nil {
 		return 0, fmt.Errorf("refresh effective priority: %w", err)
-	}
-
-	// Recover orphans before dispatching.
-	if _, _, err := uc.repo.RecoverLeaseOrphans(ctx, spec.Now); err != nil {
-		return 0, fmt.Errorf("recover lease orphans: %w", err)
 	}
 
 	handled := 0

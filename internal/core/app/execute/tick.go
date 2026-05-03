@@ -24,7 +24,7 @@ func NewTickUseCase(repo executor, handlers map[string]Handler) *TickUseCase {
 }
 
 func (uc *TickUseCase) RunOnce(ctx context.Context, tenantID, workerID string, leaseDuration time.Duration) (int, error) {
-	now := time.Now()
+	now := time.Now().UTC()
 	leaseExpiresAt := now.Add(leaseDuration)
 
 	tasks, err := uc.repo.ClaimNextDispatched(ctx, tenantID, workerID, 1, leaseExpiresAt, now)
