@@ -33,10 +33,10 @@ func newDispatchRepoMock(t *testing.T) (*DispatchRepository, sqlmock.Sqlmock) {
 // dispatch repository queries and scanInstanceSnapshot.
 var instanceColumns = []string{
 	"id", "run_id", "tenant_id", "job_id", "trigger_source",
-	"status", "priority", "partition_key", "idempotency_key",
-	"idempotency_scope", "routing_key", "worker_id",
+	"status", "priority", "effective_priority", "partition_key",
+	"idempotency_key", "idempotency_scope", "routing_key", "worker_id",
 	"attempt", "max_attempt", "scheduled_at", "started_at",
-	"finished_at", "lease_expires_at", "retry_at",
+	"finished_at", "lease_expires_at", "dispatched_at", "retry_at",
 	"result_code", "error_msg", "trace_id", "created_at", "updated_at",
 }
 
@@ -49,13 +49,13 @@ func addInstanceRow(
 ) {
 	rows.AddRow(
 		id, runID, tenantID, jobID, triggerSource,
-		status, priority, nil, nil,                  // partition_key, idempotency_key
-		"job_instance_create", nil, nil,             // idempotency_scope, routing_key, worker_id
-		1, 1,                                        // attempt, max_attempt
-		scheduledAt, nil, nil,                        // scheduled_at, started_at, finished_at
-		nil, nil,                                     // lease_expires_at, retry_at
-		nil, nil, nil,                                // result_code, error_msg, trace_id
-		now, now,                                     // created_at, updated_at
+		status, priority, priority, nil, nil,         // effective_priority, partition_key, idempotency_key
+		"job_instance_create", nil, nil,              // idempotency_scope, routing_key, worker_id
+		1, 1,                                         // attempt, max_attempt
+		scheduledAt, nil, nil,                         // scheduled_at, started_at, finished_at
+		nil, nil, nil,                                 // lease_expires_at, dispatched_at, retry_at
+		nil, nil, nil,                                 // result_code, error_msg, trace_id
+		now, now,                                      // created_at, updated_at
 	)
 }
 
@@ -94,14 +94,11 @@ func expectRunningCount(mock sqlmock.Sqlmock, tenantID string, jobID int64, coun
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(count))
 }
 
-func expectUpdateToDispatching(mock sqlmock.Sqlmock, spec domaininstance.ClaimSpec, instanceID int64, now time.Time) {
+func expectUpdateToDispatched(mock sqlmock.Sqlmock, now time.Time, instanceID int64) {
 	rows := sqlmock.NewRows(instanceColumns)
-	addInstanceRow(rows, instanceID, "run-1", spec.TenantID, 101, "schedule", "dispatching", 5, now.Add(-time.Minute), now)
-	// The updated row should have worker_id and lease_expires_at set,
-	// but sqlmock returns what we tell it. worker_id and lease_expires_at
-	// are nullable columns that now hold values; we add them accordingly.
+	addInstanceRow(rows, instanceID, "run-1", "tenant-a", 101, "schedule", "dispatched", 5, now.Add(-time.Minute), now)
 	mock.ExpectQuery("UPDATE job_instances").
-		WithArgs(spec.WorkerID, spec.LeaseExpiresAt, instanceID).
+		WithArgs(now, now.Add(30*time.Second), instanceID).
 		WillReturnRows(rows)
 }
 
@@ -146,7 +143,7 @@ func TestDispatchOne_DispatchAction(t *testing.T) {
 	expectClaimOneCandidate(mock, spec, 1, now)
 	expectPolicyLookup(mock, spec.TenantID, 101, "allow")
 	expectRunningCount(mock, spec.TenantID, 101, 0)
-	expectUpdateToDispatching(mock, spec, 1, now)
+	expectUpdateToDispatched(mock, now, 1)
 	mock.ExpectCommit()
 
 	snap, found, err := repo.DispatchOne(context.Background(), spec, domaininstance.DecideDispatch)
@@ -159,8 +156,8 @@ func TestDispatchOne_DispatchAction(t *testing.T) {
 	if snap.ID != 1 {
 		t.Fatalf("expected id=1, got %d", snap.ID)
 	}
-	if snap.Status != "dispatching" {
-		t.Fatalf("expected status=dispatching, got %q", snap.Status)
+	if snap.Status != "dispatched" {
+		t.Fatalf("expected status=dispatched, got %q", snap.Status)
 	}
 	assertMock(t, mock)
 }
@@ -199,7 +196,7 @@ func TestDispatchOne_ReplaceAction(t *testing.T) {
 	expectPolicyLookup(mock, spec.TenantID, 101, "replace")
 	expectRunningCount(mock, spec.TenantID, 101, 2)
 	expectCancelRunning(mock, spec.TenantID, 101, now)
-	expectUpdateToDispatching(mock, spec, 3, now)
+	expectUpdateToDispatched(mock, now, 3)
 	mock.ExpectCommit()
 
 	snap, found, err := repo.DispatchOne(context.Background(), spec, domaininstance.DecideDispatch)
@@ -212,8 +209,8 @@ func TestDispatchOne_ReplaceAction(t *testing.T) {
 	if snap.ID != 3 {
 		t.Fatalf("expected id=3, got %d", snap.ID)
 	}
-	if snap.Status != "dispatching" {
-		t.Fatalf("expected status=dispatching, got %q", snap.Status)
+	if snap.Status != "dispatched" {
+		t.Fatalf("expected status=dispatched, got %q", snap.Status)
 	}
 	assertMock(t, mock)
 }
@@ -310,7 +307,7 @@ func TestDispatchOne_CommitError(t *testing.T) {
 	expectClaimOneCandidate(mock, spec, 1, now)
 	expectPolicyLookup(mock, spec.TenantID, 101, "allow")
 	expectRunningCount(mock, spec.TenantID, 101, 0)
-	expectUpdateToDispatching(mock, spec, 1, now)
+	expectUpdateToDispatched(mock, now, 1)
 	mock.ExpectCommit().WillReturnError(errors.New("commit boom"))
 
 	_, found, err := repo.DispatchOne(context.Background(), spec, domaininstance.DecideDispatch)
@@ -378,7 +375,7 @@ func TestDispatchOne_UpdateToDispatchingError(t *testing.T) {
 	expectPolicyLookup(mock, spec.TenantID, 101, "allow")
 	expectRunningCount(mock, spec.TenantID, 101, 0)
 	mock.ExpectQuery("UPDATE job_instances").
-		WithArgs(spec.WorkerID, spec.LeaseExpiresAt, int64(1)).
+		WithArgs(now, spec.LeaseExpiresAt, int64(1)).
 		WillReturnError(errors.New("update boom"))
 	mock.ExpectRollback()
 
@@ -473,8 +470,11 @@ func TestRecoverLeaseOrphans_Success(t *testing.T) {
 	mock.ExpectExec("UPDATE job_instances").
 		WithArgs(now).
 		WillReturnResult(sqlmock.NewResult(0, 3))
+	mock.ExpectExec("UPDATE job_instances").
+		WithArgs(now).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 
-	n, err := repo.RecoverLeaseOrphans(context.Background(), now)
+	n, _, err := repo.RecoverLeaseOrphans(context.Background(), now)
 	if err != nil {
 		t.Fatalf("RecoverLeaseOrphans() error = %v", err)
 	}
@@ -497,9 +497,9 @@ func TestRecoverLeaseOrphans_Error(t *testing.T) {
 		WithArgs(now).
 		WillReturnError(errors.New("recover boom"))
 
-	_, err = repo.RecoverLeaseOrphans(context.Background(), now)
-	if err == nil || !strings.Contains(err.Error(), "recover lease orphans") {
-		t.Fatalf("expected recover lease orphans error, got %v", err)
+	_, _, err = repo.RecoverLeaseOrphans(context.Background(), now)
+	if err == nil || !strings.Contains(err.Error(), "recover dispatched") {
+		t.Fatalf("expected recover dispatched orphans error, got %v", err)
 	}
 }
 
@@ -516,12 +516,81 @@ func TestRecoverLeaseOrphans_NoOrphans(t *testing.T) {
 	mock.ExpectExec("UPDATE job_instances").
 		WithArgs(now).
 		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("UPDATE job_instances").
+		WithArgs(now).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 
-	n, err := repo.RecoverLeaseOrphans(context.Background(), now)
+	n, _, err := repo.RecoverLeaseOrphans(context.Background(), now)
 	if err != nil {
 		t.Fatalf("RecoverLeaseOrphans() error = %v", err)
 	}
 	if n != 0 {
 		t.Fatalf("expected n=0, got %d", n)
+	}
+}
+
+func TestRefreshEffectivePriority_Success(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewDispatchRepository(db)
+	now := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
+
+	mock.ExpectExec("UPDATE job_instances").
+		WithArgs(now).
+		WillReturnResult(sqlmock.NewResult(0, 5))
+
+	n, err := repo.RefreshEffectivePriority(context.Background(), now)
+	if err != nil {
+		t.Fatalf("RefreshEffectivePriority() error = %v", err)
+	}
+	if n != 5 {
+		t.Fatalf("expected n=5, got %d", n)
+	}
+}
+
+func TestRefreshEffectivePriority_Error(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewDispatchRepository(db)
+	now := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
+
+	mock.ExpectExec("UPDATE job_instances").
+		WithArgs(now).
+		WillReturnError(errors.New("refresh boom"))
+
+	_, err = repo.RefreshEffectivePriority(context.Background(), now)
+	if err == nil || !strings.Contains(err.Error(), "refresh effective priority") {
+		t.Fatalf("expected refresh effective priority error, got %v", err)
+	}
+}
+
+func TestRecoverLeaseOrphans_RunningError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewDispatchRepository(db)
+	now := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
+
+	mock.ExpectExec("UPDATE job_instances").
+		WithArgs(now).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("UPDATE job_instances").
+		WithArgs(now).
+		WillReturnError(errors.New("running orphan boom"))
+
+	_, _, err = repo.RecoverLeaseOrphans(context.Background(), now)
+	if err == nil || !strings.Contains(err.Error(), "recover running orphans") {
+		t.Fatalf("expected recover running orphans error, got %v", err)
 	}
 }

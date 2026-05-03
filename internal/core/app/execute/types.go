@@ -14,6 +14,8 @@ type AssignedTask struct {
 	HandlerPayload       map[string]any
 	TimeoutSec           int
 	Priority             int
+	EffectivePriority    int
+	DispatchedAt         time.Time
 	Attempt              int
 	MaxAttempt           int
 	RetryBackoffSec      int

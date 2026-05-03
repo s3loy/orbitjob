@@ -44,13 +44,13 @@ func TestDispatchOne_AllowDispatchesPending(t *testing.T) {
 	if !found {
 		t.Fatalf("expected found=true")
 	}
-	if snap.Status != "dispatching" {
-		t.Fatalf("expected status=dispatching, got %q", snap.Status)
+	if snap.Status != "dispatched" {
+		t.Fatalf("expected status=dispatched, got %q", snap.Status)
 	}
 	if snap.WorkerID == nil || *snap.WorkerID != "worker-1" {
 		t.Fatalf("expected worker_id=worker-1, got %v", snap.WorkerID)
 	}
-	assertInstanceStatus(t, db, "tenant-dispatch-allow", snap.ID, "dispatching")
+	assertInstanceStatus(t, db, "tenant-dispatch-allow", snap.ID, "dispatched")
 }
 
 func TestDispatchOne_ForbidSkipsWhenRunning(t *testing.T) {
@@ -138,14 +138,14 @@ func TestDispatchOne_ReplaceCancelsExisting(t *testing.T) {
 	if !found {
 		t.Fatalf("expected found=true")
 	}
-	if snap.Status != "dispatching" {
-		t.Fatalf("expected status=dispatching, got %q", snap.Status)
+	if snap.Status != "dispatched" {
+		t.Fatalf("expected status=dispatched, got %q", snap.Status)
 	}
 
 	// Verify old running instance was canceled.
 	assertInstanceStatus(t, db, "tenant-dispatch-replace", runningID, "canceled")
-	// Verify new instance is dispatching.
-	assertInstanceStatus(t, db, "tenant-dispatch-replace", snap.ID, "dispatching")
+	// Verify new instance is dispatched.
+	assertInstanceStatus(t, db, "tenant-dispatch-replace", snap.ID, "dispatched")
 }
 
 func TestDispatchOne_PriorityOrdering(t *testing.T) {
@@ -227,8 +227,8 @@ func TestDispatchOne_RetryWaitEligible(t *testing.T) {
 	if !found {
 		t.Fatalf("expected found=true for retry_wait instance")
 	}
-	if snap.Status != "dispatching" {
-		t.Fatalf("expected status=dispatching, got %q", snap.Status)
+	if snap.Status != "dispatched" {
+		t.Fatalf("expected status=dispatched, got %q", snap.Status)
 	}
 	if snap.Attempt != 2 {
 		t.Fatalf("expected attempt=2 (incremented from retry_wait), got %d", snap.Attempt)
@@ -343,7 +343,7 @@ func seedDispatchingInstance(t *testing.T, db *sql.DB, in dispatchInstanceSeed) 
 	var id int64
 	err := db.QueryRowContext(context.Background(), `
 		INSERT INTO job_instances (tenant_id, job_id, status, priority, scheduled_at, worker_id, attempt, max_attempt)
-		VALUES ($1, $2, 'dispatching', $3, $4, $5, $6, $7)
+		VALUES ($1, $2, 'dispatched', $3, $4, $5, $6, $7)
 		RETURNING id
 	`, in.TenantID, in.JobID, in.Priority, in.ScheduledAt, in.WorkerID, attempt, maxAttempt).Scan(&id)
 	if err != nil {

@@ -185,6 +185,12 @@ CREATE TABLE IF NOT EXISTS job_instances (
   -- Instance-level priority snapshot copied from job at scheduling time
   priority INT NOT NULL DEFAULT 0,
 
+  -- Effective priority with aging (materialized for index)
+  effective_priority INT NOT NULL DEFAULT 0,
+
+  -- Timestamp when dispatcher moved this instance to dispatched status
+  dispatched_at TIMESTAMPTZ,
+
   -- Instance-level partition key copied from job
   partition_key VARCHAR(64),
 
@@ -246,6 +252,7 @@ CREATE TABLE IF NOT EXISTS job_instances (
     status IN (
       'pending',
       'dispatching',
+      'dispatched',
       'running',
       'retry_wait',
       'success',
@@ -266,7 +273,7 @@ CREATE TABLE IF NOT EXISTS job_instances (
   -- retry_wait is treated as "previous attempt finished, waiting next retry".
   CONSTRAINT chk_instances_status_timestamps CHECK (
     (
-      status IN ('pending', 'dispatching')
+      status IN ('pending', 'dispatching', 'dispatched')
       AND started_at IS NULL
       AND finished_at IS NULL
     ) OR (
@@ -429,14 +436,19 @@ WHERE status = 'retry_wait' AND retry_at IS NOT NULL;
 --   WHERE status IN ('pending','retry_wait')
 --   ORDER BY priority DESC, scheduled_at ASC
 CREATE INDEX IF NOT EXISTS idx_instances_dispatch_scan
-ON job_instances(tenant_id, status, priority DESC, scheduled_at)
+ON job_instances(tenant_id, status, effective_priority DESC, scheduled_at)
 WHERE status IN ('pending', 'retry_wait');
 
 -- Concurrency policy lookup index for forbid/replace checks:
 --   WHERE tenant_id = ? AND job_id = ? AND status IN ('dispatching','running')
 CREATE INDEX IF NOT EXISTS idx_instances_job_running
 ON job_instances(tenant_id, job_id, status)
-WHERE status IN ('dispatching', 'running');
+WHERE status IN ('dispatched', 'running');
+
+-- Worker claim index: find dispatched instances ordered by effective priority.
+CREATE INDEX IF NOT EXISTS idx_instances_dispatched_claim
+ON job_instances(tenant_id, effective_priority DESC, scheduled_at)
+WHERE status = 'dispatched';
 
 -- ============================================================
 -- Worker execution lookup index

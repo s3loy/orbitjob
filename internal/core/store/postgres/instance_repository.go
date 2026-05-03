@@ -24,6 +24,7 @@ func scanInstanceSnapshot(scanner rowScanner) (domaininstance.Snapshot, error) {
 	var startedAt sql.NullTime
 	var finishedAt sql.NullTime
 	var leaseExpiresAt sql.NullTime
+	var dispatchedAt sql.NullTime
 	var retryAt sql.NullTime
 	var resultCode sql.NullString
 	var errorMsg sql.NullString
@@ -37,6 +38,7 @@ func scanInstanceSnapshot(scanner rowScanner) (domaininstance.Snapshot, error) {
 		&out.TriggerSource,
 		&out.Status,
 		&out.Priority,
+		&out.EffectivePriority,
 		&partitionKey,
 		&idempotencyKey,
 		&out.IdempotencyScope,
@@ -48,6 +50,7 @@ func scanInstanceSnapshot(scanner rowScanner) (domaininstance.Snapshot, error) {
 		&startedAt,
 		&finishedAt,
 		&leaseExpiresAt,
+		&dispatchedAt,
 		&retryAt,
 		&resultCode,
 		&errorMsg,
@@ -66,6 +69,7 @@ func scanInstanceSnapshot(scanner rowScanner) (domaininstance.Snapshot, error) {
 	out.StartedAt = nullTimePtr(startedAt)
 	out.FinishedAt = nullTimePtr(finishedAt)
 	out.LeaseExpiresAt = nullTimePtr(leaseExpiresAt)
+	out.DispatchedAt = nullTimePtr(dispatchedAt)
 	out.RetryAt = nullTimePtr(retryAt)
 	out.ResultCode = nullStringPtr(resultCode)
 	out.ErrorMsg = nullStringPtr(errorMsg)

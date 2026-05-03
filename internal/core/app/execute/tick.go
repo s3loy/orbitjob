@@ -9,8 +9,7 @@ import (
 )
 
 type executor interface {
-	FetchAssigned(ctx context.Context, tenantID, workerID string, limit int) ([]AssignedTask, error)
-	StartInstance(ctx context.Context, spec domaininstance.StartSpec) error
+	ClaimNextDispatched(ctx context.Context, tenantID, workerID string, limit int, leaseExpiresAt, now time.Time) ([]AssignedTask, error)
 	CompleteInstance(ctx context.Context, spec domaininstance.CompleteSpec) error
 	ExtendLease(ctx context.Context, tenantID string, instanceID int64, workerID string, newExpiry time.Time) error
 }
@@ -25,29 +24,17 @@ func NewTickUseCase(repo executor, handlers map[string]Handler) *TickUseCase {
 }
 
 func (uc *TickUseCase) RunOnce(ctx context.Context, tenantID, workerID string, leaseDuration time.Duration) (int, error) {
-	tasks, err := uc.repo.FetchAssigned(ctx, tenantID, workerID, 1)
+	now := time.Now()
+	leaseExpiresAt := now.Add(leaseDuration)
+
+	tasks, err := uc.repo.ClaimNextDispatched(ctx, tenantID, workerID, 1, leaseExpiresAt, now)
 	if err != nil {
-		return 0, fmt.Errorf("fetch assigned: %w", err)
+		return 0, fmt.Errorf("claim dispatched: %w", err)
 	}
 	if len(tasks) == 0 {
 		return 0, nil
 	}
 	task := tasks[0]
-
-	now := time.Now()
-	startSpec, err := domaininstance.NormalizeStart(domaininstance.StartInput{
-		TenantID:   tenantID,
-		InstanceID: task.InstanceID,
-		WorkerID:   workerID,
-		Now:        now,
-	})
-	if err != nil {
-		return 0, fmt.Errorf("normalize start: %w", err)
-	}
-
-	if err := uc.repo.StartInstance(ctx, startSpec); err != nil {
-		return 0, nil
-	}
 
 	handler, ok := uc.handlers[task.HandlerType]
 	if !ok {

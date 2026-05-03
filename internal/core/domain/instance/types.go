@@ -14,6 +14,7 @@ const (
 
 	StatusPending     = "pending"
 	StatusDispatching = "dispatching"
+	StatusDispatched  = "dispatched"
 	StatusRunning     = "running"
 	StatusRetryWait   = "retry_wait"
 	StatusSuccess     = "success"
@@ -46,8 +47,9 @@ type Snapshot struct {
 	JobID            int64
 	TriggerSource    string
 	Status           string
-	Priority         int
-	PartitionKey     *string
+	Priority          int
+	EffectivePriority int
+	PartitionKey      *string
 	IdempotencyKey   *string
 	IdempotencyScope string
 	RoutingKey       *string
@@ -58,6 +60,7 @@ type Snapshot struct {
 	StartedAt        *time.Time
 	FinishedAt       *time.Time
 	LeaseExpiresAt   *time.Time
+	DispatchedAt     *time.Time
 	RetryAt          *time.Time
 	ResultCode       *string
 	ErrorMsg         *string
