@@ -4,27 +4,24 @@
 
 本文档定义 OrbitJob execution plane 的数据模型、状态语义与组件行为契约，为 scheduler、dispatcher、worker 之间的协作提供确定性规范。
 
-## 当前实现状态（2026-04-20）
+> 权威来源：项目架构文档 · 更新时间 2026-05-04
+>
+> **注意：** 本文档描述**设计目标**（Mode B: `dispatched` 状态，Worker 自主 claim）。当前代码实现为 Mode A（`dispatching` 状态，Dispatcher 绑定 Worker）。迁移方案见 architecture.md P0 TODO。
+
+## 当前实现状态（2026-05-04）
 
 **已实现：**
 
-- Job definition 中与执行路由相关的字段（`priority`、`partition_key`、`handler_type`、`handler_payload`）全链路打通
-- `job_instances` 的 create 与 claim 语义已落地，含 domain 模型、repository 与测试
-- `workers` 的 heartbeat 与 lease upsert 已落地，含 domain 模型、repository 与测试
-- Scheduler MVP tick loop（`cmd/scheduler` + `core/app/schedule` + `SchedulerRepository`）
-- 确定性 misfire 策略评估器（skip / fire_now / catch_up）
-- 原子调度事务（claim + insert instance + update cursor 在同一事务完成）
-- Dispatcher runtime（`cmd/dispatcher` + `core/app/dispatch`）：
-  - 原子 claim：`FOR UPDATE SKIP LOCKED` 防止重复分发
-  - Concurrency policy 纯函数决策：`DecideDispatch(input) -> dispatch / skip / replace`
-  - Priority aging：pending instance 按等待时长每分钟有效优先级 +1，上限 base priority + 60
-  - Lease expiry recovery：每轮 tick 开始前回收过期 lease 的孤儿 instance 至 pending
-  - Graceful shutdown：响应 SIGINT / SIGTERM 优雅退出
-  - 环境变量配置（`DISPATCHER_WORKER_ID` / `DISPATCHER_TENANT_ID` / `DISPATCHER_BATCH_SIZE` / `DISPATCHER_TICK_INTERVAL_SEC` / `DISPATCHER_LEASE_DURATION_SEC`）
+- Job definition 中与执行路由相关的字段全链路打通
+- `job_instances` 的 create 与 claim 语义已落地
+- `workers` 的 heartbeat 与 lease upsert 已落地
+- Scheduler MVP tick loop + misfire 策略 + 原子调度事务
+- Dispatcher runtime：原子 claim + concurrency policy + priority aging + lease recovery + graceful shutdown
+- **Worker executor MVP**（`cmd/worker` + HTTP callback + exec subprocess + heartbeat + graceful shutdown）——`feat/worker-executor-mvp` 分支
 
 **未实现：**
 
-- Worker executor runtime（接收任务、执行、结果回写）
+- 状态机迁移（`dispatching` → `dispatched`，见 architecture.md ADR-0002）
 - Manual trigger API
 - Instance query API
 - `job_instance_attempts` 完整写入链路
@@ -38,8 +35,8 @@ flowchart LR
     Manual["Manual Trigger API<br/>(planned)"] -.-> InstanceRepo
     Dispatcher["Dispatcher"] --> InstanceRepo
     Dispatcher --> WorkerRepo["workers"]
-    Worker["Worker<br/>(planned)"] -.-> WorkerRepo
-    Worker -.-> InstanceRepo
+    Worker["Worker"] --> WorkerRepo
+    Worker --> InstanceRepo
 ```
 
 ## Job Definition 路由字段
