@@ -15,6 +15,7 @@ type stubDispatcherRepo struct {
 	errAt                int
 	recoverOrphansCalls  int
 	recoverOrphansErr    error
+	refreshPriorityErr   error
 }
 
 func (s *stubDispatcherRepo) DispatchOne(
@@ -34,10 +35,17 @@ func (s *stubDispatcherRepo) DispatchOne(
 	return domaininstance.Snapshot{}, s.found[i], nil
 }
 
-func (s *stubDispatcherRepo) RecoverLeaseOrphans(ctx context.Context, now time.Time) (int64, error) {
+func (s *stubDispatcherRepo) RecoverLeaseOrphans(ctx context.Context, now time.Time) (int64, int64, error) {
 	s.recoverOrphansCalls++
 	if s.recoverOrphansErr != nil {
-		return 0, s.recoverOrphansErr
+		return 0, 0, s.recoverOrphansErr
+	}
+	return 0, 0, nil
+}
+
+func (s *stubDispatcherRepo) RefreshEffectivePriority(ctx context.Context, now time.Time) (int64, error) {
+	if s.refreshPriorityErr != nil {
+		return 0, s.refreshPriorityErr
 	}
 	return 0, nil
 }
@@ -128,5 +136,16 @@ func TestTickUseCase_RunBatch_ReturnsErrorOnOrphanRecoveryFailure(t *testing.T) 
 	_, err := uc.RunBatch(context.Background(), spec, 10)
 	if err == nil || !errors.Is(err, repo.recoverOrphansErr) {
 		t.Fatalf("expected orphan recovery error, got %v", err)
+	}
+}
+
+func TestTickUseCase_RunBatch_ReturnsErrorOnRefreshPriorityFailure(t *testing.T) {
+	repo := &stubDispatcherRepo{}
+	repo.refreshPriorityErr = errors.New("refresh boom")
+	uc := NewTickUseCase(repo)
+	spec := makeTestClaimSpec()
+	_, err := uc.RunBatch(context.Background(), spec, 10)
+	if err == nil || !errors.Is(err, repo.refreshPriorityErr) {
+		t.Fatalf("expected refresh priority error, got %v", err)
 	}
 }

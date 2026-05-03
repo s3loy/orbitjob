@@ -14,32 +14,34 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// FetchAssigned
+// ClaimNextDispatched
 // ---------------------------------------------------------------------------
 
-func TestFetchAssigned_Integration_ReturnsDispatchingInstances(t *testing.T) {
+func TestClaimNextDispatched_Integration_ClaimsDispatched(t *testing.T) {
 	db := postgrestest.Open(t)
 	repo := NewExecutorRepository(db)
 	now := time.Now().UTC().Truncate(time.Second)
 
 	jobID := seedExecutorJob(t, db, executorJobSeed{
-		TenantID:    "tenant-exec-fetch",
-		Name:        "fetch-job",
+		TenantID:    "tenant-exec-claim",
+		Name:        "claim-job",
 		HandlerType: "exec",
 		Payload:     `{"command":"echo","args":["hello"]}`,
 		TimeoutSec:  30,
 	})
-	seedDispatchingInstance(t, db, dispatchInstanceSeed{
-		TenantID:    "tenant-exec-fetch",
+	seedDispatchedInstance(t, db, executorInstanceSeed{
+		TenantID:    "tenant-exec-claim",
 		JobID:       jobID,
 		Priority:    5,
 		ScheduledAt: now.Add(-time.Minute),
-		WorkerID:    "worker-1",
 	})
 
-	tasks, err := repo.FetchAssigned(context.Background(), "tenant-exec-fetch", "worker-1", 10)
+	tasks, err := repo.ClaimNextDispatched(context.Background(),
+		"tenant-exec-claim", "worker-1", 10,
+		now.Add(30*time.Second), now,
+	)
 	if err != nil {
-		t.Fatalf("FetchAssigned() error = %v", err)
+		t.Fatalf("ClaimNextDispatched() error = %v", err)
 	}
 	if len(tasks) != 1 {
 		t.Fatalf("expected 1 task, got %d", len(tasks))
@@ -56,104 +58,104 @@ func TestFetchAssigned_Integration_ReturnsDispatchingInstances(t *testing.T) {
 	}
 }
 
-func TestFetchAssigned_Integration_IsolatesWorkers(t *testing.T) {
+func TestClaimNextDispatched_Integration_OnlyClaimsDispatchedStatus(t *testing.T) {
 	db := postgrestest.Open(t)
 	repo := NewExecutorRepository(db)
 	now := time.Now().UTC().Truncate(time.Second)
 
 	jobID := seedExecutorJob(t, db, executorJobSeed{
-		TenantID:    "tenant-exec-isolate",
-		Name:        "isolate-job",
+		TenantID:    "tenant-exec-status",
+		Name:        "status-job",
 		HandlerType: "exec",
 		Payload:     `{"command":"echo"}`,
 	})
-	seedDispatchingInstance(t, db, dispatchInstanceSeed{
-		TenantID:    "tenant-exec-isolate",
+	seedExecutorPending(t, db, executorInstanceSeed{
+		TenantID:    "tenant-exec-status",
 		JobID:       jobID,
 		Priority:    5,
 		ScheduledAt: now.Add(-time.Minute),
-		WorkerID:    "worker-other",
 	})
 
-	tasks, err := repo.FetchAssigned(context.Background(), "tenant-exec-isolate", "worker-1", 10)
+	tasks, err := repo.ClaimNextDispatched(context.Background(),
+		"tenant-exec-status", "worker-1", 10,
+		now.Add(30*time.Second), now,
+	)
 	if err != nil {
-		t.Fatalf("FetchAssigned() error = %v", err)
+		t.Fatalf("ClaimNextDispatched() error = %v", err)
 	}
 	if len(tasks) != 0 {
-		t.Fatalf("expected 0 tasks for different worker, got %d", len(tasks))
+		t.Fatalf("expected 0 tasks for non-dispatched instance, got %d", len(tasks))
 	}
 }
 
-// ---------------------------------------------------------------------------
-// StartInstance
-// ---------------------------------------------------------------------------
-
-func TestStartInstance_Integration_DispatchingToRunning(t *testing.T) {
+func TestClaimNextDispatched_Integration_TransitionsToRunning(t *testing.T) {
 	db := postgrestest.Open(t)
 	repo := NewExecutorRepository(db)
 	now := time.Now().UTC().Truncate(time.Second)
 
 	jobID := seedExecutorJob(t, db, executorJobSeed{
-		TenantID:    "tenant-exec-start",
-		Name:        "start-job",
+		TenantID:    "tenant-exec-trans",
+		Name:        "trans-job",
 		HandlerType: "exec",
 		Payload:     `{"command":"echo"}`,
 	})
-	instanceID := seedDispatchingInstance(t, db, dispatchInstanceSeed{
-		TenantID:    "tenant-exec-start",
+	instanceID := seedDispatchedInstance(t, db, executorInstanceSeed{
+		TenantID:    "tenant-exec-trans",
 		JobID:       jobID,
 		Priority:    5,
 		ScheduledAt: now.Add(-time.Minute),
-		WorkerID:    "worker-1",
 	})
 
-	err := repo.StartInstance(context.Background(), domaininstance.StartSpec{
-		TenantID:   "tenant-exec-start",
-		InstanceID: instanceID,
-		WorkerID:   "worker-1",
-		StartedAt:  now,
-	})
+	_, err := repo.ClaimNextDispatched(context.Background(),
+		"tenant-exec-trans", "worker-1", 10,
+		now.Add(30*time.Second), now,
+	)
 	if err != nil {
-		t.Fatalf("StartInstance() error = %v", err)
+		t.Fatalf("ClaimNextDispatched() error = %v", err)
 	}
 
-	assertInstanceStatus(t, db, "tenant-exec-start", instanceID, "running")
-	assertInstanceStartedAt(t, db, "tenant-exec-start", instanceID, now)
+	assertInstanceStatus(t, db, "tenant-exec-trans", instanceID, "running")
+	assertInstanceStartedAt(t, db, "tenant-exec-trans", instanceID, now)
 }
 
-func TestStartInstance_Integration_RaceReturnsNotClaimed(t *testing.T) {
+func TestClaimNextDispatched_Integration_AlreadyClaimedReturnsEmpty(t *testing.T) {
 	db := postgrestest.Open(t)
 	repo := NewExecutorRepository(db)
 	now := time.Now().UTC().Truncate(time.Second)
 
 	jobID := seedExecutorJob(t, db, executorJobSeed{
-		TenantID:    "tenant-exec-race",
-		Name:        "race-job",
+		TenantID:    "tenant-exec-empty",
+		Name:        "empty-job",
 		HandlerType: "exec",
 		Payload:     `{"command":"echo"}`,
 	})
-	instanceID := seedDispatchingInstance(t, db, dispatchInstanceSeed{
-		TenantID:    "tenant-exec-race",
+	seedDispatchedInstance(t, db, executorInstanceSeed{
+		TenantID:    "tenant-exec-empty",
 		JobID:       jobID,
 		Priority:    5,
 		ScheduledAt: now.Add(-time.Minute),
-		WorkerID:    "worker-1",
 	})
 
-	spec := domaininstance.StartSpec{
-		TenantID:   "tenant-exec-race",
-		InstanceID: instanceID,
-		WorkerID:   "worker-1",
-		StartedAt:  now,
+	tasks, err := repo.ClaimNextDispatched(context.Background(),
+		"tenant-exec-empty", "worker-1", 10,
+		now.Add(30*time.Second), now,
+	)
+	if err != nil {
+		t.Fatalf("first ClaimNextDispatched() error = %v", err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("expected 1 task on first claim, got %d", len(tasks))
 	}
 
-	if err := repo.StartInstance(context.Background(), spec); err != nil {
-		t.Fatalf("first StartInstance() error = %v", err)
+	tasks, err = repo.ClaimNextDispatched(context.Background(),
+		"tenant-exec-empty", "worker-2", 10,
+		now.Add(60*time.Second), now,
+	)
+	if err != nil {
+		t.Fatalf("second ClaimNextDispatched() error = %v", err)
 	}
-
-	err := repo.StartInstance(context.Background(), spec)
-	if !errors.Is(err, ErrInstanceNotClaimed) {
-		t.Fatalf("expected ErrInstanceNotClaimed on second call, got %v", err)
+	if len(tasks) != 0 {
+		t.Fatalf("expected 0 tasks on second claim, got %d", len(tasks))
 	}
 }
 
@@ -172,7 +174,7 @@ func TestCompleteInstance_Integration_Success(t *testing.T) {
 		HandlerType: "exec",
 		Payload:     `{"command":"echo"}`,
 	})
-	instanceID := seedRunningInstance(t, db, executorInstanceSeed{
+	instanceID := seedExecutorRunning(t, db, executorInstanceSeed{
 		TenantID:    "tenant-exec-complete",
 		JobID:       jobID,
 		Priority:    5,
@@ -207,7 +209,7 @@ func TestCompleteInstance_Integration_RetryWait(t *testing.T) {
 		HandlerType: "exec",
 		Payload:     `{"command":"echo"}`,
 	})
-	instanceID := seedRunningInstance(t, db, executorInstanceSeed{
+	instanceID := seedExecutorRunning(t, db, executorInstanceSeed{
 		TenantID:    "tenant-exec-retry",
 		JobID:       jobID,
 		Priority:    5,
@@ -249,7 +251,7 @@ func TestCompleteInstance_Integration_AlreadyCompleted(t *testing.T) {
 		HandlerType: "exec",
 		Payload:     `{"command":"echo"}`,
 	})
-	instanceID := seedRunningInstance(t, db, executorInstanceSeed{
+	instanceID := seedExecutorRunning(t, db, executorInstanceSeed{
 		TenantID:    "tenant-exec-done",
 		JobID:       jobID,
 		Priority:    5,
@@ -291,7 +293,7 @@ func TestExtendLease_Integration_Success(t *testing.T) {
 		HandlerType: "exec",
 		Payload:     `{"command":"echo"}`,
 	})
-	instanceID := seedRunningInstance(t, db, executorInstanceSeed{
+	instanceID := seedExecutorRunning(t, db, executorInstanceSeed{
 		TenantID:    "tenant-exec-lease",
 		JobID:       jobID,
 		Priority:    5,
@@ -355,7 +357,7 @@ type executorInstanceSeed struct {
 	MaxAttempt  int
 }
 
-func seedRunningInstance(t *testing.T, db *sql.DB, in executorInstanceSeed) int64 {
+func seedDispatchedInstance(t *testing.T, db *sql.DB, in executorInstanceSeed) int64 {
 	t.Helper()
 
 	attempt := in.Attempt
@@ -369,14 +371,63 @@ func seedRunningInstance(t *testing.T, db *sql.DB, in executorInstanceSeed) int6
 
 	var id int64
 	err := db.QueryRowContext(context.Background(), `
-		INSERT INTO job_instances (tenant_id, job_id, status, priority, scheduled_at,
+		INSERT INTO job_instances (tenant_id, job_id, status, priority, effective_priority,
+		                          scheduled_at, dispatched_at, attempt, max_attempt)
+		VALUES ($1, $2, 'dispatched', $3, $3, $4, $4, $5, $6)
+		RETURNING id
+	`, in.TenantID, in.JobID, in.Priority, in.ScheduledAt, attempt, maxAttempt).Scan(&id)
+	if err != nil {
+		t.Fatalf("seed dispatched instance: %v", err)
+	}
+	return id
+}
+
+func seedExecutorPending(t *testing.T, db *sql.DB, in executorInstanceSeed) int64 {
+	t.Helper()
+
+	attempt := in.Attempt
+	if attempt == 0 {
+		attempt = 1
+	}
+	maxAttempt := in.MaxAttempt
+	if maxAttempt == 0 {
+		maxAttempt = 1
+	}
+
+	var id int64
+	err := db.QueryRowContext(context.Background(), `
+		INSERT INTO job_instances (tenant_id, job_id, status, priority, effective_priority, scheduled_at, attempt, max_attempt)
+		VALUES ($1, $2, 'pending', $3, $3, $4, $5, $6)
+		RETURNING id
+	`, in.TenantID, in.JobID, in.Priority, in.ScheduledAt, attempt, maxAttempt).Scan(&id)
+	if err != nil {
+		t.Fatalf("seed executor pending: %v", err)
+	}
+	return id
+}
+
+func seedExecutorRunning(t *testing.T, db *sql.DB, in executorInstanceSeed) int64 {
+	t.Helper()
+
+	attempt := in.Attempt
+	if attempt == 0 {
+		attempt = 1
+	}
+	maxAttempt := in.MaxAttempt
+	if maxAttempt == 0 {
+		maxAttempt = 1
+	}
+
+	var id int64
+	err := db.QueryRowContext(context.Background(), `
+		INSERT INTO job_instances (tenant_id, job_id, status, priority, effective_priority, scheduled_at,
 		                           worker_id, started_at, attempt, max_attempt)
-		VALUES ($1, $2, 'running', $3, $4, $5, $6, $7, $8)
+		VALUES ($1, $2, 'running', $3, $3, $4, $5, $6, $7, $8)
 		RETURNING id
 	`, in.TenantID, in.JobID, in.Priority, in.ScheduledAt,
 		in.WorkerID, in.StartedAt, attempt, maxAttempt).Scan(&id)
 	if err != nil {
-		t.Fatalf("seed running instance: %v", err)
+		t.Fatalf("seed executor running: %v", err)
 	}
 	return id
 }

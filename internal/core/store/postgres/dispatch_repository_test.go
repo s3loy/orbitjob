@@ -44,13 +44,13 @@ func TestDispatchOne_AllowDispatchesPending(t *testing.T) {
 	if !found {
 		t.Fatalf("expected found=true")
 	}
-	if snap.Status != "dispatching" {
-		t.Fatalf("expected status=dispatching, got %q", snap.Status)
+	if snap.Status != "dispatched" {
+		t.Fatalf("expected status=dispatched, got %q", snap.Status)
 	}
-	if snap.WorkerID == nil || *snap.WorkerID != "worker-1" {
-		t.Fatalf("expected worker_id=worker-1, got %v", snap.WorkerID)
+	if snap.WorkerID != nil {
+		t.Fatalf("expected worker_id=nil (set by ClaimNextDispatched), got %v", *snap.WorkerID)
 	}
-	assertInstanceStatus(t, db, "tenant-dispatch-allow", snap.ID, "dispatching")
+	assertInstanceStatus(t, db, "tenant-dispatch-allow", snap.ID, "dispatched")
 }
 
 func TestDispatchOne_ForbidSkipsWhenRunning(t *testing.T) {
@@ -64,7 +64,6 @@ func TestDispatchOne_ForbidSkipsWhenRunning(t *testing.T) {
 		Priority:          5,
 		ConcurrencyPolicy: "forbid",
 	})
-	// Seed a running instance for the same job.
 	seedDispatchingInstance(t, db, dispatchInstanceSeed{
 		TenantID:    "tenant-dispatch-forbid",
 		JobID:       jobID,
@@ -72,7 +71,6 @@ func TestDispatchOne_ForbidSkipsWhenRunning(t *testing.T) {
 		ScheduledAt: now.Add(-2 * time.Minute),
 		WorkerID:    "worker-other",
 	})
-	// Seed a pending instance that should be skipped.
 	seedPendingInstance(t, db, dispatchInstanceSeed{
 		TenantID:    "tenant-dispatch-forbid",
 		JobID:       jobID,
@@ -138,14 +136,12 @@ func TestDispatchOne_ReplaceCancelsExisting(t *testing.T) {
 	if !found {
 		t.Fatalf("expected found=true")
 	}
-	if snap.Status != "dispatching" {
-		t.Fatalf("expected status=dispatching, got %q", snap.Status)
+	if snap.Status != "dispatched" {
+		t.Fatalf("expected status=dispatched, got %q", snap.Status)
 	}
 
-	// Verify old running instance was canceled.
 	assertInstanceStatus(t, db, "tenant-dispatch-replace", runningID, "canceled")
-	// Verify new instance is dispatching.
-	assertInstanceStatus(t, db, "tenant-dispatch-replace", snap.ID, "dispatching")
+	assertInstanceStatus(t, db, "tenant-dispatch-replace", snap.ID, "dispatched")
 }
 
 func TestDispatchOne_PriorityOrdering(t *testing.T) {
@@ -159,7 +155,6 @@ func TestDispatchOne_PriorityOrdering(t *testing.T) {
 		Priority:          1,
 		ConcurrencyPolicy: "allow",
 	})
-	// Seed instances with different priorities; high priority should be claimed first.
 	seedPendingInstance(t, db, dispatchInstanceSeed{
 		TenantID:    "tenant-dispatch-priority",
 		JobID:       jobID,
@@ -208,7 +203,7 @@ func TestDispatchOne_RetryWaitEligible(t *testing.T) {
 		JobID:       jobID,
 		Priority:    5,
 		ScheduledAt: now.Add(-5 * time.Minute),
-		RetryAt:     now.Add(-time.Second), // retry_at <= now, eligible
+		RetryAt:     now.Add(-time.Second),
 		Attempt:     1,
 		MaxAttempt:  3,
 	})
@@ -227,8 +222,8 @@ func TestDispatchOne_RetryWaitEligible(t *testing.T) {
 	if !found {
 		t.Fatalf("expected found=true for retry_wait instance")
 	}
-	if snap.Status != "dispatching" {
-		t.Fatalf("expected status=dispatching, got %q", snap.Status)
+	if snap.Status != "dispatched" {
+		t.Fatalf("expected status=dispatched, got %q", snap.Status)
 	}
 	if snap.Attempt != 2 {
 		t.Fatalf("expected attempt=2 (incremented from retry_wait), got %d", snap.Attempt)
@@ -240,7 +235,6 @@ func TestDispatchOne_NoCandidateReturnsFalse(t *testing.T) {
 	repo := NewDispatchRepository(db)
 	now := time.Now().UTC().Truncate(time.Second)
 
-	// Seed a job but no instances.
 	seedDispatchJob(t, db, dispatchJobSeed{
 		TenantID:          "tenant-dispatch-empty",
 		Name:              "empty-job",
@@ -318,8 +312,8 @@ func seedPendingInstance(t *testing.T, db *sql.DB, in dispatchInstanceSeed) int6
 
 	var id int64
 	err := db.QueryRowContext(context.Background(), `
-		INSERT INTO job_instances (tenant_id, job_id, status, priority, scheduled_at, attempt, max_attempt)
-		VALUES ($1, $2, 'pending', $3, $4, $5, $6)
+		INSERT INTO job_instances (tenant_id, job_id, status, priority, effective_priority, scheduled_at, attempt, max_attempt)
+		VALUES ($1, $2, 'pending', $3, $3, $4, $5, $6)
 		RETURNING id
 	`, in.TenantID, in.JobID, in.Priority, in.ScheduledAt, attempt, maxAttempt).Scan(&id)
 	if err != nil {
@@ -342,12 +336,12 @@ func seedDispatchingInstance(t *testing.T, db *sql.DB, in dispatchInstanceSeed) 
 
 	var id int64
 	err := db.QueryRowContext(context.Background(), `
-		INSERT INTO job_instances (tenant_id, job_id, status, priority, scheduled_at, worker_id, attempt, max_attempt)
-		VALUES ($1, $2, 'dispatching', $3, $4, $5, $6, $7)
+		INSERT INTO job_instances (tenant_id, job_id, status, priority, effective_priority, scheduled_at, worker_id, dispatched_at, attempt, max_attempt)
+		VALUES ($1, $2, 'dispatched', $3, $3, $4, $5, $4, $6, $7)
 		RETURNING id
 	`, in.TenantID, in.JobID, in.Priority, in.ScheduledAt, in.WorkerID, attempt, maxAttempt).Scan(&id)
 	if err != nil {
-		t.Fatalf("seed dispatching instance: %v", err)
+		t.Fatalf("seed dispatched instance: %v", err)
 	}
 	return id
 }
@@ -364,13 +358,12 @@ func seedRetryWaitInstance(t *testing.T, db *sql.DB, in dispatchInstanceSeed) in
 		maxAttempt = 1
 	}
 
-	// For retry_wait we need a finished_at to satisfy the constraint.
 	finishedAt := in.ScheduledAt.Add(10 * time.Second)
 
 	var id int64
 	err := db.QueryRowContext(context.Background(), `
-		INSERT INTO job_instances (tenant_id, job_id, status, priority, scheduled_at, attempt, max_attempt, retry_at, finished_at)
-		VALUES ($1, $2, 'retry_wait', $3, $4, $5, $6, $7, $8)
+		INSERT INTO job_instances (tenant_id, job_id, status, priority, effective_priority, scheduled_at, attempt, max_attempt, retry_at, finished_at)
+		VALUES ($1, $2, 'retry_wait', $3, $3, $4, $5, $6, $7, $8)
 		RETURNING id
 	`, in.TenantID, in.JobID, in.Priority, in.ScheduledAt, attempt, maxAttempt, in.RetryAt, finishedAt).Scan(&id)
 	if err != nil {

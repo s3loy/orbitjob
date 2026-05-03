@@ -66,11 +66,11 @@ func (r *DispatchRepository) DispatchOne(
 		return domaininstance.Snapshot{}, false, fmt.Errorf("lookup concurrency policy: %w", err)
 	}
 
-	// Step 3: Count dispatching+running instances for same job.
+	// Step 3: Count dispatched+running instances for same job.
 	var runningCount int
 	err = tx.QueryRowContext(ctx, `
 		SELECT count(*) FROM job_instances
-		WHERE tenant_id = $1 AND job_id = $2 AND status IN ('dispatching', 'running')
+		WHERE tenant_id = $1 AND job_id = $2 AND status IN ('dispatched', 'running')
 	`, candidate.TenantID, candidate.JobID).Scan(&runningCount)
 	if err != nil {
 		return domaininstance.Snapshot{}, false, fmt.Errorf("count running instances: %w", err)
@@ -87,7 +87,7 @@ func (r *DispatchRepository) DispatchOne(
 	switch decision.Action {
 	case domaininstance.DispatchActionDispatch:
 		var updated domaininstance.Snapshot
-		updated, err = updateInstanceToDispatching(ctx, tx, candidate, claimSpec)
+		updated, err = updateInstanceToDispatched(ctx, tx, candidate, claimSpec)
 		if err != nil {
 			return domaininstance.Snapshot{}, false, err
 		}
@@ -110,7 +110,7 @@ func (r *DispatchRepository) DispatchOne(
 			return domaininstance.Snapshot{}, false, err
 		}
 		var updated domaininstance.Snapshot
-		updated, err = updateInstanceToDispatching(ctx, tx, candidate, claimSpec)
+		updated, err = updateInstanceToDispatched(ctx, tx, candidate, claimSpec)
 		if err != nil {
 			return domaininstance.Snapshot{}, false, err
 		}
@@ -128,10 +128,10 @@ func (r *DispatchRepository) DispatchOne(
 func claimOneDispatchCandidate(ctx context.Context, tx *sql.Tx, spec domaininstance.ClaimSpec) (domaininstance.Snapshot, bool, error) {
 	row := tx.QueryRowContext(ctx, `
 		SELECT id, run_id::text, tenant_id, job_id, trigger_source,
-		       status, priority, partition_key, idempotency_key,
-		       idempotency_scope, routing_key, worker_id,
+		       status, priority, effective_priority, partition_key,
+		       idempotency_key, idempotency_scope, routing_key, worker_id,
 		       attempt, max_attempt, scheduled_at, started_at,
-		       finished_at, lease_expires_at, retry_at,
+		       finished_at, lease_expires_at, dispatched_at, retry_at,
 		       result_code, error_msg, trace_id, created_at, updated_at
 		FROM job_instances
 		WHERE tenant_id = $1
@@ -140,11 +140,7 @@ func claimOneDispatchCandidate(ctx context.Context, tx *sql.Tx, spec domaininsta
 		       AND retry_at IS NOT NULL
 		       AND retry_at <= $2
 		       AND attempt < max_attempt))
-		ORDER BY
-			least(greatest(priority,
-				priority + floor(extract(epoch from (now() - scheduled_at)) / 60)),
-				priority + 60) DESC,
-			scheduled_at ASC, id ASC
+		ORDER BY effective_priority DESC, scheduled_at ASC, id ASC
 		FOR UPDATE SKIP LOCKED
 		LIMIT 1
 	`, spec.TenantID, spec.Now)
@@ -159,11 +155,14 @@ func claimOneDispatchCandidate(ctx context.Context, tx *sql.Tx, spec domaininsta
 	return out, true, nil
 }
 
-func updateInstanceToDispatching(ctx context.Context, tx *sql.Tx, snap domaininstance.Snapshot, spec domaininstance.ClaimSpec) (domaininstance.Snapshot, error) {
+func updateInstanceToDispatched(ctx context.Context, tx *sql.Tx, snap domaininstance.Snapshot, spec domaininstance.ClaimSpec) (domaininstance.Snapshot, error) {
 	row := tx.QueryRowContext(ctx, `
 		UPDATE job_instances
-		SET status = 'dispatching',
-		    worker_id = $1,
+		SET status = 'dispatched',
+		    dispatched_at = $1,
+		    effective_priority = LEAST(GREATEST(priority,
+		        priority + FLOOR(EXTRACT(EPOCH FROM ($1 - scheduled_at)) / 60)::int),
+		        priority + 60),
 		    lease_expires_at = $2,
 		    retry_at = NULL,
 		    started_at = NULL,
@@ -173,12 +172,12 @@ func updateInstanceToDispatching(ctx context.Context, tx *sql.Tx, snap domainins
 		    attempt = CASE WHEN status = 'retry_wait' THEN attempt + 1 ELSE attempt END
 		WHERE id = $3
 		RETURNING id, run_id::text, tenant_id, job_id, trigger_source,
-		          status, priority, partition_key, idempotency_key,
-		          idempotency_scope, routing_key, worker_id,
+		          status, priority, effective_priority, partition_key,
+		          idempotency_key, idempotency_scope, routing_key, worker_id,
 		          attempt, max_attempt, scheduled_at, started_at,
-		          finished_at, lease_expires_at, retry_at,
+		          finished_at, lease_expires_at, dispatched_at, retry_at,
 		          result_code, error_msg, trace_id, created_at, updated_at
-	`, spec.WorkerID, spec.LeaseExpiresAt, snap.ID)
+	`, spec.Now, spec.LeaseExpiresAt, snap.ID)
 
 	return scanInstanceSnapshot(row)
 }
@@ -190,7 +189,7 @@ func cancelRunningInstances(ctx context.Context, tx *sql.Tx, tenantID string, jo
 		    finished_at = $3,
 		    error_msg = 'canceled by concurrency replace policy'
 		WHERE tenant_id = $1 AND job_id = $2
-		  AND status IN ('dispatching', 'running')
+		  AND status IN ('dispatched', 'running')
 	`, tenantID, jobID, now)
 	if err != nil {
 		return fmt.Errorf("cancel running instances: %w", err)
@@ -198,25 +197,81 @@ func cancelRunningInstances(ctx context.Context, tx *sql.Tx, tenantID string, jo
 	return nil
 }
 
-// RecoverLeaseOrphans reclaims dispatching instances whose lease has expired,
-// returning them to pending so they can be re-dispatched. This handles the case
-// where a dispatcher crashes after claiming but before the worker picks up.
-func (r *DispatchRepository) RecoverLeaseOrphans(ctx context.Context, now time.Time) (int64, error) {
-	result, err := r.db.ExecContext(ctx, `
+// RecoverLeaseOrphans reclaims dispatched instances whose lease has expired
+// (dispatcher crashed after claiming) AND running instances whose lease has
+// expired (worker crashed). Returns counts for each recovery category.
+func (r *DispatchRepository) RecoverLeaseOrphans(ctx context.Context, now time.Time) (dispatched, running int64, _ error) {
+	// Phase 1: dispatched orphans → pending
+	dResult, err := r.db.ExecContext(ctx, `
 		UPDATE job_instances
 		SET status = 'pending',
 		    worker_id = NULL,
 		    lease_expires_at = NULL,
+		    dispatched_at = NULL,
 		    error_msg = 'orphaned: dispatcher lease expired'
-		WHERE status = 'dispatching'
+		WHERE status = 'dispatched'
 		  AND lease_expires_at < $1
 	`, now)
 	if err != nil {
-		return 0, fmt.Errorf("recover lease orphans: %w", err)
+		return 0, 0, fmt.Errorf("recover dispatched orphans: %w", err)
+	}
+	dispatched, err = dResult.RowsAffected()
+	if err != nil {
+		return 0, 0, fmt.Errorf("dispatched rows affected: %w", err)
+	}
+
+	// Phase 2: running orphans → retry_wait or failed
+	rResult, err := r.db.ExecContext(ctx, `
+		UPDATE job_instances ji
+		SET status = CASE
+		        WHEN ji.attempt < ji.max_attempt THEN 'retry_wait'::VARCHAR
+		        ELSE 'failed'::VARCHAR
+		    END,
+		    worker_id = NULL,
+		    lease_expires_at = NULL,
+		    finished_at = $1,
+		    retry_at = CASE
+		        WHEN ji.attempt < ji.max_attempt
+		        THEN $1 + make_interval(secs => COALESCE(j.retry_backoff_sec, 0))
+		        ELSE NULL
+		    END,
+		    error_msg = CASE
+		        WHEN ji.attempt < ji.max_attempt THEN 'orphaned: worker lease expired, retrying'
+		        ELSE 'orphaned: worker lease expired, no retries left'
+		    END
+		FROM jobs j
+		WHERE ji.tenant_id = j.tenant_id
+		  AND ji.job_id = j.id
+		  AND ji.status = 'running'
+		  AND ji.lease_expires_at < $1
+	`, now)
+	if err != nil {
+		return dispatched, 0, fmt.Errorf("recover running orphans: %w", err)
+	}
+	running, err = rResult.RowsAffected()
+	if err != nil {
+		return dispatched, 0, fmt.Errorf("running rows affected: %w", err)
+	}
+	return dispatched, running, nil
+}
+
+// RefreshEffectivePriority recomputes the materialized effective_priority
+// for all pending and retry_wait instances.
+func (r *DispatchRepository) RefreshEffectivePriority(ctx context.Context, now time.Time) (int64, error) {
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE job_instances
+		SET effective_priority = LEAST(
+		    GREATEST(priority,
+		        priority + FLOOR(EXTRACT(EPOCH FROM ($1 - scheduled_at)) / 60)::int),
+		    priority + 60)
+		WHERE status IN ('pending', 'retry_wait')
+	`, now)
+	if err != nil {
+		return 0, fmt.Errorf("refresh effective priority: %w", err)
 	}
 	n, err := result.RowsAffected()
 	if err != nil {
-		return 0, fmt.Errorf("rows affected: %w", err)
+		return 0, fmt.Errorf("refresh rows affected: %w", err)
 	}
 	return n, nil
 }

@@ -11,7 +11,7 @@ const (
 type DispatchInput struct {
 	InstanceSnapshot  Snapshot
 	ConcurrencyPolicy string // from jobs table: "allow", "forbid", "replace"
-	RunningCount      int    // count of dispatching+running instances for same job
+	RunningCount      int    // count of dispatched+running instances for same job
 }
 
 // DispatchDecision describes what the dispatcher should do with a claimed instance.

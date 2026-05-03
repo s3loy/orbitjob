@@ -152,12 +152,13 @@ func insertScheduledInstance(ctx context.Context, tx *sql.Tx, job dueCronJobReco
 			scheduled_at,
 			status,
 			priority,
+			effective_priority,
 			partition_key,
 			idempotency_scope,
 			attempt,
 			max_attempt
 		)
-		VALUES ($1, $2, 'schedule', $3, 'pending', $4, $5, 'job_instance_create', 1, $6)
+		VALUES ($1, $2, 'schedule', $3, 'pending', $4, $4, $5, 'job_instance_create', 1, $6)
 		RETURNING run_id::text
 	`,
 		job.TenantID,

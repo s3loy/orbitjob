@@ -16,6 +16,7 @@ func (r *InstanceRepository) Create(ctx context.Context, in domaininstance.Creat
 			scheduled_at,
 			status,
 			priority,
+			effective_priority,
 			partition_key,
 			idempotency_key,
 			idempotency_scope,
@@ -25,7 +26,7 @@ func (r *InstanceRepository) Create(ctx context.Context, in domaininstance.Creat
 			trace_id
 		)
 		VALUES (
-			$1, $2, $3, $4, 'pending', $5, $6, $7, $8, $9, 1, $10, $11
+			$1, $2, $3, $4, 'pending', $5, $5, $6, $7, $8, $9, 1, $10, $11
 		)
 		RETURNING
 			id,
@@ -35,6 +36,7 @@ func (r *InstanceRepository) Create(ctx context.Context, in domaininstance.Creat
 			trigger_source,
 			status,
 			priority,
+			effective_priority,
 			partition_key,
 			idempotency_key,
 			idempotency_scope,
@@ -46,6 +48,7 @@ func (r *InstanceRepository) Create(ctx context.Context, in domaininstance.Creat
 			started_at,
 			finished_at,
 			lease_expires_at,
+			dispatched_at,
 			retry_at,
 			result_code,
 			error_msg,
