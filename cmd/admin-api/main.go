@@ -70,6 +70,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	db.SetMaxOpenConns(25)
 	defer func() {
 		_ = db.Close()
 	}()

@@ -3,6 +3,7 @@ package execute
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 	"time"
 
 	domaininstance "orbitjob/internal/core/domain/instance"
@@ -47,7 +48,19 @@ func (uc *TickUseCase) RunOnce(ctx context.Context, tenantID, workerID string, l
 
 	timeoutDur := time.Duration(task.TimeoutSec) * time.Second
 	timeoutCtx, cancelTimeout := context.WithTimeout(ctx, timeoutDur)
-	result := handler.Execute(timeoutCtx, task)
+	var result Result
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				result = Result{
+					Success:    false,
+					ResultCode: "panic",
+					ErrorMsg:   fmt.Sprintf("handler panic: %v\n%s", r, debug.Stack()),
+				}
+			}
+		}()
+		result = handler.Execute(timeoutCtx, task)
+	}()
 	cancelTimeout()
 
 	stopRenew()

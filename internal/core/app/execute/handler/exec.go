@@ -8,11 +8,38 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 
 	"orbitjob/internal/core/app/execute"
 )
 
 const maxStderrBytes = 4096
+
+// envWhitelist defines environment variables inherited from the parent process.
+var envWhitelist = map[string]bool{
+	"PATH":   true,
+	"TMPDIR": true,
+	"TEMP":   true,
+	"TMP":    true,
+	"LANG":   true,
+}
+
+// envBlacklist defines environment variables forbidden in user-declared env.
+// DYLD_* prefix is also blocked (see isBlacklisted).
+var envBlacklist = map[string]bool{
+	"LD_PRELOAD":      true,
+	"LD_LIBRARY_PATH": true,
+	"PYTHONPATH":      true,
+	"PERL5LIB":        true,
+	"RUBYLIB":         true,
+}
+
+func isBlacklisted(k string) bool {
+	if envBlacklist[k] {
+		return true
+	}
+	return strings.HasPrefix(k, "DYLD_")
+}
 
 type ExecHandler struct{}
 
@@ -27,7 +54,7 @@ func (h *ExecHandler) Execute(ctx context.Context, task execute.AssignedTask) ex
 	}
 
 	cmd := exec.CommandContext(ctx, command, args...)
-	cmd.Env = mergeEnv(os.Environ(), env)
+	cmd.Env = buildEnv(env)
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &limitedWriter{buf: &stderr, limit: maxStderrBytes}
@@ -107,16 +134,23 @@ func parseExecPayload(p map[string]any) (command string, args []string, env map[
 	return command, args, env, nil
 }
 
-func mergeEnv(base []string, extra map[string]string) []string {
-	if len(extra) == 0 {
-		return base
+func buildEnv(userEnv map[string]string) []string {
+	env := []string{
+		"HOME=/tmp",
+		"USER=nobody",
 	}
-	merged := make([]string, len(base), len(base)+len(extra))
-	copy(merged, base)
-	for k, v := range extra {
-		merged = append(merged, k+"="+v)
+	for k := range envWhitelist {
+		if v, ok := os.LookupEnv(k); ok {
+			env = append(env, k+"="+v)
+		}
 	}
-	return merged
+	for k, v := range userEnv {
+		if isBlacklisted(k) {
+			continue
+		}
+		env = append(env, k+"="+v)
+	}
+	return env
 }
 
 type limitedWriter struct {
