@@ -396,8 +396,8 @@ func seedExecutorPending(t *testing.T, db *sql.DB, in executorInstanceSeed) int6
 
 	var id int64
 	err := db.QueryRowContext(context.Background(), `
-		INSERT INTO job_instances (tenant_id, job_id, status, priority, scheduled_at, attempt, max_attempt)
-		VALUES ($1, $2, 'pending', $3, $4, $5, $6)
+		INSERT INTO job_instances (tenant_id, job_id, status, priority, effective_priority, scheduled_at, attempt, max_attempt)
+		VALUES ($1, $2, 'pending', $3, $3, $4, $5, $6)
 		RETURNING id
 	`, in.TenantID, in.JobID, in.Priority, in.ScheduledAt, attempt, maxAttempt).Scan(&id)
 	if err != nil {
@@ -420,9 +420,9 @@ func seedExecutorRunning(t *testing.T, db *sql.DB, in executorInstanceSeed) int6
 
 	var id int64
 	err := db.QueryRowContext(context.Background(), `
-		INSERT INTO job_instances (tenant_id, job_id, status, priority, scheduled_at,
+		INSERT INTO job_instances (tenant_id, job_id, status, priority, effective_priority, scheduled_at,
 		                           worker_id, started_at, attempt, max_attempt)
-		VALUES ($1, $2, 'running', $3, $4, $5, $6, $7, $8)
+		VALUES ($1, $2, 'running', $3, $3, $4, $5, $6, $7, $8)
 		RETURNING id
 	`, in.TenantID, in.JobID, in.Priority, in.ScheduledAt,
 		in.WorkerID, in.StartedAt, attempt, maxAttempt).Scan(&id)
