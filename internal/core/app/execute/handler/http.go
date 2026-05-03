@@ -4,13 +4,98 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"orbitjob/internal/core/app/execute"
 )
 
 const maxResponseBodyBytes = 4096
+
+// privateNetworks defines IP ranges blocked for SSRF protection.
+var privateNetworks = []*net.IPNet{
+	{IP: net.IPv4(10, 0, 0, 0), Mask: net.CIDRMask(8, 32)},
+	{IP: net.IPv4(172, 16, 0, 0), Mask: net.CIDRMask(12, 32)},
+	{IP: net.IPv4(192, 168, 0, 0), Mask: net.CIDRMask(16, 32)},
+	{IP: net.IPv4(127, 0, 0, 0), Mask: net.CIDRMask(8, 32)},
+}
+
+var metadataIP = net.IPv4(169, 254, 169, 254)
+
+// validateCallbackURL is overridable for tests.
+var validateCallbackURL = validateURLImpl
+
+// isBlockedIP is overridable for tests. The transport-level check uses this
+// to enforce DNS rebinding protection at connection time.
+var isBlockedIP = func(ip net.IP) bool {
+	if ip.Equal(metadataIP) {
+		return true
+	}
+	for _, network := range privateNetworks {
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+func validateURLImpl(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("only http/https schemes allowed, got %q", u.Scheme)
+	}
+
+	host := u.Hostname()
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return fmt.Errorf("DNS resolution failed for %q: %w", host, err)
+	}
+	if len(ips) == 0 {
+		return fmt.Errorf("no IP addresses resolved for %q", host)
+	}
+
+	for _, ip := range ips {
+		if isBlockedIP(ip) {
+			return fmt.Errorf("URL resolves to blocked IP %s", ip)
+		}
+	}
+
+	return nil
+}
+
+// newSecureTransport returns an http.RoundTripper that validates the resolved
+// IP at connection time (DNS rebinding protection).
+func newSecureTransport(base http.RoundTripper) http.RoundTripper {
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	if t, ok := base.(*http.Transport); ok {
+		t2 := t.Clone()
+		baseDial := t2.DialContext
+		t2.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, _, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, err
+			}
+			ip := net.ParseIP(host)
+			if ip != nil && isBlockedIP(ip) {
+				return nil, fmt.Errorf("connection to blocked IP %s refused", ip)
+			}
+			if baseDial != nil {
+				return baseDial(ctx, network, addr)
+			}
+			d := &net.Dialer{}
+			return d.DialContext(ctx, network, addr)
+		}
+		return t2
+	}
+	return base
+}
 
 type HTTPHandler struct {
 	client *http.Client
@@ -24,11 +109,19 @@ func NewHTTPHandler(client *http.Client) *HTTPHandler {
 }
 
 func (h *HTTPHandler) Execute(ctx context.Context, task execute.AssignedTask) execute.Result {
-	url, method, headers, body, err := parseHTTPPayload(task.HandlerPayload)
+	rawURL, method, headers, body, err := parseHTTPPayload(task.HandlerPayload)
 	if err != nil {
 		return execute.Result{
 			Success:    false,
 			ResultCode: "invalid_payload",
+			ErrorMsg:   err.Error(),
+		}
+	}
+
+	if err := validateCallbackURL(rawURL); err != nil {
+		return execute.Result{
+			Success:    false,
+			ResultCode: "ssrf_blocked",
 			ErrorMsg:   err.Error(),
 		}
 	}
@@ -38,7 +131,7 @@ func (h *HTTPHandler) Execute(ctx context.Context, task execute.AssignedTask) ex
 		bodyReader = strings.NewReader(body)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
+	req, err := http.NewRequestWithContext(ctx, method, rawURL, bodyReader)
 	if err != nil {
 		return execute.Result{
 			Success:    false,
@@ -51,7 +144,13 @@ func (h *HTTPHandler) Execute(ctx context.Context, task execute.AssignedTask) ex
 		req.Header.Set(k, v)
 	}
 
-	resp, err := h.client.Do(req)
+	client := &http.Client{
+		Transport:     newSecureTransport(h.client.Transport),
+		CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse },
+		Timeout:       h.client.Timeout,
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
 			return execute.Result{
@@ -85,13 +184,13 @@ func (h *HTTPHandler) Execute(ctx context.Context, task execute.AssignedTask) ex
 	}
 }
 
-func parseHTTPPayload(p map[string]any) (url, method string, headers map[string]string, body string, err error) {
+func parseHTTPPayload(p map[string]any) (rawURL, method string, headers map[string]string, body string, err error) {
 	urlRaw, ok := p["url"]
 	if !ok {
 		return "", "", nil, "", fmt.Errorf("missing required field: url")
 	}
-	url, ok = urlRaw.(string)
-	if !ok || url == "" {
+	rawURL, ok = urlRaw.(string)
+	if !ok || rawURL == "" {
 		return "", "", nil, "", fmt.Errorf("url must be a non-empty string")
 	}
 
@@ -125,5 +224,5 @@ func parseHTTPPayload(p map[string]any) (url, method string, headers map[string]
 		}
 	}
 
-	return url, method, headers, body, nil
+	return rawURL, method, headers, body, nil
 }
