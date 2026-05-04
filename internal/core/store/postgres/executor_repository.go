@@ -10,6 +10,7 @@ import (
 
 	"orbitjob/internal/core/app/execute"
 	domaininstance "orbitjob/internal/core/domain/instance"
+	tenant "orbitjob/internal/core/domain/tenant"
 )
 
 var ErrInstanceNotClaimed = errors.New("instance not claimed: row not found or status changed")
@@ -28,6 +29,11 @@ func (r *ExecutorRepository) ClaimNextDispatched(
 	limit int,
 	leaseExpiresAt, now time.Time,
 ) ([]execute.AssignedTask, error) {
+	// Set tenant context for RLS
+	if _, err := r.db.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID); err != nil {
+		return nil, fmt.Errorf("set tenant context: %w", err)
+	}
+
 	rows, err := r.db.QueryContext(ctx, `
 		WITH claimed AS (
 			SELECT id FROM job_instances
@@ -83,6 +89,11 @@ func (r *ExecutorRepository) CompleteInstance(
 	ctx context.Context,
 	spec domaininstance.CompleteSpec,
 ) error {
+	// Set tenant context for RLS
+	if _, err := r.db.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", spec.TenantID); err != nil {
+		return fmt.Errorf("set tenant context: %w", err)
+	}
+
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE job_instances
 		SET status = $1,
@@ -114,6 +125,38 @@ func (r *ExecutorRepository) CompleteInstance(
 	if n == 0 {
 		return ErrInstanceNotClaimed
 	}
+
+	eventType := tenant.EventTypeInstanceCompleted
+	if spec.Status == "retry_wait" {
+		eventType = tenant.EventTypeInstanceStatusChanged
+	}
+
+	diff := map[string]any{
+		"from_status": "running",
+		"to_status":   spec.Status,
+	}
+	if spec.ResultCode != nil {
+		diff["result_code"] = *spec.ResultCode
+	}
+	diffBytes, err := json.Marshal(diff)
+	if err != nil {
+		return fmt.Errorf("marshal audit diff: %w", err)
+	}
+	if _, err = r.db.ExecContext(ctx, `
+		INSERT INTO audit_events (tenant_id, actor_type, actor_id, event_type, resource_type, resource_id, diff)
+		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+	`,
+		spec.TenantID,
+		tenant.ActorTypeSystem,
+		"worker",
+		eventType,
+		tenant.ResourceTypeInstance,
+		fmt.Sprintf("%d", spec.InstanceID),
+		string(diffBytes),
+	); err != nil {
+		return fmt.Errorf("insert audit event: %w", err)
+	}
+
 	return nil
 }
 
@@ -124,6 +167,11 @@ func (r *ExecutorRepository) ExtendLease(
 	workerID string,
 	newExpiry time.Time,
 ) error {
+	// Set tenant context for RLS
+	if _, err := r.db.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID); err != nil {
+		return fmt.Errorf("set tenant context: %w", err)
+	}
+
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE job_instances
 		SET lease_expires_at = $1

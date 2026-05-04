@@ -3,10 +3,12 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	"orbitjob/internal/core/app/schedule"
+	tenant "orbitjob/internal/core/domain/tenant"
 )
 
 // SchedulerRepository owns scheduler-side persistence operations.
@@ -61,6 +63,11 @@ func (r *SchedulerRepository) ScheduleOneDueCron(
 		return schedule.ScheduledOneResult{}, false, nil
 	}
 
+	// Set tenant context for RLS
+	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", job.TenantID); err != nil {
+		return schedule.ScheduledOneResult{}, false, fmt.Errorf("set tenant context: %w", err)
+	}
+
 	decision, err := decide(now, schedule.DueCronJob{
 		CronExpr:      job.CronExpr,
 		Timezone:      job.Timezone,
@@ -80,6 +87,29 @@ func (r *SchedulerRepository) ScheduleOneDueCron(
 		runID, err = insertScheduledInstance(ctx, tx, job, *decision.ScheduledAt)
 		if err != nil {
 			return schedule.ScheduledOneResult{}, false, err
+		}
+
+		diffBytes, err := json.Marshal(map[string]any{
+			"job_id":         job.ID,
+			"trigger_source": "schedule",
+			"scheduled_at":   decision.ScheduledAt,
+		})
+		if err != nil {
+			return schedule.ScheduledOneResult{}, false, fmt.Errorf("marshal audit diff: %w", err)
+		}
+		if _, err = tx.ExecContext(ctx, `
+			INSERT INTO audit_events (tenant_id, actor_type, actor_id, event_type, resource_type, resource_id, diff)
+			VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+		`,
+			job.TenantID,
+			tenant.ActorTypeSystem,
+			"scheduler",
+			tenant.EventTypeInstanceCreated,
+			tenant.ResourceTypeInstance,
+			runID,
+			string(diffBytes),
+		); err != nil {
+			return schedule.ScheduledOneResult{}, false, fmt.Errorf("insert audit event: %w", err)
 		}
 	}
 

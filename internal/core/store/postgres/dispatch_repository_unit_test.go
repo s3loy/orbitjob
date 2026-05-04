@@ -62,19 +62,24 @@ func addInstanceRow(
 func makeClaimSpec(now time.Time) domaininstance.ClaimSpec {
 	return domaininstance.ClaimSpec{
 		TenantID:       "tenant-a",
-		WorkerID:       "worker-1",
 		LeaseExpiresAt: now.Add(30 * time.Second),
 		Now:            now,
 	}
 }
 
 func expectClaimNoCandidate(mock sqlmock.Sqlmock, spec domaininstance.ClaimSpec) {
+	mock.ExpectExec("SELECT set_config").
+		WithArgs(spec.TenantID).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery("FOR UPDATE SKIP LOCKED").
 		WithArgs(spec.TenantID, spec.Now).
 		WillReturnRows(sqlmock.NewRows(instanceColumns))
 }
 
 func expectClaimOneCandidate(mock sqlmock.Sqlmock, spec domaininstance.ClaimSpec, id int64, now time.Time) {
+	mock.ExpectExec("SELECT set_config").
+		WithArgs(spec.TenantID).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	rows := sqlmock.NewRows(instanceColumns)
 	addInstanceRow(rows, id, "run-1", spec.TenantID, 101, "schedule", "pending", 5, now.Add(-time.Minute), now)
 	mock.ExpectQuery("FOR UPDATE SKIP LOCKED").
@@ -94,18 +99,31 @@ func expectRunningCount(mock sqlmock.Sqlmock, tenantID string, jobID int64, coun
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(count))
 }
 
+func expectAuditInsertInstanceStatus(mock sqlmock.Sqlmock, tenantID, runID, fromStatus, toStatus string, jobID int64) {
+	mock.ExpectExec("INSERT INTO audit_events").
+		WithArgs(tenantID, "system", "dispatcher", "instance.status_changed", "instance", runID, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+}
+
 func expectUpdateToDispatched(mock sqlmock.Sqlmock, now time.Time, instanceID int64) {
 	rows := sqlmock.NewRows(instanceColumns)
 	addInstanceRow(rows, instanceID, "run-1", "tenant-a", 101, "schedule", "dispatched", 5, now.Add(-time.Minute), now)
 	mock.ExpectQuery("UPDATE job_instances").
 		WithArgs(now, now.Add(30*time.Second), instanceID).
 		WillReturnRows(rows)
+	expectAuditInsertInstanceStatus(mock, "tenant-a", "run-1", "pending", "dispatched", 101)
 }
 
 func expectCancelRunning(mock sqlmock.Sqlmock, tenantID string, jobID int64, now time.Time) {
-	mock.ExpectExec("UPDATE job_instances").
+	canceledRows := sqlmock.NewRows([]string{"run_id", "status"}).
+		AddRow("run-c1", "dispatched").
+		AddRow("run-c2", "running")
+	mock.ExpectQuery("UPDATE job_instances").
 		WithArgs(tenantID, jobID, now).
-		WillReturnResult(sqlmock.NewResult(0, 2))
+		WillReturnRows(canceledRows)
+	// Audit for each canceled instance
+	expectAuditInsertInstanceStatus(mock, tenantID, "run-c1", "dispatched", "canceled", jobID)
+	expectAuditInsertInstanceStatus(mock, tenantID, "run-c2", "running", "canceled", jobID)
 }
 
 // ---------------------------------------------------------------------------
@@ -238,6 +256,9 @@ func TestDispatchOne_ClaimError(t *testing.T) {
 	spec := makeClaimSpec(now)
 
 	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").
+		WithArgs(spec.TenantID).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery("FOR UPDATE SKIP LOCKED").
 		WithArgs(spec.TenantID, spec.Now).
 		WillReturnError(errors.New("claim boom"))
@@ -350,7 +371,7 @@ func TestDispatchOne_CancelRunningError(t *testing.T) {
 	expectClaimOneCandidate(mock, spec, 1, now)
 	expectPolicyLookup(mock, spec.TenantID, 101, "replace")
 	expectRunningCount(mock, spec.TenantID, 101, 1)
-	mock.ExpectExec("UPDATE job_instances").
+	mock.ExpectQuery("UPDATE job_instances").
 		WithArgs(spec.TenantID, int64(101), now).
 		WillReturnError(errors.New("cancel boom"))
 	mock.ExpectRollback()
@@ -457,6 +478,12 @@ func TestNewDispatchRepository(t *testing.T) {
 	}
 }
 
+func expectAuditInsertOrphanRecovered(mock sqlmock.Sqlmock, tenantID, runID string) {
+	mock.ExpectExec("INSERT INTO audit_events").
+		WithArgs(tenantID, "system", "dispatcher", "instance.orphan_recovered", "instance", runID, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+}
+
 func TestRecoverLeaseOrphans_Success(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -467,12 +494,22 @@ func TestRecoverLeaseOrphans_Success(t *testing.T) {
 	repo := NewDispatchRepository(db)
 	now := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
 
-	mock.ExpectExec("UPDATE job_instances").
+	orphanDispatchedRows := sqlmock.NewRows([]string{"run_id", "tenant_id"}).
+		AddRow("run-d1", "tenant-x").
+		AddRow("run-d2", "tenant-y").
+		AddRow("run-d3", "tenant-x")
+	mock.ExpectQuery("UPDATE job_instances").
 		WithArgs(now).
-		WillReturnResult(sqlmock.NewResult(0, 3))
-	mock.ExpectExec("UPDATE job_instances").
+		WillReturnRows(orphanDispatchedRows)
+	// Audit for each dispatched orphan
+	expectAuditInsertOrphanRecovered(mock, "tenant-x", "run-d1")
+	expectAuditInsertOrphanRecovered(mock, "tenant-y", "run-d2")
+	expectAuditInsertOrphanRecovered(mock, "tenant-x", "run-d3")
+
+	orphanRunningRows := sqlmock.NewRows([]string{"run_id", "tenant_id"})
+	mock.ExpectQuery("UPDATE job_instances").
 		WithArgs(now).
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(orphanRunningRows)
 
 	n, _, err := repo.RecoverLeaseOrphans(context.Background(), now)
 	if err != nil {
@@ -493,7 +530,7 @@ func TestRecoverLeaseOrphans_Error(t *testing.T) {
 	repo := NewDispatchRepository(db)
 	now := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
 
-	mock.ExpectExec("UPDATE job_instances").
+	mock.ExpectQuery("UPDATE job_instances").
 		WithArgs(now).
 		WillReturnError(errors.New("recover boom"))
 
@@ -513,12 +550,13 @@ func TestRecoverLeaseOrphans_NoOrphans(t *testing.T) {
 	repo := NewDispatchRepository(db)
 	now := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
 
-	mock.ExpectExec("UPDATE job_instances").
+	noRows := sqlmock.NewRows([]string{"run_id", "tenant_id"})
+	mock.ExpectQuery("UPDATE job_instances").
 		WithArgs(now).
-		WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec("UPDATE job_instances").
+		WillReturnRows(noRows)
+	mock.ExpectQuery("UPDATE job_instances").
 		WithArgs(now).
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(noRows)
 
 	n, _, err := repo.RecoverLeaseOrphans(context.Background(), now)
 	if err != nil {
@@ -582,10 +620,11 @@ func TestRecoverLeaseOrphans_RunningError(t *testing.T) {
 	repo := NewDispatchRepository(db)
 	now := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
 
-	mock.ExpectExec("UPDATE job_instances").
+	noRows := sqlmock.NewRows([]string{"run_id", "tenant_id"})
+	mock.ExpectQuery("UPDATE job_instances").
 		WithArgs(now).
-		WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec("UPDATE job_instances").
+		WillReturnRows(noRows)
+	mock.ExpectQuery("UPDATE job_instances").
 		WithArgs(now).
 		WillReturnError(errors.New("running orphan boom"))
 

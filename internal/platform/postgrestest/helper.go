@@ -131,7 +131,7 @@ func open(dsn string) (*sql.DB, error) {
 func resetTestData(ctx context.Context, db *sql.DB) error {
 	_, err := db.ExecContext(ctx, `
 		TRUNCATE TABLE
-			job_change_audits,
+			audit_events,
 			job_instance_attempts,
 			job_instances,
 			workers,
