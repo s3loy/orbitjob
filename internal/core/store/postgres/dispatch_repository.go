@@ -233,13 +233,25 @@ func cancelRunningInstances(ctx context.Context, tx *sql.Tx, tenantID string, jo
 	}
 	defer func() { _ = rows.Close() }()
 
+	type canceledRow struct {
+		runID, prevStatus string
+	}
+	var canceled []canceledRow
 	for rows.Next() {
-		var runID, prevStatus string
-		if err := rows.Scan(&runID, &prevStatus); err != nil {
+		var r canceledRow
+		if err := rows.Scan(&r.runID, &r.prevStatus); err != nil {
 			return fmt.Errorf("scan canceled instance: %w", err)
 		}
+		canceled = append(canceled, r)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate canceled instances: %w", err)
+	}
+	_ = rows.Close()
+
+	for _, r := range canceled {
 		diffBytes, err := json.Marshal(map[string]any{
-			"from_status": prevStatus,
+			"from_status": r.prevStatus,
 			"to_status":   "canceled",
 			"job_id":      jobID,
 		})
@@ -255,14 +267,11 @@ func cancelRunningInstances(ctx context.Context, tx *sql.Tx, tenantID string, jo
 			"dispatcher",
 			tenant.EventTypeInstanceStatusChanged,
 			tenant.ResourceTypeInstance,
-			runID,
+			r.runID,
 			string(diffBytes),
 		); err != nil {
 			return fmt.Errorf("insert audit event: %w", err)
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate canceled instances: %w", err)
 	}
 	return nil
 }
@@ -288,13 +297,24 @@ func (r *DispatchRepository) RecoverLeaseOrphans(ctx context.Context, now time.T
 	}
 	defer func() { _ = dRows.Close() }()
 
+	type orphanRow struct {
+		runID, tenantID string
+	}
+	var dOrphans []orphanRow
 	for dRows.Next() {
-		var runID, tenantID string
-		if err := dRows.Scan(&runID, &tenantID); err != nil {
+		var r orphanRow
+		if err := dRows.Scan(&r.runID, &r.tenantID); err != nil {
 			return 0, 0, fmt.Errorf("scan dispatched orphan: %w", err)
 		}
-		dispatched++
+		dOrphans = append(dOrphans, r)
+	}
+	if err := dRows.Err(); err != nil {
+		return 0, 0, fmt.Errorf("iterate dispatched orphans: %w", err)
+	}
+	_ = dRows.Close()
 
+	for _, o := range dOrphans {
+		dispatched++
 		diffBytes, err := json.Marshal(map[string]any{
 			"from_status": "dispatched",
 			"to_status":   "pending",
@@ -306,19 +326,16 @@ func (r *DispatchRepository) RecoverLeaseOrphans(ctx context.Context, now time.T
 			INSERT INTO audit_events (tenant_id, actor_type, actor_id, event_type, resource_type, resource_id, diff)
 			VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
 		`,
-			tenantID,
+			o.tenantID,
 			tenant.ActorTypeSystem,
 			"dispatcher",
 			tenant.EventTypeOrphanRecovered,
 			tenant.ResourceTypeInstance,
-			runID,
+			o.runID,
 			string(diffBytes),
 		); err != nil {
 			return 0, 0, fmt.Errorf("insert audit event: %w", err)
 		}
-	}
-	if err := dRows.Err(); err != nil {
-		return 0, 0, fmt.Errorf("iterate dispatched orphans: %w", err)
 	}
 
 	// Phase 2: running orphans → retry_wait or failed
@@ -352,13 +369,21 @@ func (r *DispatchRepository) RecoverLeaseOrphans(ctx context.Context, now time.T
 	}
 	defer func() { _ = rRows.Close() }()
 
+	var rOrphans []orphanRow
 	for rRows.Next() {
-		var runID, tenantID string
-		if err := rRows.Scan(&runID, &tenantID); err != nil {
+		var r orphanRow
+		if err := rRows.Scan(&r.runID, &r.tenantID); err != nil {
 			return dispatched, 0, fmt.Errorf("scan running orphan: %w", err)
 		}
-		running++
+		rOrphans = append(rOrphans, r)
+	}
+	if err := rRows.Err(); err != nil {
+		return dispatched, 0, fmt.Errorf("iterate running orphans: %w", err)
+	}
+	_ = rRows.Close()
 
+	for _, o := range rOrphans {
+		running++
 		diffBytes, err := json.Marshal(map[string]any{
 			"from_status": "running",
 			"to_status":   "orphan_recovered",
@@ -370,19 +395,16 @@ func (r *DispatchRepository) RecoverLeaseOrphans(ctx context.Context, now time.T
 			INSERT INTO audit_events (tenant_id, actor_type, actor_id, event_type, resource_type, resource_id, diff)
 			VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
 		`,
-			tenantID,
+			o.tenantID,
 			tenant.ActorTypeSystem,
 			"dispatcher",
 			tenant.EventTypeOrphanRecovered,
 			tenant.ResourceTypeInstance,
-			runID,
+			o.runID,
 			string(diffBytes),
 		); err != nil {
 			return dispatched, 0, fmt.Errorf("insert audit event: %w", err)
 		}
-	}
-	if err := rRows.Err(); err != nil {
-		return dispatched, 0, fmt.Errorf("iterate running orphans: %w", err)
 	}
 	return dispatched, running, nil
 }

@@ -11,6 +11,7 @@ import (
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
 
 	domaininstance "orbitjob/internal/core/domain/instance"
+	tenant "orbitjob/internal/core/domain/tenant"
 )
 
 // ---------------------------------------------------------------------------
@@ -580,6 +581,17 @@ func TestRefreshEffectivePriority_Success(t *testing.T) {
 	mock.ExpectExec("UPDATE job_instances").
 		WithArgs(now).
 		WillReturnResult(sqlmock.NewResult(0, 5))
+
+	mock.ExpectExec("INSERT INTO audit_events").
+		WithArgs(
+			tenant.ActorTypeSystem,
+			"dispatcher",
+			tenant.EventTypeInstanceStatusChanged,
+			tenant.ResourceTypeAudit,
+			"effective_priority_refresh",
+			sqlmock.AnyArg(),
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	n, err := repo.RefreshEffectivePriority(context.Background(), now)
 	if err != nil {
