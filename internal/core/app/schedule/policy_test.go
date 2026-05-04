@@ -139,3 +139,46 @@ func TestDecideSchedule_DefaultTimezoneAndFallbackPolicy(t *testing.T) {
 		t.Fatalf("expected next_run_at after now")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Benchmarks
+// ---------------------------------------------------------------------------
+
+func BenchmarkDecideSchedule(b *testing.B) {
+	now := time.Date(2026, 4, 19, 12, 3, 0, 0, time.UTC)
+
+	tests := []struct {
+		name string
+		job  DueCronJob
+	}{
+		{"skip_misfire", DueCronJob{
+			CronExpr: "0 * * * *", Timezone: "UTC", MisfirePolicy: "skip",
+			NextRunAt: time.Date(2026, 4, 19, 11, 0, 0, 0, time.UTC),
+		}},
+		{"fire_now", DueCronJob{
+			CronExpr: "*/5 * * * *", Timezone: "UTC", MisfirePolicy: "fire_now",
+			NextRunAt: time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC),
+		}},
+		{"catch_up", DueCronJob{
+			CronExpr: "*/5 * * * *", Timezone: "UTC", MisfirePolicy: "catch_up",
+			NextRunAt: time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC),
+		}},
+		{"future_next_run", DueCronJob{
+			CronExpr: "*/5 * * * *", Timezone: "UTC", MisfirePolicy: "skip",
+			NextRunAt: now.Add(2 * time.Minute),
+		}},
+		{"with_timezone", DueCronJob{
+			CronExpr: "0 9 * * *", Timezone: "Asia/Shanghai", MisfirePolicy: "fire_now",
+			NextRunAt: time.Date(2026, 4, 19, 0, 0, 0, 0, time.UTC),
+		}},
+	}
+
+	for _, tt := range tests {
+		b.Run(tt.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				_, _ = DecideSchedule(now, tt.job)
+			}
+		})
+	}
+}

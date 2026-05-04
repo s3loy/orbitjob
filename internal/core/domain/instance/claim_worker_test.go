@@ -148,3 +148,41 @@ func TestNormalizeWorkerClaim_LeaseZero(t *testing.T) {
 		t.Fatal("expected error for zero lease")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Benchmarks
+// ---------------------------------------------------------------------------
+
+func BenchmarkNormalizeWorkerClaim(b *testing.B) {
+	now := time.Now().UTC()
+	lease := now.Add(60 * time.Second)
+
+	tests := []struct {
+		name  string
+		input WorkerClaimInput
+	}{
+		{"valid", WorkerClaimInput{
+			TenantID: "tenant-a", WorkerID: "worker-1", Limit: 10,
+			LeaseExpiresAt: lease, Now: now,
+		}},
+		{"default_tenant", WorkerClaimInput{
+			WorkerID: "w", Limit: 5, LeaseExpiresAt: lease, Now: now,
+		}},
+		{"limit_clamp_low", WorkerClaimInput{
+			WorkerID: "w", Limit: 0, LeaseExpiresAt: lease, Now: now,
+		}},
+		{"limit_clamp_high", WorkerClaimInput{
+			WorkerID: "w", Limit: 200, LeaseExpiresAt: lease, Now: now,
+		}},
+		{"validation_error", WorkerClaimInput{}},
+	}
+
+	for _, tt := range tests {
+		b.Run(tt.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				_, _ = NormalizeWorkerClaim(tt.input)
+			}
+		})
+	}
+}

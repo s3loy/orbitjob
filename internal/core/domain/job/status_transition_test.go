@@ -41,3 +41,37 @@ func TestResumeTransitionValidationError(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Benchmarks
+// ---------------------------------------------------------------------------
+
+func BenchmarkPause(b *testing.B) {
+	b.Run("valid", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			_, _ = Pause(StatusActive, 3)
+		}
+	})
+	b.Run("invalid_state", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			_, _ = Pause(StatusPaused, 3)
+		}
+	})
+}
+
+func BenchmarkResume(b *testing.B) {
+	b.Run("valid", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			_, _ = Resume(StatusPaused, 7)
+		}
+	})
+	b.Run("invalid_state", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			_, _ = Resume(StatusActive, 7)
+		}
+	})
+}

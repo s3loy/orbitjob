@@ -86,6 +86,39 @@ func TestNormalizeUpdate_TracksRoutingFields(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Benchmarks
+// ---------------------------------------------------------------------------
+
+func BenchmarkNormalizeUpdate(b *testing.B) {
+	now := time.Date(2026, 4, 7, 0, 58, 0, 0, time.UTC)
+	cronExpr := "0 9 * * *"
+
+	tests := []struct {
+		name  string
+		input UpdateInput
+	}{
+		{"manual_minimal", UpdateInput{
+			ID: 42, Version: 3, Name: "manual-report", TriggerType: TriggerTypeManual, HandlerType: "http",
+		}},
+		{"cron_full", UpdateInput{
+			ID: 7, Version: 2, Name: "daily-report", TenantID: "tenant-a", Priority: 9,
+			TriggerType: TriggerTypeCron, CronExpr: &cronExpr, Timezone: "Asia/Shanghai",
+			HandlerType: "http", TimeoutSec: 300,
+		}},
+		{"validation_error", UpdateInput{ID: 0, Version: 0}},
+	}
+
+	for _, tt := range tests {
+		b.Run(tt.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				_, _ = NormalizeUpdate(now, tt.input)
+			}
+		})
+	}
+}
+
 func TestNormalizeUpdate_InvalidInputReturnsValidationError(t *testing.T) {
 	tests := []struct {
 		name        string
