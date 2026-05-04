@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	domaininstance "orbitjob/internal/core/domain/instance"
@@ -405,13 +406,17 @@ func (r *DispatchRepository) RefreshEffectivePriority(ctx context.Context, now t
 		return 0, fmt.Errorf("refresh rows affected: %w", err)
 	}
 	if n > 0 {
-		diffBytes, _ := json.Marshal(map[string]any{"affected_rows": n, "refreshed_at": now})
-		_, _ = r.db.ExecContext(ctx, `
+		diffBytes, err := json.Marshal(map[string]any{"affected_rows": n, "refreshed_at": now})
+		if err != nil {
+			slog.Error("marshal audit diff failed", "error", err.Error())
+		} else if _, err = r.db.ExecContext(ctx, `
 			INSERT INTO audit_events (
 				tenant_id, actor_type, actor_id, event_type, resource_type, resource_id, diff
-			) VALUES ('', $1, $2, $3, $4, $5, $6::jsonb)
+			) VALUES ('system', $1, $2, $3, $4, $5, $6::jsonb)
 		`, tenant.ActorTypeSystem, "dispatcher", tenant.EventTypeInstanceStatusChanged,
-			tenant.ResourceTypeAudit, "effective_priority_refresh", string(diffBytes))
+			tenant.ResourceTypeAudit, "effective_priority_refresh", string(diffBytes)); err != nil {
+			slog.Error("insert audit event failed", "error", err.Error())
+		}
 	}
 	return n, nil
 }

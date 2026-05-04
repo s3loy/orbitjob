@@ -102,7 +102,7 @@ func (r *JobRepository) Create(ctx context.Context, in domainjob.CreateSpec) (do
 		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
 	`,
 		in.TenantID,
-		tenant.ActorTypeAPIKey,
+		tenant.ActorTypeSystem,
 		"system",
 		tenant.EventTypeJobCreated,
 		tenant.ResourceTypeJob,
