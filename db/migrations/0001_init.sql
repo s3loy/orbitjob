@@ -556,6 +556,11 @@ CREATE TABLE IF NOT EXISTS audit_events (
   CONSTRAINT chk_audit_tenant_non_empty CHECK (tenant_id <> '')
 ) PARTITION BY RANGE (created_at);
 
+-- Default partition: catches all rows until monthly partitions are created.
+-- Once specific partitions exist (e.g. FOR VALUES FROM ... TO ...), this
+-- partition only receives rows that don't match any explicit partition.
+CREATE TABLE IF NOT EXISTS audit_events_default PARTITION OF audit_events DEFAULT;
+
 CREATE INDEX IF NOT EXISTS idx_audit_events_tenant_time
   ON audit_events(tenant_id, created_at DESC);
 
