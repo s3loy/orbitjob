@@ -494,4 +494,162 @@ BEFORE UPDATE ON workers
 FOR EACH ROW
 EXECUTE FUNCTION set_updated_at();
 
+-- ============================================================
+-- Table: tenants
+-- ============================================================
+CREATE TABLE IF NOT EXISTS tenants (
+  id CHAR(26) PRIMARY KEY,
+  slug VARCHAR(64) NOT NULL,
+  name VARCHAR(128) NOT NULL,
+  status VARCHAR(16) NOT NULL DEFAULT 'active',
+  quotas JSONB NOT NULL DEFAULT '{}',
+  metadata JSONB NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT uniq_tenants_slug UNIQUE (slug),
+  CONSTRAINT chk_tenants_status CHECK (status IN ('active', 'suspended')),
+  CONSTRAINT chk_tenants_slug_non_empty CHECK (slug <> ''),
+  CONSTRAINT chk_tenants_name_non_empty CHECK (name <> '')
+);
+
+CREATE TRIGGER trg_tenants_set_updated_at
+  BEFORE UPDATE ON tenants
+  FOR EACH ROW
+  EXECUTE FUNCTION set_updated_at();
+
+-- ============================================================
+-- Table: api_keys
+-- ============================================================
+CREATE TABLE IF NOT EXISTS api_keys (
+  id CHAR(26) PRIMARY KEY,
+  tenant_id CHAR(26) NOT NULL REFERENCES tenants(id),
+  key_hash VARCHAR(60) NOT NULL,
+  key_prefix VARCHAR(12) NOT NULL,
+  permissions JSONB NOT NULL DEFAULT '{}',
+  expires_at TIMESTAMPTZ,
+  revoked_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by VARCHAR(64),
+  CONSTRAINT chk_api_keys_key_hash_non_empty CHECK (key_hash <> ''),
+  CONSTRAINT chk_api_keys_key_prefix_non_empty CHECK (key_prefix <> '')
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_keys_tenant ON api_keys(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(key_prefix);
+
+-- ============================================================
+-- Table: audit_events (partitioned monthly, INSERT-only)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS audit_events (
+  id BIGSERIAL,
+  tenant_id VARCHAR(64) NOT NULL,
+  actor_type VARCHAR(32) NOT NULL,
+  actor_id VARCHAR(64),
+  event_type VARCHAR(32) NOT NULL,
+  resource_type VARCHAR(32) NOT NULL,
+  resource_id VARCHAR(64) NOT NULL,
+  diff JSONB NOT NULL DEFAULT '{}',
+  trace_id VARCHAR(64),
+  idempotency_key VARCHAR(128),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT chk_audit_actor_type CHECK (actor_type IN ('system', 'api_key', 'user')),
+  CONSTRAINT chk_audit_tenant_non_empty CHECK (tenant_id <> '')
+) PARTITION BY RANGE (created_at);
+
+CREATE INDEX IF NOT EXISTS idx_audit_events_tenant_time
+  ON audit_events(tenant_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_audit_events_resource
+  ON audit_events(tenant_id, resource_type, resource_id, created_at DESC);
+
+-- ============================================================
+-- PG Roles (DDL only; GRANT statements require superuser)
+-- ============================================================
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'orbitjob_owner') THEN
+    CREATE ROLE orbitjob_owner WITH LOGIN PASSWORD NULL;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'orbitjob_admin') THEN
+    CREATE ROLE orbitjob_admin WITH LOGIN PASSWORD NULL;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'orbitjob_dispatcher') THEN
+    CREATE ROLE orbitjob_dispatcher WITH LOGIN PASSWORD NULL;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'orbitjob_worker') THEN
+    CREATE ROLE orbitjob_worker WITH LOGIN PASSWORD NULL;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'orbitjob_reader') THEN
+    CREATE ROLE orbitjob_reader WITH LOGIN PASSWORD NULL;
+  END IF;
+END
+$$;
+
 COMMIT;
+-- Stage A: Create RLS policies but leave RLS disabled.
+-- To activate (Stage C), run: ALTER TABLE <name> ENABLE ROW LEVEL SECURITY;
+-- Policies use current_setting('app.tenant_id') which is set by the application
+-- via SET LOCAL app.tenant_id at the start of each transaction.
+
+-- ============================================================
+-- jobs table
+-- ============================================================
+CREATE POLICY jobs_tenant_isolation ON jobs
+    FOR ALL
+    USING (tenant_id = current_setting('app.tenant_id'))
+    WITH CHECK (tenant_id = current_setting('app.tenant_id'));
+
+-- ============================================================
+-- job_instances table
+-- ============================================================
+CREATE POLICY job_instances_tenant_isolation ON job_instances
+    FOR ALL
+    USING (tenant_id = current_setting('app.tenant_id'))
+    WITH CHECK (tenant_id = current_setting('app.tenant_id'));
+
+-- Policy for dispatcher: SELECT + UPDATE across tenants for claim
+CREATE POLICY job_instances_dispatcher_claim ON job_instances
+    FOR SELECT
+    USING (true);
+
+CREATE POLICY job_instances_dispatcher_update ON job_instances
+    FOR UPDATE
+    USING (true)
+    WITH CHECK (true);
+
+-- ============================================================
+-- api_keys table
+-- ============================================================
+-- No tenant isolation policy on api_keys — the auth middleware reads this table
+-- before the tenant_id is known. Access is controlled at the application level.
+
+-- ============================================================
+-- audit_events table
+-- ============================================================
+CREATE POLICY audit_events_tenant_isolation ON audit_events
+    FOR INSERT
+    WITH CHECK (tenant_id = current_setting('app.tenant_id'));
+
+CREATE POLICY audit_events_tenant_read ON audit_events
+    FOR SELECT
+    USING (tenant_id = current_setting('app.tenant_id'));
+
+-- ============================================================
+-- tenants table
+-- ============================================================
+CREATE POLICY tenants_isolation ON tenants
+    FOR ALL
+    USING (id = current_setting('app.tenant_id'))
+    WITH CHECK (id = current_setting('app.tenant_id'));
+
+-- Note: The default tenant_id 'default' must exist in the tenants table.
+
+-- ============================================================
+-- Tables NOT covered by RLS policies:
+--   - job_instance_attempts : accessed via FK from job_instances; inherits
+--     tenant scope from the parent instance.
+--   - workers               : dispatcher needs cross-tenant worker visibility
+--     for capacity-based routing.
+--   - job_change_audits     : audit trail; application-level access control
+--     is sufficient.
+-- ============================================================
