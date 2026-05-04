@@ -14,10 +14,21 @@ import (
 
 	command "orbitjob/internal/admin/app/job/command"
 	query "orbitjob/internal/admin/app/job/query"
+	"orbitjob/internal/admin/http/middleware"
 	domainjob "orbitjob/internal/core/domain/job"
 	"orbitjob/internal/domain/resource"
 	"orbitjob/internal/domain/validation"
 )
+
+// testTenantMiddleware injects a tenant_id into the request context, simulating
+// the production auth middleware for handler-level tests.
+func testTenantMiddleware(tenantID string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx := middleware.WithTenantID(c.Request.Context(), tenantID, middleware.TenantSourceHeader)
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+	}
+}
 
 type stubCreateJobUseCase struct {
 	called bool
@@ -160,10 +171,11 @@ func TestHandler_RegisterAndListJobs(t *testing.T) {
 
 	handler := NewHandler(nil, useCase, nil, nil, nil)
 	router := gin.New()
+	router.Use(testTenantMiddleware("tenant-a"))
 	handler.Register(router)
 
 	req := httptest.NewRequest(stdhttp.MethodGet,
-		"/api/v1/jobs?tenant_id=tenant-a&status=active&limit=20&offset=40", nil)
+		"/api/v1/jobs?status=active&limit=20&offset=40", nil)
 	resp := httptest.NewRecorder()
 
 	router.ServeHTTP(resp, req)
@@ -250,9 +262,10 @@ func TestHandler_RegisterAndGetJob(t *testing.T) {
 
 	handler := NewHandler(nil, nil, useCase, nil, nil)
 	router := gin.New()
+	router.Use(testTenantMiddleware("tenant-a"))
 	handler.Register(router)
 
-	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/jobs/1?tenant_id=tenant-a", nil)
+	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/jobs/1", nil)
 	resp := httptest.NewRecorder()
 
 	router.ServeHTTP(resp, req)

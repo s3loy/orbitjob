@@ -131,7 +131,10 @@ func run(ctx context.Context) error {
 
 	slog.SetDefault(newLoggerFn(os.Getenv("APP_ENV")))
 
-	dsn := os.Getenv("DATABASE_DSN")
+	dsn := os.Getenv("SCHEDULER_DSN")
+	if dsn == "" {
+		dsn = os.Getenv("DATABASE_DSN")
+	}
 	if dsn == "" {
 		return fmt.Errorf("DATABASE_DSN is required")
 	}

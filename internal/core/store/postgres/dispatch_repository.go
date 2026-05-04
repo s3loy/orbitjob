@@ -3,11 +3,14 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	domaininstance "orbitjob/internal/core/domain/instance"
+	tenant "orbitjob/internal/core/domain/tenant"
 )
 
 // DispatchRepository owns dispatcher-side persistence operations.
@@ -40,6 +43,11 @@ func (r *DispatchRepository) DispatchOne(
 			_ = tx.Rollback()
 		}
 	}()
+
+	// Set tenant context for RLS
+	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", claimSpec.TenantID); err != nil {
+		return domaininstance.Snapshot{}, false, fmt.Errorf("set tenant context: %w", err)
+	}
 
 	// Step 1: Claim one candidate instance.
 	candidate, found, err := claimOneDispatchCandidate(ctx, tx, claimSpec)
@@ -179,20 +187,91 @@ func updateInstanceToDispatched(ctx context.Context, tx *sql.Tx, snap domaininst
 		          result_code, error_msg, trace_id, created_at, updated_at
 	`, spec.Now, spec.LeaseExpiresAt, snap.ID)
 
-	return scanInstanceSnapshot(row)
+	out, err := scanInstanceSnapshot(row)
+	if err != nil {
+		return domaininstance.Snapshot{}, err
+	}
+
+	diffBytes, err := json.Marshal(map[string]any{
+		"from_status": snap.Status,
+		"to_status":   "dispatched",
+		"job_id":      snap.JobID,
+	})
+	if err != nil {
+		return domaininstance.Snapshot{}, fmt.Errorf("marshal audit diff: %w", err)
+	}
+	if _, err = tx.ExecContext(ctx, `
+		INSERT INTO audit_events (tenant_id, actor_type, actor_id, event_type, resource_type, resource_id, diff)
+		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+	`,
+		snap.TenantID,
+		tenant.ActorTypeSystem,
+		"dispatcher",
+		tenant.EventTypeInstanceStatusChanged,
+		tenant.ResourceTypeInstance,
+		snap.RunID,
+		string(diffBytes),
+	); err != nil {
+		return domaininstance.Snapshot{}, fmt.Errorf("insert audit event: %w", err)
+	}
+
+	return out, nil
 }
 
 func cancelRunningInstances(ctx context.Context, tx *sql.Tx, tenantID string, jobID int64, now time.Time) error {
-	_, err := tx.ExecContext(ctx, `
+	rows, err := tx.QueryContext(ctx, `
 		UPDATE job_instances
 		SET status = 'canceled',
 		    finished_at = $3,
 		    error_msg = 'canceled by concurrency replace policy'
 		WHERE tenant_id = $1 AND job_id = $2
 		  AND status IN ('dispatched', 'running')
+		RETURNING run_id::text, status
 	`, tenantID, jobID, now)
 	if err != nil {
 		return fmt.Errorf("cancel running instances: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	type canceledRow struct {
+		runID, prevStatus string
+	}
+	var canceled []canceledRow
+	for rows.Next() {
+		var r canceledRow
+		if err := rows.Scan(&r.runID, &r.prevStatus); err != nil {
+			return fmt.Errorf("scan canceled instance: %w", err)
+		}
+		canceled = append(canceled, r)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate canceled instances: %w", err)
+	}
+	_ = rows.Close()
+
+	for _, r := range canceled {
+		diffBytes, err := json.Marshal(map[string]any{
+			"from_status": r.prevStatus,
+			"to_status":   "canceled",
+			"job_id":      jobID,
+		})
+		if err != nil {
+			return fmt.Errorf("marshal audit diff: %w", err)
+		}
+		if _, err = tx.ExecContext(ctx, `
+			INSERT INTO audit_events (tenant_id, actor_type, actor_id, event_type, resource_type, resource_id, diff)
+			VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+		`,
+			tenantID,
+			tenant.ActorTypeSystem,
+			"dispatcher",
+			tenant.EventTypeInstanceStatusChanged,
+			tenant.ResourceTypeInstance,
+			r.runID,
+			string(diffBytes),
+		); err != nil {
+			return fmt.Errorf("insert audit event: %w", err)
+		}
 	}
 	return nil
 }
@@ -202,7 +281,7 @@ func cancelRunningInstances(ctx context.Context, tx *sql.Tx, tenantID string, jo
 // expired (worker crashed). Returns counts for each recovery category.
 func (r *DispatchRepository) RecoverLeaseOrphans(ctx context.Context, now time.Time) (dispatched, running int64, _ error) {
 	// Phase 1: dispatched orphans → pending
-	dResult, err := r.db.ExecContext(ctx, `
+	dRows, err := r.db.QueryContext(ctx, `
 		UPDATE job_instances
 		SET status = 'pending',
 		    worker_id = NULL,
@@ -211,17 +290,56 @@ func (r *DispatchRepository) RecoverLeaseOrphans(ctx context.Context, now time.T
 		    error_msg = 'orphaned: dispatcher lease expired'
 		WHERE status = 'dispatched'
 		  AND lease_expires_at < $1
+		RETURNING run_id::text, tenant_id
 	`, now)
 	if err != nil {
 		return 0, 0, fmt.Errorf("recover dispatched orphans: %w", err)
 	}
-	dispatched, err = dResult.RowsAffected()
-	if err != nil {
-		return 0, 0, fmt.Errorf("dispatched rows affected: %w", err)
+	defer func() { _ = dRows.Close() }()
+
+	type orphanRow struct {
+		runID, tenantID string
+	}
+	var dOrphans []orphanRow
+	for dRows.Next() {
+		var r orphanRow
+		if err := dRows.Scan(&r.runID, &r.tenantID); err != nil {
+			return 0, 0, fmt.Errorf("scan dispatched orphan: %w", err)
+		}
+		dOrphans = append(dOrphans, r)
+	}
+	if err := dRows.Err(); err != nil {
+		return 0, 0, fmt.Errorf("iterate dispatched orphans: %w", err)
+	}
+	_ = dRows.Close()
+
+	for _, o := range dOrphans {
+		dispatched++
+		diffBytes, err := json.Marshal(map[string]any{
+			"from_status": "dispatched",
+			"to_status":   "pending",
+		})
+		if err != nil {
+			return 0, 0, fmt.Errorf("marshal audit diff: %w", err)
+		}
+		if _, err = r.db.ExecContext(ctx, `
+			INSERT INTO audit_events (tenant_id, actor_type, actor_id, event_type, resource_type, resource_id, diff)
+			VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+		`,
+			o.tenantID,
+			tenant.ActorTypeSystem,
+			"dispatcher",
+			tenant.EventTypeOrphanRecovered,
+			tenant.ResourceTypeInstance,
+			o.runID,
+			string(diffBytes),
+		); err != nil {
+			return 0, 0, fmt.Errorf("insert audit event: %w", err)
+		}
 	}
 
 	// Phase 2: running orphans → retry_wait or failed
-	rResult, err := r.db.ExecContext(ctx, `
+	rRows, err := r.db.QueryContext(ctx, `
 		UPDATE job_instances ji
 		SET status = CASE
 		        WHEN ji.attempt < ji.max_attempt THEN 'retry_wait'::VARCHAR
@@ -244,13 +362,49 @@ func (r *DispatchRepository) RecoverLeaseOrphans(ctx context.Context, now time.T
 		  AND ji.job_id = j.id
 		  AND ji.status = 'running'
 		  AND ji.lease_expires_at < $1
+		RETURNING ji.run_id::text, ji.tenant_id
 	`, now)
 	if err != nil {
 		return dispatched, 0, fmt.Errorf("recover running orphans: %w", err)
 	}
-	running, err = rResult.RowsAffected()
-	if err != nil {
-		return dispatched, 0, fmt.Errorf("running rows affected: %w", err)
+	defer func() { _ = rRows.Close() }()
+
+	var rOrphans []orphanRow
+	for rRows.Next() {
+		var r orphanRow
+		if err := rRows.Scan(&r.runID, &r.tenantID); err != nil {
+			return dispatched, 0, fmt.Errorf("scan running orphan: %w", err)
+		}
+		rOrphans = append(rOrphans, r)
+	}
+	if err := rRows.Err(); err != nil {
+		return dispatched, 0, fmt.Errorf("iterate running orphans: %w", err)
+	}
+	_ = rRows.Close()
+
+	for _, o := range rOrphans {
+		running++
+		diffBytes, err := json.Marshal(map[string]any{
+			"from_status": "running",
+			"to_status":   "orphan_recovered",
+		})
+		if err != nil {
+			return dispatched, 0, fmt.Errorf("marshal audit diff: %w", err)
+		}
+		if _, err = r.db.ExecContext(ctx, `
+			INSERT INTO audit_events (tenant_id, actor_type, actor_id, event_type, resource_type, resource_id, diff)
+			VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+		`,
+			o.tenantID,
+			tenant.ActorTypeSystem,
+			"dispatcher",
+			tenant.EventTypeOrphanRecovered,
+			tenant.ResourceTypeInstance,
+			o.runID,
+			string(diffBytes),
+		); err != nil {
+			return dispatched, 0, fmt.Errorf("insert audit event: %w", err)
+		}
 	}
 	return dispatched, running, nil
 }
@@ -272,6 +426,19 @@ func (r *DispatchRepository) RefreshEffectivePriority(ctx context.Context, now t
 	n, err := result.RowsAffected()
 	if err != nil {
 		return 0, fmt.Errorf("refresh rows affected: %w", err)
+	}
+	if n > 0 {
+		diffBytes, err := json.Marshal(map[string]any{"affected_rows": n, "refreshed_at": now})
+		if err != nil {
+			slog.Error("marshal audit diff failed", "error", err.Error())
+		} else if _, err = r.db.ExecContext(ctx, `
+			INSERT INTO audit_events (
+				tenant_id, actor_type, actor_id, event_type, resource_type, resource_id, diff
+			) VALUES ('system', $1, $2, $3, $4, $5, $6::jsonb)
+		`, tenant.ActorTypeSystem, "dispatcher", tenant.EventTypeInstanceStatusChanged,
+			tenant.ResourceTypeAudit, "effective_priority_refresh", string(diffBytes)); err != nil {
+			slog.Error("insert audit event failed", "error", err.Error())
+		}
 	}
 	return n, nil
 }

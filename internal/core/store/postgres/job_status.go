@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	domainjob "orbitjob/internal/core/domain/job"
+	tenant "orbitjob/internal/core/domain/tenant"
 )
 
 // ChangeStatus persists pause/resume lifecycle changes with optimistic concurrency and audit writes.
@@ -30,6 +31,11 @@ func (r *JobRepository) ChangeStatus(
 			_ = tx.Rollback()
 		}
 	}()
+
+	// Set tenant context for RLS
+	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", in.TenantID); err != nil {
+		return domainjob.Snapshot{}, fmt.Errorf("set tenant context: %w", err)
+	}
 
 	var out domainjob.Snapshot
 	var nextRunAt sql.NullTime
@@ -69,22 +75,18 @@ func (r *JobRepository) ChangeStatus(
 	}
 
 	if _, err = tx.ExecContext(ctx, `
-		INSERT INTO job_change_audits (
-			tenant_id,
-			job_id,
-			action,
-			changed_by,
-			diff_payload
-		)
-		VALUES ($1, $2, $3, $4, $5::jsonb)
+		INSERT INTO audit_events (tenant_id, actor_type, actor_id, event_type, resource_type, resource_id, diff)
+		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
 	`,
 		in.TenantID,
-		in.ID,
-		in.Action,
+		tenant.ActorTypeAPIKey,
 		changedBy,
+		tenant.EventTypeJobStatusChanged,
+		tenant.ResourceTypeJob,
+		fmt.Sprintf("%d", in.ID),
 		string(diffBytes),
 	); err != nil {
-		return domainjob.Snapshot{}, fmt.Errorf("insert job audit: %w", err)
+		return domainjob.Snapshot{}, fmt.Errorf("insert audit event: %w", err)
 	}
 
 	if err = tx.Commit(); err != nil {

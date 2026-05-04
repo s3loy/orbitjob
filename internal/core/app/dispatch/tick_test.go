@@ -54,7 +54,6 @@ func makeTestClaimSpec() domaininstance.ClaimSpec {
 	now := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
 	return domaininstance.ClaimSpec{
 		TenantID:       "tenant-test",
-		WorkerID:       "worker-test",
 		LeaseExpiresAt: now.Add(30 * time.Second),
 		Now:            now,
 	}

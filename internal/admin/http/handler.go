@@ -8,6 +8,7 @@ import (
 
 	command "orbitjob/internal/admin/app/job/command"
 	query "orbitjob/internal/admin/app/job/query"
+	"orbitjob/internal/admin/http/middleware"
 	"orbitjob/internal/domain/validation"
 )
 
@@ -85,7 +86,9 @@ func (h *Handler) CreateJob(c *gin.Context) {
 		return
 	}
 
-	out, err := h.createJobUC.Create(c.Request.Context(), req.ToCreateInput())
+	in := req.ToCreateInput()
+	in.TenantID = middleware.GetTenantID(c)
+	out, err := h.createJobUC.Create(c.Request.Context(), in)
 	if err != nil {
 		if validation.Is(err) {
 			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
@@ -108,7 +111,9 @@ func (h *Handler) ListJobs(c *gin.Context) {
 		return
 	}
 
-	out, err := h.listJobsUC.List(c.Request.Context(), req.ToListInput())
+	in := req.ToListInput()
+	in.TenantID = middleware.GetTenantID(c)
+	out, err := h.listJobsUC.List(c.Request.Context(), in)
 	if err != nil {
 		if validation.Is(err) {
 			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
@@ -137,7 +142,9 @@ func (h *Handler) GetJob(c *gin.Context) {
 		return
 	}
 
-	out, err := h.getJobUC.Get(c.Request.Context(), req.ToGetInput())
+	in := req.ToGetInput()
+	in.TenantID = middleware.GetTenantID(c)
+	out, err := h.getJobUC.Get(c.Request.Context(), in)
 	if err != nil {
 		if validation.Is(err) {
 			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
@@ -165,21 +172,15 @@ func (h *Handler) UpdateJob(c *gin.Context) {
 		return
 	}
 
-	var tenantReq tenantQueryRequest
-	if err := c.ShouldBindQuery(&tenantReq); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
-		return
-	}
-
 	req := UpdateJobRequest{
-		ID:       pathReq.ID,
-		TenantID: tenantReq.TenantID,
+		ID: pathReq.ID,
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
+	tenantID := middleware.GetTenantID(c)
 	actorID, err := requiredActorID(c)
 	if err != nil {
 		writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
@@ -188,7 +189,7 @@ func (h *Handler) UpdateJob(c *gin.Context) {
 
 	current, err := h.getJobUC.Get(c.Request.Context(), query.GetInput{
 		ID:       req.ID,
-		TenantID: req.TenantID,
+		TenantID: tenantID,
 	})
 	if err != nil {
 		if validation.Is(err) {
@@ -207,6 +208,7 @@ func (h *Handler) UpdateJob(c *gin.Context) {
 		return
 	}
 
+	req.TenantID = tenantID
 	out, err := h.updateJobUC.Update(c.Request.Context(), req.ToUpdateInput(current, actorID))
 	if err != nil {
 		if validation.Is(err) {
@@ -254,15 +256,9 @@ func (h *Handler) changeJobStatus(c *gin.Context, action string) {
 		return
 	}
 
-	var tenantReq tenantQueryRequest
-	if err := c.ShouldBindQuery(&tenantReq); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
-		return
-	}
-
 	req := ChangeStatusRequest{
 		ID:       pathReq.ID,
-		TenantID: tenantReq.TenantID,
+		TenantID: middleware.GetTenantID(c),
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))

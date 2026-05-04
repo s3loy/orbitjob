@@ -1,0 +1,6 @@
+# Gitleaks configuration for OrbitJob
+[allowlist]
+  description = "Test files with fake API keys"
+  paths = [
+    '''internal/admin/http/middleware/auth_test.go''',
+  ]

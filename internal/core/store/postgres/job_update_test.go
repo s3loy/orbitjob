@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -108,10 +109,10 @@ func TestJobRepository_UpdateRollsBackWhenAuditInsertFails(t *testing.T) {
 	)
 
 	err = db.QueryRowContext(context.Background(), `
-		SELECT name, status, version
-		FROM jobs
-		WHERE tenant_id = $1 AND id = $2
-	`, "tenant-audit", jobID).Scan(&name, &status, &version)
+			SELECT name, status, version
+			FROM jobs
+			WHERE tenant_id = $1 AND id = $2
+		`, "tenant-audit", jobID).Scan(&name, &status, &version)
 	if err != nil {
 		t.Fatalf("reload job: %v", err)
 	}
@@ -153,18 +154,18 @@ func seedJob(t *testing.T, db *sql.DB, in seedJobInput) int64 {
 
 	var id int64
 	err := db.QueryRowContext(context.Background(), `
-		INSERT INTO jobs (
-			name,
-			tenant_id,
-			priority,
-			trigger_type,
-			cron_expr,
-			timezone,
-			handler_type
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id
-	`,
+			INSERT INTO jobs (
+				name,
+				tenant_id,
+				priority,
+				trigger_type,
+				cron_expr,
+				timezone,
+				handler_type
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
+			RETURNING id
+		`,
 		in.Name,
 		in.TenantID,
 		in.Priority,
@@ -254,10 +255,10 @@ func loadStoredUpdatedJob(t *testing.T, db *sql.DB, tenantID string, jobID int64
 
 	var stored storedUpdatedJob
 	err := db.QueryRowContext(context.Background(), `
-		SELECT name, version, priority, partition_key, cron_expr, timezone, handler_type
-		FROM jobs
-		WHERE tenant_id = $1 AND id = $2
-	`, tenantID, jobID).Scan(
+			SELECT name, version, priority, partition_key, cron_expr, timezone, handler_type
+			FROM jobs
+			WHERE tenant_id = $1 AND id = $2
+		`, tenantID, jobID).Scan(
 		&stored.name,
 		&stored.version,
 		&stored.priority,
@@ -304,10 +305,10 @@ func assertUpdateAuditCount(t *testing.T, db *sql.DB, tenantID string, jobID int
 
 	var count int
 	err := db.QueryRowContext(context.Background(), `
-		SELECT count(*)
-		FROM job_change_audits
-		WHERE tenant_id = $1 AND job_id = $2 AND action = 'update' AND changed_by = $3
-	`, tenantID, jobID, changedBy).Scan(&count)
+			SELECT count(*)
+			FROM audit_events
+			WHERE tenant_id = $1 AND resource_id = $2 AND event_type = 'job.updated' AND actor_id = $3
+		`, tenantID, fmt.Sprintf("%d", jobID), changedBy).Scan(&count)
 	if err != nil {
 		t.Fatalf("count audits: %v", err)
 	}

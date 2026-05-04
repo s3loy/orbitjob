@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -47,10 +48,10 @@ func TestJobRepository_Pause(t *testing.T) {
 	var storedVersion int
 	var storedAuditCount int
 	err = db.QueryRowContext(context.Background(), `
-		SELECT status, version
-		FROM jobs
-		WHERE tenant_id = $1 AND id = $2
-	`, "tenant-pause", jobID).Scan(&storedStatus, &storedVersion)
+			SELECT status, version
+			FROM jobs
+			WHERE tenant_id = $1 AND id = $2
+		`, "tenant-pause", jobID).Scan(&storedStatus, &storedVersion)
 	if err != nil {
 		t.Fatalf("reload job: %v", err)
 	}
@@ -62,10 +63,10 @@ func TestJobRepository_Pause(t *testing.T) {
 	}
 
 	err = db.QueryRowContext(context.Background(), `
-		SELECT count(*)
-		FROM job_change_audits
-		WHERE tenant_id = $1 AND job_id = $2 AND action = 'pause' AND changed_by = $3
-	`, "tenant-pause", jobID, "control-plane-user").Scan(&storedAuditCount)
+			SELECT count(*)
+			FROM audit_events
+			WHERE tenant_id = $1 AND resource_id = $2 AND event_type = 'job.status_changed' AND actor_id = $3
+		`, "tenant-pause", fmt.Sprintf("%d", jobID), "control-plane-user").Scan(&storedAuditCount)
 	if err != nil {
 		t.Fatalf("count audits: %v", err)
 	}
@@ -86,10 +87,10 @@ func TestJobRepository_Resume(t *testing.T) {
 	})
 
 	_, err := db.ExecContext(context.Background(), `
-		UPDATE jobs
-		SET status = 'paused', version = 3
-		WHERE tenant_id = $1 AND id = $2
-	`, "tenant-resume", jobID)
+			UPDATE jobs
+			SET status = 'paused', version = 3
+			WHERE tenant_id = $1 AND id = $2
+		`, "tenant-resume", jobID)
 	if err != nil {
 		t.Fatalf("seed paused job: %v", err)
 	}
@@ -171,10 +172,10 @@ func TestJobRepository_ChangeStatusRollsBackWhenAuditInsertFails(t *testing.T) {
 	var status string
 	var version int
 	err = db.QueryRowContext(context.Background(), `
-		SELECT status, version
-		FROM jobs
-		WHERE tenant_id = $1 AND id = $2
-	`, "tenant-status-audit", jobID).Scan(&status, &version)
+			SELECT status, version
+			FROM jobs
+			WHERE tenant_id = $1 AND id = $2
+		`, "tenant-status-audit", jobID).Scan(&status, &version)
 	if err != nil {
 		t.Fatalf("reload job: %v", err)
 	}
@@ -198,10 +199,10 @@ func TestJobRepository_ChangeStatusPreservesNextRunAt(t *testing.T) {
 
 	var nextRunAt sql.NullTime
 	err := db.QueryRowContext(context.Background(), `
-		SELECT next_run_at
-		FROM jobs
-		WHERE tenant_id = $1 AND id = $2
-	`, "tenant-next-run", jobID).Scan(&nextRunAt)
+			SELECT next_run_at
+			FROM jobs
+			WHERE tenant_id = $1 AND id = $2
+		`, "tenant-next-run", jobID).Scan(&nextRunAt)
 	if err != nil {
 		t.Fatalf("load next_run_at: %v", err)
 	}

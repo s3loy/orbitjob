@@ -83,6 +83,7 @@ func TestSchedulerRepository_ScheduleOneDueCron_DecideError(t *testing.T) {
 
 	mock.ExpectBegin()
 	expectClaimOneRow(mock, now, "tenant-a", 101, nil)
+	expectSchedulerSetTenantContext(mock, "tenant-a")
 	mock.ExpectRollback()
 
 	_, found, err := repo.ScheduleOneDueCron(context.Background(), now, func(time.Time, schedule.DueCronJob) (schedule.ScheduleDecision, error) {
@@ -104,6 +105,7 @@ func TestSchedulerRepository_ScheduleOneDueCron_CreateWithoutScheduledAt(t *test
 
 	mock.ExpectBegin()
 	expectClaimOneRow(mock, now, "tenant-a", 101, nil)
+	expectSchedulerSetTenantContext(mock, "tenant-a")
 	mock.ExpectRollback()
 
 	_, found, err := repo.ScheduleOneDueCron(context.Background(), now, func(time.Time, schedule.DueCronJob) (schedule.ScheduleDecision, error) {
@@ -127,6 +129,7 @@ func TestSchedulerRepository_ScheduleOneDueCron_InsertError(t *testing.T) {
 
 	mock.ExpectBegin()
 	expectClaimOneRow(mock, now, "tenant-a", 101, &partition)
+	expectSchedulerSetTenantContext(mock, "tenant-a")
 	mock.ExpectQuery("INSERT INTO job_instances").
 		WithArgs("tenant-a", int64(101), scheduledAt, 7, sqlmock.AnyArg(), 4).
 		WillReturnError(errors.New("insert boom"))
@@ -150,6 +153,7 @@ func TestSchedulerRepository_ScheduleOneDueCron_NextRunAtRequired(t *testing.T) 
 
 	mock.ExpectBegin()
 	expectClaimOneRow(mock, now, "tenant-a", 101, nil)
+	expectSchedulerSetTenantContext(mock, "tenant-a")
 	mock.ExpectRollback()
 
 	_, found, err := repo.ScheduleOneDueCron(context.Background(), now, func(time.Time, schedule.DueCronJob) (schedule.ScheduleDecision, error) {
@@ -171,6 +175,7 @@ func TestSchedulerRepository_ScheduleOneDueCron_UpdateError(t *testing.T) {
 
 	mock.ExpectBegin()
 	expectClaimOneRow(mock, now, "tenant-a", 101, nil)
+	expectSchedulerSetTenantContext(mock, "tenant-a")
 	mock.ExpectExec("UPDATE jobs").
 		WithArgs("tenant-a", int64(101), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnError(errors.New("update boom"))
@@ -195,6 +200,7 @@ func TestSchedulerRepository_ScheduleOneDueCron_CommitError(t *testing.T) {
 
 	mock.ExpectBegin()
 	expectClaimOneRow(mock, now, "tenant-a", 101, nil)
+	expectSchedulerSetTenantContext(mock, "tenant-a")
 	mock.ExpectExec("UPDATE jobs").
 		WithArgs("tenant-a", int64(101), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -219,6 +225,7 @@ func TestSchedulerRepository_ScheduleOneDueCron_SuccessWithoutInstance(t *testin
 
 	mock.ExpectBegin()
 	expectClaimOneRow(mock, now, "tenant-a", 101, nil)
+	expectSchedulerSetTenantContext(mock, "tenant-a")
 	mock.ExpectExec("UPDATE jobs").
 		WithArgs("tenant-a", int64(101), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -254,9 +261,13 @@ func TestSchedulerRepository_ScheduleOneDueCron_SuccessWithInstance(t *testing.T
 
 	mock.ExpectBegin()
 	expectClaimOneRow(mock, now, "tenant-a", 101, &partition)
+	expectSchedulerSetTenantContext(mock, "tenant-a")
 	mock.ExpectQuery("INSERT INTO job_instances").
 		WithArgs("tenant-a", int64(101), scheduledAt, 7, sqlmock.AnyArg(), 4).
 		WillReturnRows(sqlmock.NewRows([]string{"run_id"}).AddRow("run-1"))
+	mock.ExpectExec("INSERT INTO audit_events").
+		WithArgs("tenant-a", "system", "scheduler", "instance.created", "instance", "run-1", sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("UPDATE jobs").
 		WithArgs("tenant-a", int64(101), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -295,6 +306,12 @@ func newSchedulerRepoMock(t *testing.T) (*SchedulerRepository, sqlmock.Sqlmock) 
 	})
 
 	return NewSchedulerRepository(db), mock
+}
+
+func expectSchedulerSetTenantContext(mock sqlmock.Sqlmock, tenantID string) {
+	mock.ExpectExec("SELECT set_config").
+		WithArgs(tenantID).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 }
 
 func expectClaimNoRows(mock sqlmock.Sqlmock, now time.Time) {

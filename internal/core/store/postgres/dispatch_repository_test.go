@@ -32,7 +32,6 @@ func TestDispatchOne_AllowDispatchesPending(t *testing.T) {
 
 	spec := domaininstance.ClaimSpec{
 		TenantID:       "tenant-dispatch-allow",
-		WorkerID:       "worker-1",
 		LeaseExpiresAt: now.Add(30 * time.Second),
 		Now:            now,
 	}
@@ -80,7 +79,6 @@ func TestDispatchOne_ForbidSkipsWhenRunning(t *testing.T) {
 
 	spec := domaininstance.ClaimSpec{
 		TenantID:       "tenant-dispatch-forbid",
-		WorkerID:       "worker-1",
 		LeaseExpiresAt: now.Add(30 * time.Second),
 		Now:            now,
 	}
@@ -124,7 +122,6 @@ func TestDispatchOne_ReplaceCancelsExisting(t *testing.T) {
 
 	spec := domaininstance.ClaimSpec{
 		TenantID:       "tenant-dispatch-replace",
-		WorkerID:       "worker-new",
 		LeaseExpiresAt: now.Add(30 * time.Second),
 		Now:            now,
 	}
@@ -170,7 +167,6 @@ func TestDispatchOne_PriorityOrdering(t *testing.T) {
 
 	spec := domaininstance.ClaimSpec{
 		TenantID:       "tenant-dispatch-priority",
-		WorkerID:       "worker-1",
 		LeaseExpiresAt: now.Add(30 * time.Second),
 		Now:            now,
 	}
@@ -210,7 +206,6 @@ func TestDispatchOne_RetryWaitEligible(t *testing.T) {
 
 	spec := domaininstance.ClaimSpec{
 		TenantID:       "tenant-dispatch-retry",
-		WorkerID:       "worker-1",
 		LeaseExpiresAt: now.Add(30 * time.Second),
 		Now:            now,
 	}
@@ -244,7 +239,6 @@ func TestDispatchOne_NoCandidateReturnsFalse(t *testing.T) {
 
 	spec := domaininstance.ClaimSpec{
 		TenantID:       "tenant-dispatch-empty",
-		WorkerID:       "worker-1",
 		LeaseExpiresAt: now.Add(30 * time.Second),
 		Now:            now,
 	}

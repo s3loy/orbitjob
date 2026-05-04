@@ -118,21 +118,7 @@ func resetDispatcherMainDeps(t *testing.T) {
 	})
 }
 
-func TestLoadDispatcherRuntimeConfig_Defaults(t *testing.T) {
-	t.Setenv("DISPATCHER_WORKER_ID", "")
-	t.Setenv("DISPATCHER_TENANT_ID", "")
-	t.Setenv("DISPATCHER_BATCH_SIZE", "")
-	t.Setenv("DISPATCHER_TICK_INTERVAL_SEC", "")
-	t.Setenv("DISPATCHER_LEASE_DURATION_SEC", "")
-
-	_, err := loadDispatcherRuntimeConfig()
-	if err == nil || !strings.Contains(err.Error(), "DISPATCHER_WORKER_ID is required") {
-		t.Fatalf("expected DISPATCHER_WORKER_ID required error, got %v", err)
-	}
-}
-
 func TestLoadDispatcherRuntimeConfig_Custom(t *testing.T) {
-	t.Setenv("DISPATCHER_WORKER_ID", "worker-1")
 	t.Setenv("DISPATCHER_TENANT_ID", "tenant-42")
 	t.Setenv("DISPATCHER_BATCH_SIZE", "100")
 	t.Setenv("DISPATCHER_TICK_INTERVAL_SEC", "5")
@@ -141,9 +127,6 @@ func TestLoadDispatcherRuntimeConfig_Custom(t *testing.T) {
 	cfg, err := loadDispatcherRuntimeConfig()
 	if err != nil {
 		t.Fatalf("loadDispatcherRuntimeConfig() error = %v", err)
-	}
-	if cfg.WorkerID != "worker-1" {
-		t.Fatalf("expected workerID=worker-1, got %q", cfg.WorkerID)
 	}
 	if cfg.TenantID != "tenant-42" {
 		t.Fatalf("expected tenantID=tenant-42, got %q", cfg.TenantID)
@@ -159,8 +142,31 @@ func TestLoadDispatcherRuntimeConfig_Custom(t *testing.T) {
 	}
 }
 
+func TestLoadDispatcherRuntimeConfig_Defaults(t *testing.T) {
+	t.Setenv("DISPATCHER_TENANT_ID", "")
+	t.Setenv("DISPATCHER_BATCH_SIZE", "")
+	t.Setenv("DISPATCHER_TICK_INTERVAL_SEC", "")
+	t.Setenv("DISPATCHER_LEASE_DURATION_SEC", "")
+
+	cfg, err := loadDispatcherRuntimeConfig()
+	if err != nil {
+		t.Fatalf("loadDispatcherRuntimeConfig() error = %v", err)
+	}
+	if cfg.TenantID != "default" {
+		t.Fatalf("expected default tenantID, got %q", cfg.TenantID)
+	}
+	if cfg.BatchSize != 50 {
+		t.Fatalf("expected default batch size=50, got %d", cfg.BatchSize)
+	}
+	if cfg.TickInterval != 2*time.Second {
+		t.Fatalf("expected default tick interval=2s, got %s", cfg.TickInterval)
+	}
+	if cfg.LeaseDuration != 30*time.Second {
+		t.Fatalf("expected default lease duration=30s, got %s", cfg.LeaseDuration)
+	}
+}
+
 func TestLoadDispatcherRuntimeConfig_InvalidBatchSize(t *testing.T) {
-	t.Setenv("DISPATCHER_WORKER_ID", "worker-1")
 	t.Setenv("DISPATCHER_TENANT_ID", "")
 	t.Setenv("DISPATCHER_BATCH_SIZE", "abc")
 	t.Setenv("DISPATCHER_TICK_INTERVAL_SEC", "")
@@ -168,22 +174,6 @@ func TestLoadDispatcherRuntimeConfig_InvalidBatchSize(t *testing.T) {
 
 	if _, err := loadDispatcherRuntimeConfig(); err == nil {
 		t.Fatalf("expected error for invalid batch size")
-	}
-}
-
-func TestLoadDispatcherRuntimeConfig_MissingWorkerID(t *testing.T) {
-	t.Setenv("DISPATCHER_WORKER_ID", "")
-	t.Setenv("DISPATCHER_TENANT_ID", "tenant-1")
-	t.Setenv("DISPATCHER_BATCH_SIZE", "10")
-	t.Setenv("DISPATCHER_TICK_INTERVAL_SEC", "3")
-	t.Setenv("DISPATCHER_LEASE_DURATION_SEC", "30")
-
-	_, err := loadDispatcherRuntimeConfig()
-	if err == nil {
-		t.Fatalf("expected error for missing DISPATCHER_WORKER_ID")
-	}
-	if !strings.Contains(err.Error(), "DISPATCHER_WORKER_ID is required") {
-		t.Fatalf("expected DISPATCHER_WORKER_ID required error, got %v", err)
 	}
 }
 
@@ -206,7 +196,6 @@ func TestRunLoop_StopsOnContextCancel(t *testing.T) {
 	go func() {
 		runLoop(ctx, runner, runtimeConfig{
 			TenantID:      "t1",
-			WorkerID:      "w1",
 			BatchSize:     7,
 			TickInterval:  time.Second,
 			LeaseDuration: 30 * time.Second,
@@ -231,9 +220,6 @@ func TestRunLoop_StopsOnContextCancel(t *testing.T) {
 	spec := runner.lastSpec()
 	if spec.TenantID != "t1" {
 		t.Fatalf("expected spec.TenantID=t1, got %q", spec.TenantID)
-	}
-	if spec.WorkerID != "w1" {
-		t.Fatalf("expected spec.WorkerID=w1, got %q", spec.WorkerID)
 	}
 	if !spec.Now.Equal(now) {
 		t.Fatalf("expected spec.Now=%v, got %v", now, spec.Now)
@@ -266,7 +252,6 @@ func TestRunLoop_ContinuesAfterTickSignal(t *testing.T) {
 	go func() {
 		runLoop(ctx, runner, runtimeConfig{
 			TenantID:      "t1",
-			WorkerID:      "w1",
 			BatchSize:     3,
 			TickInterval:  time.Second,
 			LeaseDuration: 30 * time.Second,
@@ -313,7 +298,6 @@ func TestRunLoop_ErrorPathStillWaitsForShutdown(t *testing.T) {
 	go func() {
 		runLoop(ctx, runner, runtimeConfig{
 			TenantID:      "t1",
-			WorkerID:      "w1",
 			BatchSize:     1,
 			TickInterval:  time.Second,
 			LeaseDuration: 30 * time.Second,
@@ -369,7 +353,6 @@ func TestRun_DatabaseDSNRequired(t *testing.T) {
 func TestRun_OpenDBError(t *testing.T) {
 	resetDispatcherMainDeps(t)
 	t.Setenv("DATABASE_DSN", "postgres://unit-test")
-	t.Setenv("DISPATCHER_WORKER_ID", "worker-1")
 	t.Setenv("DISPATCHER_TENANT_ID", "")
 	t.Setenv("DISPATCHER_BATCH_SIZE", "")
 	t.Setenv("DISPATCHER_TICK_INTERVAL_SEC", "")
@@ -388,7 +371,6 @@ func TestRun_OpenDBError(t *testing.T) {
 func TestRun_SuccessInvokesRunLoop(t *testing.T) {
 	resetDispatcherMainDeps(t)
 	t.Setenv("DATABASE_DSN", "postgres://unit-test")
-	t.Setenv("DISPATCHER_WORKER_ID", "worker-1")
 	t.Setenv("DISPATCHER_TENANT_ID", "tenant-42")
 	t.Setenv("DISPATCHER_BATCH_SIZE", "9")
 	t.Setenv("DISPATCHER_TICK_INTERVAL_SEC", "3")
@@ -444,9 +426,6 @@ func TestRun_SuccessInvokesRunLoop(t *testing.T) {
 		if cfg.TenantID != "tenant-42" {
 			t.Fatalf("expected tenantID=tenant-42, got %q", cfg.TenantID)
 		}
-		if cfg.WorkerID != "worker-1" {
-			t.Fatalf("expected workerID=worker-1, got %q", cfg.WorkerID)
-		}
 		if cfg.BatchSize != 9 {
 			t.Fatalf("expected batch size=9, got %d", cfg.BatchSize)
 		}
@@ -477,7 +456,6 @@ func TestRun_SuccessInvokesRunLoop(t *testing.T) {
 func TestRun_PingDBError(t *testing.T) {
 	resetDispatcherMainDeps(t)
 	t.Setenv("DATABASE_DSN", "postgres://unit-test")
-	t.Setenv("DISPATCHER_WORKER_ID", "worker-1")
 	t.Setenv("DISPATCHER_TENANT_ID", "")
 	t.Setenv("DISPATCHER_BATCH_SIZE", "")
 	t.Setenv("DISPATCHER_TICK_INTERVAL_SEC", "")
@@ -505,26 +483,5 @@ func TestRun_PingDBError(t *testing.T) {
 	}
 	if runLoopCalled {
 		t.Fatalf("expected runLoop not to run when ping fails")
-	}
-}
-
-func TestRun_MissingWorkerID(t *testing.T) {
-	resetDispatcherMainDeps(t)
-	t.Setenv("DATABASE_DSN", "postgres://unit-test")
-	t.Setenv("DISPATCHER_WORKER_ID", "")
-	t.Setenv("DISPATCHER_TENANT_ID", "tenant-1")
-	t.Setenv("DISPATCHER_BATCH_SIZE", "10")
-	t.Setenv("DISPATCHER_TICK_INTERVAL_SEC", "3")
-	t.Setenv("DISPATCHER_LEASE_DURATION_SEC", "30")
-
-	loadDotenvFn = func() error { return nil }
-	newLoggerFn = func(string) *slog.Logger { return slog.Default() }
-
-	err := run(context.Background())
-	if err == nil {
-		t.Fatalf("expected error for missing DISPATCHER_WORKER_ID")
-	}
-	if !strings.Contains(err.Error(), "DISPATCHER_WORKER_ID is required") {
-		t.Fatalf("expected DISPATCHER_WORKER_ID required error, got %v", err)
 	}
 }

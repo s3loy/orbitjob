@@ -59,7 +59,7 @@ func (s *stubGetJobUseCase) Get(ctx context.Context, in query.GetInput) (query.G
 func TestNewRouter_Healthz(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	router := newRouter(nil)
+	router := newRouter(nil, nil)
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	resp := httptest.NewRecorder()
 
@@ -86,7 +86,7 @@ func TestNewRouter_CreateJobRoute(t *testing.T) {
 	}
 
 	handler := adminhttp.NewHandler(createUC, nil, nil, nil, nil)
-	router := newRouter(handler)
+	router := newRouter(handler, nil)
 
 	body := `{
                   "name":"demo-job",
@@ -135,7 +135,7 @@ func TestNewRouter_ListJobsRoute(t *testing.T) {
 	}
 
 	handler := adminhttp.NewHandler(nil, listUC, nil, nil, nil)
-	router := newRouter(handler)
+	router := newRouter(handler, nil)
 
 	req := httptest.NewRequest(http.MethodGet,
 		"/api/v1/jobs?tenant_id=default&status=active&limit=10&offset=0", nil)
@@ -188,7 +188,7 @@ func TestNewRouter_GetJobRoute(t *testing.T) {
 	}
 
 	handler := adminhttp.NewHandler(nil, nil, getUC, nil, nil)
-	router := newRouter(handler)
+	router := newRouter(handler, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/1?tenant_id=default", nil)
 	resp := httptest.NewRecorder()

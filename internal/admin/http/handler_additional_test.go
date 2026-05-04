@@ -6,28 +6,38 @@ import (
 	"errors"
 	stdhttp "net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 
+	command "orbitjob/internal/admin/app/job/command"
+	"orbitjob/internal/admin/http/middleware"
 	"orbitjob/internal/domain/resource"
 	"orbitjob/internal/domain/validation"
 )
 
-func TestHandler_UpdateJob_QueryBindError(t *testing.T) {
+func TestHandler_UpdateJob_WorksWithoutQueryTenantID(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	getUseCase := &stubGetJobUseCase{}
-	updateUseCase := &stubUpdateJobUseCase{}
+	getUseCase := &stubGetJobUseCase{
+		out: currentJobForUpdateTests(),
+	}
+	updateUseCase := &stubUpdateJobUseCase{
+		out: command.UpdateResult{
+			ID:      42,
+			Name:    "updated-job",
+			Status:  "active",
+			Version: 5,
+		},
+	}
 	handler := NewHandler(nil, nil, getUseCase, updateUseCase, nil)
 	router := gin.New()
+	router.Use(testTenantMiddleware("tenant-a"))
 	handler.Register(router)
 
-	tenantID := strings.Repeat("a", 65)
 	req := httptest.NewRequest(stdhttp.MethodPut,
-		"/api/v1/jobs/42?tenant_id="+tenantID,
-		bytes.NewBufferString(`{"version":1}`),
+		"/api/v1/jobs/42",
+		bytes.NewBufferString(`{"version":4,"name":"updated-job"}`),
 	)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(actorIDHeader, "control-plane-user")
@@ -35,11 +45,14 @@ func TestHandler_UpdateJob_QueryBindError(t *testing.T) {
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 
-	if resp.Code != stdhttp.StatusBadRequest {
-		t.Fatalf("expected status=%d, got %d", stdhttp.StatusBadRequest, resp.Code)
+	if resp.Code != stdhttp.StatusOK {
+		t.Fatalf("expected status=%d, got %d, body=%s", stdhttp.StatusOK, resp.Code, resp.Body.String())
 	}
-	if getUseCase.called || updateUseCase.called {
-		t.Fatalf("expected use cases not to be called on query bind error")
+	if !getUseCase.called || !updateUseCase.called {
+		t.Fatalf("expected both use cases to be called")
+	}
+	if updateUseCase.in.TenantID != "tenant-a" {
+		t.Fatalf("expected tenant_id=%q, got %q", "tenant-a", updateUseCase.in.TenantID)
 	}
 }
 
@@ -52,10 +65,11 @@ func TestHandler_UpdateJob_CurrentJobValidationError(t *testing.T) {
 	updateUseCase := &stubUpdateJobUseCase{}
 	handler := NewHandler(nil, nil, getUseCase, updateUseCase, nil)
 	router := gin.New()
+	router.Use(testTenantMiddleware("tenant-a"))
 	handler.Register(router)
 
 	req := httptest.NewRequest(stdhttp.MethodPut,
-		"/api/v1/jobs/42?tenant_id=tenant-a",
+		"/api/v1/jobs/42",
 		bytes.NewBufferString(`{"version":1}`),
 	)
 	req.Header.Set("Content-Type", "application/json")
@@ -79,10 +93,11 @@ func TestHandler_UpdateJob_CurrentJobInternalError(t *testing.T) {
 	updateUseCase := &stubUpdateJobUseCase{}
 	handler := NewHandler(nil, nil, getUseCase, updateUseCase, nil)
 	router := gin.New()
+	router.Use(testTenantMiddleware("tenant-a"))
 	handler.Register(router)
 
 	req := httptest.NewRequest(stdhttp.MethodPut,
-		"/api/v1/jobs/42?tenant_id=tenant-a",
+		"/api/v1/jobs/42",
 		bytes.NewBufferString(`{"version":1}`),
 	)
 	req.Header.Set("Content-Type", "application/json")
@@ -108,10 +123,11 @@ func TestHandler_UpdateJob_UpdateUseCaseNotFound(t *testing.T) {
 	}
 	handler := NewHandler(nil, nil, getUseCase, updateUseCase, nil)
 	router := gin.New()
+	router.Use(testTenantMiddleware("tenant-a"))
 	handler.Register(router)
 
 	req := httptest.NewRequest(stdhttp.MethodPut,
-		"/api/v1/jobs/42?tenant_id=tenant-a",
+		"/api/v1/jobs/42",
 		bytes.NewBufferString(`{"version":1}`),
 	)
 	req.Header.Set("Content-Type", "application/json")
@@ -125,17 +141,24 @@ func TestHandler_UpdateJob_UpdateUseCaseNotFound(t *testing.T) {
 	}
 }
 
-func TestHandler_ChangeJobStatus_QueryBindError(t *testing.T) {
+func TestHandler_ChangeJobStatus_WorksWithoutQueryTenantID(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	statusUseCase := &stubChangeStatusUseCase{}
+	statusUseCase := &stubChangeStatusUseCase{
+		out: command.ChangeStatusResult{
+			ID:      42,
+			Name:    "demo-job",
+			Status:  "paused",
+			Version: 2,
+		},
+	}
 	handler := NewHandler(nil, nil, nil, nil, statusUseCase)
 	router := gin.New()
+	router.Use(testTenantMiddleware("tenant-a"))
 	handler.Register(router)
 
-	tenantID := strings.Repeat("a", 65)
 	req := httptest.NewRequest(stdhttp.MethodPost,
-		"/api/v1/jobs/42/pause?tenant_id="+tenantID,
+		"/api/v1/jobs/42/pause",
 		bytes.NewBufferString(`{"version":1}`),
 	)
 	req.Header.Set("Content-Type", "application/json")
@@ -144,11 +167,14 @@ func TestHandler_ChangeJobStatus_QueryBindError(t *testing.T) {
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 
-	if resp.Code != stdhttp.StatusBadRequest {
-		t.Fatalf("expected status=%d, got %d", stdhttp.StatusBadRequest, resp.Code)
+	if resp.Code != stdhttp.StatusOK {
+		t.Fatalf("expected status=%d, got %d, body=%s", stdhttp.StatusOK, resp.Code, resp.Body.String())
 	}
-	if statusUseCase.pauseCalled || statusUseCase.resumeCalled {
-		t.Fatalf("expected status use case not to be called on query bind error")
+	if !statusUseCase.pauseCalled {
+		t.Fatal("expected Pause to be called")
+	}
+	if statusUseCase.in.TenantID != "tenant-a" {
+		t.Fatalf("expected tenant_id=%q, got %q", "tenant-a", statusUseCase.in.TenantID)
 	}
 }
 
@@ -160,10 +186,11 @@ func TestHandler_ChangeJobStatus_NotFound(t *testing.T) {
 	}
 	handler := NewHandler(nil, nil, nil, nil, statusUseCase)
 	router := gin.New()
+	router.Use(testTenantMiddleware("tenant-a"))
 	handler.Register(router)
 
 	req := httptest.NewRequest(stdhttp.MethodPost,
-		"/api/v1/jobs/42/pause?tenant_id=tenant-a",
+		"/api/v1/jobs/42/pause",
 		bytes.NewBufferString(`{"version":1}`),
 	)
 	req.Header.Set("Content-Type", "application/json")
@@ -185,8 +212,11 @@ func TestHandler_ChangeJobStatus_UnsupportedAction(t *testing.T) {
 	resp := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(resp)
 	ctx.Request = httptest.NewRequest(stdhttp.MethodPost,
-		"/api/v1/jobs/42/pause?tenant_id=tenant-a",
+		"/api/v1/jobs/42/pause",
 		bytes.NewBufferString(`{"version":1}`),
+	)
+	ctx.Request = ctx.Request.WithContext(
+		middleware.WithTenantID(ctx.Request.Context(), "tenant-a", middleware.TenantSourceHeader),
 	)
 	ctx.Request.Header.Set("Content-Type", "application/json")
 	ctx.Request.Header.Set(actorIDHeader, "control-plane-user")
