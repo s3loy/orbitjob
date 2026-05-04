@@ -15,6 +15,7 @@ import (
 	command "orbitjob/internal/admin/app/job/command"
 	query "orbitjob/internal/admin/app/job/query"
 	adminhttp "orbitjob/internal/admin/http"
+	"orbitjob/internal/admin/http/middleware"
 	adminpostgres "orbitjob/internal/admin/store/postgres"
 	corepostgres "orbitjob/internal/core/store/postgres"
 	"orbitjob/internal/platform/config"
@@ -33,9 +34,12 @@ func traceMiddleware() gin.HandlerFunc {
 	}
 }
 
-func newRouter(handler *adminhttp.Handler) *gin.Engine {
+func newRouter(handler *adminhttp.Handler, auth *middleware.Auth) *gin.Engine {
 	r := gin.Default()
 	r.Use(traceMiddleware())
+	if auth != nil {
+		r.Use(auth.Middleware())
+	}
 
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -61,7 +65,10 @@ func main() {
 	logger := platformlogger.New(os.Getenv("APP_ENV"))
 	slog.SetDefault(logger)
 
-	dsn := os.Getenv("DATABASE_DSN")
+	dsn := os.Getenv("ADMIN_DSN")
+	if dsn == "" {
+		dsn = os.Getenv("DATABASE_DSN")
+	}
 	if dsn == "" {
 		log.Fatal("DATABASE_DSN is required")
 	}
@@ -90,8 +97,9 @@ func main() {
 	listJobsUC := query.NewListJobsUseCase(readRepo)
 	getJobUC := query.NewGetJobUseCase(readRepo)
 	handler := adminhttp.NewHandler(createJobUC, listJobsUC, getJobUC, updateJobUC, changeStatusUC)
+	auth := middleware.NewAuth(db)
 
-	if err := newRouter(handler).Run(":8080"); err != nil {
+	if err := newRouter(handler, auth).Run(":8080"); err != nil {
 		log.Fatal(err)
 	}
 }

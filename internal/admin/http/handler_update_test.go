@@ -81,7 +81,7 @@ func TestHandler_RegisterAndUpdateJob(t *testing.T) {
 
 	resp := performUpdateJobRequest(
 		router,
-		"/api/v1/jobs/42?tenant_id=tenant-a",
+		"/api/v1/jobs/42",
 		`{
 		"version": 4,
 		"name":"nightly-report"
@@ -107,6 +107,7 @@ func TestHandler_RegisterAndUpdateJob(t *testing.T) {
 func newUpdateTestRouter(getUseCase *stubGetJobUseCase, useCase *stubUpdateJobUseCase) *gin.Engine {
 	handler := NewHandler(nil, nil, getUseCase, useCase, nil)
 	router := gin.New()
+	router.Use(testTenantMiddleware("tenant-a"))
 	handler.Register(router)
 	return router
 }

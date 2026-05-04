@@ -51,9 +51,9 @@ func TestNewRouter_PauseJobRoute(t *testing.T) {
 	}
 
 	handler := adminhttp.NewHandler(nil, nil, nil, nil, statusUC)
-	router := newRouter(handler)
+	router := newRouter(handler, nil)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs/42/pause?tenant_id=tenant-a",
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs/42/pause",
 		bytes.NewBufferString(`{"version":4}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Actor-ID", "control-plane-user")
@@ -81,9 +81,9 @@ func TestNewRouter_ResumeJobRoute(t *testing.T) {
 	}
 
 	handler := adminhttp.NewHandler(nil, nil, nil, nil, statusUC)
-	router := newRouter(handler)
+	router := newRouter(handler, nil)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs/42/resume?tenant_id=tenant-a",
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs/42/resume",
 		bytes.NewBufferString(`{"version":5}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Actor-ID", "control-plane-user")

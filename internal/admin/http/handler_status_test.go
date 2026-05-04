@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	command "orbitjob/internal/admin/app/job/command"
+	"orbitjob/internal/admin/http/middleware"
 	"orbitjob/internal/domain/resource"
 	"orbitjob/internal/domain/validation"
 )
@@ -58,9 +59,14 @@ func TestHandler_RegisterAndPauseJob(t *testing.T) {
 	}
 	handler := NewHandler(nil, nil, nil, nil, useCase)
 	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		ctx := middleware.WithTenantID(c.Request.Context(), "tenant-a", middleware.TenantSourceHeader)
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+	})
 	handler.Register(router)
 
-	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/jobs/42/pause?tenant_id=tenant-a",
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/jobs/42/pause",
 		bytes.NewBufferString(`{"version":4}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(actorIDHeader, "control-plane-user")
@@ -102,9 +108,14 @@ func TestHandler_RegisterAndResumeJob(t *testing.T) {
 	}
 	handler := NewHandler(nil, nil, nil, nil, useCase)
 	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		ctx := middleware.WithTenantID(c.Request.Context(), "tenant-a", middleware.TenantSourceHeader)
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+	})
 	handler.Register(router)
 
-	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/jobs/42/resume?tenant_id=tenant-a",
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/jobs/42/resume",
 		bytes.NewBufferString(`{"version":5}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(actorIDHeader, "control-plane-user")

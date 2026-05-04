@@ -62,13 +62,13 @@ func TestNewRouter_UpdateJobRoute(t *testing.T) {
 	}
 
 	handler := adminhttp.NewHandler(nil, nil, getUC, updateUC, nil)
-	router := newRouter(handler)
+	router := newRouter(handler, nil)
 
 	body := `{
 		"version": 4,
 		"name":"nightly-report"
 	}`
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/jobs/42?tenant_id=default",
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/jobs/42",
 		bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Actor-ID", "control-plane-user")

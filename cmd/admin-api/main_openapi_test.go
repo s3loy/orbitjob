@@ -21,7 +21,7 @@ func TestNewRouter_OpenAPIRoute(t *testing.T) {
 		&stubUpdateJobUseCase{},
 		&stubChangeStatusUseCase{},
 	)
-	router := newRouter(handler)
+	router := newRouter(handler, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
 	resp := httptest.NewRecorder()
@@ -60,7 +60,7 @@ func TestNewRouter_OpenAPIRoute(t *testing.T) {
 func TestNewRouter_OpenAPIRoute_WithNilHandler(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	router := newRouter(nil)
+	router := newRouter(nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
 	resp := httptest.NewRecorder()
