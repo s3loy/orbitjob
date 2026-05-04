@@ -10,7 +10,6 @@ func TestNormalizeClaim_DefaultTenant(t *testing.T) {
 	leaseExpiresAt := now.Add(30 * time.Second)
 
 	spec, err := NormalizeClaim(ClaimInput{
-		WorkerID:       "worker-a",
 		Now:            now,
 		LeaseExpiresAt: leaseExpiresAt,
 	})
@@ -19,9 +18,6 @@ func TestNormalizeClaim_DefaultTenant(t *testing.T) {
 	}
 	if spec.TenantID != DefaultTenantID {
 		t.Fatalf("expected tenant_id=%q, got %q", DefaultTenantID, spec.TenantID)
-	}
-	if spec.WorkerID != "worker-a" {
-		t.Fatalf("expected worker_id=%q, got %q", "worker-a", spec.WorkerID)
 	}
 }
 
@@ -35,18 +31,8 @@ func TestNormalizeClaim_InvalidInput(t *testing.T) {
 		wantMessage string
 	}{
 		{
-			name: "missing worker id",
-			input: ClaimInput{
-				Now:            now,
-				LeaseExpiresAt: now.Add(time.Minute),
-			},
-			wantField:   "worker_id",
-			wantMessage: "is required",
-		},
-		{
 			name: "missing now",
 			input: ClaimInput{
-				WorkerID:       "worker-a",
 				LeaseExpiresAt: now.Add(time.Minute),
 			},
 			wantField:   "now",
@@ -55,7 +41,6 @@ func TestNormalizeClaim_InvalidInput(t *testing.T) {
 		{
 			name: "lease not after now",
 			input: ClaimInput{
-				WorkerID:       "worker-a",
 				Now:            now,
 				LeaseExpiresAt: now,
 			},

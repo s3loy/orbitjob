@@ -7,14 +7,12 @@ import (
 
 type ClaimInput struct {
 	TenantID       string
-	WorkerID       string
 	LeaseExpiresAt time.Time
 	Now            time.Time
 }
 
 type ClaimSpec struct {
 	TenantID       string
-	WorkerID       string
 	LeaseExpiresAt time.Time
 	Now            time.Time
 }
@@ -28,13 +26,6 @@ func NormalizeClaim(in ClaimInput) (ClaimSpec, error) {
 		return ClaimSpec{}, validationError("tenant_id", "must be <= 64 characters")
 	}
 
-	workerID := strings.TrimSpace(in.WorkerID)
-	if workerID == "" {
-		return ClaimSpec{}, validationError("worker_id", "is required")
-	}
-	if len(workerID) > 64 {
-		return ClaimSpec{}, validationError("worker_id", "must be <= 64 characters")
-	}
 	if in.LeaseExpiresAt.IsZero() {
 		return ClaimSpec{}, validationError("lease_expires_at", "is required")
 	}
@@ -47,7 +38,6 @@ func NormalizeClaim(in ClaimInput) (ClaimSpec, error) {
 
 	return ClaimSpec{
 		TenantID:       tenantID,
-		WorkerID:       workerID,
 		LeaseExpiresAt: in.LeaseExpiresAt.UTC(),
 		Now:            in.Now.UTC(),
 	}, nil
