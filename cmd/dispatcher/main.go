@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -23,7 +22,6 @@ import (
 
 type runtimeConfig struct {
 	TenantID      string
-	WorkerID      string
 	BatchSize     int
 	TickInterval  time.Duration
 	LeaseDuration time.Duration
@@ -69,11 +67,6 @@ func newWallClockTicker(interval time.Duration) schedulerTicker {
 }
 
 func loadDispatcherRuntimeConfig() (runtimeConfig, error) {
-	workerID := strings.TrimSpace(os.Getenv("DISPATCHER_WORKER_ID"))
-	if workerID == "" {
-		return runtimeConfig{}, fmt.Errorf("DISPATCHER_WORKER_ID is required")
-	}
-
 	tenantID := os.Getenv("DISPATCHER_TENANT_ID")
 	if tenantID == "" {
 		tenantID = "default"
@@ -96,7 +89,6 @@ func loadDispatcherRuntimeConfig() (runtimeConfig, error) {
 
 	return runtimeConfig{
 		TenantID:      tenantID,
-		WorkerID:      workerID,
 		BatchSize:     batchSize,
 		TickInterval:  time.Duration(tickIntervalSec) * time.Second,
 		LeaseDuration: time.Duration(leaseDurationSec) * time.Second,
@@ -134,7 +126,6 @@ func runLoop(
 		now := nowFn().UTC()
 		spec := domaininstance.ClaimSpec{
 			TenantID:       cfg.TenantID,
-			WorkerID:       cfg.WorkerID,
 			LeaseExpiresAt: now.Add(cfg.LeaseDuration),
 			Now:            now,
 		}
@@ -160,7 +151,10 @@ func run(ctx context.Context) error {
 
 	slog.SetDefault(newLoggerFn(os.Getenv("APP_ENV")))
 
-	dsn := os.Getenv("DATABASE_DSN")
+	dsn := os.Getenv("DISPATCHER_DSN")
+	if dsn == "" {
+		dsn = os.Getenv("DATABASE_DSN")
+	}
 	if dsn == "" {
 		return fmt.Errorf("DATABASE_DSN is required")
 	}
