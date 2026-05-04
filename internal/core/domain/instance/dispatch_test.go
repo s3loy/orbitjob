@@ -1,6 +1,9 @@
 package instance
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 func TestDecideDispatch_AllowAlwaysDispatches(t *testing.T) {
 	decision := DecideDispatch(DispatchInput{
@@ -89,5 +92,30 @@ func TestDecideDispatch_EmptyPolicyDefaultsToAllow(t *testing.T) {
 	})
 	if decision.Action != DispatchActionDispatch {
 		t.Fatalf("expected dispatch for empty policy, got %q", decision.Action)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Benchmarks
+// ---------------------------------------------------------------------------
+
+func BenchmarkDecideDispatch(b *testing.B) {
+	policies := []string{"allow", "forbid", "replace"}
+	counts := []int{0, 1, 5, 100}
+
+	for _, policy := range policies {
+		for _, count := range counts {
+			b.Run(fmt.Sprintf("%s/running=%d", policy, count), func(b *testing.B) {
+				in := DispatchInput{
+					ConcurrencyPolicy: policy,
+					RunningCount:      count,
+				}
+				b.ReportAllocs()
+				b.ResetTimer()
+				for b.Loop() {
+					DecideDispatch(in)
+				}
+			})
+		}
 	}
 }

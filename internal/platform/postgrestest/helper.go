@@ -163,6 +163,12 @@ func applySchemaWithDB(dsn string, db *sql.DB) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	// Drop schema first to ensure clean state across test runs
+	if schemaName != "public" {
+		if _, err := db.ExecContext(ctx, `DROP SCHEMA IF EXISTS `+quoteIdentifier(schemaName)+` CASCADE`); err != nil {
+			return err
+		}
+	}
 	if err := ensureSchema(ctx, db, schemaName); err != nil {
 		return err
 	}

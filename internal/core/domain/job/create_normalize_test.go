@@ -418,3 +418,61 @@ func TestNormalizeCreate_InvalidHandlerPayload(t *testing.T) {
 		t.Fatalf("expected field=%q, got %q", "handler_payload", validationErr.Field)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Benchmarks
+// ---------------------------------------------------------------------------
+
+func BenchmarkNormalizeCreate(b *testing.B) {
+	now := time.Date(2026, 3, 18, 0, 58, 0, 0, time.UTC)
+	cronExpr := "0 9 * * *"
+
+	smallPayload := map[string]any{"url": "https://example.com/hook"}
+	largePayload := map[string]any{
+		"url":     "https://example.com/hook",
+		"method":  "POST",
+		"headers": map[string]any{"Authorization": "Bearer token", "Content-Type": "application/json"},
+		"body":    map[string]any{"key1": "value1", "key2": 42, "key3": []string{"a", "b", "c"}},
+	}
+
+	tests := []struct {
+		name  string
+		input CreateInput
+	}{
+		{"manual_minimal", CreateInput{
+			Name: "demo-job", TriggerType: TriggerTypeManual, HandlerType: "http",
+		}},
+		{"manual_full", CreateInput{
+			Name: "demo-job", TenantID: "tenant-a", Priority: 5, TriggerType: TriggerTypeManual,
+			HandlerType: "http", TimeoutSec: 120, RetryLimit: 3, RetryBackoffSec: 10,
+			RetryBackoffStrategy: "exponential", ConcurrencyPolicy: "forbid", HandlerPayload: smallPayload,
+		}},
+		{"cron_minimal", CreateInput{
+			Name: "daily-report", TriggerType: TriggerTypeCron, CronExpr: &cronExpr,
+			Timezone: "Asia/Shanghai", HandlerType: "http",
+		}},
+		{"cron_full", CreateInput{
+			Name: "daily-report", TenantID: "tenant-a", Priority: 9, TriggerType: TriggerTypeCron,
+			CronExpr: &cronExpr, Timezone: "Asia/Shanghai", HandlerType: "http",
+			TimeoutSec: 300, RetryLimit: 5, RetryBackoffSec: 30,
+			RetryBackoffStrategy: "exponential", ConcurrencyPolicy: "replace",
+			MisfirePolicy: "fire_now", HandlerPayload: largePayload,
+		}},
+		{"large_payload_4kb", CreateInput{
+			Name: "big-job", TriggerType: TriggerTypeManual, HandlerType: "http",
+			HandlerPayload: map[string]any{"data": make([]byte, 4096)},
+		}},
+		{"validation_error", CreateInput{
+			Name: strings.Repeat("x", 129), TriggerType: "invalid", HandlerType: "",
+		}},
+	}
+
+	for _, tt := range tests {
+		b.Run(tt.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				_, _ = NormalizeCreate(now, tt.input)
+			}
+		})
+	}
+}

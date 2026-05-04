@@ -231,3 +231,68 @@ func TestComputeRetryAt_UnknownStrategy(t *testing.T) {
 		t.Fatalf("expected fixed fallback %v, got %v", want, got)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Benchmarks
+// ---------------------------------------------------------------------------
+
+func BenchmarkNormalizeComplete(b *testing.B) {
+	tests := []struct {
+		name  string
+		input CompleteInput
+	}{
+		{"success", CompleteInput{
+			InstanceID: 1, WorkerID: "worker-a", Success: true, ResultCode: "0",
+			Now: time.Date(2026, 4, 20, 10, 0, 0, 0, time.UTC), Attempt: 1, MaxAttempt: 3,
+		}},
+		{"retry_wait", CompleteInput{
+			InstanceID: 1, WorkerID: "worker-a", Success: false, ResultCode: "1",
+			ErrorMsg: "some error", Now: time.Date(2026, 4, 20, 10, 0, 0, 0, time.UTC),
+			Attempt: 1, MaxAttempt: 3, RetryBackoffSec: 10, RetryBackoffStrategy: "exponential",
+		}},
+		{"failed", CompleteInput{
+			InstanceID: 1, WorkerID: "worker-a", Success: false, ResultCode: "1",
+			ErrorMsg: "final failure", Now: time.Date(2026, 4, 20, 10, 0, 0, 0, time.UTC),
+			Attempt: 3, MaxAttempt: 3,
+		}},
+		{"validation_error", CompleteInput{
+			InstanceID: 0, WorkerID: "", Now: time.Time{},
+		}},
+	}
+
+	for _, tt := range tests {
+		b.Run(tt.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				_, _ = NormalizeComplete(tt.input)
+			}
+		})
+	}
+}
+
+func BenchmarkComputeRetryAt(b *testing.B) {
+	now := time.Date(2026, 4, 20, 10, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name     string
+		attempt  int
+		backoff  int
+		strategy string
+	}{
+		{"fixed_attempt1", 1, 10, "fixed"},
+		{"fixed_attempt10", 10, 10, "fixed"},
+		{"exponential_attempt1", 1, 10, "exponential"},
+		{"exponential_attempt5", 5, 10, "exponential"},
+		{"exponential_attempt10", 10, 10, "exponential"},
+		{"exponential_attempt30", 30, 10, "exponential"},
+		{"zero_backoff", 1, 0, "fixed"},
+	}
+
+	for _, tt := range tests {
+		b.Run(tt.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				ComputeRetryAt(now, tt.attempt, tt.backoff, tt.strategy)
+			}
+		})
+	}
+}
