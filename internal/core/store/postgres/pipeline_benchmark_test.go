@@ -11,6 +11,7 @@ import (
 	"orbitjob/internal/core/app/dispatch"
 	"orbitjob/internal/core/app/execute"
 	"orbitjob/internal/core/app/schedule"
+	"orbitjob/internal/platform/postgrestest"
 
 	domaininstance "orbitjob/internal/core/domain/instance"
 )
@@ -20,7 +21,7 @@ import (
 // ---------------------------------------------------------------------------
 
 func BenchmarkPipelineScheduleDispatch(b *testing.B) {
-	db := benchDB(b)
+	db := postgrestest.BenchDB(b)
 
 	now := time.Now().UTC().Truncate(time.Second)
 	schedRepo := NewSchedulerRepository(db)
@@ -50,7 +51,7 @@ func BenchmarkPipelineScheduleDispatch(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
 				b.StopTimer()
-				benchTruncate(b, db)
+				postgrestest.BenchTruncate(b, db)
 				past := now.Add(-5 * time.Minute)
 				for i := 0; i < sc.cronJobs; i++ {
 					seedTime := past.Add(-time.Duration(i) * time.Second)
@@ -76,7 +77,7 @@ func BenchmarkPipelineScheduleDispatch(b *testing.B) {
 // ---------------------------------------------------------------------------
 
 func BenchmarkPipelineClaimComplete(b *testing.B) {
-	db := benchDB(b)
+	db := postgrestest.BenchDB(b)
 
 	now := time.Now().UTC().Truncate(time.Second)
 	execRepo := NewExecutorRepository(db)
@@ -89,8 +90,8 @@ func BenchmarkPipelineClaimComplete(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		b.StopTimer()
-		benchTruncate(b, db)
-		jobID := benchSeedJob(b, db, "pipe-exec", "tenant-pipe", "http", 5)
+		postgrestest.BenchTruncate(b, db)
+		jobID := postgrestest.BenchSeedJob(b, db, "pipe-exec", "tenant-pipe", "http", 5)
 		benchSeedDispatchedInstance(b, db, "tenant-pipe", jobID, 5, now.Add(-time.Minute))
 		b.StartTimer()
 
@@ -110,8 +111,8 @@ func (h *benchExecHandler) Execute(_ context.Context, _ execute.AssignedTask) ex
 // ---------------------------------------------------------------------------
 
 func BenchmarkPipelineFull(b *testing.B) {
-	db := benchDB(b)
-	benchTruncate(b, db)
+	db := postgrestest.BenchDB(b)
+	postgrestest.BenchTruncate(b, db)
 
 	now := time.Now().UTC().Truncate(time.Second)
 	past := now.Add(-5 * time.Minute)
@@ -135,7 +136,7 @@ func BenchmarkPipelineFull(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		b.StopTimer()
-		benchTruncate(b, db)
+		postgrestest.BenchTruncate(b, db)
 		for i := 0; i < 20; i++ {
 			seedTime := past.Add(-time.Duration(i) * time.Second)
 			benchSeedCronJob(b, db, fmt.Sprintf("full-cron-%d", i), "tenant-full", i%10, seedTime)

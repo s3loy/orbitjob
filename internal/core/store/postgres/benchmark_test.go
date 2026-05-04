@@ -6,12 +6,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"os"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"orbitjob/internal/core/app/schedule"
+	"orbitjob/internal/platform/postgrestest"
 
 	domaininstance "orbitjob/internal/core/domain/instance"
 	domainjob "orbitjob/internal/core/domain/job"
@@ -20,59 +21,8 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// helpers
+// helpers (shared helpers in postgrestest.BenchDB / BenchTruncate / BenchSeedJob)
 // ---------------------------------------------------------------------------
-
-func benchDB(b *testing.B) *sql.DB {
-	b.Helper()
-
-	dsn := os.Getenv("TEST_DATABASE_DSN")
-	if dsn == "" {
-		b.Skip("TEST_DATABASE_DSN is not set")
-	}
-
-	db, err := sql.Open("postgres", dsn)
-	if err != nil {
-		b.Fatalf("open db: %v", err)
-	}
-	b.Cleanup(func() { _ = db.Close() })
-
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(5)
-	db.SetConnMaxLifetime(5 * time.Minute)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := db.PingContext(ctx); err != nil {
-		b.Fatalf("ping db: %v", err)
-	}
-
-	return db
-}
-
-func benchTruncate(b *testing.B, db *sql.DB) {
-	b.Helper()
-	_, err := db.ExecContext(context.Background(), `
-		TRUNCATE TABLE audit_events, job_instance_attempts, job_instances, workers, jobs RESTART IDENTITY CASCADE
-	`)
-	if err != nil {
-		b.Fatalf("truncate: %v", err)
-	}
-}
-
-func benchSeedJob(b *testing.B, db *sql.DB, name, tenantID, handlerType string, priority int) int64 {
-	b.Helper()
-	var id int64
-	err := db.QueryRowContext(context.Background(), `
-		INSERT INTO jobs (name, tenant_id, trigger_type, handler_type, handler_payload, timeout_sec, status, priority)
-		VALUES ($1, $2, 'manual', $3, '{}'::jsonb, 60, 'active', $4)
-		RETURNING id
-	`, name, tenantID, handlerType, priority).Scan(&id)
-	if err != nil {
-		b.Fatalf("seed job: %v", err)
-	}
-	return id
-}
 
 func benchSeedCronJob(b *testing.B, db *sql.DB, name, tenantID string, priority int, nextRunAt time.Time) int64 {
 	b.Helper()
@@ -149,19 +99,19 @@ func benchSeedOrphanRunning(b *testing.B, db *sql.DB, tenantID string, jobID int
 // ---------------------------------------------------------------------------
 
 func BenchmarkClaimNextDispatched(b *testing.B) {
-	db := benchDB(b)
-	benchTruncate(b, db)
+	db := postgrestest.BenchDB(b)
+	postgrestest.BenchTruncate(b, db)
 
 	now := time.Now().UTC().Truncate(time.Second)
-	jobID := benchSeedJob(b, db, "claim-bench", "tenant-claim", "http", 5)
+	jobID := postgrestest.BenchSeedJob(b, db, "claim-bench", "tenant-claim", "http", 5)
 	leaseExpiresAt := now.Add(30 * time.Second)
 	repo := NewExecutorRepository(db)
 
 	b.ReportAllocs()
 	for b.Loop() {
 		b.StopTimer()
-		benchTruncate(b, db)
-		jobID = benchSeedJob(b, db, "claim-bench", "tenant-claim", "http", 5)
+		postgrestest.BenchTruncate(b, db)
+		jobID = postgrestest.BenchSeedJob(b, db, "claim-bench", "tenant-claim", "http", 5)
 		benchSeedDispatchedInstance(b, db, "tenant-claim", jobID, 5, now.Add(-time.Minute))
 		b.StartTimer()
 
@@ -174,8 +124,8 @@ func BenchmarkClaimNextDispatched(b *testing.B) {
 // ---------------------------------------------------------------------------
 
 func BenchmarkClaimNextDispatched_Concurrent(b *testing.B) {
-	db := benchDB(b)
-	benchTruncate(b, db)
+	db := postgrestest.BenchDB(b)
+	postgrestest.BenchTruncate(b, db)
 
 	now := time.Now().UTC().Truncate(time.Second)
 	leaseExpiresAt := now.Add(30 * time.Second)
@@ -192,8 +142,8 @@ func BenchmarkClaimNextDispatched_Concurrent(b *testing.B) {
 	for _, sz := range sizes {
 		b.Run(sz.name, func(b *testing.B) {
 			b.StopTimer()
-			benchTruncate(b, db)
-			jobID := benchSeedJob(b, db, "claim-conc", "tenant-conc", "http", 5)
+			postgrestest.BenchTruncate(b, db)
+			jobID := postgrestest.BenchSeedJob(b, db, "claim-conc", "tenant-conc", "http", 5)
 			for i := 0; i < sz.instances; i++ {
 				benchSeedDispatchedInstance(b, db, "tenant-conc", jobID, i%10, now.Add(-time.Duration(sz.instances-i)*time.Minute))
 			}
@@ -202,7 +152,12 @@ func BenchmarkClaimNextDispatched_Concurrent(b *testing.B) {
 
 			b.ReportAllocs()
 			b.StartTimer()
-			b.SetParallelism(sz.workers)
+			// SetParallelism multiplies GOMAXPROCS — compensate to get target worker count.
+				if sz.workers < runtime.GOMAXPROCS(0) {
+					b.SetParallelism(1)
+				} else {
+					b.SetParallelism(sz.workers / runtime.GOMAXPROCS(0))
+				}
 			b.RunParallel(func(pb *testing.PB) {
 				workerID := fmt.Sprintf("worker-%d", atomic.AddInt64(&total, 1)%int64(sz.workers))
 				for pb.Next() {
@@ -221,7 +176,7 @@ func BenchmarkClaimNextDispatched_Concurrent(b *testing.B) {
 // ---------------------------------------------------------------------------
 
 func BenchmarkCreateJob(b *testing.B) {
-	db := benchDB(b)
+	db := postgrestest.BenchDB(b)
 
 	tests := []struct {
 		name string
@@ -246,7 +201,7 @@ func BenchmarkCreateJob(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
 				b.StopTimer()
-				benchTruncate(b, db)
+				postgrestest.BenchTruncate(b, db)
 				b.StartTimer()
 
 				_, _ = repo.Create(context.Background(), tt.spec)
@@ -260,7 +215,7 @@ func BenchmarkCreateJob(b *testing.B) {
 // ---------------------------------------------------------------------------
 
 func BenchmarkRefreshEffectivePriority(b *testing.B) {
-	db := benchDB(b)
+	db := postgrestest.BenchDB(b)
 
 	scales := []struct {
 		name    string
@@ -274,8 +229,8 @@ func BenchmarkRefreshEffectivePriority(b *testing.B) {
 	for _, sc := range scales {
 		b.Run(sc.name, func(b *testing.B) {
 			b.StopTimer()
-			benchTruncate(b, db)
-			jobID := benchSeedJob(b, db, "prio-bench", "tenant-prio", "http", 5)
+			postgrestest.BenchTruncate(b, db)
+			jobID := postgrestest.BenchSeedJob(b, db, "prio-bench", "tenant-prio", "http", 5)
 			now := time.Now().UTC().Truncate(time.Second)
 			for i := 0; i < sc.pending; i++ {
 				benchSeedPending(b, db, "tenant-prio", jobID, i%10, now.Add(-time.Duration(sc.pending-i)*time.Minute))
@@ -296,7 +251,7 @@ func BenchmarkRefreshEffectivePriority(b *testing.B) {
 // ---------------------------------------------------------------------------
 
 func BenchmarkRecoverLeaseOrphans(b *testing.B) {
-	db := benchDB(b)
+	db := postgrestest.BenchDB(b)
 
 	scales := []struct {
 		name           string
@@ -317,8 +272,8 @@ func BenchmarkRecoverLeaseOrphans(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
 				b.StopTimer()
-				benchTruncate(b, db)
-				jobID := benchSeedJob(b, db, "orphan-bench", "tenant-orphan", "http", 5)
+				postgrestest.BenchTruncate(b, db)
+				jobID := postgrestest.BenchSeedJob(b, db, "orphan-bench", "tenant-orphan", "http", 5)
 				for i := 0; i < sc.orphanDispatch; i++ {
 					seedTime := past.Add(-time.Duration(i) * time.Second)
 					benchSeedOrphanDispatched(b, db, "tenant-orphan", jobID, seedTime, past.Add(5*time.Minute))
@@ -340,7 +295,7 @@ func BenchmarkRecoverLeaseOrphans(b *testing.B) {
 // ---------------------------------------------------------------------------
 
 func BenchmarkScheduleOneDueCron(b *testing.B) {
-	db := benchDB(b)
+	db := postgrestest.BenchDB(b)
 
 	now := time.Now().UTC().Truncate(time.Second)
 	past := now.Add(-2 * time.Minute)
@@ -349,7 +304,7 @@ func BenchmarkScheduleOneDueCron(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		b.StopTimer()
-		benchTruncate(b, db)
+		postgrestest.BenchTruncate(b, db)
 		benchSeedCronJob(b, db, "cron-bench", "tenant-cron", 5, past)
 		b.StartTimer()
 
@@ -362,7 +317,7 @@ func BenchmarkScheduleOneDueCron(b *testing.B) {
 // ---------------------------------------------------------------------------
 
 func BenchmarkDispatchOne(b *testing.B) {
-	db := benchDB(b)
+	db := postgrestest.BenchDB(b)
 
 	now := time.Now().UTC().Truncate(time.Second)
 	claimSpec := domaininstance.ClaimSpec{
@@ -386,8 +341,8 @@ func BenchmarkDispatchOne(b *testing.B) {
 
 			for b.Loop() {
 				b.StopTimer()
-				benchTruncate(b, db)
-				jobID := benchSeedJob(b, db, "disp-bench", "tenant-disp", "http", 5)
+				postgrestest.BenchTruncate(b, db)
+				jobID := postgrestest.BenchSeedJob(b, db, "disp-bench", "tenant-disp", "http", 5)
 				benchSeedPending(b, db, "tenant-disp", jobID, 5, now.Add(-time.Minute))
 				b.StartTimer()
 
@@ -402,7 +357,7 @@ func BenchmarkDispatchOne(b *testing.B) {
 // ---------------------------------------------------------------------------
 
 func BenchmarkCreateInstance(b *testing.B) {
-	db := benchDB(b)
+	db := postgrestest.BenchDB(b)
 
 	now := time.Now().UTC().Truncate(time.Second)
 	repo := NewInstanceRepository(db)
@@ -410,8 +365,8 @@ func BenchmarkCreateInstance(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		b.StopTimer()
-		benchTruncate(b, db)
-		jobID := benchSeedJob(b, db, "inst-bench", "tenant-inst", "http", 5)
+		postgrestest.BenchTruncate(b, db)
+		jobID := postgrestest.BenchSeedJob(b, db, "inst-bench", "tenant-inst", "http", 5)
 		b.StartTimer()
 
 		_, _ = repo.Create(context.Background(), domaininstance.CreateSpec{

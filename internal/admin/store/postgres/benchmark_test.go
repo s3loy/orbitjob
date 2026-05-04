@@ -6,12 +6,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
 	query "orbitjob/internal/admin/app/job/query"
+	"orbitjob/internal/platform/postgrestest"
 
 	_ "github.com/lib/pq"
 )
@@ -20,56 +20,7 @@ import (
 // helpers
 // ---------------------------------------------------------------------------
 
-func adminBenchDB(b *testing.B) *sql.DB {
-	b.Helper()
-
-	dsn := os.Getenv("TEST_DATABASE_DSN")
-	if dsn == "" {
-		b.Skip("TEST_DATABASE_DSN is not set")
-	}
-
-	db, err := sql.Open("postgres", dsn)
-	if err != nil {
-		b.Fatalf("open db: %v", err)
-	}
-	b.Cleanup(func() { _ = db.Close() })
-
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(5)
-	db.SetConnMaxLifetime(5 * time.Minute)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := db.PingContext(ctx); err != nil {
-		b.Fatalf("ping db: %v", err)
-	}
-
-	return db
-}
-
-func adminTruncate(b *testing.B, db *sql.DB) {
-	b.Helper()
-	_, err := db.ExecContext(context.Background(), `
-		TRUNCATE TABLE audit_events, job_instance_attempts, job_instances, workers, jobs RESTART IDENTITY CASCADE
-	`)
-	if err != nil {
-		b.Fatalf("truncate: %v", err)
-	}
-}
-
-func adminSeedJob(b *testing.B, db *sql.DB, name, tenantID string, priority int) int64 {
-	b.Helper()
-	var id int64
-	err := db.QueryRowContext(context.Background(), `
-		INSERT INTO jobs (name, tenant_id, trigger_type, handler_type, handler_payload, timeout_sec, status, priority)
-		VALUES ($1, $2, 'manual', 'http', '{}'::jsonb, 60, 'active', $3)
-		RETURNING id
-	`, name, tenantID, priority).Scan(&id)
-	if err != nil {
-		b.Fatalf("seed job: %v", err)
-	}
-	return id
-}
+// shared helpers: postgrestest.BenchDB / BenchTruncate / BenchSeedJob
 
 func adminSeedJobWithPayload(b *testing.B, db *sql.DB, name, tenantID string, payload string) int64 {
 	b.Helper()
@@ -90,7 +41,7 @@ func adminSeedJobWithPayload(b *testing.B, db *sql.DB, name, tenantID string, pa
 // ---------------------------------------------------------------------------
 
 func BenchmarkListJobs(b *testing.B) {
-	db := adminBenchDB(b)
+	db := postgrestest.BenchDB(b)
 
 	scales := []struct {
 		name  string
@@ -108,9 +59,9 @@ func BenchmarkListJobs(b *testing.B) {
 	for _, sc := range scales {
 		b.Run(sc.name, func(b *testing.B) {
 			b.StopTimer()
-			adminTruncate(b, db)
+			postgrestest.BenchTruncate(b, db)
 			for i := 0; i < sc.rows; i++ {
-				adminSeedJob(b, db, fmt.Sprintf("job-%d", i), "tenant-list", i%10)
+				postgrestest.BenchSeedJob(b, db, fmt.Sprintf("job-%d", i), "tenant-list", "http", i%10)
 			}
 			repo := NewJobRepository(db)
 			b.StartTimer()
@@ -128,12 +79,12 @@ func BenchmarkListJobs(b *testing.B) {
 }
 
 func BenchmarkListJobs_WithStatusFilter(b *testing.B) {
-	db := adminBenchDB(b)
+	db := postgrestest.BenchDB(b)
 
 	b.StopTimer()
-	adminTruncate(b, db)
+	postgrestest.BenchTruncate(b, db)
 	for i := 0; i < 500; i++ {
-		adminSeedJob(b, db, fmt.Sprintf("job-%d", i), "tenant-filter", i%10)
+		postgrestest.BenchSeedJob(b, db, fmt.Sprintf("job-%d", i), "tenant-filter", "http", i%10)
 	}
 	// Seed some paused jobs too
 	db.ExecContext(context.Background(), `
@@ -161,7 +112,7 @@ func BenchmarkListJobs_WithStatusFilter(b *testing.B) {
 // ---------------------------------------------------------------------------
 
 func BenchmarkGetJob(b *testing.B) {
-	db := adminBenchDB(b)
+	db := postgrestest.BenchDB(b)
 
 	tests := []struct {
 		name    string
@@ -175,7 +126,7 @@ func BenchmarkGetJob(b *testing.B) {
 	for _, tt := range tests {
 		b.Run(tt.name, func(b *testing.B) {
 			b.StopTimer()
-			adminTruncate(b, db)
+			postgrestest.BenchTruncate(b, db)
 			jobID := adminSeedJobWithPayload(b, db, "get-bench", "tenant-get", tt.payload)
 			repo := NewJobRepository(db)
 			b.StartTimer()
