@@ -3,7 +3,6 @@ package execute
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -83,7 +82,7 @@ func TestRunOnce_NoTasks(t *testing.T) {
 	repo := &stubExecutor{}
 	uc := NewTickUseCase(repo, nil)
 
-	n, err := uc.RunOnce(context.Background(), "default", "worker-1", 60*time.Second)
+	n, err := uc.RunOnce(context.Background(), "default", "worker-1", 1, 60*time.Second)
 	if err != nil {
 		t.Fatalf("RunOnce() error = %v", err)
 	}
@@ -96,7 +95,7 @@ func TestRunOnce_FetchError(t *testing.T) {
 	repo := &stubExecutor{claimErr: errors.New("db down")}
 	uc := NewTickUseCase(repo, nil)
 
-	_, err := uc.RunOnce(context.Background(), "default", "worker-1", 60*time.Second)
+	_, err := uc.RunOnce(context.Background(), "default", "worker-1", 1, 60*time.Second)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -108,7 +107,7 @@ func TestRunOnce_ClaimError(t *testing.T) {
 	}
 	uc := NewTickUseCase(repo, map[string]Handler{"test": &stubHandler{}})
 
-	_, err := uc.RunOnce(context.Background(), "default", "worker-1", 60*time.Second)
+	_, err := uc.RunOnce(context.Background(), "default", "worker-1", 1, 60*time.Second)
 	if err == nil {
 		t.Fatal("expected error when claim fails")
 	}
@@ -119,7 +118,7 @@ func TestRunOnce_SuccessExecution(t *testing.T) {
 	handler := &stubHandler{result: Result{Success: true, ResultCode: "0"}}
 	uc := NewTickUseCase(repo, map[string]Handler{"test": handler})
 
-	n, err := uc.RunOnce(context.Background(), "default", "worker-1", 60*time.Second)
+	n, err := uc.RunOnce(context.Background(), "default", "worker-1", 1, 60*time.Second)
 	if err != nil {
 		t.Fatalf("RunOnce() error = %v", err)
 	}
@@ -139,7 +138,7 @@ func TestRunOnce_FailureWithRetry(t *testing.T) {
 	handler := &stubHandler{result: Result{Success: false, ResultCode: "1", ErrorMsg: "boom"}}
 	uc := NewTickUseCase(repo, map[string]Handler{"test": handler})
 
-	n, err := uc.RunOnce(context.Background(), "default", "worker-1", 60*time.Second)
+	n, err := uc.RunOnce(context.Background(), "default", "worker-1", 1, 60*time.Second)
 	if err != nil {
 		t.Fatalf("RunOnce() error = %v", err)
 	}
@@ -163,7 +162,7 @@ func TestRunOnce_FinalFailure(t *testing.T) {
 	handler := &stubHandler{result: Result{Success: false, ResultCode: "1", ErrorMsg: "final"}}
 	uc := NewTickUseCase(repo, map[string]Handler{"test": handler})
 
-	n, err := uc.RunOnce(context.Background(), "default", "worker-1", 60*time.Second)
+	n, err := uc.RunOnce(context.Background(), "default", "worker-1", 1, 60*time.Second)
 	if err != nil {
 		t.Fatalf("RunOnce() error = %v", err)
 	}
@@ -181,7 +180,7 @@ func TestRunOnce_UnknownHandler(t *testing.T) {
 	repo := &stubExecutor{tasks: []AssignedTask{task}}
 	uc := NewTickUseCase(repo, map[string]Handler{"test": &stubHandler{}})
 
-	n, err := uc.RunOnce(context.Background(), "default", "worker-1", 60*time.Second)
+	n, err := uc.RunOnce(context.Background(), "default", "worker-1", 1, 60*time.Second)
 	if err != nil {
 		t.Fatalf("RunOnce() error = %v", err)
 	}
@@ -201,11 +200,12 @@ func TestRunOnce_CompleteError(t *testing.T) {
 	handler := &stubHandler{result: Result{Success: true, ResultCode: "0"}}
 	uc := NewTickUseCase(repo, map[string]Handler{"test": handler})
 
-	n, err := uc.RunOnce(context.Background(), "default", "worker-1", 60*time.Second)
-	if err == nil || !strings.Contains(err.Error(), "complete instance") {
-		t.Fatalf("expected complete instance error, got %v", err)
+	n, err := uc.RunOnce(context.Background(), "default", "worker-1", 1, 60*time.Second)
+	if err != nil {
+		t.Fatalf("RunOnce() error = %v", err)
 	}
 	if n != 1 {
 		t.Fatalf("expected n=1, got %d", n)
 	}
+	// CompleteInstance errors are logged, not returned — RunOnce still reports the task was handled
 }

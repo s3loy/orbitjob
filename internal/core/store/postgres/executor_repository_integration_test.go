@@ -191,6 +191,7 @@ func TestCompleteInstance_Integration_Success(t *testing.T) {
 		Status:     "success",
 		ResultCode: &resultCode,
 		FinishedAt: now,
+			Attempt:    1,
 	})
 	if err != nil {
 		t.Fatalf("CompleteInstance() error = %v", err)
@@ -231,6 +232,7 @@ func TestCompleteInstance_Integration_RetryWait(t *testing.T) {
 		ResultCode: &resultCode,
 		ErrorMsg:   &errorMsg,
 		FinishedAt: now,
+			Attempt:    1,
 		RetryAt:    &retryAt,
 	})
 	if err != nil {
@@ -266,6 +268,7 @@ func TestCompleteInstance_Integration_AlreadyCompleted(t *testing.T) {
 		WorkerID:   "worker-1",
 		Status:     "success",
 		FinishedAt: now,
+			Attempt:    1,
 	}
 
 	if err := repo.CompleteInstance(context.Background(), spec); err != nil {

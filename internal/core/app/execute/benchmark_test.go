@@ -87,7 +87,7 @@ func BenchmarkExecuteTick(b *testing.B) {
 			b.ResetTimer()
 			for b.Loop() {
 				uc := NewTickUseCase(tt.repo, handlers)
-				_, _ = uc.RunOnce(context.Background(), "default", "worker-1", 60*time.Second)
+				_, _ = uc.RunOnce(context.Background(), "default", "worker-1", 1, 60*time.Second)
 			}
 		})
 	}
@@ -114,6 +114,6 @@ func BenchmarkExecuteTick_PanicRecovery(b *testing.B) {
 	b.ResetTimer()
 	for b.Loop() {
 		uc := NewTickUseCase(repo, handlers)
-		_, _ = uc.RunOnce(context.Background(), "default", "worker-1", 60*time.Second)
+		_, _ = uc.RunOnce(context.Background(), "default", "worker-1", 1, 60*time.Second)
 	}
 }

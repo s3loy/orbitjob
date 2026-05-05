@@ -26,7 +26,7 @@ curl -X POST http://localhost:8080/api/v1/jobs \
 
 # 3. Start the background components
 go run ./cmd/scheduler &
-DISPATCHER_WORKER_ID=worker-1 go run ./cmd/dispatcher &
+go run ./cmd/dispatcher &
 WORKER_ID=worker-1 go run ./cmd/worker &
 ```
 
@@ -71,8 +71,8 @@ go run ./cmd/admin-api
 # Scheduler
 go run ./cmd/scheduler
 
-# Dispatcher (DISPATCHER_WORKER_ID will be deprecated in Mode B)
-DISPATCHER_WORKER_ID=worker-1 go run ./cmd/dispatcher
+# Dispatcher
+go run ./cmd/dispatcher
 
 # Worker
 WORKER_ID=worker-1 go run ./cmd/worker
@@ -90,8 +90,15 @@ WORKER_ID=worker-1 go run ./cmd/worker
 | `DISPATCHER_BATCH_SIZE` | Max claims per tick | `50` |
 | `DISPATCHER_TICK_INTERVAL_SEC` | Tick interval in seconds | `2` |
 | `DISPATCHER_LEASE_DURATION_SEC` | Lease duration in seconds | `30` |
+| `DISPATCHER_TENANT_ID` | Dispatcher tenant scope | `default` |
+| `WORKER_ID` | Unique worker identifier | -- |
+| `WORKER_TENANT_ID` | Worker tenant scope | `default` |
+| `WORKER_DSN` | Worker database DSN (overrides DATABASE_DSN) | -- |
 | `WORKER_POLL_INTERVAL_SEC` | Poll interval in seconds | `2` |
-| `WORKER_CAPACITY` | Max concurrent executions | `10` |
+| `WORKER_HEARTBEAT_INTERVAL_SEC` | Heartbeat interval in seconds | `10` |
+| `WORKER_LEASE_DURATION_SEC` | Worker lease duration in seconds | `60` |
+| `WORKER_CAPACITY` | Max concurrent executions | `1` |
+| `WORKER_LABELS` | Worker labels (JSON object) | `{}` |
 
 ### Testing
 
@@ -123,8 +130,9 @@ go run ./cmd/openapi-gen -check -out api/openapi.yaml                # OpenAPI d
 | --- | --- |
 | Control plane HTTP API | ✅ |
 | Scheduler + Dispatcher runtime | ✅ |
-| Worker executor MVP | ✅ |
-| Multi-tenant RLS security model | 🔧 In design |
+| Worker executor (concurrent + graceful shutdown) | ✅ |
+| Multi-tenant RLS security model | ✅ Policies defined (Stage A, not yet enabled) |
+| Benchmark baseline (4 layers) | ✅ |
 | Instance query / Manual trigger API | 🔧 Planned |
 
 ## Docs

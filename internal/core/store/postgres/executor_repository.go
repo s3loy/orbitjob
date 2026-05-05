@@ -29,12 +29,22 @@ func (r *ExecutorRepository) ClaimNextDispatched(
 	limit int,
 	leaseExpiresAt, now time.Time,
 ) ([]execute.AssignedTask, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin claim tx: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
 	// Set tenant context for RLS
-	if _, err := r.db.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID); err != nil {
+	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID); err != nil {
 		return nil, fmt.Errorf("set tenant context: %w", err)
 	}
 
-	rows, err := r.db.QueryContext(ctx, `
+	rows, err := tx.QueryContext(ctx, `
 		WITH claimed AS (
 			SELECT id FROM job_instances
 			WHERE tenant_id = $1
@@ -82,6 +92,37 @@ func (r *ExecutorRepository) ClaimNextDispatched(
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate claimed instances: %w", err)
 	}
+
+	// Audit log for each claimed task (dispatched → running).
+	for _, task := range tasks {
+		diff := map[string]any{
+			"from_status": "dispatched",
+			"to_status":   "running",
+			"worker_id":   workerID,
+		}
+		diffBytes, err := json.Marshal(diff)
+		if err != nil {
+			return nil, fmt.Errorf("marshal claim audit diff: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO audit_events (tenant_id, actor_type, actor_id, event_type, resource_type, resource_id, diff)
+			VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+		`,
+			task.TenantID,
+			tenant.ActorTypeSystem,
+			"worker",
+			tenant.EventTypeInstanceStatusChanged,
+			tenant.ResourceTypeInstance,
+			fmt.Sprintf("%d", task.InstanceID),
+			string(diffBytes),
+		); err != nil {
+			return nil, fmt.Errorf("insert claim audit event: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit claim tx: %w", err)
+	}
 	return tasks, nil
 }
 
@@ -89,12 +130,22 @@ func (r *ExecutorRepository) CompleteInstance(
 	ctx context.Context,
 	spec domaininstance.CompleteSpec,
 ) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin complete tx: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
 	// Set tenant context for RLS
-	if _, err := r.db.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", spec.TenantID); err != nil {
+	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", spec.TenantID); err != nil {
 		return fmt.Errorf("set tenant context: %w", err)
 	}
 
-	result, err := r.db.ExecContext(ctx, `
+	result, err := tx.ExecContext(ctx, `
 		UPDATE job_instances
 		SET status = $1,
 		    finished_at = $2,
@@ -123,9 +174,33 @@ func (r *ExecutorRepository) CompleteInstance(
 		return fmt.Errorf("complete instance rows affected: %w", err)
 	}
 	if n == 0 {
-		return ErrInstanceNotClaimed
+		err = ErrInstanceNotClaimed
+		return err
 	}
 
+	// Per-attempt immutable trail.
+	attemptStatus := spec.Status
+	if attemptStatus == domaininstance.StatusRetryWait {
+		attemptStatus = domaininstance.StatusFailed
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO job_instance_attempts (tenant_id, instance_id, attempt_no, worker_id, status, finished_at, result_code, error_msg)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		ON CONFLICT (tenant_id, instance_id, attempt_no) DO NOTHING
+	`,
+		spec.TenantID,
+		spec.InstanceID,
+		spec.Attempt,
+		spec.WorkerID,
+		attemptStatus,
+		spec.FinishedAt,
+		spec.ResultCode,
+		spec.ErrorMsg,
+	); err != nil {
+		return fmt.Errorf("insert instance attempt: %w", err)
+	}
+
+	// Audit event.
 	eventType := tenant.EventTypeInstanceCompleted
 	if spec.Status == "retry_wait" {
 		eventType = tenant.EventTypeInstanceStatusChanged
@@ -142,7 +217,7 @@ func (r *ExecutorRepository) CompleteInstance(
 	if err != nil {
 		return fmt.Errorf("marshal audit diff: %w", err)
 	}
-	if _, err = r.db.ExecContext(ctx, `
+	if _, err = tx.ExecContext(ctx, `
 		INSERT INTO audit_events (tenant_id, actor_type, actor_id, event_type, resource_type, resource_id, diff)
 		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
 	`,
@@ -157,6 +232,9 @@ func (r *ExecutorRepository) CompleteInstance(
 		return fmt.Errorf("insert audit event: %w", err)
 	}
 
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit complete tx: %w", err)
+	}
 	return nil
 }
 
@@ -190,6 +268,30 @@ func (r *ExecutorRepository) ExtendLease(
 	if n == 0 {
 		return ErrInstanceNotClaimed
 	}
+
+	// Audit log.
+	diff := map[string]any{
+		"new_lease_expires_at": newExpiry,
+	}
+	diffBytes, err := json.Marshal(diff)
+	if err != nil {
+		return fmt.Errorf("marshal lease audit diff: %w", err)
+	}
+	if _, err := r.db.ExecContext(ctx, `
+		INSERT INTO audit_events (tenant_id, actor_type, actor_id, event_type, resource_type, resource_id, diff)
+		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+	`,
+		tenantID,
+		tenant.ActorTypeSystem,
+		"worker",
+		tenant.EventTypeInstanceStatusChanged,
+		tenant.ResourceTypeInstance,
+		fmt.Sprintf("%d", instanceID),
+		string(diffBytes),
+	); err != nil {
+		return fmt.Errorf("insert lease audit event: %w", err)
+	}
+
 	return nil
 }
 

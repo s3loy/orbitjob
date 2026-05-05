@@ -239,6 +239,9 @@ CREATE TABLE IF NOT EXISTS job_instances (
   -- Last update timestamp
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 
+  -- Optimistic locking version
+  version INT NOT NULL DEFAULT 1,
+
   -- ------------------------------------------------------------
   -- Constraints
   -- ------------------------------------------------------------

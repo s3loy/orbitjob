@@ -26,7 +26,7 @@ curl -X POST http://localhost:8080/api/v1/jobs \
 
 # 3. 启动后台调度
 go run ./cmd/scheduler &
-DISPATCHER_WORKER_ID=worker-1 go run ./cmd/dispatcher &
+go run ./cmd/dispatcher &
 WORKER_ID=worker-1 go run ./cmd/worker &
 ```
 

@@ -25,6 +25,7 @@ type CompleteSpec struct {
 	InstanceID int64
 	WorkerID   string
 	Status     string
+	Attempt    int
 	ResultCode *string
 	ErrorMsg   *string
 	FinishedAt time.Time
@@ -81,6 +82,7 @@ func NormalizeComplete(in CompleteInput) (CompleteSpec, error) {
 		InstanceID: in.InstanceID,
 		WorkerID:   workerID,
 		Status:     status,
+		Attempt:    in.Attempt,
 		ResultCode: resultCode,
 		ErrorMsg:   errorMsg,
 		FinishedAt: now,

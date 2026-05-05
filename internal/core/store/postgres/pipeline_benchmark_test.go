@@ -36,8 +36,8 @@ func BenchmarkPipelineScheduleDispatch(b *testing.B) {
 	}
 
 	scales := []struct {
-		name     string
-		cronJobs int
+		name       string
+		cronJobs   int
 		schedLimit int
 		dispLimit  int
 	}{
@@ -95,7 +95,7 @@ func BenchmarkPipelineClaimComplete(b *testing.B) {
 		benchSeedDispatchedInstance(b, db, "tenant-pipe", jobID, 5, now.Add(-time.Minute))
 		b.StartTimer()
 
-		_, _ = execUC.RunOnce(context.Background(), "tenant-pipe", "worker-1", 60*time.Second)
+		_, _ = execUC.RunOnce(context.Background(), "tenant-pipe", "worker-1", 1, 60*time.Second)
 	}
 }
 
@@ -152,7 +152,7 @@ func BenchmarkPipelineFull(b *testing.B) {
 		b.ReportMetric(float64(dispatched), "dispatched")
 
 		// Phase 3: Execute
-		completed, _ := execUC.RunOnce(context.Background(), "tenant-full", "worker-1", 60*time.Second)
+		completed, _ := execUC.RunOnce(context.Background(), "tenant-full", "worker-1", 1, 60*time.Second)
 		b.ReportMetric(float64(completed), "completed")
 	}
 }

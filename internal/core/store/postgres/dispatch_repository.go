@@ -140,7 +140,8 @@ func claimOneDispatchCandidate(ctx context.Context, tx *sql.Tx, spec domaininsta
 		       idempotency_key, idempotency_scope, routing_key, worker_id,
 		       attempt, max_attempt, scheduled_at, started_at,
 		       finished_at, lease_expires_at, dispatched_at, retry_at,
-		       result_code, error_msg, trace_id, created_at, updated_at
+		       result_code, error_msg, trace_id, created_at, updated_at,
+			       version
 		FROM job_instances
 		WHERE tenant_id = $1
 		  AND (status = 'pending' OR (
@@ -184,7 +185,8 @@ func updateInstanceToDispatched(ctx context.Context, tx *sql.Tx, snap domaininst
 		          idempotency_key, idempotency_scope, routing_key, worker_id,
 		          attempt, max_attempt, scheduled_at, started_at,
 		          finished_at, lease_expires_at, dispatched_at, retry_at,
-		          result_code, error_msg, trace_id, created_at, updated_at
+		          result_code, error_msg, trace_id, created_at, updated_at,
+			       version
 	`, spec.Now, spec.LeaseExpiresAt, snap.ID)
 
 	out, err := scanInstanceSnapshot(row)
@@ -441,4 +443,19 @@ func (r *DispatchRepository) RefreshEffectivePriority(ctx context.Context, now t
 		}
 	}
 	return n, nil
+}
+
+// RecoverExpiredWorkers marks workers whose lease has expired as offline.
+// Returns the number of workers affected.
+func (r *DispatchRepository) RecoverExpiredWorkers(ctx context.Context, now time.Time) (int64, error) {
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE workers
+		SET status = 'offline'
+		WHERE status IN ('online', 'draining')
+		  AND lease_expires_at < $1
+	`, now)
+	if err != nil {
+		return 0, fmt.Errorf("recover expired workers: %w", err)
+	}
+	return result.RowsAffected()
 }

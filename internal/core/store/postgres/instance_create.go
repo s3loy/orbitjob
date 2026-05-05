@@ -56,7 +56,8 @@ func (r *InstanceRepository) Create(ctx context.Context, in domaininstance.Creat
 				error_msg,
 				trace_id,
 				created_at,
-				updated_at
+				updated_at,
+			version
 		`,
 		in.TenantID,
 		in.JobID,
