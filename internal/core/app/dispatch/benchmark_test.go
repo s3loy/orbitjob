@@ -28,6 +28,10 @@ func (m *benchDispatchRepo) RecoverLeaseOrphans(_ context.Context, _ time.Time) 
 	return m.orphanDispatched, m.orphanRunning, m.orphanErr
 }
 
+func (m *benchDispatchRepo) RecoverExpiredWorkers(_ context.Context, _ time.Time) (int64, error) {
+	return 0, nil
+}
+
 func (m *benchDispatchRepo) RefreshEffectivePriority(_ context.Context, _ time.Time) (int64, error) {
 	return m.priorityAffected, m.priorityErr
 }

@@ -16,6 +16,7 @@ type dispatcher interface {
 	) (_ domaininstance.Snapshot, found bool, _ error)
 	RecoverLeaseOrphans(ctx context.Context, now time.Time) (dispatched, running int64, _ error)
 	RefreshEffectivePriority(ctx context.Context, now time.Time) (int64, error)
+	RecoverExpiredWorkers(ctx context.Context, now time.Time) (int64, error)
 }
 
 // TickUseCase executes one bounded dispatcher batch.
@@ -39,6 +40,11 @@ func (uc *TickUseCase) RunBatch(ctx context.Context, spec domaininstance.ClaimSp
 	// recomputed by the subsequent refresh.
 	if _, _, err := uc.repo.RecoverLeaseOrphans(ctx, spec.Now); err != nil {
 		return 0, fmt.Errorf("recover lease orphans: %w", err)
+	}
+
+	// Mark workers whose lease expired as offline.
+	if _, err := uc.repo.RecoverExpiredWorkers(ctx, spec.Now); err != nil {
+		return 0, fmt.Errorf("recover expired workers: %w", err)
 	}
 
 	// Refresh effective_priority for all pending/retry_wait instances.
