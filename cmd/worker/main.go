@@ -35,11 +35,12 @@ type runtimeConfig struct {
 }
 
 type tickRunner interface {
-	RunOnce(ctx context.Context, tenantID, workerID string, leaseDuration time.Duration) (int, error)
+	RunOnce(ctx context.Context, tenantID, workerID string, limit int, leaseDuration time.Duration) (int, error)
 }
 
 type heartbeater interface {
 	UpsertHeartbeat(ctx context.Context, spec domainworker.HeartbeatSpec) (domainworker.Snapshot, error)
+	GetByID(ctx context.Context, tenantID, workerID string) (domainworker.Snapshot, error)
 }
 
 type workerTicker interface {
@@ -164,19 +165,22 @@ func runLoop(
 	newTicker func(time.Duration) workerTicker,
 	nowFn func() time.Time,
 ) {
-	go heartbeatLoop(ctx, hb, cfg, newTicker, nowFn)
+	loopDone := make(chan struct{})
+	go heartbeatLoop(ctx, loopDone, hb, cfg, newTicker, nowFn)
 
 	ticker := newTicker(cfg.PollInterval)
 	defer ticker.Stop()
 
 	for {
-		n, err := runner.RunOnce(ctx, cfg.TenantID, cfg.WorkerID, cfg.LeaseDuration)
+		n, err := runner.RunOnce(ctx, cfg.TenantID, cfg.WorkerID, cfg.Capacity, cfg.LeaseDuration)
 		if err != nil {
 			slog.Error("worker tick failed", "error", err.Error())
 		} else if n > 0 {
 			slog.Info("worker executed task", "handled", n)
 			select {
 			case <-ctx.Done():
+				close(loopDone)
+				slog.Info("worker drain complete, shutting down")
 				return
 			default:
 				continue
@@ -185,14 +189,19 @@ func runLoop(
 
 		select {
 		case <-ctx.Done():
+			close(loopDone)
+			slog.Info("worker drain complete, shutting down")
 			return
 		case <-ticker.Chan():
 		}
 	}
 }
 
+const shutdownDeadline = 30 * time.Second
+
 func heartbeatLoop(
 	ctx context.Context,
+	loopDone <-chan struct{},
 	hb heartbeater,
 	cfg runtimeConfig,
 	newTicker func(time.Duration) workerTicker,
@@ -206,9 +215,22 @@ func heartbeatLoop(
 	for {
 		select {
 		case <-ctx.Done():
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			sendHeartbeat(shutdownCtx, hb, cfg, nowFn, domainworker.StatusOffline)
-			cancel()
+			// Phase 1: mark draining — stop accepting new work
+			drainCtx, drainCancel := context.WithTimeout(context.Background(), 3*time.Second)
+			sendHeartbeat(drainCtx, hb, cfg, nowFn, domainworker.StatusDraining)
+			drainCancel()
+
+			// Phase 2: wait for in-flight tasks to complete
+			select {
+			case <-loopDone:
+			case <-time.After(shutdownDeadline):
+				slog.Warn("shutdown deadline exceeded, forcing offline")
+			}
+
+			// Phase 3: send offline heartbeat
+			offCtx, offCancel := context.WithTimeout(context.Background(), 3*time.Second)
+			sendHeartbeat(offCtx, hb, cfg, nowFn, domainworker.StatusOffline)
+			offCancel()
 			return
 		case <-ticker.Chan():
 			sendHeartbeat(ctx, hb, cfg, nowFn, domainworker.StatusOnline)

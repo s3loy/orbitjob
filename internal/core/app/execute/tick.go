@@ -3,10 +3,13 @@ package execute
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"runtime/debug"
+	"sync"
 	"time"
 
 	domaininstance "orbitjob/internal/core/domain/instance"
+	"orbitjob/internal/platform/metrics"
 )
 
 type executor interface {
@@ -24,25 +27,60 @@ func NewTickUseCase(repo executor, handlers map[string]Handler) *TickUseCase {
 	return &TickUseCase{repo: repo, handlers: handlers}
 }
 
-func (uc *TickUseCase) RunOnce(ctx context.Context, tenantID, workerID string, leaseDuration time.Duration) (int, error) {
+func (uc *TickUseCase) RunOnce(
+	ctx context.Context,
+	tenantID, workerID string,
+	limit int, leaseDuration time.Duration,
+) (int, error) {
+	if limit <= 0 {
+		return 0, nil
+	}
+
 	now := time.Now().UTC()
 	leaseExpiresAt := now.Add(leaseDuration)
 
-	tasks, err := uc.repo.ClaimNextDispatched(ctx, tenantID, workerID, 1, leaseExpiresAt, now)
+	tasks, err := uc.repo.ClaimNextDispatched(ctx, tenantID, workerID, limit, leaseExpiresAt, now)
 	if err != nil {
 		return 0, fmt.Errorf("claim dispatched: %w", err)
 	}
 	if len(tasks) == 0 {
 		return 0, nil
 	}
-	task := tasks[0]
 
+	var wg sync.WaitGroup
+
+	for _, task := range tasks {
+		wg.Add(1)
+		go func(t AssignedTask) {
+			defer wg.Done()
+			uc.executeTask(ctx, tenantID, workerID, t, leaseDuration)
+		}(task)
+	}
+
+	wg.Wait()
+	return len(tasks), nil
+}
+
+func (uc *TickUseCase) executeTask(
+	ctx context.Context,
+	tenantID, workerID string,
+	task AssignedTask,
+	leaseDuration time.Duration,
+) {
 	handler, ok := uc.handlers[task.HandlerType]
 	if !ok {
+		slog.Error("unknown handler type",
+			"instance_id", task.InstanceID,
+			"handler_type", task.HandlerType,
+		)
+		metrics.ExecutionsTotal.WithLabelValues(task.HandlerType, "unknown_handler").Inc()
 		uc.completeAsFailure(ctx, tenantID, task.InstanceID, workerID, task,
 			"unknown_handler", fmt.Sprintf("no handler registered for type %q", task.HandlerType))
-		return 1, nil
+		return
 	}
+
+	metrics.ExecutionsActive.Inc()
+	defer metrics.ExecutionsActive.Dec()
 
 	stopRenew := uc.startLeaseRenewal(ctx, tenantID, task.InstanceID, workerID, leaseDuration)
 
@@ -65,6 +103,8 @@ func (uc *TickUseCase) RunOnce(ctx context.Context, tenantID, workerID string, l
 
 	stopRenew()
 
+	metrics.ExecutionsTotal.WithLabelValues(task.HandlerType, result.ResultCode).Inc()
+
 	completeSpec, err := domaininstance.NormalizeComplete(domaininstance.CompleteInput{
 		TenantID:             tenantID,
 		InstanceID:           task.InstanceID,
@@ -79,14 +119,19 @@ func (uc *TickUseCase) RunOnce(ctx context.Context, tenantID, workerID string, l
 		RetryBackoffStrategy: task.RetryBackoffStrategy,
 	})
 	if err != nil {
-		return 1, fmt.Errorf("normalize complete: %w", err)
+		slog.Error("normalize complete failed",
+			"instance_id", task.InstanceID,
+			"error", err.Error(),
+		)
+		return
 	}
 
 	if err := uc.repo.CompleteInstance(ctx, completeSpec); err != nil {
-		return 1, fmt.Errorf("complete instance: %w", err)
+		slog.Error("complete instance failed",
+			"instance_id", task.InstanceID,
+			"error", err.Error(),
+		)
 	}
-
-	return 1, nil
 }
 
 func (uc *TickUseCase) completeAsFailure(
@@ -111,7 +156,12 @@ func (uc *TickUseCase) completeAsFailure(
 	if err != nil {
 		return
 	}
-	_ = uc.repo.CompleteInstance(ctx, spec)
+	if err := uc.repo.CompleteInstance(ctx, spec); err != nil {
+		slog.Error("complete as failure failed",
+			"instance_id", instanceID,
+			"error", err.Error(),
+		)
+	}
 }
 
 func (uc *TickUseCase) startLeaseRenewal(
@@ -122,10 +172,7 @@ func (uc *TickUseCase) startLeaseRenewal(
 	done := make(chan struct{})
 	stopped := make(chan struct{})
 
-	interval := leaseDuration / 3
-	if interval < time.Second {
-		interval = time.Second
-	}
+	interval := max(leaseDuration/3, time.Second)
 
 	go func() {
 		defer close(stopped)
@@ -139,7 +186,13 @@ func (uc *TickUseCase) startLeaseRenewal(
 				return
 			case <-ticker.C:
 				newExpiry := time.Now().Add(leaseDuration)
-				_ = uc.repo.ExtendLease(ctx, tenantID, instanceID, workerID, newExpiry)
+				if err := uc.repo.ExtendLease(ctx, tenantID, instanceID, workerID, newExpiry); err != nil {
+					metrics.LeaseExtensionFailuresTotal.Inc()
+					slog.Warn("extend lease failed",
+						"instance_id", instanceID,
+						"error", err.Error(),
+					)
+				}
 			}
 		}
 	}()

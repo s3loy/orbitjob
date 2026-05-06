@@ -27,7 +27,7 @@ type stubTickRunner struct {
 	callCh  chan struct{}
 }
 
-func (s *stubTickRunner) RunOnce(_ context.Context, _, _ string, _ time.Duration) (int, error) {
+func (s *stubTickRunner) RunOnce(_ context.Context, _, _ string, _ int, _ time.Duration) (int, error) {
 	s.mu.Lock()
 	s.calls++
 	callNo := s.calls
@@ -65,6 +65,10 @@ func (s *stubHeartbeater) UpsertHeartbeat(_ context.Context, spec domainworker.H
 	s.calls = append(s.calls, spec)
 	s.mu.Unlock()
 	return domainworker.Snapshot{}, nil
+}
+
+func (s *stubHeartbeater) GetByID(_ context.Context, _, _ string) (domainworker.Snapshot, error) {
+	return domainworker.Snapshot{Status: domainworker.StatusOnline}, nil
 }
 
 func (s *stubHeartbeater) callCount() int {

@@ -39,6 +39,7 @@ var instanceColumns = []string{
 	"attempt", "max_attempt", "scheduled_at", "started_at",
 	"finished_at", "lease_expires_at", "dispatched_at", "retry_at",
 	"result_code", "error_msg", "trace_id", "created_at", "updated_at",
+		"version",
 }
 
 // addInstanceRow appends one instance row to the given sqlmock rows.
@@ -57,6 +58,7 @@ func addInstanceRow(
 		nil, nil, nil,                                 // lease_expires_at, dispatched_at, retry_at
 		nil, nil, nil,                                 // result_code, error_msg, trace_id
 		now, now,                                      // created_at, updated_at
+		1,                                             // version
 	)
 }
 

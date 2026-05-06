@@ -57,6 +57,7 @@ func scanInstanceSnapshot(scanner rowScanner) (domaininstance.Snapshot, error) {
 		&traceID,
 		&out.CreatedAt,
 		&out.UpdatedAt,
+		&out.Version,
 	)
 	if err != nil {
 		return domaininstance.Snapshot{}, fmt.Errorf("scan instance snapshot: %w", err)

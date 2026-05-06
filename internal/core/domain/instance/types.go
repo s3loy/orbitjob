@@ -67,4 +67,5 @@ type Snapshot struct {
 	TraceID          *string
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
+	Version          int
 }

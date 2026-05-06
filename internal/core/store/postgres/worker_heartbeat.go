@@ -62,3 +62,29 @@ func (r *WorkerRepository) UpsertHeartbeat(
 
 	return out, nil
 }
+
+func (r *WorkerRepository) GetByID(
+	ctx context.Context,
+	tenantID, workerID string,
+) (domainworker.Snapshot, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT
+			tenant_id,
+			worker_id,
+			status,
+			last_heartbeat_at,
+			lease_expires_at,
+			capacity,
+			labels,
+			created_at,
+			updated_at
+		FROM workers
+		WHERE tenant_id = $1 AND worker_id = $2
+	`, tenantID, workerID)
+
+	out, err := scanWorkerSnapshot(row)
+	if err != nil {
+		return domainworker.Snapshot{}, fmt.Errorf("get worker by id: %w", err)
+	}
+	return out, nil
+}
