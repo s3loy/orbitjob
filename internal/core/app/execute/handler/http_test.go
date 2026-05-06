@@ -34,7 +34,7 @@ func disableSSRF() func() {
 	}
 }
 
-func TestHTTPHandler_Success2xx(t *testing.T) {
+func TestHTTP_Success2xx(t *testing.T) {
 	defer disableSSRF()()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -42,7 +42,7 @@ func TestHTTPHandler_Success2xx(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	h := NewHTTPHandler(srv.Client())
+	h := NewHTTP(srv.Client())
 	result := h.Execute(context.Background(), makeHTTPTask(map[string]any{
 		"url":    srv.URL,
 		"method": "GET",
@@ -55,7 +55,7 @@ func TestHTTPHandler_Success2xx(t *testing.T) {
 	}
 }
 
-func TestHTTPHandler_Non2xx(t *testing.T) {
+func TestHTTP_Non2xx(t *testing.T) {
 	defer disableSSRF()()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -64,7 +64,7 @@ func TestHTTPHandler_Non2xx(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	h := NewHTTPHandler(srv.Client())
+	h := NewHTTP(srv.Client())
 	result := h.Execute(context.Background(), makeHTTPTask(map[string]any{
 		"url": srv.URL,
 	}))
@@ -79,7 +79,7 @@ func TestHTTPHandler_Non2xx(t *testing.T) {
 	}
 }
 
-func TestHTTPHandler_DefaultMethodIsPOST(t *testing.T) {
+func TestHTTP_DefaultMethodIsPOST(t *testing.T) {
 	defer disableSSRF()()
 
 	var gotMethod string
@@ -89,7 +89,7 @@ func TestHTTPHandler_DefaultMethodIsPOST(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	h := NewHTTPHandler(srv.Client())
+	h := NewHTTP(srv.Client())
 	h.Execute(context.Background(), makeHTTPTask(map[string]any{
 		"url": srv.URL,
 	}))
@@ -98,7 +98,7 @@ func TestHTTPHandler_DefaultMethodIsPOST(t *testing.T) {
 	}
 }
 
-func TestHTTPHandler_HeadersForwarded(t *testing.T) {
+func TestHTTP_HeadersForwarded(t *testing.T) {
 	defer disableSSRF()()
 
 	var gotAuth string
@@ -108,7 +108,7 @@ func TestHTTPHandler_HeadersForwarded(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	h := NewHTTPHandler(srv.Client())
+	h := NewHTTP(srv.Client())
 	h.Execute(context.Background(), makeHTTPTask(map[string]any{
 		"url":     srv.URL,
 		"headers": map[string]any{"Authorization": "Bearer token-123"},
@@ -118,7 +118,7 @@ func TestHTTPHandler_HeadersForwarded(t *testing.T) {
 	}
 }
 
-func TestHTTPHandler_Timeout(t *testing.T) {
+func TestHTTP_Timeout(t *testing.T) {
 	defer disableSSRF()()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -130,7 +130,7 @@ func TestHTTPHandler_Timeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	h := NewHTTPHandler(srv.Client())
+	h := NewHTTP(srv.Client())
 	result := h.Execute(ctx, makeHTTPTask(map[string]any{
 		"url": srv.URL,
 	}))
@@ -142,8 +142,8 @@ func TestHTTPHandler_Timeout(t *testing.T) {
 	}
 }
 
-func TestHTTPHandler_InvalidPayload_MissingURL(t *testing.T) {
-	h := NewHTTPHandler(nil)
+func TestHTTP_InvalidPayload_MissingURL(t *testing.T) {
+	h := NewHTTP(nil)
 	result := h.Execute(context.Background(), makeHTTPTask(map[string]any{}))
 	if result.Success {
 		t.Fatal("expected failure")
@@ -153,8 +153,8 @@ func TestHTTPHandler_InvalidPayload_MissingURL(t *testing.T) {
 	}
 }
 
-func TestHTTPHandler_InvalidPayload_BadHeaders(t *testing.T) {
-	h := NewHTTPHandler(nil)
+func TestHTTP_InvalidPayload_BadHeaders(t *testing.T) {
+	h := NewHTTP(nil)
 	result := h.Execute(context.Background(), makeHTTPTask(map[string]any{
 		"url":     "http://localhost",
 		"headers": "not-a-map",
@@ -167,10 +167,10 @@ func TestHTTPHandler_InvalidPayload_BadHeaders(t *testing.T) {
 	}
 }
 
-func TestHTTPHandler_ConnectionRefused(t *testing.T) {
+func TestHTTP_ConnectionRefused(t *testing.T) {
 	defer disableSSRF()()
 
-	h := NewHTTPHandler(&http.Client{})
+	h := NewHTTP(&http.Client{})
 	result := h.Execute(context.Background(), makeHTTPTask(map[string]any{
 		"url": "http://127.0.0.1:1",
 	}))
@@ -186,8 +186,8 @@ func TestHTTPHandler_ConnectionRefused(t *testing.T) {
 // SSRF protection tests
 // ---------------------------------------------------------------------------
 
-func TestHTTPHandler_SSRF_Private10(t *testing.T) {
-	h := NewHTTPHandler(nil)
+func TestHTTP_SSRF_Private10(t *testing.T) {
+	h := NewHTTP(nil)
 	result := h.Execute(context.Background(), makeHTTPTask(map[string]any{
 		"url": "http://10.0.0.1/",
 	}))
@@ -199,8 +199,8 @@ func TestHTTPHandler_SSRF_Private10(t *testing.T) {
 	}
 }
 
-func TestHTTPHandler_SSRF_Private172(t *testing.T) {
-	h := NewHTTPHandler(nil)
+func TestHTTP_SSRF_Private172(t *testing.T) {
+	h := NewHTTP(nil)
 	result := h.Execute(context.Background(), makeHTTPTask(map[string]any{
 		"url": "http://172.16.0.1/",
 	}))
@@ -212,8 +212,8 @@ func TestHTTPHandler_SSRF_Private172(t *testing.T) {
 	}
 }
 
-func TestHTTPHandler_SSRF_Private192(t *testing.T) {
-	h := NewHTTPHandler(nil)
+func TestHTTP_SSRF_Private192(t *testing.T) {
+	h := NewHTTP(nil)
 	result := h.Execute(context.Background(), makeHTTPTask(map[string]any{
 		"url": "http://192.168.1.1/",
 	}))
@@ -225,8 +225,8 @@ func TestHTTPHandler_SSRF_Private192(t *testing.T) {
 	}
 }
 
-func TestHTTPHandler_SSRF_Loopback(t *testing.T) {
-	h := NewHTTPHandler(nil)
+func TestHTTP_SSRF_Loopback(t *testing.T) {
+	h := NewHTTP(nil)
 	result := h.Execute(context.Background(), makeHTTPTask(map[string]any{
 		"url": "http://127.0.0.1/",
 	}))
@@ -238,8 +238,8 @@ func TestHTTPHandler_SSRF_Loopback(t *testing.T) {
 	}
 }
 
-func TestHTTPHandler_SSRF_Metadata(t *testing.T) {
-	h := NewHTTPHandler(nil)
+func TestHTTP_SSRF_Metadata(t *testing.T) {
+	h := NewHTTP(nil)
 	result := h.Execute(context.Background(), makeHTTPTask(map[string]any{
 		"url": "http://169.254.169.254/",
 	}))
@@ -251,8 +251,8 @@ func TestHTTPHandler_SSRF_Metadata(t *testing.T) {
 	}
 }
 
-func TestHTTPHandler_SSRF_BadScheme(t *testing.T) {
-	h := NewHTTPHandler(nil)
+func TestHTTP_SSRF_BadScheme(t *testing.T) {
+	h := NewHTTP(nil)
 	result := h.Execute(context.Background(), makeHTTPTask(map[string]any{
 		"url": "ftp://example.com/",
 	}))
@@ -264,7 +264,7 @@ func TestHTTPHandler_SSRF_BadScheme(t *testing.T) {
 	}
 }
 
-func TestHTTPHandler_SSRF_RedirectDisabled(t *testing.T) {
+func TestHTTP_SSRF_RedirectDisabled(t *testing.T) {
 	defer disableSSRF()()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -272,7 +272,7 @@ func TestHTTPHandler_SSRF_RedirectDisabled(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	h := NewHTTPHandler(srv.Client())
+	h := NewHTTP(srv.Client())
 	result := h.Execute(context.Background(), makeHTTPTask(map[string]any{
 		"url": srv.URL,
 	}))

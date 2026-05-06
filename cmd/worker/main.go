@@ -64,8 +64,8 @@ var (
 	buildRunnerFn = func(db *sql.DB) tickRunner {
 		repo := corepostgres.NewExecutorRepository(db)
 		handlers := map[string]execute.Handler{
-			"exec": &handler.ExecHandler{},
-			"http": handler.NewHTTPHandler(http.DefaultClient),
+			"exec": &handler.Exec{},
+			"http": handler.NewHTTP(http.DefaultClient),
 		}
 		return execute.NewTickUseCase(repo, handlers)
 	}

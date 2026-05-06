@@ -97,18 +97,18 @@ func newSecureTransport(base http.RoundTripper) http.RoundTripper {
 	return base
 }
 
-type HTTPHandler struct {
+type HTTP struct {
 	client *http.Client
 }
 
-func NewHTTPHandler(client *http.Client) *HTTPHandler {
+func NewHTTP(client *http.Client) *HTTP {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	return &HTTPHandler{client: client}
+	return &HTTP{client: client}
 }
 
-func (h *HTTPHandler) Execute(ctx context.Context, task execute.AssignedTask) execute.Result {
+func (h *HTTP) Execute(ctx context.Context, task execute.AssignedTask) execute.Result {
 	rawURL, method, headers, body, err := parseHTTPPayload(task.HandlerPayload)
 	if err != nil {
 		return execute.Result{

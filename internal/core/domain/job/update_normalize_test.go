@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"orbitjob/internal/domain/validation"
 )
 
 func TestNormalizeUpdate_ManualJobClearsCron(t *testing.T) {
@@ -196,12 +198,12 @@ func TestNormalizeUpdate_InvalidInputReturnsValidationError(t *testing.T) {
 			if err == nil {
 				t.Fatalf("expected validation error, got nil")
 			}
-			if !IsValidationError(err) {
+			if !validation.Is(err) {
 				t.Fatalf("expected validation error, got %T", err)
 			}
 
 			var validationErr *ValidationError
-			if !AsValidationError(err, &validationErr) {
+			if !validation.As(err, &validationErr) {
 				t.Fatalf("expected error to unwrap as ValidationError")
 			}
 			if validationErr.Field != tt.wantField {

@@ -96,7 +96,7 @@ func main() {
 	wg.Add(1)
 	go runDevAdmin(shutdownCtx, &wg, srv, adminPort)
 
-	slog.Info("orbitjob-dev running", "components", "scheduler dispatcher worker admin", "admin_port", adminPort)
+	slog.Info("devserver running", "components", "scheduler dispatcher worker admin", "admin_port", adminPort)
 
 	// Wait for shutdown signal then gracefully terminate.
 	<-shutdownCtx.Done()
@@ -104,7 +104,7 @@ func main() {
 	slog.Info("shutting down")
 	stop()
 	wg.Wait()
-	slog.Info("orbitjob-dev stopped")
+	slog.Info("devserver stopped")
 }
 
 // --- Scheduler helpers ---
@@ -261,8 +261,8 @@ func runDevWorker(ctx context.Context, wg *sync.WaitGroup, db *sql.DB, cfg devWo
 
 	repo := corepostgres.NewExecutorRepository(db)
 	handlers := map[string]execute.Handler{
-		"exec": &handler.ExecHandler{},
-		"http": handler.NewHTTPHandler(http.DefaultClient),
+		"exec": &handler.Exec{},
+		"http": handler.NewHTTP(http.DefaultClient),
 	}
 	runner := execute.NewTickUseCase(repo, handlers)
 

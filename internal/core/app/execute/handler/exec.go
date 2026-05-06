@@ -41,9 +41,9 @@ func isBlacklisted(k string) bool {
 	return strings.HasPrefix(k, "DYLD_")
 }
 
-type ExecHandler struct{}
+type Exec struct{}
 
-func (h *ExecHandler) Execute(ctx context.Context, task execute.AssignedTask) execute.Result {
+func (h *Exec) Execute(ctx context.Context, task execute.AssignedTask) execute.Result {
 	command, args, env, err := parseExecPayload(task.HandlerPayload)
 	if err != nil {
 		return execute.Result{

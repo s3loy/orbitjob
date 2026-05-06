@@ -3,6 +3,8 @@ package instance
 import (
 	"testing"
 	"time"
+
+	"orbitjob/internal/domain/validation"
 )
 
 func TestNormalizeClaim_DefaultTenant(t *testing.T) {
@@ -56,7 +58,7 @@ func TestNormalizeClaim_InvalidInput(t *testing.T) {
 				t.Fatalf("expected validation error, got nil")
 			}
 			var validationErr *ValidationError
-			if !AsValidationError(err, &validationErr) {
+			if !validation.As(err, &validationErr) {
 				t.Fatalf("expected ValidationError, got %T", err)
 			}
 			if validationErr.Field != tt.wantField {
