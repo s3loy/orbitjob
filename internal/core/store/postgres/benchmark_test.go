@@ -28,8 +28,8 @@ func benchSeedCronJob(b *testing.B, db *sql.DB, name, tenantID string, priority 
 	b.Helper()
 	var id int64
 	err := db.QueryRowContext(context.Background(), `
-		INSERT INTO jobs (name, tenant_id, trigger_type, cron_expr, timezone, handler_type, handler_payload, timeout_sec, status, priority, next_run_at)
-		VALUES ($1, $2, 'cron', '*/5 * * * *', 'UTC', 'http', '{}'::jsonb, 60, 'active', $3, $4)
+		INSERT INTO jobs (name, tenant_id, trigger_type, cron_expr, timezone, handler_type, handler_payload, timeout_sec, status, priority, next_run_at, misfire_policy)
+		VALUES ($1, $2, 'cron', '*/5 * * * *', 'UTC', 'http', '{}'::jsonb, 60, 'active', $3, $4, 'fire_now')
 		RETURNING id
 	`, name, tenantID, priority, nextRunAt).Scan(&id)
 	if err != nil {

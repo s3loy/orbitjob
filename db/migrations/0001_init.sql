@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   -- skip     : ignore missed schedule
   -- fire_now : execute immediately
   -- catch_up : run all missed schedules
-  misfire_policy VARCHAR(16) NOT NULL DEFAULT 'skip',
+  misfire_policy VARCHAR(16) NOT NULL DEFAULT 'fire_now',
 
   -- Current job status
   -- active : scheduler will generate instances
@@ -254,7 +254,6 @@ CREATE TABLE IF NOT EXISTS job_instances (
   CONSTRAINT chk_instances_status CHECK (
     status IN (
       'pending',
-      'dispatching',
       'dispatched',
       'running',
       'retry_wait',
@@ -437,7 +436,7 @@ WHERE status = 'retry_wait' AND retry_at IS NOT NULL;
 
 -- Dispatcher scanning index for:
 --   WHERE status IN ('pending','retry_wait')
---   ORDER BY priority DESC, scheduled_at ASC
+--   ORDER BY effective_priority DESC, scheduled_at ASC
 CREATE INDEX IF NOT EXISTS idx_instances_dispatch_scan
 ON job_instances(tenant_id, status, effective_priority DESC, scheduled_at)
 WHERE status IN ('pending', 'retry_wait');

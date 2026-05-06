@@ -12,9 +12,8 @@ const (
 	TriggerSourceSchedule = "schedule"
 	TriggerSourceManual   = "manual"
 
-	StatusPending     = "pending"
-	StatusDispatching = "dispatching"
-	StatusDispatched  = "dispatched"
+	StatusPending    = "pending"
+	StatusDispatched = "dispatched"
 	StatusRunning     = "running"
 	StatusRetryWait   = "retry_wait"
 	StatusSuccess     = "success"
