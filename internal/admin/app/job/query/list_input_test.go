@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	domainjob "orbitjob/internal/core/domain/job"
+	"orbitjob/internal/domain/validation"
 )
 
 func TestNormalizeListInput_Defaults(t *testing.T) {
@@ -104,12 +105,12 @@ func TestNormalizeListInput_InvalidInput(t *testing.T) {
 				t.Fatalf("expected validation error, got nil")
 			}
 
-			if !domainjob.IsValidationError(err) {
+			if !validation.Is(err) {
 				t.Fatalf("expected validation error, got %T", err)
 			}
 
-			var validationErr *domainjob.ValidationError
-			if !domainjob.AsValidationError(err, &validationErr) {
+			var validationErr *validation.Error
+			if !validation.As(err, &validationErr) {
 				t.Fatalf("expected error to unwrap as ValidationError")
 			}
 			if validationErr.Field != tt.wantField {

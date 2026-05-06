@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"orbitjob/internal/domain/validation"
 )
 
 func TestNormalizeCreate_ManualDefaults(t *testing.T) {
@@ -361,10 +363,10 @@ func TestNormalizeCreate_InvalidInput(t *testing.T) {
 			if !strings.Contains(err.Error(), tt.wantMessage) {
 				t.Fatalf("expected error containing %q, got %q", tt.wantMessage, err.Error())
 			}
-			if !IsValidationError(err) {
+			if !validation.Is(err) {
 				t.Fatalf("expected validation error, got %T", err)
 			}
-			if !AsValidationError(err, &validationErr) {
+			if !validation.As(err, &validationErr) {
 				t.Fatalf("expected error to unwrap as ValidationError")
 			}
 			if validationErr.Field != tt.wantField {
@@ -387,7 +389,7 @@ func TestNormalizeCreate_InvalidInputReturnsValidationError(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
-	if !IsValidationError(err) {
+	if !validation.Is(err) {
 		t.Fatalf("expected validation error, got %T", err)
 	}
 }
@@ -406,12 +408,12 @@ func TestNormalizeCreate_InvalidHandlerPayload(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
-	if !IsValidationError(err) {
+	if !validation.Is(err) {
 		t.Fatalf("expected validation error, got %T", err)
 	}
 
 	var validationErr *ValidationError
-	if !AsValidationError(err, &validationErr) {
+	if !validation.As(err, &validationErr) {
 		t.Fatalf("expected error to unwrap as ValidationError")
 	}
 	if validationErr.Field != "handler_payload" {

@@ -23,14 +23,6 @@ const (
 
 type ValidationError = validation.Error
 
-func IsValidationError(err error) bool {
-	return validation.Is(err)
-}
-
-func AsValidationError(err error, target **ValidationError) bool {
-	return validation.As(err, target)
-}
-
 func validationError(field, message string) error {
 	return validation.New(field, message)
 }

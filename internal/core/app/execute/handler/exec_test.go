@@ -40,8 +40,8 @@ func makeTask(payload map[string]any) execute.AssignedTask {
 	}
 }
 
-func TestExecHandler_Success(t *testing.T) {
-	h := &ExecHandler{}
+func TestExec_Success(t *testing.T) {
+	h := &Exec{}
 	result := h.Execute(context.Background(), makeTask(map[string]any{
 		"command": echoCommand(),
 		"args":    echoArgs("hello"),
@@ -54,8 +54,8 @@ func TestExecHandler_Success(t *testing.T) {
 	}
 }
 
-func TestExecHandler_ExitError(t *testing.T) {
-	h := &ExecHandler{}
+func TestExec_ExitError(t *testing.T) {
+	h := &Exec{}
 	cmd, args := failCommand()
 	argsAny := make([]any, len(args))
 	copy(argsAny, args)
@@ -71,8 +71,8 @@ func TestExecHandler_ExitError(t *testing.T) {
 	}
 }
 
-func TestExecHandler_Timeout(t *testing.T) {
-	h := &ExecHandler{}
+func TestExec_Timeout(t *testing.T) {
+	h := &Exec{}
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
@@ -98,8 +98,8 @@ func TestExecHandler_Timeout(t *testing.T) {
 	}
 }
 
-func TestExecHandler_InvalidPayload_MissingCommand(t *testing.T) {
-	h := &ExecHandler{}
+func TestExec_InvalidPayload_MissingCommand(t *testing.T) {
+	h := &Exec{}
 	result := h.Execute(context.Background(), makeTask(map[string]any{}))
 	if result.Success {
 		t.Fatal("expected failure")
@@ -109,8 +109,8 @@ func TestExecHandler_InvalidPayload_MissingCommand(t *testing.T) {
 	}
 }
 
-func TestExecHandler_InvalidPayload_BadArgs(t *testing.T) {
-	h := &ExecHandler{}
+func TestExec_InvalidPayload_BadArgs(t *testing.T) {
+	h := &Exec{}
 	result := h.Execute(context.Background(), makeTask(map[string]any{
 		"command": "echo",
 		"args":    "not-an-array",
@@ -123,8 +123,8 @@ func TestExecHandler_InvalidPayload_BadArgs(t *testing.T) {
 	}
 }
 
-func TestExecHandler_CommandNotFound(t *testing.T) {
-	h := &ExecHandler{}
+func TestExec_CommandNotFound(t *testing.T) {
+	h := &Exec{}
 	result := h.Execute(context.Background(), makeTask(map[string]any{
 		"command": "/nonexistent/binary/xyz",
 	}))
