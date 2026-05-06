@@ -211,8 +211,8 @@ func TestRunLoop_StopsOnContextCancel(t *testing.T) {
 		t.Fatalf("runLoop did not stop after context cancellation")
 	}
 
-	if runner.callCount() != 1 {
-		t.Fatalf("expected one RunBatch call, got %d", runner.callCount())
+	if runner.callCount() != 2 {
+		t.Fatalf("expected two RunBatch calls (1 tick + 1 drain), got %d", runner.callCount())
 	}
 	if runner.lastLimit() != 7 {
 		t.Fatalf("expected limit=7, got %d", runner.lastLimit())
@@ -275,8 +275,8 @@ func TestRunLoop_ContinuesAfterTickSignal(t *testing.T) {
 		t.Fatalf("runLoop did not stop after second iteration")
 	}
 
-	if runner.callCount() != 2 {
-		t.Fatalf("expected two RunBatch calls, got %d", runner.callCount())
+	if runner.callCount() != 3 {
+		t.Fatalf("expected three RunBatch calls (2 ticks + 1 drain), got %d", runner.callCount())
 	}
 }
 
@@ -313,8 +313,8 @@ func TestRunLoop_ErrorPathStillWaitsForShutdown(t *testing.T) {
 		t.Fatalf("runLoop did not stop on error-path cancellation")
 	}
 
-	if runner.callCount() != 1 {
-		t.Fatalf("expected one RunBatch call on error path, got %d", runner.callCount())
+	if runner.callCount() != 2 {
+		t.Fatalf("expected two RunBatch calls on error path (1 tick + 1 drain), got %d", runner.callCount())
 	}
 }
 

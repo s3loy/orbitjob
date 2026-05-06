@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -25,6 +26,7 @@ type runtimeConfig struct {
 	BatchSize     int
 	TickInterval  time.Duration
 	LeaseDuration time.Duration
+	HealthPort    string
 }
 
 type tickRunner interface {
@@ -87,11 +89,17 @@ func loadDispatcherRuntimeConfig() (runtimeConfig, error) {
 		return runtimeConfig{}, err
 	}
 
+	healthPort := os.Getenv("DISPATCHER_HEALTH_PORT")
+	if healthPort == "" {
+		healthPort = "6061"
+	}
+
 	return runtimeConfig{
 		TenantID:      tenantID,
 		BatchSize:     batchSize,
 		TickInterval:  time.Duration(tickIntervalSec) * time.Second,
 		LeaseDuration: time.Duration(leaseDurationSec) * time.Second,
+		HealthPort:    healthPort,
 	}, nil
 }
 
@@ -138,6 +146,20 @@ func runLoop(
 
 		select {
 		case <-ctx.Done():
+			slog.Info("dispatcher draining, running final tick")
+			drainCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			now := nowFn().UTC()
+			spec := domaininstance.ClaimSpec{
+				TenantID:       cfg.TenantID,
+				LeaseExpiresAt: now.Add(cfg.LeaseDuration),
+				Now:            now,
+			}
+			if handled, err := runner.RunBatch(drainCtx, spec, cfg.BatchSize); err != nil {
+				slog.Error("dispatcher drain tick failed", "error", err.Error())
+			} else {
+				slog.Info("dispatcher drain tick completed", "dispatched", handled)
+			}
 			return
 		case <-ticker.Chan():
 		}
@@ -169,9 +191,7 @@ func run(ctx context.Context) error {
 		return err
 	}
 	db.SetMaxOpenConns(25)
-	defer func() {
-		_ = db.Close()
-	}()
+	defer func() { _ = db.Close() }()
 
 	pingCtx, cancel := context.WithTimeout(ctx, startupDBPingTimeout)
 	defer cancel()
@@ -179,10 +199,43 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("ping database: %w", err)
 	}
 
+	// Health HTTP server
+	healthCtx, healthCancel := context.WithCancel(context.Background())
+	defer healthCancel()
+	go startComponentHealthServer(healthCtx, db, cfg.HealthPort, "dispatcher")
+
 	runner := buildRunnerFn(db)
 	runLoopFn(ctx, runner, cfg, newWallClockTicker, time.Now)
 
 	return nil
+}
+
+func startComponentHealthServer(ctx context.Context, db *sql.DB, port, component string) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		if err := db.PingContext(r.Context()); err != nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte("db ping failed"))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ready"))
+	})
+	srv := &http.Server{Addr: ":" + port, Handler: mux}
+	go func() {
+		slog.Info(component+" health server listening", "addr", srv.Addr)
+		if err := srv.ListenAndServe(); err != http.ErrServerClosed {
+			slog.Error(component+" health server error", "error", err)
+		}
+	}()
+	<-ctx.Done()
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = srv.Shutdown(shutdownCtx)
 }
 
 func main() {
