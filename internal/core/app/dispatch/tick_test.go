@@ -43,6 +43,10 @@ func (s *stubDispatcherRepo) RecoverLeaseOrphans(ctx context.Context, now time.T
 	return 0, 0, nil
 }
 
+func (s *stubDispatcherRepo) RecoverExpiredWorkers(ctx context.Context, now time.Time) (int64, error) {
+	return 0, nil
+}
+
 func (s *stubDispatcherRepo) RefreshEffectivePriority(ctx context.Context, now time.Time) (int64, error) {
 	if s.refreshPriorityErr != nil {
 		return 0, s.refreshPriorityErr

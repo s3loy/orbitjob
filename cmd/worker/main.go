@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
+
 	adminpostgres "orbitjob/internal/admin/store/postgres"
 	"orbitjob/internal/core/app/execute"
 	"orbitjob/internal/core/app/execute/handler"
@@ -83,7 +85,8 @@ func newWallClockTicker(interval time.Duration) workerTicker {
 func loadWorkerRuntimeConfig() (runtimeConfig, error) {
 	workerID := strings.TrimSpace(os.Getenv("WORKER_ID"))
 	if workerID == "" {
-		return runtimeConfig{}, fmt.Errorf("WORKER_ID is required")
+		hostname, _ := os.Hostname()
+		workerID = hostname + "-" + shortUUID()
 	}
 
 	tenantID := os.Getenv("WORKER_TENANT_ID")
@@ -310,6 +313,10 @@ func run(ctx context.Context) error {
 	runLoopFn(ctx, runner, hb, cfg, newWallClockTicker, time.Now)
 
 	return nil
+}
+
+func shortUUID() string {
+	return uuid.New().String()[:8]
 }
 
 func main() {

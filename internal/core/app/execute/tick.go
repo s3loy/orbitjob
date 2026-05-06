@@ -126,7 +126,12 @@ func (uc *TickUseCase) executeTask(
 		return
 	}
 
-	if err := uc.repo.CompleteInstance(ctx, completeSpec); err != nil {
+	// Use independent context for the DB write. The handler's ctx may already
+	// be cancelled (shutdown), but we must persist the result — especially for
+	// non-idempotent tasks where a lost write means a duplicate execution.
+	writeCtx, writeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer writeCancel()
+	if err := uc.repo.CompleteInstance(writeCtx, completeSpec); err != nil {
 		slog.Error("complete instance failed",
 			"instance_id", task.InstanceID,
 			"error", err.Error(),
@@ -135,7 +140,7 @@ func (uc *TickUseCase) executeTask(
 }
 
 func (uc *TickUseCase) completeAsFailure(
-	ctx context.Context,
+	_ context.Context,
 	tenantID string, instanceID int64, workerID string,
 	task AssignedTask,
 	resultCode, errorMsg string,
@@ -156,7 +161,9 @@ func (uc *TickUseCase) completeAsFailure(
 	if err != nil {
 		return
 	}
-	if err := uc.repo.CompleteInstance(ctx, spec); err != nil {
+	writeCtx, writeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer writeCancel()
+	if err := uc.repo.CompleteInstance(writeCtx, spec); err != nil {
 		slog.Error("complete as failure failed",
 			"instance_id", instanceID,
 			"error", err.Error(),

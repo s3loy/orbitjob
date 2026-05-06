@@ -3,8 +3,6 @@ package schedule
 import (
 	"strings"
 	"time"
-
-	"github.com/robfig/cron/v3"
 )
 
 // DueCronJob is the minimum input needed to decide one scheduler tick action.
@@ -24,12 +22,8 @@ type ScheduleDecision struct {
 
 // DecideSchedule computes one scheduling decision for a due cron job.
 func DecideSchedule(now time.Time, job DueCronJob) (ScheduleDecision, error) {
-	loc, err := time.LoadLocation(strings.TrimSpace(defaultIfEmpty(job.Timezone, "UTC")))
-	if err != nil {
-		return ScheduleDecision{}, err
-	}
-
-	schedule, err := cron.ParseStandard(strings.TrimSpace(job.CronExpr))
+	tz := defaultIfEmpty(job.Timezone, "UTC")
+	schedule, loc, err := getCachedSchedule(job.CronExpr, tz)
 	if err != nil {
 		return ScheduleDecision{}, err
 	}

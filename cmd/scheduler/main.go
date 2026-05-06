@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -22,6 +23,7 @@ import (
 type runtimeConfig struct {
 	BatchSize    int
 	TickInterval time.Duration
+	HealthPort   string
 }
 
 type tickRunner interface {
@@ -74,9 +76,15 @@ func loadSchedulerRuntimeConfig() (runtimeConfig, error) {
 		return runtimeConfig{}, err
 	}
 
+	healthPort := os.Getenv("SCHEDULER_HEALTH_PORT")
+	if healthPort == "" {
+		healthPort = "6060"
+	}
+
 	return runtimeConfig{
 		BatchSize:    batchSize,
 		TickInterval: time.Duration(tickIntervalSec) * time.Second,
+		HealthPort:   healthPort,
 	}, nil
 }
 
@@ -118,6 +126,15 @@ func runLoop(
 
 		select {
 		case <-ctx.Done():
+			slog.Info("scheduler draining, running final tick")
+			drainCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			now := nowFn().UTC()
+			if handled, err := runner.RunBatch(drainCtx, now, cfg.BatchSize); err != nil {
+				slog.Error("scheduler drain tick failed", "error", err.Error())
+			} else {
+				slog.Info("scheduler drain tick completed", "handled_due_jobs", handled)
+			}
 			return
 		case <-ticker.Chan():
 		}
@@ -149,9 +166,7 @@ func run(ctx context.Context) error {
 		return err
 	}
 	db.SetMaxOpenConns(25)
-	defer func() {
-		_ = db.Close()
-	}()
+	defer func() { _ = db.Close() }()
 
 	pingCtx, cancel := context.WithTimeout(ctx, startupDBPingTimeout)
 	defer cancel()
@@ -159,10 +174,44 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("ping database: %w", err)
 	}
 
+	// Health HTTP server
+	healthCtx, healthCancel := context.WithCancel(context.Background())
+	defer healthCancel()
+	go startComponentHealthServer(healthCtx, db, cfg.HealthPort, "scheduler")
+
 	runner := buildRunnerFn(db)
 	runLoopFn(ctx, runner, cfg, newWallClockTicker, time.Now)
 
 	return nil
+}
+
+// startComponentHealthServer runs a minimal HTTP server with /healthz and /readyz.
+func startComponentHealthServer(ctx context.Context, db *sql.DB, port, component string) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		if err := db.PingContext(r.Context()); err != nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte("db ping failed"))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ready"))
+	})
+	srv := &http.Server{Addr: ":" + port, Handler: mux}
+	go func() {
+		slog.Info(component+" health server listening", "addr", srv.Addr)
+		if err := srv.ListenAndServe(); err != http.ErrServerClosed {
+			slog.Error(component+" health server error", "error", err)
+		}
+	}()
+	<-ctx.Done()
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = srv.Shutdown(shutdownCtx)
 }
 
 func main() {
