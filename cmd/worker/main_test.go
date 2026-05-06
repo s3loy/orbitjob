@@ -137,9 +137,12 @@ func resetWorkerMainDeps(t *testing.T) {
 func TestLoadWorkerRuntimeConfig_Defaults(t *testing.T) {
 	t.Setenv("WORKER_ID", "")
 
-	_, err := loadWorkerRuntimeConfig()
-	if err == nil || !strings.Contains(err.Error(), "WORKER_ID is required") {
-		t.Fatalf("expected WORKER_ID required error, got %v", err)
+	cfg, err := loadWorkerRuntimeConfig()
+	if err != nil {
+		t.Fatalf("loadWorkerRuntimeConfig() error = %v", err)
+	}
+	if cfg.WorkerID == "" {
+		t.Fatalf("expected auto-generated worker ID")
 	}
 }
 

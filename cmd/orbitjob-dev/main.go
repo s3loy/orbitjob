@@ -142,7 +142,16 @@ func runDevScheduler(ctx context.Context, wg *sync.WaitGroup, db *sql.DB, cfg de
 
 		select {
 		case <-ctx.Done():
-			return
+				slog.Info("scheduler draining, running final tick")
+				drainCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				now := time.Now().UTC()
+				if handled, err := runner.RunBatch(drainCtx, now, cfg.BatchSize); err != nil {
+					slog.Error("scheduler drain tick failed", "error", err)
+				} else {
+					slog.Info("scheduler drain tick completed", "handled_due_jobs", handled)
+				}
+			
 		case <-ticker.C:
 		}
 	}
@@ -197,7 +206,16 @@ func runDevDispatcher(ctx context.Context, wg *sync.WaitGroup, db *sql.DB, cfg d
 
 		select {
 		case <-ctx.Done():
-			return
+				slog.Info("dispatcher draining, running final tick")
+				drainCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				now := time.Now().UTC()
+				if handled, err := runner.RunBatch(drainCtx, domaininstance.ClaimSpec{TenantID: cfg.TenantID, LeaseExpiresAt: now.Add(cfg.LeaseDuration), Now: now}, cfg.BatchSize); err != nil {
+					slog.Error("dispatcher drain tick failed", "error", err)
+				} else {
+					slog.Info("dispatcher drain tick completed", "dispatched", handled)
+				}
+			
 		case <-ticker.C:
 		}
 	}
@@ -217,7 +235,8 @@ type devWorkerConfig struct {
 func loadDevWorkerConfig() devWorkerConfig {
 	workerID := os.Getenv("WORKER_ID")
 	if workerID == "" {
-		workerID = "orbitjob-dev"
+		hostname, _ := os.Hostname()
+		workerID = hostname + "-dev-" + uuid.New().String()[:8]
 	}
 	tenant := os.Getenv("WORKER_TENANT_ID")
 	if tenant == "" {
