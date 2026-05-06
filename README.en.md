@@ -7,142 +7,92 @@
 
 [中文](./README.md)
 
-A background job scheduler for Go applications.
-PostgreSQL is the only dependency.
+![Stone Badge](https://stone.professorlee.work/api/stone/s3loy/orbitjob)
 
-Use it as a library in your Go app, or deploy as a standalone service.
+A Go job scheduling library. PostgreSQL is the only external dependency.
+
+Embed as a library, or deploy as standalone services.
 
 ## Quick Start
 
+Currently requires manual PostgreSQL setup.
+
 ```bash
-# 1. Start PostgreSQL, then start the API server
-DATABASE_DSN="postgres://postgres:password@127.0.0.1:5432/orbitjob?sslmode=disable" \
+# 1. Start PostgreSQL, then the API server
+DATABASE_DSN="postgres://user:pass@localhost:5432/orbitjob?sslmode=disable" \
   go run ./cmd/admin-api
 
-# 2. Create your first job
+# 2. Create a job
 curl -X POST http://localhost:8080/api/v1/jobs \
   -H "Content-Type: application/json" \
+  -H "X-Actor-ID: admin" \
   -d '{"name":"hello-world","trigger_type":"manual"}'
 
-# 3. Start the background components
+# 3. Start background components (WORKER_ID is optional — auto-generated if unset)
 go run ./cmd/scheduler &
 go run ./cmd/dispatcher &
-WORKER_ID=worker-1 go run ./cmd/worker &
+go run ./cmd/worker &
 ```
 
-## Overview
+All-in-one dev mode:
 
-OrbitJob handles reliable single-task scheduling — cron triggering, dispatching, execution, retry, and result tracking.
-
-- **scheduler** — generates instances from cron expressions
-- **dispatcher** — advances instance state, recovers orphans, enforces concurrency policy
-- **worker** — claims and executes tasks autonomously (HTTP callback or subprocess)
-- **admin-api** — REST API for job management and execution visibility
-
-Components communicate through PostgreSQL — no direct RPC between them.
-
-## API
-
-RESTful HTTP with auto-generated OpenAPI spec:
-
-| Method | Path | Description |
-| --- | --- | --- |
-| `POST` | `/api/v1/jobs` | Create job |
-| `GET` | `/api/v1/jobs` | List jobs |
-| `GET` | `/api/v1/jobs/:id` | Get job detail |
-| `PUT` | `/api/v1/jobs/:id` | Update job |
-| `POST` | `/api/v1/jobs/:id/pause` | Pause job |
-| `POST` | `/api/v1/jobs/:id/resume` | Resume job |
-
-Mutation endpoints require `X-Actor-ID` header. Updates use optimistic locking via `version`. Full contract at [`api/openapi.yaml`](./api/openapi.yaml) or `/openapi.json` on a running instance.
+```bash
+go run ./cmd/devserver
+```
 
 ## Development
 
 ### Requirements
 
-Go 1.26+, PostgreSQL.
+Go 1.26+, PostgreSQL 17
 
 ### Running
 
 ```bash
-# Admin API
-go run ./cmd/admin-api
-
-# Scheduler
-go run ./cmd/scheduler
-
-# Dispatcher
-go run ./cmd/dispatcher
-
-# Worker
-WORKER_ID=worker-1 go run ./cmd/worker
+go run ./cmd/admin-api       # API server
+go run ./cmd/scheduler       # Scheduler
+go run ./cmd/dispatcher      # Dispatcher
+go run ./cmd/worker          # Worker (WORKER_ID optional — auto-generated)
+go run ./cmd/devserver       # All-in-one dev mode
+go run ./cmd/openapi-gen     # OpenAPI generation
 ```
 
 ### Environment Variables
 
 | Variable | Purpose | Default |
 | --- | --- | --- |
-| `DATABASE_DSN` | Database connection string | -- |
-| `TEST_DATABASE_DSN` | Integration test connection string | -- |
-| `APP_ENV` | Log environment (development/production) | -- |
+| `DATABASE_DSN` | Database connection string | — |
+| `ADMIN_DSN` | Admin API DSN (overrides DATABASE_DSN) | — |
+| `SCHEDULER_DSN` | Scheduler DSN | — |
+| `DISPATCHER_DSN` | Dispatcher DSN | — |
+| `WORKER_DSN` | Worker DSN | — |
+| `DEV_DSN` | Devserver DSN | — |
+| `TEST_DATABASE_DSN` | Integration test DSN | — |
+| `APP_ENV` | Log mode (development / production) | — |
+| `ADMIN_PORT` | API listen port | `8080` |
 | `SCHEDULER_BATCH_SIZE` | Max jobs per tick | `100` |
-| `SCHEDULER_TICK_INTERVAL_SEC` | Tick interval in seconds | `5` |
-| `DISPATCHER_BATCH_SIZE` | Max claims per tick | `50` |
-| `DISPATCHER_TICK_INTERVAL_SEC` | Tick interval in seconds | `2` |
-| `DISPATCHER_LEASE_DURATION_SEC` | Lease duration in seconds | `30` |
+| `SCHEDULER_TICK_INTERVAL_SEC` | Tick interval (seconds) | `5` |
 | `DISPATCHER_TENANT_ID` | Dispatcher tenant scope | `default` |
-| `WORKER_ID` | Unique worker identifier | -- |
+| `DISPATCHER_BATCH_SIZE` | Max claims per tick | `50` |
+| `DISPATCHER_TICK_INTERVAL_SEC` | Tick interval (seconds) | `2` |
+| `DISPATCHER_LEASE_DURATION_SEC` | Lease duration (seconds) | `30` |
+| `WORKER_ID` | Worker identifier | {hostname}-{uuid8} |
 | `WORKER_TENANT_ID` | Worker tenant scope | `default` |
-| `WORKER_DSN` | Worker database DSN (overrides DATABASE_DSN) | -- |
-| `WORKER_POLL_INTERVAL_SEC` | Poll interval in seconds | `2` |
-| `WORKER_HEARTBEAT_INTERVAL_SEC` | Heartbeat interval in seconds | `10` |
-| `WORKER_LEASE_DURATION_SEC` | Worker lease duration in seconds | `60` |
+| `WORKER_POLL_INTERVAL_SEC` | Poll interval (seconds) | `2` |
+| `WORKER_HEARTBEAT_INTERVAL_SEC` | Heartbeat interval (seconds) | `10` |
+| `WORKER_LEASE_DURATION_SEC` | Lease duration (seconds) | `60` |
 | `WORKER_CAPACITY` | Max concurrent executions | `1` |
-| `WORKER_LABELS` | Worker labels (JSON object) | `{}` |
+| `WORKER_LABELS` | Worker labels (JSON) | `{}` |
 
 ### Testing
 
 ```bash
-go test ./...                                                        # Unit tests
-go test -tags integration ./internal/platform/postgrestest            # Integration tests
+go test ./...                                                    # Unit tests
+go test -tags integration ./internal/platform/postgrestest        # Integration tests
 go test -tags integration ./internal/admin/store/postgres ./internal/core/store/postgres
-golangci-lint run                                                    # Lint
-go run ./cmd/openapi-gen -check -out api/openapi.yaml                # OpenAPI drift check
+golangci-lint run                                                # Lint
+go run ./cmd/openapi-gen -check -out api/openapi.yaml            # OpenAPI drift check
 ```
-
-## Repository Structure
-
-| Path | Description |
-| --- | --- |
-| `cmd/admin-api` | Control plane HTTP service |
-| `cmd/scheduler` | Scheduler |
-| `cmd/dispatcher` | Dispatcher |
-| `cmd/worker` | Worker executor |
-| `cmd/openapi-gen` | OpenAPI generation and drift check |
-| `internal/admin/` | HTTP handlers, use cases, read-side store |
-| `internal/core/` | Domain rules, use cases, write-side store |
-| `internal/platform/` | Config, logger, metrics, test helpers |
-| `db/migrations/` | PostgreSQL schema |
-
-## Project Status
-
-| Area | Status |
-| --- | --- |
-| Control plane HTTP API | ✅ |
-| Scheduler + Dispatcher runtime | ✅ |
-| Worker executor (concurrent + graceful shutdown) | ✅ |
-| Multi-tenant RLS security model | ✅ Policies defined (Stage A, not yet enabled) |
-| Benchmark baseline (4 layers) | ✅ |
-| Instance query / Manual trigger API | 🔧 Planned |
-
-## Docs
-
-| Document | Description |
-| --- | --- |
-| [`docs/job-lifecycle.md`](./docs/job-lifecycle.md) | Job state machine |
-| [`docs/execution-plane.md`](./docs/execution-plane.md) | Execution plane contract |
-| [`./CONTRIBUTING.md`](./CONTRIBUTING.md) | Contributing guide |
-| [`./SECURITY.md`](./SECURITY.md) | Security policy |
 
 ## License
 
