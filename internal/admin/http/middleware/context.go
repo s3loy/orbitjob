@@ -7,6 +7,7 @@ type contextKey int
 const (
 	tenantIDKey contextKey = iota
 	tenantSourceKey
+	idempotencyKeyKey
 )
 
 const (
@@ -24,4 +25,13 @@ func TenantID(ctx context.Context) (string, string) {
 	tid, _ := ctx.Value(tenantIDKey).(string)
 	src, _ := ctx.Value(tenantSourceKey).(string)
 	return tid, src
+}
+
+func WithIdempotencyKey(ctx context.Context, key string) context.Context {
+	return context.WithValue(ctx, idempotencyKeyKey, key)
+}
+
+func IdempotencyKey(ctx context.Context) string {
+	key, _ := ctx.Value(idempotencyKeyKey).(string)
+	return key
 }

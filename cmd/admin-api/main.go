@@ -13,6 +13,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	command "orbitjob/internal/admin/app/job/command"
+	instancecommand "orbitjob/internal/admin/app/instance/command"
+	instancequery "orbitjob/internal/admin/app/instance/query"
 	query "orbitjob/internal/admin/app/job/query"
 	adminhttp "orbitjob/internal/admin/http"
 	"orbitjob/internal/admin/http/middleware"
@@ -96,7 +98,22 @@ func main() {
 	changeStatusUC := command.NewChangeStatusUseCase(readRepo, writeRepo)
 	listJobsUC := query.NewListJobsUseCase(readRepo)
 	getJobUC := query.NewGetJobUseCase(readRepo)
+
+	deleteJobUC := command.NewDeleteJobUseCase(writeRepo)
+	triggerJobUC := command.NewTriggerJobUseCase(readRepo, corepostgres.NewInstanceRepository(db))
+
+	instanceReadRepo := adminpostgres.NewInstanceRepository(db)
+	instanceWriteRepo := corepostgres.NewInstanceRepository(db)
+	listInstancesUC := instancequery.NewListInstancesUseCase(instanceReadRepo)
+	getInstanceUC := instancequery.NewGetInstanceUseCase(instanceReadRepo)
+	cancelInstanceUC := instancecommand.NewCancelInstanceUseCase(instanceReadRepo, instanceWriteRepo)
+
 	handler := adminhttp.NewHandler(createJobUC, listJobsUC, getJobUC, updateJobUC, changeStatusUC)
+	handler.SetDeleteJobUseCase(deleteJobUC)
+	handler.SetTriggerJobUseCase(triggerJobUC)
+	handler.SetListInstancesUseCase(listInstancesUC)
+	handler.SetGetInstanceUseCase(getInstanceUC)
+	handler.SetCancelInstanceUseCase(cancelInstanceUC)
 	auth := middleware.NewAuth(db)
 
 	if err := newRouter(handler, auth).Run(":8080"); err != nil {

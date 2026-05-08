@@ -4,6 +4,202 @@ info:
   version: 0.1.0
   description: Code-first OpenAPI document generated from OrbitJob HTTP route metadata and DTOs.
 paths:
+  /api/v1/instances:
+    get:
+      operationId: listInstances
+      summary: List instances
+      description: List execution instances for one tenant. Optionally filter by status.
+      tags:
+      - Instances
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: status
+        in: query
+        schema:
+          type: string
+          enum:
+          - pending
+          - dispatched
+          - running
+          - retry_wait
+          - success
+          - failed
+          - canceled
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          default: 50
+          minimum: 1
+          maximum: 100
+      - name: offset
+        in: query
+        schema:
+          type: integer
+          default: 0
+          minimum: 0
+      responses:
+        "200":
+          description: Instance list
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InstanceListResponse"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/instances/{run_id}:
+    get:
+      operationId: getInstance
+      summary: Get one instance
+      description: Get one execution instance by run_id.
+      tags:
+      - Instances
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 64
+      responses:
+        "200":
+          description: Instance detail
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InstanceItem"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Instance not found
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/instances/{run_id}/cancel:
+    post:
+      operationId: cancelInstance
+      summary: Cancel one instance
+      description: Cancel a dispatched or running instance using optimistic locking by version.
+      tags:
+      - Instances
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 64
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Snapshot"
+      responses:
+        "200":
+          description: Canceled instance
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Snapshot"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/jobs:
     get:
       operationId: listJobs
@@ -293,6 +489,76 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteJob
+      summary: Delete one job
+      description: Soft-delete a job definition by setting deleted_at.
+      tags:
+      - Jobs
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      - name: tenant_id
+        in: query
+        schema:
+          type: string
+          default: default
+          maxLength: 64
+      responses:
+        "200":
+          description: Deleted job
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteResult"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Job not found
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/jobs/{id}/pause:
     post:
       operationId: pauseJob
@@ -461,6 +727,65 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: Version conflict
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/jobs/{id}/trigger:
+    post:
+      operationId: triggerJob
+      summary: Trigger a manual run
+      description: Create a manual execution instance for a job. Use X-OrbitJob-Idempotency-Key header to prevent duplicate triggers.
+      tags:
+      - Jobs
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      - name: X-OrbitJob-Idempotency-Key
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      responses:
+        "201":
+          description: Created instance
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TriggerResult"
+        "400":
+          description: Invalid request
           headers:
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
@@ -710,6 +1035,34 @@ components:
       - status
       - created_at
       - updated_at
+    DeleteResult:
+      type: object
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        status:
+          type: string
+        tenant_id:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+        version:
+          type: integer
+      required:
+      - id
+      - name
+      - tenant_id
+      - status
+      - version
+      - created_at
+      - updated_at
     ErrorResponse:
       type: object
       properties:
@@ -803,6 +1156,87 @@ components:
           type: string
       required:
       - status
+    InstanceItem:
+      type: object
+      properties:
+        attempt:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        dispatched_at:
+          type: string
+          format: date-time
+          nullable: true
+        effective_priority:
+          type: integer
+        error_msg:
+          type: string
+          nullable: true
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        job_id:
+          type: integer
+          format: int64
+        max_attempt:
+          type: integer
+        priority:
+          type: integer
+        result_code:
+          type: string
+          nullable: true
+        retry_at:
+          type: string
+          format: date-time
+          nullable: true
+        run_id:
+          type: string
+        scheduled_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+        tenant_id:
+          type: string
+        trigger_source:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+        version:
+          type: integer
+        worker_id:
+          type: string
+          nullable: true
+      required:
+      - run_id
+      - tenant_id
+      - job_id
+      - trigger_source
+      - status
+      - priority
+      - effective_priority
+      - attempt
+      - max_attempt
+      - scheduled_at
+      - created_at
+      - updated_at
+      - version
+    InstanceListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/InstanceItem"
+      required:
+      - items
     JobListResponse:
       type: object
       properties:
@@ -866,6 +1300,33 @@ components:
       - status
       - created_at
       - updated_at
+    Snapshot:
+      type: object
+    TriggerResult:
+      type: object
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        job_id:
+          type: integer
+          format: int64
+        run_id:
+          type: string
+        scheduled_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+        tenant_id:
+          type: string
+      required:
+      - run_id
+      - job_id
+      - tenant_id
+      - status
+      - scheduled_at
+      - created_at
     UpdateJobRequest:
       type: object
       properties:

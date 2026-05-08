@@ -9,7 +9,9 @@ import (
 	"github.com/gin-gonic/gin"
 
 	command "orbitjob/internal/admin/app/job/command"
+	instancequery "orbitjob/internal/admin/app/instance/query"
 	query "orbitjob/internal/admin/app/job/query"
+	domaininstance "orbitjob/internal/core/domain/instance"
 )
 
 const adminAPIPrefix = "/api/v1"
@@ -63,6 +65,7 @@ type PathItem struct {
 	Get  *Operation `json:"get,omitempty"`
 	Post *Operation `json:"post,omitempty"`
 	Put  *Operation `json:"put,omitempty"`
+	Delete *Operation `json:"delete,omitempty"`
 }
 
 type Operation struct {
@@ -134,6 +137,10 @@ type schemaRegistry struct {
 
 type traceIDHeaderRequest struct {
 	TraceID string `header:"X-Trace-ID" binding:"omitempty,max=128"`
+}
+
+type idempotencyKeyHeaderRequest struct {
+	IdempotencyKey string `header:"X-OrbitJob-Idempotency-Key" binding:"omitempty,max=128"`
 }
 
 type healthzResponse struct {
@@ -330,6 +337,100 @@ func adminAPIRoutes() []routeDefinition {
 				responses: []responseDefinition{
 					{statusCode: stdhttp.StatusCreated, description: "Created job", model: command.CreateResult{}},
 					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		{
+			method: stdhttp.MethodPost,
+			path:   "/jobs/:id/trigger",
+			enabled: func(h *Handler) bool { return h != nil && h.triggerJobUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.POST("/jobs/:id/trigger", h.TriggerJob) },
+			spec: operationDefinition{
+				id:              "triggerJob",
+				summary:         "Trigger a manual run",
+				description:     "Create a manual execution instance for a job. Use X-OrbitJob-Idempotency-Key header to prevent duplicate triggers.",
+				tags:            []string{"Jobs"},
+				parameterModels: []any{jobIDURI{}, idempotencyKeyHeaderRequest{}},
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusCreated, description: "Created instance", model: command.TriggerResult{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		{
+			method: stdhttp.MethodDelete,
+			path:   "/jobs/:id",
+			enabled: func(h *Handler) bool { return h != nil && h.deleteJobUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.DELETE("/jobs/:id", h.DeleteJob) },
+			spec: operationDefinition{
+				id:              "deleteJob",
+				summary:         "Delete one job",
+				description:     "Soft-delete a job definition by setting deleted_at.",
+				tags:            []string{"Jobs"},
+				parameterModels: []any{jobIDURI{}, tenantQueryRequest{}},
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "Deleted job", model: command.DeleteResult{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusNotFound, description: "Job not found", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		{
+			method: stdhttp.MethodGet,
+			path:   "/instances",
+			enabled: func(h *Handler) bool { return h != nil && h.listInstancesUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.GET("/instances", h.ListInstances) },
+			spec: operationDefinition{
+				id:              "listInstances",
+				summary:         "List instances",
+				description:     "List execution instances for one tenant. Optionally filter by status.",
+				tags:            []string{"Instances"},
+				parameterModels: []any{ListInstancesRequest{}},
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "Instance list", model: instanceListResponse{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		{
+			method: stdhttp.MethodGet,
+			path:   "/instances/:run_id",
+			enabled: func(h *Handler) bool { return h != nil && h.getInstanceUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.GET("/instances/:run_id", h.GetInstance) },
+			spec: operationDefinition{
+				id:              "getInstance",
+				summary:         "Get one instance",
+				description:     "Get one execution instance by run_id.",
+				tags:            []string{"Instances"},
+				parameterModels: []any{instanceRunIDURI{}},
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "Instance detail", model: instancequery.InstanceItem{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusNotFound, description: "Instance not found", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		{
+			method: stdhttp.MethodPost,
+			path:   "/instances/:run_id/cancel",
+			enabled: func(h *Handler) bool { return h != nil && h.cancelInstanceUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.POST("/instances/:run_id/cancel", h.CancelInstance) },
+			spec: operationDefinition{
+				id:                  "cancelInstance",
+				summary:             "Cancel one instance",
+				description:         "Cancel a dispatched or running instance using optimistic locking by version.",
+				tags:                []string{"Instances"},
+				parameterModels:     []any{instanceRunIDURI{}},
+				requestBodyModel:    domaininstance.Snapshot{},
+				requestBodyRequired: false,
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "Canceled instance", model: domaininstance.Snapshot{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
 					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
 				},
 			},
@@ -391,6 +492,8 @@ func setPathItemOperation(paths map[string]PathItem, path string, method string,
 		pathItem.Post = &operation
 	case stdhttp.MethodPut:
 		pathItem.Put = &operation
+	case stdhttp.MethodDelete:
+		pathItem.Delete = &operation
 	}
 
 	paths[path] = pathItem
