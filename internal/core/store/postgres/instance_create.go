@@ -7,6 +7,7 @@ import (
 
 	domaininstance "orbitjob/internal/core/domain/instance"
 	tenant "orbitjob/internal/core/domain/tenant"
+	"orbitjob/internal/platform/metrics"
 )
 
 func (r *InstanceRepository) Create(ctx context.Context, in domaininstance.CreateSpec) (domaininstance.Snapshot, error) {
@@ -99,5 +100,6 @@ func (r *InstanceRepository) Create(ctx context.Context, in domaininstance.Creat
 		return domaininstance.Snapshot{}, fmt.Errorf("insert audit event: %w", err)
 	}
 
+	metrics.InstancesTotal.WithLabelValues(in.TenantID, domaininstance.StatusPending).Inc()
 	return out, nil
 }
