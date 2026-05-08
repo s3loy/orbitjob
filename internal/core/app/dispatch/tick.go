@@ -17,6 +17,7 @@ type dispatcher interface {
 	RecoverLeaseOrphans(ctx context.Context, now time.Time) (dispatched, running int64, _ error)
 	RefreshEffectivePriority(ctx context.Context, now time.Time) (int64, error)
 	RecoverExpiredWorkers(ctx context.Context, now time.Time) (int64, error)
+	ListActiveTenantIDs(ctx context.Context) ([]string, error)
 }
 
 // TickUseCase executes one bounded dispatcher batch.
@@ -66,3 +67,7 @@ func (uc *TickUseCase) RunBatch(ctx context.Context, spec domaininstance.ClaimSp
 
 	return handled, nil
 }
+
+	func (uc *TickUseCase) ListActiveTenantIDs(ctx context.Context) ([]string, error) {
+		return uc.repo.ListActiveTenantIDs(ctx)
+	}

@@ -54,6 +54,10 @@ func (s *stubDispatcherRepo) RefreshEffectivePriority(ctx context.Context, now t
 	return 0, nil
 }
 
+func (s *stubDispatcherRepo) ListActiveTenantIDs(ctx context.Context) ([]string, error) {
+	return []string{"default"}, nil
+}
+
 func makeTestClaimSpec() domaininstance.ClaimSpec {
 	now := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
 	return domaininstance.ClaimSpec{
