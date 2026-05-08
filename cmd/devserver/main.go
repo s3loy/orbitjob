@@ -19,6 +19,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	command "orbitjob/internal/admin/app/job/command"
+	instancecommand "orbitjob/internal/admin/app/instance/command"
+	instancequery "orbitjob/internal/admin/app/instance/query"
 	query "orbitjob/internal/admin/app/job/query"
 	adminhttp "orbitjob/internal/admin/http"
 	"orbitjob/internal/admin/http/middleware"
@@ -348,6 +350,15 @@ func setupDevAdminServer(db *sql.DB) *http.Server {
 	listJobsUC := query.NewListJobsUseCase(readRepo)
 	getJobUC := query.NewGetJobUseCase(readRepo)
 	h := adminhttp.NewHandler(createJobUC, listJobsUC, getJobUC, updateJobUC, changeStatusUC)
+	deleteJobUC := command.NewDeleteJobUseCase(writeRepo)
+	triggerJobUC := command.NewTriggerJobUseCase(readRepo, corepostgres.NewInstanceRepository(db))
+	instanceReadRepo := adminpostgres.NewInstanceRepository(db)
+	instanceWriteRepo := corepostgres.NewInstanceRepository(db)
+	h.SetDeleteJobUseCase(deleteJobUC)
+	h.SetTriggerJobUseCase(triggerJobUC)
+	h.SetListInstancesUseCase(instancequery.NewListInstancesUseCase(instanceReadRepo))
+	h.SetGetInstanceUseCase(instancequery.NewGetInstanceUseCase(instanceReadRepo))
+	h.SetCancelInstanceUseCase(instancecommand.NewCancelInstanceUseCase(instanceReadRepo, instanceWriteRepo))
 	auth := middleware.NewAuth(db)
 
 	r := gin.Default()

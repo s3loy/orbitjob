@@ -32,6 +32,10 @@ func (m *benchDispatchRepo) RecoverExpiredWorkers(_ context.Context, _ time.Time
 	return 0, nil
 }
 
+func (m *benchDispatchRepo) ListActiveTenantIDs(_ context.Context) ([]string, error) {
+	return []string{"default"}, nil
+}
+
 func (m *benchDispatchRepo) RefreshEffectivePriority(_ context.Context, _ time.Time) (int64, error) {
 	return m.priorityAffected, m.priorityErr
 }

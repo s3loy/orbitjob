@@ -220,3 +220,13 @@ func cloneOptionalString(in *string) *string {
 	value := *in
 	return &value
 }
+
+type instanceRunIDURI struct {
+	RunID string `uri:"run_id" binding:"required,min=1,max=64"`
+}
+
+type ListInstancesRequest struct {
+	Status string `form:"status" binding:"omitempty,oneof=pending dispatched running retry_wait success failed canceled"`
+	Limit  int    `form:"limit" binding:"omitempty,min=1,max=100"`
+	Offset int    `form:"offset" binding:"omitempty,min=0"`
+}

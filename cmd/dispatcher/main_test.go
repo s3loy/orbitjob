@@ -51,6 +51,10 @@ func (s *stubTickRunner) RunBatch(ctx context.Context, spec domaininstance.Claim
 	return handled, err
 }
 
+func (s *stubTickRunner) ListActiveTenantIDs(_ context.Context) ([]string, error) {
+	return []string{"default"}, nil
+}
+
 func (s *stubTickRunner) callCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -152,8 +156,8 @@ func TestLoadDispatcherRuntimeConfig_Defaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadDispatcherRuntimeConfig() error = %v", err)
 	}
-	if cfg.TenantID != "default" {
-		t.Fatalf("expected default tenantID, got %q", cfg.TenantID)
+	if cfg.TenantID != "" {
+		t.Fatalf("expected empty tenantID when DISPATCHER_TENANT_ID not set, got %q", cfg.TenantID)
 	}
 	if cfg.BatchSize != 50 {
 		t.Fatalf("expected default batch size=50, got %d", cfg.BatchSize)

@@ -31,6 +31,7 @@ type runtimeConfig struct {
 
 type tickRunner interface {
 	RunBatch(ctx context.Context, spec domaininstance.ClaimSpec, limit int) (int, error)
+	ListActiveTenantIDs(ctx context.Context) ([]string, error)
 }
 
 type schedulerTicker interface {
@@ -70,9 +71,6 @@ func newWallClockTicker(interval time.Duration) schedulerTicker {
 
 func loadDispatcherRuntimeConfig() (runtimeConfig, error) {
 	tenantID := os.Getenv("DISPATCHER_TENANT_ID")
-	if tenantID == "" {
-		tenantID = "default"
-	}
 
 	batchSize, err := loadPositiveIntEnv("DISPATCHER_BATCH_SIZE", 50)
 	if err != nil {
@@ -120,6 +118,39 @@ func loadPositiveIntEnv(key string, defaultValue int) (int, error) {
 	return value, nil
 }
 
+func tenantIDs(cfg runtimeConfig, runner tickRunner, ctx context.Context) []string {
+	if cfg.TenantID != "" {
+		return []string{cfg.TenantID}
+	}
+	ids, err := runner.ListActiveTenantIDs(ctx)
+	if err != nil {
+		slog.Error("list active tenant ids failed, falling back to default", "error", err.Error())
+		return []string{"default"}
+	}
+	if len(ids) == 0 {
+		return []string{"default"}
+	}
+	return ids
+}
+
+func dispatchTick(ctx context.Context, runner tickRunner, cfg runtimeConfig, now time.Time) int {
+	var total int
+	for _, tid := range tenantIDs(cfg, runner, ctx) {
+		spec := domaininstance.ClaimSpec{
+			TenantID:       tid,
+			LeaseExpiresAt: now.Add(cfg.LeaseDuration),
+			Now:            now,
+		}
+		handled, err := runner.RunBatch(ctx, spec, cfg.BatchSize)
+		if err != nil {
+			slog.Error("dispatcher tick failed", "tenant_id", tid, "error", err.Error())
+			continue
+		}
+		total += handled
+	}
+	return total
+}
+
 func runLoop(
 	ctx context.Context,
 	runner tickRunner,
@@ -132,17 +163,8 @@ func runLoop(
 
 	for {
 		now := nowFn().UTC()
-		spec := domaininstance.ClaimSpec{
-			TenantID:       cfg.TenantID,
-			LeaseExpiresAt: now.Add(cfg.LeaseDuration),
-			Now:            now,
-		}
-		handled, err := runner.RunBatch(ctx, spec, cfg.BatchSize)
-		if err != nil {
-			slog.Error("dispatcher tick failed", "error", err.Error())
-		} else {
-			slog.Info("dispatcher tick completed", "dispatched", handled)
-		}
+		handled := dispatchTick(ctx, runner, cfg, now)
+		slog.Info("dispatcher tick completed", "dispatched", handled)
 
 		select {
 		case <-ctx.Done():
@@ -150,14 +172,7 @@ func runLoop(
 			drainCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			now := nowFn().UTC()
-			spec := domaininstance.ClaimSpec{
-				TenantID:       cfg.TenantID,
-				LeaseExpiresAt: now.Add(cfg.LeaseDuration),
-				Now:            now,
-			}
-			if handled, err := runner.RunBatch(drainCtx, spec, cfg.BatchSize); err != nil {
-				slog.Error("dispatcher drain tick failed", "error", err.Error())
-			} else {
+			if handled := dispatchTick(drainCtx, runner, cfg, now); handled > 0 {
 				slog.Info("dispatcher drain tick completed", "dispatched", handled)
 			}
 			return

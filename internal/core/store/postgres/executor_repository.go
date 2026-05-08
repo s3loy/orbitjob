@@ -11,6 +11,7 @@ import (
 	"orbitjob/internal/core/app/execute"
 	domaininstance "orbitjob/internal/core/domain/instance"
 	tenant "orbitjob/internal/core/domain/tenant"
+	"orbitjob/internal/platform/metrics"
 )
 
 var ErrInstanceNotClaimed = errors.New("instance not claimed: row not found or status changed")
@@ -122,6 +123,9 @@ func (r *ExecutorRepository) ClaimNextDispatched(
 
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit claim tx: %w", err)
+	}
+	for _, t := range tasks {
+		metrics.InstancesTotal.WithLabelValues(t.TenantID, domaininstance.StatusRunning).Inc()
 	}
 	return tasks, nil
 }
@@ -235,6 +239,7 @@ func (r *ExecutorRepository) CompleteInstance(
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit complete tx: %w", err)
 	}
+	metrics.InstancesTotal.WithLabelValues(spec.TenantID, spec.Status).Inc()
 	return nil
 }
 

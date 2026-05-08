@@ -3,12 +3,17 @@ package http
 import (
 	"context"
 	stdhttp "net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
 	command "orbitjob/internal/admin/app/job/command"
+	instancecommand "orbitjob/internal/admin/app/instance/command"
+	instancequery "orbitjob/internal/admin/app/instance/query"
 	query "orbitjob/internal/admin/app/job/query"
 	"orbitjob/internal/admin/http/middleware"
+	domaininstance "orbitjob/internal/core/domain/instance"
+	"orbitjob/internal/domain/resource"
 	"orbitjob/internal/domain/validation"
 )
 
@@ -34,8 +39,32 @@ type changeJobStatusUseCase interface {
 	Resume(ctx context.Context, in command.ChangeStatusInput) (command.ChangeStatusResult, error)
 }
 
+type deleteJobUseCase interface {
+	Delete(ctx context.Context, in command.DeleteInput) (command.DeleteResult, error)
+}
+
+type triggerJobUseCase interface {
+	Trigger(ctx context.Context, in command.TriggerInput) (command.TriggerResult, error)
+}
+
+type listInstancesUseCase interface {
+	List(ctx context.Context, in instancequery.ListInstancesInput) ([]instancequery.InstanceItem, error)
+}
+
+type getInstanceUseCase interface {
+	Get(ctx context.Context, runID string) (*instancequery.InstanceItem, error)
+}
+
+type cancelInstanceUseCase interface {
+	Cancel(ctx context.Context, in instancecommand.CancelInstanceInput) (domaininstance.Snapshot, error)
+}
+
 type jobListResponse struct {
 	Items []query.ListItem `json:"items"`
+}
+
+type instanceListResponse struct {
+	Items []instancequery.InstanceItem `json:"items"`
 }
 
 type errorResponse struct {
@@ -44,11 +73,16 @@ type errorResponse struct {
 
 // Handler wires HTTP endpoints to application use cases.
 type Handler struct {
-	createJobUC createJobUseCase
-	listJobsUC  listJobsUseCase
-	getJobUC    getJobUseCase
-	updateJobUC updateJobUseCase
-	statusJobUC changeJobStatusUseCase
+	createJobUC      createJobUseCase
+	listJobsUC       listJobsUseCase
+	getJobUC         getJobUseCase
+	updateJobUC      updateJobUseCase
+	statusJobUC      changeJobStatusUseCase
+	deleteJobUC      deleteJobUseCase
+	triggerJobUC     triggerJobUseCase
+	listInstancesUC  listInstancesUseCase
+	getInstanceUC    getInstanceUseCase
+	cancelInstanceUC cancelInstanceUseCase
 }
 
 func NewHandler(
@@ -66,6 +100,12 @@ func NewHandler(
 		statusJobUC: statusJobUC,
 	}
 }
+
+func (h *Handler) SetDeleteJobUseCase(uc deleteJobUseCase)        { h.deleteJobUC = uc }
+func (h *Handler) SetTriggerJobUseCase(uc triggerJobUseCase)       { h.triggerJobUC = uc }
+func (h *Handler) SetListInstancesUseCase(uc listInstancesUseCase) { h.listInstancesUC = uc }
+func (h *Handler) SetGetInstanceUseCase(uc getInstanceUseCase)     { h.getInstanceUC = uc }
+func (h *Handler) SetCancelInstanceUseCase(uc cancelInstanceUseCase) { h.cancelInstanceUC = uc }
 
 // Register mounts HTTP routes for the admin API.
 func (h *Handler) Register(r gin.IRouter) {
@@ -302,6 +342,147 @@ func (h *Handler) changeJobStatus(c *gin.Context, action string) {
 			writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
 			return
 		}
+	}
+
+	c.JSON(stdhttp.StatusOK, out)
+}
+
+const idempotencyKeyHeader = "X-OrbitJob-Idempotency-Key"
+
+func parseIdempotencyKey(c *gin.Context) *string {
+	key := strings.TrimSpace(c.GetHeader(idempotencyKeyHeader))
+	if key == "" {
+		return nil
+	}
+	return &key
+}
+
+// TriggerJob handles manual trigger requests.
+func (h *Handler) TriggerJob(c *gin.Context) {
+	var pathReq jobIDURI
+	if err := c.ShouldBindUri(&pathReq); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	tenantID := middleware.GetTenantID(c)
+	in := command.TriggerInput{
+		JobID:    pathReq.ID,
+		TenantID: tenantID,
+	}
+
+	reqCtx := c.Request.Context()
+	if key := parseIdempotencyKey(c); key != nil {
+		reqCtx = middleware.WithIdempotencyKey(reqCtx, *key)
+	}
+
+	out, err := h.triggerJobUC.Trigger(reqCtx, in)
+	if err != nil {
+		_ = c.Error(err)
+		writeAPIError(c, stdhttp.StatusInternalServerError, toAPIError(err))
+		return
+	}
+
+	c.JSON(stdhttp.StatusCreated, out)
+}
+
+// DeleteJob handles soft-delete requests.
+func (h *Handler) DeleteJob(c *gin.Context) {
+	var pathReq jobIDURI
+	if err := c.ShouldBindUri(&pathReq); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	tenantID := middleware.GetTenantID(c)
+	out, err := h.deleteJobUC.Delete(c.Request.Context(), command.DeleteInput{
+		ID:       pathReq.ID,
+		TenantID: tenantID,
+	})
+	if err != nil {
+		apiErr := toAPIError(err)
+		if apiErr.Code == ErrCodeNotFound {
+			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
+			return
+		}
+		_ = c.Error(err)
+		writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
+		return
+	}
+
+	c.JSON(stdhttp.StatusOK, out)
+}
+
+// ListInstances handles instance listing queries.
+func (h *Handler) ListInstances(c *gin.Context) {
+	var req ListInstancesRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	tenantID := middleware.GetTenantID(c)
+	out, err := h.listInstancesUC.List(c.Request.Context(), instancequery.ListInstancesInput{
+		TenantID: tenantID,
+		Status:   req.Status,
+		Limit:    req.Limit,
+		Offset:   req.Offset,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		writeAPIError(c, stdhttp.StatusInternalServerError, toAPIError(err))
+		return
+	}
+
+	c.JSON(stdhttp.StatusOK, instanceListResponse{Items: out})
+}
+
+// GetInstance handles instance detail query by run_id.
+func (h *Handler) GetInstance(c *gin.Context) {
+	var pathReq instanceRunIDURI
+	if err := c.ShouldBindUri(&pathReq); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	out, err := h.getInstanceUC.Get(c.Request.Context(), pathReq.RunID)
+	if err != nil {
+		if _, ok := err.(*resource.NotFoundError); ok {
+			writeAPIError(c, stdhttp.StatusNotFound, toAPIError(err))
+			return
+		}
+		_ = c.Error(err)
+		writeAPIError(c, stdhttp.StatusInternalServerError, toAPIError(err))
+		return
+	}
+
+	c.JSON(stdhttp.StatusOK, out)
+}
+
+// CancelInstance handles instance cancellation requests.
+func (h *Handler) CancelInstance(c *gin.Context) {
+	var pathReq instanceRunIDURI
+	if err := c.ShouldBindUri(&pathReq); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	var body struct {
+		Version int `json:"version" binding:"required,min=1"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	out, err := h.cancelInstanceUC.Cancel(c.Request.Context(), instancecommand.CancelInstanceInput{
+		RunID:   pathReq.RunID,
+		Version: body.Version,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		writeAPIError(c, stdhttp.StatusInternalServerError, toAPIError(err))
+		return
 	}
 
 	c.JSON(stdhttp.StatusOK, out)
