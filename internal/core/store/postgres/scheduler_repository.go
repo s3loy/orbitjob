@@ -86,6 +86,16 @@ func (r *SchedulerRepository) ScheduleOneDueCron(
 			return schedule.ScheduledOneResult{}, false, fmt.Errorf("scheduled_at is required when CreateInstance=true")
 		}
 
+			if exceeded, err := checkConcurrentInstanceQuota(ctx, tx, job.TenantID); err != nil {
+				return schedule.ScheduledOneResult{}, false, err
+			} else if exceeded {
+				if rbErr := tx.Rollback(); rbErr != nil {
+					return schedule.ScheduledOneResult{}, false, fmt.Errorf("rollback on quota exceeded: %w", rbErr)
+				}
+				return schedule.ScheduledOneResult{Created: false}, false, nil
+			}
+
+
 		runID, traceID, err = insertScheduledInstance(ctx, tx, job, *decision.ScheduledAt)
 		if err != nil {
 			return schedule.ScheduledOneResult{}, false, err
@@ -239,4 +249,51 @@ func updateJobScheduleCursor(
 	}
 
 	return nil
+}
+
+func checkConcurrentInstanceQuota(ctx context.Context, tx *sql.Tx, tenantID string) (bool, error) {
+	var raw []byte
+	err := tx.QueryRowContext(ctx, `SELECT quotas FROM tenants WHERE id = $1`, tenantID).Scan(&raw)
+	if err != nil {
+		return false, fmt.Errorf("read tenant quotas: %w", err)
+	}
+	if len(raw) == 0 {
+		return false, nil
+	}
+	var quotas map[string]any
+	if err := json.Unmarshal(raw, &quotas); err != nil {
+		return false, fmt.Errorf("unmarshal tenant quotas: %w", err)
+	}
+	v, ok := quotas["max_concurrent_instances"]
+	if !ok {
+		return false, nil
+	}
+	maxConc, ok := toFloatInt(v)
+	if !ok || maxConc <= 0 {
+		return false, nil
+	}
+	var count int
+	err = tx.QueryRowContext(ctx, `
+		SELECT count(*) FROM job_instances
+		WHERE tenant_id = $1 AND status IN ('pending', 'retry_wait', 'dispatched', 'running')
+	`, tenantID).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("count concurrent instances: %w", err)
+	}
+	return count >= maxConc, nil
+}
+
+func toFloatInt(v any) (int, bool) {
+	switch x := v.(type) {
+	case float64:
+		return int(x), true
+	case float32:
+		return int(x), true
+	case int:
+		return x, true
+	case int64:
+		return int(x), true
+	default:
+		return 0, false
+	}
 }

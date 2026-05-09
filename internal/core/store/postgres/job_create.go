@@ -118,3 +118,16 @@ func (r *JobRepository) Create(ctx context.Context, in domainjob.CreateSpec) (do
 
 	return out, nil
 }
+
+// CountActiveByTenant returns the number of non-deleted jobs for a tenant.
+func (r *JobRepository) CountActiveByTenant(ctx context.Context, tenantID string) (int, error) {
+	var count int
+	err := r.db.QueryRowContext(ctx, `
+		SELECT count(*) FROM jobs
+		WHERE tenant_id = $1 AND deleted_at IS NULL
+	`, tenantID).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count active jobs: %w", err)
+	}
+	return count, nil
+}

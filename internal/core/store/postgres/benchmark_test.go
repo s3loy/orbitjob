@@ -115,7 +115,7 @@ func BenchmarkClaimNextDispatched(b *testing.B) {
 		benchSeedDispatchedInstance(b, db, "tenant-claim", jobID, 5, now.Add(-time.Minute))
 		b.StartTimer()
 
-		_, _ = repo.ClaimNextDispatched(context.Background(), "tenant-claim", "worker-1", 1, leaseExpiresAt, now)
+		_, _ = repo.ClaimNextDispatched(context.Background(), "tenant-claim", "worker-1", 1, leaseExpiresAt, now, nil)
 	}
 }
 
@@ -161,7 +161,7 @@ func BenchmarkClaimNextDispatched_Concurrent(b *testing.B) {
 			b.RunParallel(func(pb *testing.PB) {
 				workerID := fmt.Sprintf("worker-%d", atomic.AddInt64(&total, 1)%int64(sz.workers))
 				for pb.Next() {
-					tasks, _ := repo.ClaimNextDispatched(context.Background(), "tenant-conc", workerID, 10, leaseExpiresAt, now)
+					tasks, _ := repo.ClaimNextDispatched(context.Background(), "tenant-conc", workerID, 10, leaseExpiresAt, now, nil)
 					atomic.AddInt64(&total, int64(len(tasks)))
 				}
 			})

@@ -344,7 +344,7 @@ func runDevHeartbeat(ctx context.Context, wg *sync.WaitGroup, db *sql.DB, cfg de
 func setupDevAdminServer(db *sql.DB) *http.Server {
 	writeRepo := corepostgres.NewJobRepository(db)
 	readRepo := adminpostgres.NewJobRepository(db)
-	createJobUC := command.NewCreateJobUseCase(writeRepo)
+	createJobUC := command.NewCreateJobUseCase(writeRepo, readRepo)
 	updateJobUC := command.NewUpdateJobUseCase(writeRepo)
 	changeStatusUC := command.NewChangeStatusUseCase(readRepo, writeRepo)
 	listJobsUC := query.NewListJobsUseCase(readRepo)

@@ -10,6 +10,11 @@ import (
 
 type jobCreator interface {
 	Create(ctx context.Context, in domainjob.CreateSpec) (domainjob.Snapshot, error)
+	CountActiveByTenant(ctx context.Context, tenantID string) (int, error)
+}
+
+type tenantQuotaReader interface {
+	GetQuota(ctx context.Context, tenantID string) (map[string]any, error)
 }
 
 type clock interface {
@@ -23,18 +28,36 @@ func (realClock) Now() time.Time {
 }
 
 type CreateJobUseCase struct {
-	repo  jobCreator
-	clock clock
+	repo       jobCreator
+	quotaReader tenantQuotaReader
+	clock      clock
 }
 
-func NewCreateJobUseCase(repo jobCreator) *CreateJobUseCase {
+func NewCreateJobUseCase(repo jobCreator, quotaReader tenantQuotaReader) *CreateJobUseCase {
 	return &CreateJobUseCase{
-		repo:  repo,
-		clock: realClock{},
+		repo:        repo,
+		quotaReader: quotaReader,
+		clock:       realClock{},
 	}
 }
 
 func (uc *CreateJobUseCase) Create(ctx context.Context, in CreateInput) (CreateResult, error) {
+	if uc.quotaReader != nil {
+		quotas, err := uc.quotaReader.GetQuota(ctx, in.TenantID)
+		if err != nil {
+			return CreateResult{}, err
+		}
+		if maxJobs, ok := getMaxJobs(quotas); ok {
+			count, err := uc.repo.CountActiveByTenant(ctx, in.TenantID)
+			if err != nil {
+				return CreateResult{}, err
+			}
+			if count >= maxJobs {
+				return CreateResult{}, domainjob.NewQuotaExceededError("max_jobs", maxJobs)
+			}
+		}
+	}
+
 	spec, err := domainjob.NormalizeCreate(uc.clock.Now(), domainjob.CreateInput{
 		Name:                 in.Name,
 		TenantID:             in.TenantID,
@@ -70,4 +93,34 @@ func (uc *CreateJobUseCase) Create(ctx context.Context, in CreateInput) (CreateR
 		CreatedAt: out.CreatedAt,
 		UpdatedAt: out.UpdatedAt,
 	}, err
+}
+
+func getMaxJobs(quotas map[string]any) (int, bool) {
+	if quotas == nil {
+		return 0, false
+	}
+	v, ok := quotas["max_jobs"]
+	if !ok {
+		return 0, false
+	}
+	n, ok := toFloatInt(v)
+	if !ok || n <= 0 {
+		return 0, false
+	}
+	return n, true
+}
+
+func toFloatInt(v any) (int, bool) {
+	switch x := v.(type) {
+	case float64:
+		return int(x), true
+	case float32:
+		return int(x), true
+	case int:
+		return x, true
+	case int64:
+		return int(x), true
+	default:
+		return 0, false
+	}
 }
