@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/lib/pq"
+
 	"orbitjob/internal/core/app/execute"
 	domaininstance "orbitjob/internal/core/domain/instance"
 	tenant "orbitjob/internal/core/domain/tenant"
@@ -29,6 +31,7 @@ func (r *ExecutorRepository) ClaimNextDispatched(
 	tenantID, workerID string,
 	limit int,
 	leaseExpiresAt, now time.Time,
+	labels map[string]any,
 ) ([]execute.AssignedTask, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -45,11 +48,14 @@ func (r *ExecutorRepository) ClaimNextDispatched(
 		return nil, fmt.Errorf("set tenant context: %w", err)
 	}
 
+	labelValues := labelValueList(labels)
+
 	rows, err := tx.QueryContext(ctx, `
 		WITH claimed AS (
 			SELECT id FROM job_instances
 			WHERE tenant_id = $1
 			  AND status = 'dispatched'
+				  AND (routing_key IS NULL OR routing_key = ANY($6::text[]))
 			ORDER BY effective_priority DESC, scheduled_at ASC, id ASC
 			LIMIT $2
 			FOR UPDATE SKIP LOCKED
@@ -76,7 +82,7 @@ func (r *ExecutorRepository) ClaimNextDispatched(
 		       u.scheduled_at, u.dispatched_at, u.lease_expires_at
 		FROM updated u
 		JOIN jobs j ON u.tenant_id = j.tenant_id AND u.job_id = j.id
-	`, tenantID, limit, workerID, now, leaseExpiresAt)
+	`, tenantID, limit, workerID, now, leaseExpiresAt, pq.Array(labelValues))
 	if err != nil {
 		return nil, fmt.Errorf("claim dispatched instances: %w", err)
 	}
@@ -348,4 +354,19 @@ func scanAssignedTask(scanner rowScanner) (execute.AssignedTask, error) {
 	}
 
 	return task, nil
+}
+
+func labelValueList(labels map[string]any) []string {
+	if len(labels) == 0 {
+		return nil
+	}
+	values := make([]string, 0, len(labels))
+	for _, v := range labels {
+		s, ok := v.(string)
+		if !ok {
+			continue
+		}
+		values = append(values, s)
+	}
+	return values
 }

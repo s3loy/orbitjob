@@ -291,7 +291,7 @@ func runDevWorker(ctx context.Context, wg *sync.WaitGroup, db *sql.DB, cfg devWo
 }
 
 func runDevWorkerOnce(ctx context.Context, runner *execute.TickUseCase, cfg devWorkerConfig) {
-	n, err := runner.RunOnce(ctx, cfg.TenantID, cfg.WorkerID, cfg.Capacity, cfg.LeaseDuration)
+	n, err := runner.RunOnce(ctx, cfg.TenantID, cfg.WorkerID, cfg.Capacity, cfg.LeaseDuration, nil)
 	if err != nil {
 		slog.Error("worker tick failed", "error", err)
 	} else if n > 0 {

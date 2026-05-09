@@ -36,7 +36,7 @@ func TestClaimNextDispatched_Integration_ClaimsDispatched(t *testing.T) {
 		ScheduledAt: now.Add(-time.Minute),
 	})
 
-	tasks, err := repo.ClaimNextDispatched(context.Background(),
+	tasks, err := repo.ClaimNextDispatched(context.Background(, nil),
 		"tenant-exec-claim", "worker-1", 10,
 		now.Add(30*time.Second), now,
 	)
@@ -76,7 +76,7 @@ func TestClaimNextDispatched_Integration_OnlyClaimsDispatchedStatus(t *testing.T
 		ScheduledAt: now.Add(-time.Minute),
 	})
 
-	tasks, err := repo.ClaimNextDispatched(context.Background(),
+	tasks, err := repo.ClaimNextDispatched(context.Background(, nil),
 		"tenant-exec-status", "worker-1", 10,
 		now.Add(30*time.Second), now,
 	)
@@ -106,7 +106,7 @@ func TestClaimNextDispatched_Integration_TransitionsToRunning(t *testing.T) {
 		ScheduledAt: now.Add(-time.Minute),
 	})
 
-	_, err := repo.ClaimNextDispatched(context.Background(),
+	_, err := repo.ClaimNextDispatched(context.Background(, nil),
 		"tenant-exec-trans", "worker-1", 10,
 		now.Add(30*time.Second), now,
 	)
@@ -136,7 +136,7 @@ func TestClaimNextDispatched_Integration_AlreadyClaimedReturnsEmpty(t *testing.T
 		ScheduledAt: now.Add(-time.Minute),
 	})
 
-	tasks, err := repo.ClaimNextDispatched(context.Background(),
+	tasks, err := repo.ClaimNextDispatched(context.Background(, nil),
 		"tenant-exec-empty", "worker-1", 10,
 		now.Add(30*time.Second), now,
 	)
@@ -147,7 +147,7 @@ func TestClaimNextDispatched_Integration_AlreadyClaimedReturnsEmpty(t *testing.T
 		t.Fatalf("expected 1 task on first claim, got %d", len(tasks))
 	}
 
-	tasks, err = repo.ClaimNextDispatched(context.Background(),
+	tasks, err = repo.ClaimNextDispatched(context.Background(, nil),
 		"tenant-exec-empty", "worker-2", 10,
 		now.Add(60*time.Second), now,
 	)

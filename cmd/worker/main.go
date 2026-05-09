@@ -37,7 +37,7 @@ type runtimeConfig struct {
 }
 
 type tickRunner interface {
-	RunOnce(ctx context.Context, tenantID, workerID string, limit int, leaseDuration time.Duration) (int, error)
+	RunOnce(ctx context.Context, tenantID, workerID string, limit int, leaseDuration time.Duration, labels map[string]any) (int, error)
 }
 
 type heartbeater interface {
@@ -175,7 +175,7 @@ func runLoop(
 	defer ticker.Stop()
 
 	for {
-		n, err := runner.RunOnce(ctx, cfg.TenantID, cfg.WorkerID, cfg.Capacity, cfg.LeaseDuration)
+		n, err := runner.RunOnce(ctx, cfg.TenantID, cfg.WorkerID, cfg.Capacity, cfg.LeaseDuration, nil)
 		if err != nil {
 			slog.Error("worker tick failed", "error", err.Error())
 		} else if n > 0 {

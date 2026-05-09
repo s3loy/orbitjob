@@ -13,7 +13,7 @@ import (
 )
 
 type executor interface {
-	ClaimNextDispatched(ctx context.Context, tenantID, workerID string, limit int, leaseExpiresAt, now time.Time) ([]AssignedTask, error)
+	ClaimNextDispatched(ctx context.Context, tenantID, workerID string, limit int, leaseExpiresAt, now time.Time, labels map[string]any) ([]AssignedTask, error)
 	CompleteInstance(ctx context.Context, spec domaininstance.CompleteSpec) error
 	ExtendLease(ctx context.Context, tenantID string, instanceID int64, workerID string, newExpiry time.Time) error
 }
@@ -31,6 +31,7 @@ func (uc *TickUseCase) RunOnce(
 	ctx context.Context,
 	tenantID, workerID string,
 	limit int, leaseDuration time.Duration,
+	labels map[string]any,
 ) (int, error) {
 	if limit <= 0 {
 		return 0, nil
@@ -39,7 +40,7 @@ func (uc *TickUseCase) RunOnce(
 	now := time.Now().UTC()
 	leaseExpiresAt := now.Add(leaseDuration)
 
-	tasks, err := uc.repo.ClaimNextDispatched(ctx, tenantID, workerID, limit, leaseExpiresAt, now)
+	tasks, err := uc.repo.ClaimNextDispatched(ctx, tenantID, workerID, limit, leaseExpiresAt, now, labels)
 	if err != nil {
 		return 0, fmt.Errorf("claim dispatched: %w", err)
 	}
