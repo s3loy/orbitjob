@@ -253,7 +253,7 @@ func updateJobScheduleCursor(
 
 func checkConcurrentInstanceQuota(ctx context.Context, tx *sql.Tx, tenantID string) (bool, error) {
 	var raw []byte
-	err := tx.QueryRowContext(ctx, `SELECT quotas FROM tenants WHERE id = $1`, tenantID).Scan(&raw)
+	err := tx.QueryRowContext(ctx, `SELECT quotas FROM tenants WHERE id = $1 FOR UPDATE`, tenantID).Scan(&raw)
 	if err != nil {
 		return false, fmt.Errorf("read tenant quotas: %w", err)
 	}

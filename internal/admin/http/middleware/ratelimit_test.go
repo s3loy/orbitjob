@@ -73,25 +73,39 @@ func TestRateLimiter_SeparateTenants(t *testing.T) {
 	rl := NewRateLimiter()
 
 	r := gin.New()
-	r.Use(func(c *gin.Context) {
-		// tenant comes from context via middleware/context.go
-		c.Next()
-	})
 	r.Use(rl.Middleware())
 	r.POST("/api/v1/jobs", func(c *gin.Context) {
 		c.Status(http.StatusCreated)
 	})
 
-	// Exhaust tenant-a
+	// Exhaust tenant-a (inject via context)
 	for i := 0; i < 10; i++ {
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest("POST", "/api/v1/jobs", nil)
+		req = req.WithContext(WithTenantID(req.Context(), "tenant-a", TenantSourceHeader))
 		r.ServeHTTP(w, req)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("tenant-a request %d: expected 201, got %d", i, w.Code)
+		}
 	}
 
-	// tenant-b should still be allowed (different tenant, independent bucket)
-	// Note: default tenant for unauthenticated is "default", so both are same.
-	// This test verifies the mechanism works per-tenant.
+	// tenant-a should be blocked
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/jobs", nil)
+	req = req.WithContext(WithTenantID(req.Context(), "tenant-a", TenantSourceHeader))
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("tenant-a 11th request: expected 429, got %d", w.Code)
+	}
+
+	// tenant-b should still be allowed (separate bucket)
+	w2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest("POST", "/api/v1/jobs", nil)
+	req2 = req2.WithContext(WithTenantID(req2.Context(), "tenant-b", TenantSourceHeader))
+	r.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusCreated {
+		t.Fatalf("tenant-b first request: expected 201, got %d", w2.Code)
+	}
 }
 
 func TestRateLimiter_PublicEndpointsAlwaysAllowed(t *testing.T) {

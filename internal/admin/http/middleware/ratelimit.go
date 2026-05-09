@@ -100,9 +100,8 @@ func (rl *RateLimiter) Middleware() gin.HandlerFunc {
 
 		tenantID := GetTenantID(c)
 		cfg := rl.limits[group]
-		bucket := rl.getBucket(group, tenantID, cfg)
 
-		if !bucket.allow(cfg) {
+		if !rl.tryAllow(group, tenantID, cfg) {
 			metrics.RateLimitHits.WithLabelValues(tenantID, string(group)).Inc()
 			c.Header("Retry-After", "1")
 			c.AbortWithStatus(429)
@@ -130,7 +129,7 @@ func classifyEndpoint(method, path string) endpointGroup {
 	return groupWrite
 }
 
-func (rl *RateLimiter) getBucket(group endpointGroup, tenantID string, cfg groupConfig) *tokenBucket {
+func (rl *RateLimiter) tryAllow(group endpointGroup, tenantID string, cfg groupConfig) bool {
 	now := time.Now()
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
@@ -149,21 +148,17 @@ func (rl *RateLimiter) getBucket(group endpointGroup, tenantID string, cfg group
 		}
 		groupBuckets[tenantID] = bucket
 	}
-	bucket.lastUsed = now
-	return bucket
-}
 
-func (b *tokenBucket) allow(cfg groupConfig) bool {
-	now := time.Now()
-	elapsed := now.Sub(b.lastTime).Seconds()
-	b.tokens += elapsed * float64(cfg.rps)
-	if b.tokens > float64(cfg.burst) {
-		b.tokens = float64(cfg.burst)
+	elapsed := now.Sub(bucket.lastTime).Seconds()
+	bucket.tokens += elapsed * float64(cfg.rps)
+	if bucket.tokens > float64(cfg.burst) {
+		bucket.tokens = float64(cfg.burst)
 	}
-	b.lastTime = now
+	bucket.lastTime = now
+	bucket.lastUsed = now
 
-	if b.tokens >= 1.0 {
-		b.tokens--
+	if bucket.tokens >= 1.0 {
+		bucket.tokens--
 		return true
 	}
 	return false
