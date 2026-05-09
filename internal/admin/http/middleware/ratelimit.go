@@ -1,0 +1,187 @@
+package middleware
+
+import (
+	"os"
+	"strconv"
+	"sync"
+	"time"
+
+	"github.com/gin-gonic/gin"
+
+	"orbitjob/internal/platform/metrics"
+)
+
+type endpointGroup string
+
+const (
+	groupRead    endpointGroup = "read"
+	groupWrite   endpointGroup = "write"
+	groupTrigger endpointGroup = "trigger"
+	groupAdmin   endpointGroup = "admin"
+	groupPublic  endpointGroup = "public"
+)
+
+type groupConfig struct {
+	rps   int
+	burst int
+}
+
+var defaultLimits = map[endpointGroup]groupConfig{
+	groupRead:    {rps: 100, burst: 100},
+	groupWrite:   {rps: 10, burst: 10},
+	groupTrigger: {rps: 5, burst: 5},
+	groupAdmin:   {rps: 5, burst: 5},
+}
+
+// RateLimiter implements per-tenant, per-endpoint-group token bucket rate limiting.
+type RateLimiter struct {
+	limits  map[endpointGroup]groupConfig
+	mu      sync.Mutex
+	buckets map[endpointGroup]map[string]*tokenBucket
+}
+
+type tokenBucket struct {
+	tokens   float64
+	lastTime time.Time
+	lastUsed time.Time
+}
+
+func NewRateLimiter() *RateLimiter {
+	limits := make(map[endpointGroup]groupConfig, len(defaultLimits))
+	for g, c := range defaultLimits {
+		limits[g] = groupConfig{
+			rps:   loadEnvInt(groupEnvKey(g), c.rps),
+			burst: loadEnvInt(groupEnvKey(g), c.burst),
+		}
+	}
+	rl := &RateLimiter{
+		limits:  limits,
+		buckets: make(map[endpointGroup]map[string]*tokenBucket),
+	}
+	go rl.reapLoop(30 * time.Minute)
+	return rl
+}
+
+func groupEnvKey(g endpointGroup) string {
+	switch g {
+	case groupRead:
+		return "RATELIMIT_READ_RPS"
+	case groupWrite:
+		return "RATELIMIT_WRITE_RPS"
+	case groupTrigger:
+		return "RATELIMIT_TRIGGER_RPS"
+	case groupAdmin:
+		return "RATELIMIT_ADMIN_RPS"
+	default:
+		return ""
+	}
+}
+
+func loadEnvInt(key string, fallback int) int {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil || v < 1 {
+		return fallback
+	}
+	return v
+}
+
+// Middleware returns a gin middleware that enforces per-tenant rate limits.
+func (rl *RateLimiter) Middleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		group := classifyEndpoint(c.Request.Method, c.FullPath())
+		if group == groupPublic {
+			c.Next()
+			return
+		}
+
+		tenantID := GetTenantID(c)
+		cfg := rl.limits[group]
+		bucket := rl.getBucket(group, tenantID, cfg)
+
+		if !bucket.allow(cfg) {
+			metrics.RateLimitHits.WithLabelValues(tenantID, string(group)).Inc()
+			c.Header("Retry-After", "1")
+			c.AbortWithStatus(429)
+			return
+		}
+
+		metrics.RateLimitPassed.WithLabelValues(tenantID, string(group)).Inc()
+		c.Next()
+	}
+}
+
+func classifyEndpoint(method, path string) endpointGroup {
+	switch path {
+	case "/healthz", "/openapi.json", "/metrics":
+		return groupPublic
+	case "/api/v1/jobs/:id/trigger":
+		return groupTrigger
+	case "/api/v1/instances/:run_id/cancel":
+		return groupAdmin
+	}
+
+	if method == "GET" || method == "HEAD" {
+		return groupRead
+	}
+	return groupWrite
+}
+
+func (rl *RateLimiter) getBucket(group endpointGroup, tenantID string, cfg groupConfig) *tokenBucket {
+	now := time.Now()
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	groupBuckets, ok := rl.buckets[group]
+	if !ok {
+		groupBuckets = make(map[string]*tokenBucket)
+		rl.buckets[group] = groupBuckets
+	}
+
+	bucket, ok := groupBuckets[tenantID]
+	if !ok {
+		bucket = &tokenBucket{
+			tokens:   float64(cfg.burst),
+			lastTime: now,
+		}
+		groupBuckets[tenantID] = bucket
+	}
+	bucket.lastUsed = now
+	return bucket
+}
+
+func (b *tokenBucket) allow(cfg groupConfig) bool {
+	now := time.Now()
+	elapsed := now.Sub(b.lastTime).Seconds()
+	b.tokens += elapsed * float64(cfg.rps)
+	if b.tokens > float64(cfg.burst) {
+		b.tokens = float64(cfg.burst)
+	}
+	b.lastTime = now
+
+	if b.tokens >= 1.0 {
+		b.tokens--
+		return true
+	}
+	return false
+}
+
+func (rl *RateLimiter) reapLoop(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for range ticker.C {
+		rl.mu.Lock()
+		cutoff := time.Now().Add(-interval)
+		for _, groupBuckets := range rl.buckets {
+			for tid, entry := range groupBuckets {
+				if entry.lastUsed.Before(cutoff) {
+					delete(groupBuckets, tid)
+				}
+			}
+		}
+		rl.mu.Unlock()
+	}
+}

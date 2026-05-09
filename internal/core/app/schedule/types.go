@@ -7,6 +7,7 @@ type ScheduledOneResult struct {
 	JobID     int64
 	TenantID  string
 	RunID     string
+	TraceID   string
 	Created   bool
 	NextRunAt *time.Time
 }

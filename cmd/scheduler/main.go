@@ -18,6 +18,7 @@ import (
 	corepostgres "orbitjob/internal/core/store/postgres"
 	"orbitjob/internal/platform/config"
 	platformlogger "orbitjob/internal/platform/logger"
+	"orbitjob/internal/platform/metrics"
 )
 
 type runtimeConfig struct {
@@ -116,23 +117,32 @@ func runLoop(
 	defer ticker.Stop()
 
 	for {
-		now := nowFn().UTC()
+		start := time.Now()
+		now := start.UTC()
 		handled, err := runner.RunBatch(ctx, now, cfg.BatchSize)
+		metrics.SchedulerTickDuration.Observe(time.Since(start).Seconds())
+
 		if err != nil {
+			metrics.SchedulerCronErrors.Inc()
 			slog.Error("scheduler tick failed", "error", err.Error())
 		} else {
+			metrics.SchedulerInstancesCreated.Add(float64(handled))
 			slog.Info("scheduler tick completed", "handled_due_jobs", handled)
 		}
 
 		select {
 		case <-ctx.Done():
 			slog.Info("scheduler draining, running final tick")
+			drainStart := time.Now()
 			drainCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			now := nowFn().UTC()
 			if handled, err := runner.RunBatch(drainCtx, now, cfg.BatchSize); err != nil {
+				metrics.SchedulerCronErrors.Inc()
 				slog.Error("scheduler drain tick failed", "error", err.Error())
 			} else {
+				metrics.SchedulerTickDuration.Observe(time.Since(drainStart).Seconds())
+				metrics.SchedulerInstancesCreated.Add(float64(handled))
 				slog.Info("scheduler drain tick completed", "handled_due_jobs", handled)
 			}
 			return

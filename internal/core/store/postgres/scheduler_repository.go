@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
+
 	"orbitjob/internal/core/app/schedule"
 	tenant "orbitjob/internal/core/domain/tenant"
 )
@@ -78,13 +80,13 @@ func (r *SchedulerRepository) ScheduleOneDueCron(
 		return schedule.ScheduledOneResult{}, false, fmt.Errorf("decide schedule policy: %w", err)
 	}
 
-	var runID string
+	var runID, traceID string
 	if decision.CreateInstance {
 		if decision.ScheduledAt == nil {
 			return schedule.ScheduledOneResult{}, false, fmt.Errorf("scheduled_at is required when CreateInstance=true")
 		}
 
-		runID, err = insertScheduledInstance(ctx, tx, job, *decision.ScheduledAt)
+		runID, traceID, err = insertScheduledInstance(ctx, tx, job, *decision.ScheduledAt)
 		if err != nil {
 			return schedule.ScheduledOneResult{}, false, err
 		}
@@ -126,6 +128,7 @@ func (r *SchedulerRepository) ScheduleOneDueCron(
 		JobID:     job.ID,
 		TenantID:  job.TenantID,
 		RunID:     runID,
+		TraceID:   traceID,
 		Created:   decision.CreateInstance,
 		NextRunAt: decision.NextRunAt,
 	}, true, nil
@@ -170,8 +173,9 @@ func claimOneDueCronJob(ctx context.Context, tx *sql.Tx, now time.Time) (dueCron
 	return out, true, nil
 }
 
-func insertScheduledInstance(ctx context.Context, tx *sql.Tx, job dueCronJobRecord, scheduledAt time.Time) (string, error) {
+func insertScheduledInstance(ctx context.Context, tx *sql.Tx, job dueCronJobRecord, scheduledAt time.Time) (string, string, error) {
 	maxAttempt := job.RetryLimit + 1
+	traceID := uuid.New().String()
 
 	var runID string
 	err := tx.QueryRowContext(ctx, `
@@ -186,9 +190,10 @@ func insertScheduledInstance(ctx context.Context, tx *sql.Tx, job dueCronJobReco
 			partition_key,
 			idempotency_scope,
 			attempt,
-			max_attempt
+			max_attempt,
+				trace_id
 		)
-		VALUES ($1, $2, 'schedule', $3, 'pending', $4, $4, $5, 'job_instance_create', 1, $6)
+		VALUES ($1, $2, 'schedule', $3, 'pending', $4, $4, $5, 'job_instance_create', 1, $6, $7)
 		RETURNING run_id::text
 	`,
 		job.TenantID,
@@ -197,12 +202,13 @@ func insertScheduledInstance(ctx context.Context, tx *sql.Tx, job dueCronJobReco
 		job.Priority,
 		job.PartitionKey,
 		maxAttempt,
+			traceID,
 	).Scan(&runID)
 	if err != nil {
-		return "", fmt.Errorf("insert scheduled instance: %w", err)
+		return "", "", fmt.Errorf("insert scheduled instance: %w", err)
 	}
 
-	return runID, nil
+	return runID, traceID, nil
 }
 
 func updateJobScheduleCursor(

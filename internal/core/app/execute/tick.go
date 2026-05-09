@@ -67,12 +67,14 @@ func (uc *TickUseCase) executeTask(
 	task AssignedTask,
 	leaseDuration time.Duration,
 ) {
+	taskLog := slog.With("instance_id", task.InstanceID)
+	if task.TraceID != nil {
+		taskLog = taskLog.With("trace_id", *task.TraceID)
+	}
+
 	handler, ok := uc.handlers[task.HandlerType]
 	if !ok {
-		slog.Error("unknown handler type",
-			"instance_id", task.InstanceID,
-			"handler_type", task.HandlerType,
-		)
+		taskLog.Error("unknown handler type", "handler_type", task.HandlerType)
 		metrics.ExecutionsTotal.WithLabelValues(task.HandlerType, "unknown_handler").Inc()
 		uc.completeAsFailure(ctx, tenantID, task.InstanceID, workerID, task,
 			"unknown_handler", fmt.Sprintf("no handler registered for type %q", task.HandlerType))
@@ -119,10 +121,7 @@ func (uc *TickUseCase) executeTask(
 		RetryBackoffStrategy: task.RetryBackoffStrategy,
 	})
 	if err != nil {
-		slog.Error("normalize complete failed",
-			"instance_id", task.InstanceID,
-			"error", err.Error(),
-		)
+		taskLog.Error("normalize complete failed", "error", err.Error())
 		return
 	}
 
@@ -132,10 +131,7 @@ func (uc *TickUseCase) executeTask(
 	writeCtx, writeCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer writeCancel()
 	if err := uc.repo.CompleteInstance(writeCtx, completeSpec); err != nil {
-		slog.Error("complete instance failed",
-			"instance_id", task.InstanceID,
-			"error", err.Error(),
-		)
+		taskLog.Error("complete instance failed", "error", err.Error())
 	}
 }
 
