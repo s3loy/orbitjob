@@ -3,9 +3,11 @@ package dispatch
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	domaininstance "orbitjob/internal/core/domain/instance"
+	"orbitjob/internal/platform/metrics"
 )
 
 type dispatcher interface {
@@ -39,13 +41,22 @@ func (uc *TickUseCase) RunBatch(ctx context.Context, spec domaininstance.ClaimSp
 
 	// Recover orphans first so recovered pending instances get effective_priority
 	// recomputed by the subsequent refresh.
-	if _, _, err := uc.repo.RecoverLeaseOrphans(ctx, spec.Now); err != nil {
+	if dispatched, running, err := uc.repo.RecoverLeaseOrphans(ctx, spec.Now); err != nil {
 		return 0, fmt.Errorf("recover lease orphans: %w", err)
+	} else {
+		if dispatched > 0 {
+			metrics.DispatcherOrphanRecoveryTotal.WithLabelValues(spec.TenantID, "dispatched").Add(float64(dispatched))
+		}
+		if running > 0 {
+			metrics.DispatcherOrphanRecoveryTotal.WithLabelValues(spec.TenantID, "running").Add(float64(running))
+		}
 	}
 
 	// Mark workers whose lease expired as offline.
-	if _, err := uc.repo.RecoverExpiredWorkers(ctx, spec.Now); err != nil {
+	if n, err := uc.repo.RecoverExpiredWorkers(ctx, spec.Now); err != nil {
 		return 0, fmt.Errorf("recover expired workers: %w", err)
+	} else if n > 0 {
+		metrics.DispatcherOrphanRecoveryTotal.WithLabelValues(spec.TenantID, "worker").Add(float64(n))
 	}
 
 	// Refresh effective_priority for all pending/retry_wait instances.
@@ -55,7 +66,7 @@ func (uc *TickUseCase) RunBatch(ctx context.Context, spec domaininstance.ClaimSp
 
 	handled := 0
 	for i := 0; i < limit; i++ {
-		_, found, err := uc.repo.DispatchOne(ctx, spec, domaininstance.DecideDispatch)
+		snap, found, err := uc.repo.DispatchOne(ctx, spec, domaininstance.DecideDispatch)
 		if err != nil {
 			return handled, err
 		}
@@ -63,6 +74,14 @@ func (uc *TickUseCase) RunBatch(ctx context.Context, spec domaininstance.ClaimSp
 			break
 		}
 		handled++
+
+		if snap.TraceID != nil {
+			slog.InfoContext(ctx, "instance dispatched",
+				"trace_id", *snap.TraceID,
+				"run_id", snap.RunID,
+				"action", "dispatch",
+			)
+		}
 	}
 
 	return handled, nil

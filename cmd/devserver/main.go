@@ -291,7 +291,7 @@ func runDevWorker(ctx context.Context, wg *sync.WaitGroup, db *sql.DB, cfg devWo
 }
 
 func runDevWorkerOnce(ctx context.Context, runner *execute.TickUseCase, cfg devWorkerConfig) {
-	n, err := runner.RunOnce(ctx, cfg.TenantID, cfg.WorkerID, cfg.Capacity, cfg.LeaseDuration)
+	n, err := runner.RunOnce(ctx, cfg.TenantID, cfg.WorkerID, cfg.Capacity, cfg.LeaseDuration, nil)
 	if err != nil {
 		slog.Error("worker tick failed", "error", err)
 	} else if n > 0 {
@@ -344,7 +344,7 @@ func runDevHeartbeat(ctx context.Context, wg *sync.WaitGroup, db *sql.DB, cfg de
 func setupDevAdminServer(db *sql.DB) *http.Server {
 	writeRepo := corepostgres.NewJobRepository(db)
 	readRepo := adminpostgres.NewJobRepository(db)
-	createJobUC := command.NewCreateJobUseCase(writeRepo)
+	createJobUC := command.NewCreateJobUseCase(writeRepo, readRepo)
 	updateJobUC := command.NewUpdateJobUseCase(writeRepo)
 	changeStatusUC := command.NewChangeStatusUseCase(readRepo, writeRepo)
 	listJobsUC := query.NewListJobsUseCase(readRepo)

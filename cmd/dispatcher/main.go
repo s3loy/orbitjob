@@ -19,6 +19,7 @@ import (
 	corepostgres "orbitjob/internal/core/store/postgres"
 	"orbitjob/internal/platform/config"
 	platformlogger "orbitjob/internal/platform/logger"
+	"orbitjob/internal/platform/metrics"
 )
 
 type runtimeConfig struct {
@@ -135,6 +136,7 @@ func tenantIDs(cfg runtimeConfig, runner tickRunner, ctx context.Context) []stri
 
 func dispatchTick(ctx context.Context, runner tickRunner, cfg runtimeConfig, now time.Time) int {
 	var total int
+	tickStart := time.Now()
 	for _, tid := range tenantIDs(cfg, runner, ctx) {
 		spec := domaininstance.ClaimSpec{
 			TenantID:       tid,
@@ -148,6 +150,7 @@ func dispatchTick(ctx context.Context, runner tickRunner, cfg runtimeConfig, now
 		}
 		total += handled
 	}
+	metrics.DispatcherTickDuration.WithLabelValues(cfg.TenantID).Observe(time.Since(tickStart).Seconds())
 	return total
 }
 

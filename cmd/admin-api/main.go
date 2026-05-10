@@ -36,11 +36,14 @@ func traceMiddleware() gin.HandlerFunc {
 	}
 }
 
-func newRouter(handler *adminhttp.Handler, auth *middleware.Auth) *gin.Engine {
+func newRouter(handler *adminhttp.Handler, auth *middleware.Auth, rl *middleware.RateLimiter) *gin.Engine {
 	r := gin.Default()
 	r.Use(traceMiddleware())
 	if auth != nil {
 		r.Use(auth.Middleware())
+	}
+	if rl != nil {
+		r.Use(rl.Middleware())
 	}
 
 	r.GET("/healthz", func(c *gin.Context) {
@@ -93,7 +96,7 @@ func main() {
 
 	writeRepo := corepostgres.NewJobRepository(db)
 	readRepo := adminpostgres.NewJobRepository(db)
-	createJobUC := command.NewCreateJobUseCase(writeRepo)
+	createJobUC := command.NewCreateJobUseCase(writeRepo, readRepo)
 	updateJobUC := command.NewUpdateJobUseCase(writeRepo)
 	changeStatusUC := command.NewChangeStatusUseCase(readRepo, writeRepo)
 	listJobsUC := query.NewListJobsUseCase(readRepo)
@@ -115,8 +118,9 @@ func main() {
 	handler.SetGetInstanceUseCase(getInstanceUC)
 	handler.SetCancelInstanceUseCase(cancelInstanceUC)
 	auth := middleware.NewAuth(db)
+	rl := middleware.NewRateLimiter()
 
-	if err := newRouter(handler, auth).Run(":8080"); err != nil {
+	if err := newRouter(handler, auth, rl).Run(":8080"); err != nil {
 		log.Fatal(err)
 	}
 }

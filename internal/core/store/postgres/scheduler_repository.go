@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
+
 	"orbitjob/internal/core/app/schedule"
 	tenant "orbitjob/internal/core/domain/tenant"
 )
@@ -78,13 +80,23 @@ func (r *SchedulerRepository) ScheduleOneDueCron(
 		return schedule.ScheduledOneResult{}, false, fmt.Errorf("decide schedule policy: %w", err)
 	}
 
-	var runID string
+	var runID, traceID string
 	if decision.CreateInstance {
 		if decision.ScheduledAt == nil {
 			return schedule.ScheduledOneResult{}, false, fmt.Errorf("scheduled_at is required when CreateInstance=true")
 		}
 
-		runID, err = insertScheduledInstance(ctx, tx, job, *decision.ScheduledAt)
+			if exceeded, err := checkConcurrentInstanceQuota(ctx, tx, job.TenantID); err != nil {
+				return schedule.ScheduledOneResult{}, false, err
+			} else if exceeded {
+				if rbErr := tx.Rollback(); rbErr != nil {
+					return schedule.ScheduledOneResult{}, false, fmt.Errorf("rollback on quota exceeded: %w", rbErr)
+				}
+				return schedule.ScheduledOneResult{Created: false}, false, nil
+			}
+
+
+		runID, traceID, err = insertScheduledInstance(ctx, tx, job, *decision.ScheduledAt)
 		if err != nil {
 			return schedule.ScheduledOneResult{}, false, err
 		}
@@ -126,6 +138,7 @@ func (r *SchedulerRepository) ScheduleOneDueCron(
 		JobID:     job.ID,
 		TenantID:  job.TenantID,
 		RunID:     runID,
+		TraceID:   traceID,
 		Created:   decision.CreateInstance,
 		NextRunAt: decision.NextRunAt,
 	}, true, nil
@@ -170,8 +183,9 @@ func claimOneDueCronJob(ctx context.Context, tx *sql.Tx, now time.Time) (dueCron
 	return out, true, nil
 }
 
-func insertScheduledInstance(ctx context.Context, tx *sql.Tx, job dueCronJobRecord, scheduledAt time.Time) (string, error) {
+func insertScheduledInstance(ctx context.Context, tx *sql.Tx, job dueCronJobRecord, scheduledAt time.Time) (string, string, error) {
 	maxAttempt := job.RetryLimit + 1
+	traceID := uuid.New().String()
 
 	var runID string
 	err := tx.QueryRowContext(ctx, `
@@ -186,9 +200,10 @@ func insertScheduledInstance(ctx context.Context, tx *sql.Tx, job dueCronJobReco
 			partition_key,
 			idempotency_scope,
 			attempt,
-			max_attempt
+			max_attempt,
+				trace_id
 		)
-		VALUES ($1, $2, 'schedule', $3, 'pending', $4, $4, $5, 'job_instance_create', 1, $6)
+		VALUES ($1, $2, 'schedule', $3, 'pending', $4, $4, $5, 'job_instance_create', 1, $6, $7)
 		RETURNING run_id::text
 	`,
 		job.TenantID,
@@ -197,12 +212,13 @@ func insertScheduledInstance(ctx context.Context, tx *sql.Tx, job dueCronJobReco
 		job.Priority,
 		job.PartitionKey,
 		maxAttempt,
+			traceID,
 	).Scan(&runID)
 	if err != nil {
-		return "", fmt.Errorf("insert scheduled instance: %w", err)
+		return "", "", fmt.Errorf("insert scheduled instance: %w", err)
 	}
 
-	return runID, nil
+	return runID, traceID, nil
 }
 
 func updateJobScheduleCursor(
@@ -233,4 +249,54 @@ func updateJobScheduleCursor(
 	}
 
 	return nil
+}
+
+func checkConcurrentInstanceQuota(ctx context.Context, tx *sql.Tx, tenantID string) (bool, error) {
+	var raw []byte
+	err := tx.QueryRowContext(ctx, `SELECT quotas FROM tenants WHERE id = $1 FOR UPDATE`, tenantID).Scan(&raw)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read tenant quotas: %w", err)
+	}
+	if len(raw) == 0 {
+		return false, nil
+	}
+	var quotas map[string]any
+	if err := json.Unmarshal(raw, &quotas); err != nil {
+		return false, fmt.Errorf("unmarshal tenant quotas: %w", err)
+	}
+	v, ok := quotas["max_concurrent_instances"]
+	if !ok {
+		return false, nil
+	}
+	maxConc, ok := toFloatInt(v)
+	if !ok || maxConc <= 0 {
+		return false, nil
+	}
+	var count int
+	err = tx.QueryRowContext(ctx, `
+		SELECT count(*) FROM job_instances
+		WHERE tenant_id = $1 AND status IN ('pending', 'retry_wait', 'dispatched', 'running')
+	`, tenantID).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("count concurrent instances: %w", err)
+	}
+	return count >= maxConc, nil
+}
+
+func toFloatInt(v any) (int, bool) {
+	switch x := v.(type) {
+	case float64:
+		return int(x), true
+	case float32:
+		return int(x), true
+	case int:
+		return x, true
+	case int64:
+		return int(x), true
+	default:
+		return 0, false
+	}
 }

@@ -102,7 +102,7 @@ func expectRunningCount(mock sqlmock.Sqlmock, tenantID string, jobID int64, coun
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(count))
 }
 
-func expectAuditInsertInstanceStatus(mock sqlmock.Sqlmock, tenantID, runID, fromStatus, toStatus string, jobID int64) {
+func expectAuditInsertInstanceStatus(mock sqlmock.Sqlmock, tenantID, runID string) {
 	mock.ExpectExec("INSERT INTO audit_events").
 		WithArgs(tenantID, "system", "dispatcher", "instance.status_changed", "instance", runID, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -114,7 +114,7 @@ func expectUpdateToDispatched(mock sqlmock.Sqlmock, now time.Time, instanceID in
 	mock.ExpectQuery("UPDATE job_instances").
 		WithArgs(now, now.Add(30*time.Second), instanceID).
 		WillReturnRows(rows)
-	expectAuditInsertInstanceStatus(mock, "tenant-a", "run-1", "pending", "dispatched", 101)
+	expectAuditInsertInstanceStatus(mock, "tenant-a", "run-1")
 }
 
 func expectCancelRunning(mock sqlmock.Sqlmock, tenantID string, jobID int64, now time.Time) {
@@ -125,8 +125,8 @@ func expectCancelRunning(mock sqlmock.Sqlmock, tenantID string, jobID int64, now
 		WithArgs(tenantID, jobID, now).
 		WillReturnRows(canceledRows)
 	// Audit for each canceled instance
-	expectAuditInsertInstanceStatus(mock, tenantID, "run-c1", "dispatched", "canceled", jobID)
-	expectAuditInsertInstanceStatus(mock, tenantID, "run-c2", "running", "canceled", jobID)
+	expectAuditInsertInstanceStatus(mock, tenantID, "run-c1")
+	expectAuditInsertInstanceStatus(mock, tenantID, "run-c2")
 }
 
 // ---------------------------------------------------------------------------

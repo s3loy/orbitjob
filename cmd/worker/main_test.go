@@ -27,7 +27,7 @@ type stubTickRunner struct {
 	callCh  chan struct{}
 }
 
-func (s *stubTickRunner) RunOnce(_ context.Context, _, _ string, _ int, _ time.Duration) (int, error) {
+func (s *stubTickRunner) RunOnce(_ context.Context, _, _ string, _ int, _ time.Duration, _ map[string]any) (int, error) {
 	s.mu.Lock()
 	s.calls++
 	callNo := s.calls

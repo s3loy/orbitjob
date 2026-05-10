@@ -2,6 +2,7 @@ package schedule
 
 import (
 	"context"
+	"log/slog"
 	"time"
 )
 
@@ -30,7 +31,7 @@ func (uc *TickUseCase) RunBatch(ctx context.Context, now time.Time, limit int) (
 
 	handled := 0
 	for i := 0; i < limit; i++ {
-		_, found, err := uc.repo.ScheduleOneDueCron(ctx, now, DecideSchedule)
+		result, found, err := uc.repo.ScheduleOneDueCron(ctx, now, DecideSchedule)
 		if err != nil {
 			return handled, err
 		}
@@ -38,6 +39,14 @@ func (uc *TickUseCase) RunBatch(ctx context.Context, now time.Time, limit int) (
 			break
 		}
 		handled++
+
+		if result.TraceID != "" {
+			slog.InfoContext(ctx, "instance scheduled",
+				"trace_id", result.TraceID,
+				"run_id", result.RunID,
+				"job_id", result.JobID,
+			)
+		}
 	}
 
 	return handled, nil

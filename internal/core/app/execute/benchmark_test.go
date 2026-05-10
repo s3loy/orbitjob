@@ -18,7 +18,7 @@ type benchExecutorRepo struct {
 	err   error
 }
 
-func (m *benchExecutorRepo) ClaimNextDispatched(_ context.Context, _, _ string, _ int, _, _ time.Time) ([]AssignedTask, error) {
+func (m *benchExecutorRepo) ClaimNextDispatched(_ context.Context, _, _ string, _ int, _, _ time.Time, _ map[string]any) ([]AssignedTask, error) {
 	return m.tasks, m.err
 }
 
@@ -87,7 +87,7 @@ func BenchmarkExecuteTick(b *testing.B) {
 			b.ResetTimer()
 			for b.Loop() {
 				uc := NewTickUseCase(tt.repo, handlers)
-				_, _ = uc.RunOnce(context.Background(), "default", "worker-1", 1, 60*time.Second)
+				_, _ = uc.RunOnce(context.Background(), "default", "worker-1", 1, 60*time.Second, nil)
 			}
 		})
 	}
@@ -114,6 +114,6 @@ func BenchmarkExecuteTick_PanicRecovery(b *testing.B) {
 	b.ResetTimer()
 	for b.Loop() {
 		uc := NewTickUseCase(repo, handlers)
-		_, _ = uc.RunOnce(context.Background(), "default", "worker-1", 1, 60*time.Second)
+		_, _ = uc.RunOnce(context.Background(), "default", "worker-1", 1, 60*time.Second, nil)
 	}
 }

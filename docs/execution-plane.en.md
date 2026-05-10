@@ -4,25 +4,26 @@
 
 This document defines the data model, state semantics, and behavioral contracts for the OrbitJob execution plane, providing a deterministic specification for collaboration between the scheduler, dispatcher, and worker components.
 
-> Authoritative source: Project architecture document · Last updated 2026-05-05
+> Authoritative source: Project architecture document · Last updated 2026-05-09
 
-## Current Implementation Status (2026-05-05)
+## Current Implementation Status (2026-05-09)
 
 **Implemented:**
 
-- Execution routing fields on job definitions (`priority`, `partition_key`, `handler_type`, `handler_payload`) wired end-to-end
+- Execution routing fields on job definitions wired end-to-end
 - `job_instances` create and claim semantics with domain model, repository, and tests
 - `workers` heartbeat and lease upsert with domain model, repository, and tests
 - Scheduler MVP tick loop + misfire strategies + atomic scheduling transaction
-- Dispatcher runtime: atomic claim + concurrency policy + priority aging + lease recovery + graceful shutdown
-- **Worker**: capacity-driven concurrent execution (goroutine pool) + four-phase graceful shutdown + self-check (GetByID/draining) + full audit trail (claim/lease/complete) + `job_instance_attempts` persistence + Prometheus metrics
+- Dispatcher runtime: atomic claim + concurrency policy + priority aging + lease recovery + graceful shutdown + multi-tenant
+- **Worker**: capacity-driven concurrent execution + four-phase graceful shutdown + full audit trail + `job_instance_attempts` persistence + Prometheus metrics
 - `job_instances` version column (optimistic locking)
-
-**Not yet implemented:**
-
-- Manual trigger API
-- Instance query API
-- Label-based routing / Worker heartbeat reaper (methods ready, pending dispatcher integration)
+- **Manual trigger API**: `POST /api/v1/jobs/:id/trigger` with idempotency_key dedup
+- **Instance query/cancel API**: list, detail, cancel endpoints
+- **Label-based routing**: `ClaimNextDispatched` filters by worker labels against instance `routing_key`
+- **Scheduler + Dispatcher metrics**: tick duration, dispatch rate, orphan recovery
+- **Trace ID propagation**: scheduler → dispatcher → worker via `slog`
+- **Tenant quota**: `max_jobs` (job creation) + `max_concurrent_instances` (scheduler tick)
+- **API rate limiting**: per-tenant token bucket across 5 endpoint groups
 
 ## Component Boundaries
 

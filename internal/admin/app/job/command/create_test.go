@@ -22,6 +22,10 @@ func (r *testRepo) Create(ctx context.Context, in domainjob.CreateSpec) (domainj
 	return r.out, r.err
 }
 
+func (r *testRepo) CountActiveByTenant(_ context.Context, _ string) (int, error) {
+	return 0, nil
+}
+
 type fixedClock struct {
 	t time.Time
 }
@@ -98,13 +102,10 @@ func TestCreateJobUseCase_Create(t *testing.T) {
 
 func TestNewCreateJobUseCase_CreateValidationError(t *testing.T) {
 	repo := &testRepo{}
-	uc := NewCreateJobUseCase(repo)
+	uc := NewCreateJobUseCase(repo, nil)
 
 	if uc == nil {
 		t.Fatalf("expected use case to be initialized")
-	}
-	if uc.repo != repo {
-		t.Fatalf("expected repo to be stored on use case")
 	}
 	if uc.clock == nil {
 		t.Fatalf("expected clock to be initialized")

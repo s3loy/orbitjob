@@ -4,9 +4,9 @@
 
 本文档定义 OrbitJob execution plane 的数据模型、状态语义与组件行为契约，为 scheduler、dispatcher、worker 之间的协作提供确定性规范。
 
-> 权威来源：项目架构文档 · 更新时间 2026-05-05
+> 权威来源：项目架构文档 · 更新时间 2026-05-09
 
-## 当前实现状态（2026-05-05）
+## 当前实现状态（2026-05-09）
 
 **已实现：**
 
@@ -14,15 +14,16 @@
 - `job_instances` 的 create 与 claim 语义已落地
 - `workers` 的 heartbeat 与 lease upsert 已落地
 - Scheduler MVP tick loop + misfire 策略 + 原子调度事务
-- Dispatcher runtime：原子 claim + concurrency policy + priority aging + lease recovery + graceful shutdown
-- **Worker**：并发执行模型（capacity-driven goroutine pool）+ 四阶段优雅关闭 + 自检（GetByID/draining）+ audit 全链路（claim/lease/complete）+ `job_instance_attempts` 持久化 + Prometheus metrics
+- Dispatcher runtime：原子 claim + concurrency policy + priority aging + lease recovery + graceful shutdown + 多租户
+- **Worker**：并发执行模型（capacity-driven goroutine pool）+ 四阶段优雅关闭 + 自检（GetByID/draining）+ audit 全链路 + `job_instance_attempts` 持久化 + Prometheus metrics
 - `job_instances` version 列（乐观锁）
-
-**未实现：**
-
-- Manual trigger API
-- Instance query API
-- 标签路由 / Worker 心跳回收（方法已就绪，待 dispatcher 调用）
+- **Manual trigger API**：`POST /api/v1/jobs/:id/trigger` + idempotency_key 防重
+- **Instance query/cancel API**：`GET /api/v1/instances`（列表+分页）、`GET /api/v1/instances/:run_id`（详情）、`POST /api/v1/instances/:run_id/cancel`
+- **Label-based routing**：`ClaimNextDispatched` 按 worker labels 过滤 `routing_key`（`routing_key IS NULL OR routing_key = ANY(label_values)`）
+- **Scheduler + Dispatcher metrics**：tick duration histogram + instances created counter + dispatch rate by action + orphan recovery
+- **Trace ID 传播**：scheduler → dispatcher → worker 全链路 `slog` 注入
+- **Tenant quota**：`max_jobs`（job create 检查）、`max_concurrent_instances`（scheduler 检查）
+- **API rate limiting**：per-tenant token bucket，5 端点分组
 
 ## 组件边界
 

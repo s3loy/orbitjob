@@ -72,12 +72,12 @@ func TestClaimNextDispatched_ClaimsTask(t *testing.T) {
 		nil, now, dispatchedAt, lease,
 	)
 	mock.ExpectQuery("WITH claimed").
-		WithArgs("tenant-a", 1, "worker-1", now, lease).
+		WithArgs("tenant-a", 1, "worker-1", now, lease, sqlmock.AnyArg()).
 		WillReturnRows(rows)
 	expectAuditInsertExecutor(mock, "tenant-a", "1", "instance.status_changed")
 	mock.ExpectCommit()
 
-	tasks, err := repo.ClaimNextDispatched(context.Background(), "tenant-a", "worker-1", 1, lease, now)
+	tasks, err := repo.ClaimNextDispatched(context.Background(), "tenant-a", "worker-1", 1, lease, now, nil)
 	if err != nil {
 		t.Fatalf("ClaimNextDispatched() error = %v", err)
 	}
@@ -105,11 +105,11 @@ func TestClaimNextDispatched_Empty(t *testing.T) {
 	mock.ExpectBegin()
 	expectSetTenantContext(mock, "tenant-a")
 	mock.ExpectQuery("WITH claimed").
-		WithArgs("tenant-a", 1, "worker-1", now, lease).
+		WithArgs("tenant-a", 1, "worker-1", now, lease, sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows(claimTaskColumns))
 	mock.ExpectCommit()
 
-	tasks, err := repo.ClaimNextDispatched(context.Background(), "tenant-a", "worker-1", 1, lease, now)
+	tasks, err := repo.ClaimNextDispatched(context.Background(), "tenant-a", "worker-1", 1, lease, now, nil)
 	if err != nil {
 		t.Fatalf("ClaimNextDispatched() error = %v", err)
 	}
@@ -127,11 +127,11 @@ func TestClaimNextDispatched_QueryError(t *testing.T) {
 	mock.ExpectBegin()
 	expectSetTenantContext(mock, "tenant-a")
 	mock.ExpectQuery("WITH claimed").
-		WithArgs("tenant-a", 1, "worker-1", now, lease).
+		WithArgs("tenant-a", 1, "worker-1", now, lease, sqlmock.AnyArg()).
 		WillReturnError(errors.New("db boom"))
 	mock.ExpectRollback()
 
-	_, err := repo.ClaimNextDispatched(context.Background(), "tenant-a", "worker-1", 1, lease, now)
+	_, err := repo.ClaimNextDispatched(context.Background(), "tenant-a", "worker-1", 1, lease, now, nil)
 	if err == nil || !strings.Contains(err.Error(), "claim dispatched") {
 		t.Fatalf("expected claim dispatched error, got %v", err)
 	}
