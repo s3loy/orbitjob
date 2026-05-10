@@ -486,10 +486,10 @@ func (h *Handler) CancelInstance(c *gin.Context) {
 	})
 	if err != nil {
 		apiErr := toAPIError(err)
-		switch {
-		case apiErr.Code == ErrCodeNotFound:
+		switch apiErr.Code {
+		case ErrCodeNotFound:
 			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
-		case apiErr.Code == ErrCodeConflict:
+		case ErrCodeConflict:
 			writeAPIError(c, stdhttp.StatusConflict, apiErr)
 		default:
 			_ = c.Error(err)
