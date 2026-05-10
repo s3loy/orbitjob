@@ -292,6 +292,48 @@ func TestJobRepository_ChangeStatusUnit_AuditInsertError(t *testing.T) {
 	}
 }
 
+func TestJobRepository_ChangeStatusUnit_DBError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewJobRepository(db)
+
+	spec := domainjob.ChangeStatusSpec{
+		ID:            42,
+		TenantID:      "tenant-a",
+		Version:       1,
+		CurrentStatus: domainjob.StatusActive,
+		NextStatus:    domainjob.StatusPaused,
+		Action:        domainjob.ActionPause,
+	}
+
+	mock.ExpectBegin()
+
+	mock.ExpectExec("SELECT set_config").
+		WithArgs("tenant-a").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	// UPDATE fails with generic DB error (not ErrNoRows)
+	mock.ExpectQuery("UPDATE jobs").
+		WithArgs("tenant-a", int64(42), 1, "paused", "active").
+		WillReturnError(errors.New("db connection lost"))
+
+	_, err = repo.ChangeStatus(context.Background(), spec, "control-plane-user")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "change job status") {
+		t.Fatalf("expected change job status error, got %v", err)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sqlmock expectations: %v", err)
+	}
+}
+
 func TestBuildStatusDiffPayload(t *testing.T) {
 	in := domainjob.ChangeStatusSpec{
 		ID:            42,
@@ -315,5 +357,144 @@ func TestBuildStatusDiffPayload(t *testing.T) {
 	}
 	if payload["to_status"] != "paused" {
 		t.Fatalf("expected to_status=paused, got %v", payload["to_status"])
+	}
+}
+
+func TestJobRepository_ChangeStatusUnit_SetTenantContextError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewJobRepository(db)
+
+	spec := domainjob.ChangeStatusSpec{
+		ID:            42,
+		TenantID:      "tenant-a",
+		Version:       1,
+		CurrentStatus: domainjob.StatusActive,
+		NextStatus:    domainjob.StatusPaused,
+		Action:        domainjob.ActionPause,
+	}
+
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").
+		WithArgs("tenant-a").
+		WillReturnError(errors.New("set_config boom"))
+	mock.ExpectRollback()
+
+	_, err = repo.ChangeStatus(context.Background(), spec, "control-plane-user")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "set tenant context") {
+		t.Fatalf("expected set tenant context error, got %v", err)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sqlmock expectations: %v", err)
+	}
+}
+
+func TestJobRepository_ChangeStatusUnit_ClassifyQueryError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewJobRepository(db)
+
+	spec := domainjob.ChangeStatusSpec{
+		ID:            42,
+		TenantID:      "tenant-a",
+		Version:       1,
+		CurrentStatus: domainjob.StatusActive,
+		NextStatus:    domainjob.StatusPaused,
+		Action:        domainjob.ActionPause,
+	}
+
+	mock.ExpectBegin()
+
+	mock.ExpectExec("SELECT set_config").
+		WithArgs("tenant-a").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	// UPDATE returns no rows
+	mock.ExpectQuery("UPDATE jobs").
+		WithArgs("tenant-a", int64(42), 1, "paused", "active").
+		WillReturnError(sql.ErrNoRows)
+
+	// classifyJobWriteFailure: diagnostic query itself fails
+	mock.ExpectQuery("SELECT id FROM jobs").
+		WithArgs("tenant-a", int64(42)).
+		WillReturnError(errors.New("classify boom"))
+
+	_, err = repo.ChangeStatus(context.Background(), spec, "control-plane-user")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "classify job write failure") {
+		t.Fatalf("expected classify job write failure error, got %v", err)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sqlmock expectations: %v", err)
+	}
+}
+
+func TestJobRepository_ChangeStatusUnit_WithNextRunAt(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewJobRepository(db)
+	now := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
+	nextRun := now.Add(5 * time.Minute)
+
+	spec := domainjob.ChangeStatusSpec{
+		ID:            42,
+		TenantID:      "tenant-a",
+		Version:       1,
+		CurrentStatus: domainjob.StatusActive,
+		NextStatus:    domainjob.StatusPaused,
+		Action:        domainjob.ActionPause,
+	}
+
+	mock.ExpectBegin()
+
+	mock.ExpectExec("SELECT set_config").
+		WithArgs("tenant-a").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	// Job has next_run_at set (cron job)
+	mock.ExpectQuery("UPDATE jobs").
+		WithArgs("tenant-a", int64(42), 1, "paused", "active").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "name", "tenant_id", "status", "version", "next_run_at", "created_at", "updated_at",
+		}).AddRow(int64(42), "test-job", "tenant-a", "paused", 2, nextRun, now, now))
+
+	mock.ExpectExec("INSERT INTO audit_events").
+		WithArgs("tenant-a", tenant.ActorTypeAPIKey, "control-plane-user", tenant.EventTypeJobStatusChanged, tenant.ResourceTypeJob, "42", sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	mock.ExpectCommit()
+
+	out, err := repo.ChangeStatus(context.Background(), spec, "control-plane-user")
+	if err != nil {
+		t.Fatalf("ChangeStatus() error = %v", err)
+	}
+	if out.NextRunAt == nil {
+		t.Fatal("expected next_run_at to be set")
+	}
+	if !out.NextRunAt.Equal(nextRun) {
+		t.Fatalf("expected next_run_at=%v, got %v", nextRun, out.NextRunAt)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sqlmock expectations: %v", err)
 	}
 }

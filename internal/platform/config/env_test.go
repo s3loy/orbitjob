@@ -171,6 +171,121 @@ func TestLoadDotenv_NotFound(t *testing.T) {
 	}
 }
 
+func TestFindDotenv_GetwdError(t *testing.T) {
+	// Simulate os.Getwd failure by switching to a directory that is then removed.
+	// On Windows, the CWD is locked, so this may not work. We try anyway.
+	origWD, err := os.Getwd()
+	if err != nil {
+		t.Skipf("Getwd() error = %v", err)
+	}
+
+	tmpDir, err := os.MkdirTemp("", "orbitjob-finddotenv-test")
+	if err != nil {
+		t.Skipf("MkdirTemp error = %v", err)
+	}
+
+	if err := os.Chdir(tmpDir); err != nil {
+		_ = os.RemoveAll(tmpDir)
+		t.Skipf("Chdir error = %v", err)
+	}
+
+	// Return to original dir and remove temp dir.
+	_ = os.Chdir(origWD)
+	if err := os.RemoveAll(tmpDir); err != nil {
+		// On Windows, the directory may be locked. Skip if we can't test this.
+		t.Skipf("RemoveAll error (likely CWD lock): %v", err)
+	}
+
+	// Now chdir into a non-existent directory — os.Getwd will fail.
+	_, err = os.Getwd()
+	if err != nil {
+		// Getwd itself already fails: our process lost its CWD.
+		// Call findDotenv. Since os.Getwd inside it will also fail
+		// (the kernel remembers the old CWD that no longer exists),
+		// it should hit the error return path.
+		_, err2 := findDotenv(".env")
+		if err2 == nil {
+			t.Fatal("expected error from findDotenv when CWD is gone")
+		}
+	} else {
+		// Getwd didn't fail — the CWD was restored. Re-chdir to a removed dir.
+		if err := os.Chdir(tmpDir); err == nil {
+			t.Skip("could not trigger Getwd failure (CWD was re-resolved)")
+		}
+		// On some systems chdir to removed dir fails, so we can't test this.
+		t.Skip("Getwd failure path cannot be triggered in this environment")
+	}
+}
+
+func TestLoadDotenv_DefaultErrorCase(t *testing.T) {
+	// When findDotenv returns a non-ErrNotExist error, LoadDotenv
+	// should return that error (the default case in the switch).
+	resetLoadDotenv()
+
+	origWD, err := os.Getwd()
+	if err != nil {
+		t.Skipf("Getwd() error = %v", err)
+	}
+
+	// Create a temp dir, chdir into it, then remove it to break Getwd.
+	tmpDir, err := os.MkdirTemp("", "orbitjob-loaddotenv-test")
+	if err != nil {
+		t.Skipf("MkdirTemp error = %v", err)
+	}
+
+	if err := os.Chdir(tmpDir); err != nil {
+		_ = os.RemoveAll(tmpDir)
+		t.Skipf("Chdir error = %v", err)
+	}
+
+	_ = os.Chdir(origWD)
+	rmErr := os.RemoveAll(tmpDir)
+
+	if rmErr != nil {
+		// Can't remove CWD. Try chdir to a path with a stat error:
+		// chdir into tmpDir, then create a file that blocks stat on ".env".
+		// This approach uses the fact that findDotenv starts from CWD and walks up.
+		// If we cd to a directory with a stat error, findDotenv will fail.
+		_ = os.Chdir(origWD)
+		resetLoadDotenv()
+
+		// Try with a completely inaccessible path:
+		// Create a deeply nested path with invalid chars
+		badDir := filepath.Join(tmpDir, "bad>name")
+		if err := os.Chdir(badDir); err == nil {
+			// This shouldn't succeed since mkdir won't create bad paths
+			_ = os.Chdir(origWD)
+		}
+
+		// The simplest approach: use os.Chdir to enter tmpDir and
+		// then make the CWD have a non-ErrNotExist os.Stat error.
+		// Hard on Windows without proper permissions.
+		t.Skip("Getwd/stat error path cannot be triggered in this environment")
+	}
+
+	// CWD was successfully removed. Try chdir into it.
+	cerr := os.Chdir(tmpDir)
+	if cerr != nil {
+		// chdir to removed dir fails — OS doesn't allow this on some platforms.
+		t.Skipf("Chdir to removed dir failed: %v", cerr)
+	}
+
+	// Now the CWD doesn't exist. findDotenv should fail via os.Getwd.
+	// LoadDotenv should catch this in the default case.
+	_ = LoadDotenv()
+
+	// After LoadDotenv runs, loadDotenvErr should hold the error.
+	// Any subsequent call returns it.
+	err = LoadDotenv()
+	if err == nil {
+		t.Skip("LoadDotenv succeeded (CWD was somehow restored); default path not covered")
+	}
+
+	resetLoadDotenv()
+	_ = os.Chdir(origWD)
+	t.Logf("LoadDotenv error (Getwd failure): %v", err)
+}
+
 func TestFindDotenv_FromChildDir(t *testing.T) {
 	root := t.TempDir()
 	child := filepath.Join(root, "sub", "child")

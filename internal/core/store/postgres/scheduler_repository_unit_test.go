@@ -791,6 +791,33 @@ func TestSchedulerRepository_ScheduleOneDueCron_AuditInsertError(t *testing.T) {
 	assertMock(t, mock)
 }
 
+func TestSchedulerRepository_ScheduleOneDueCron_QuotaCheckError(t *testing.T) {
+	repo, mock := newSchedulerRepoMock(t)
+	now := time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC)
+	next := now.Add(5 * time.Minute)
+	scheduledAt := now
+
+	mock.ExpectBegin()
+	expectClaimOneRow(mock, now, "tenant-a", 101, nil)
+	expectSchedulerSetTenantContext(mock, "tenant-a")
+	// Quotas read returns non-ErrNoRows error
+	mock.ExpectQuery("SELECT quotas FROM tenants").
+		WithArgs("tenant-a").
+		WillReturnError(errors.New("quotas boom"))
+	mock.ExpectRollback()
+
+	_, found, err := repo.ScheduleOneDueCron(context.Background(), now, func(time.Time, schedule.DueCronJob) (schedule.ScheduleDecision, error) {
+		return schedule.ScheduleDecision{CreateInstance: true, ScheduledAt: &scheduledAt, NextRunAt: &next}, nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "read tenant quotas") {
+		t.Fatalf("expected read tenant quotas error, got %v", err)
+	}
+	if found {
+		t.Fatalf("expected found=false")
+	}
+	assertMock(t, mock)
+}
+
 func TestToFloatInt(t *testing.T) {
 	tests := []struct {
 		name string

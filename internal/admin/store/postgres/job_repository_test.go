@@ -544,6 +544,43 @@ func TestJobRepository_List_FilteredEmpty(t *testing.T) {
 	}
 }
 
+func TestScanJobListItem_ScanError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	// Create a row with a type mismatch: provide an int where a string is expected
+	// for the 'name' column (second field), causing scan to fail.
+	rows := sqlmock.NewRows([]string{
+		"id", "name", "tenant_id", "priority",
+		"trigger_type", "partition_key", "cron_expr", "timezone",
+		"handler_type", "concurrency_policy", "misfire_policy", "status",
+		"next_run_at", "last_scheduled_at", "created_at", "updated_at",
+	}).AddRow(
+		"not-a-number", // Scan into int64 ID fails
+		"job-1", "default", 3,
+		"manual", nil, nil, "UTC",
+		"http", "allow", "skip", "active",
+		nil, nil, time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC), time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC),
+	)
+
+	mock.ExpectQuery(`SELECT (.+) FROM jobs WHERE tenant_id = \$1 AND deleted_at IS NULL`).
+		WithArgs("default", 50, 0).
+		WillReturnRows(rows)
+
+	repo := NewJobRepository(db)
+	_, err = repo.List(context.Background(), query.ListInput{
+		TenantID: "default",
+		Limit:    50,
+		Offset:   0,
+	})
+	if err == nil {
+		t.Fatal("expected scan error, got nil")
+	}
+}
+
 func TestJobRepository_List_ScanError(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

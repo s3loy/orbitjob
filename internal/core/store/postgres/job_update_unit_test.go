@@ -581,3 +581,172 @@ func TestNormalizePayload(t *testing.T) {
 		}
 	})
 }
+
+func TestJobRepository_UpdateUnit_SetTenantContextError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewJobRepository(db)
+
+	spec := domainjob.UpdateSpec{
+		ID:      42,
+		Version: 1,
+		CreateSpec: domainjob.CreateSpec{
+			TenantID:             "tenant-a",
+			Name:                 "updated-job",
+			Priority:             5,
+			TriggerType:          domainjob.TriggerTypeManual,
+			Timezone:             "UTC",
+			HandlerType:          "http",
+			HandlerPayload:       map[string]any{},
+			TimeoutSec:           60,
+			RetryLimit:           3,
+			RetryBackoffSec:      10,
+			RetryBackoffStrategy: domainjob.RetryBackoffFixed,
+			ConcurrencyPolicy:    domainjob.ConcurrencyAllow,
+			MisfirePolicy:        domainjob.MisfireSkip,
+		},
+	}
+
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").
+		WithArgs("tenant-a").
+		WillReturnError(errors.New("set_config boom"))
+	mock.ExpectRollback()
+
+	_, err = repo.Update(context.Background(), spec, "control-plane-user")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "set tenant context") {
+		t.Fatalf("expected set tenant context error, got %v", err)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sqlmock expectations: %v", err)
+	}
+}
+
+func TestJobRepository_UpdateUnit_ClassifyQueryError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewJobRepository(db)
+
+	spec := domainjob.UpdateSpec{
+		ID:      42,
+		Version: 1,
+		CreateSpec: domainjob.CreateSpec{
+			TenantID:             "tenant-a",
+			Name:                 "updated-job",
+			Priority:             5,
+			TriggerType:          domainjob.TriggerTypeManual,
+			Timezone:             "UTC",
+			HandlerType:          "http",
+			HandlerPayload:       map[string]any{},
+			TimeoutSec:           60,
+			RetryLimit:           3,
+			RetryBackoffSec:      10,
+			RetryBackoffStrategy: domainjob.RetryBackoffFixed,
+			ConcurrencyPolicy:    domainjob.ConcurrencyAllow,
+			MisfirePolicy:        domainjob.MisfireSkip,
+		},
+	}
+
+	mock.ExpectBegin()
+
+	mock.ExpectExec("SELECT set_config").
+		WithArgs("tenant-a").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	// UPDATE returns no rows
+	mock.ExpectQuery("UPDATE jobs").
+		WithArgs(
+			"tenant-a", int64(42), "updated-job", 5, nil,
+			"manual", (*string)(nil), "UTC", "http", sqlmock.AnyArg(),
+			60, 3, 10, "fixed", "allow", "skip", (*time.Time)(nil),
+			1,
+		).
+		WillReturnError(sql.ErrNoRows)
+
+	// classifyJobWriteFailure: diagnostic query itself fails
+	mock.ExpectQuery("SELECT id FROM jobs").
+		WithArgs("tenant-a", int64(42)).
+		WillReturnError(errors.New("classify boom"))
+
+	_, err = repo.Update(context.Background(), spec, "control-plane-user")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "classify job write failure") {
+		t.Fatalf("expected classify job write failure error, got %v", err)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sqlmock expectations: %v", err)
+	}
+}
+
+func TestJobRepository_UpdateUnit_DBError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewJobRepository(db)
+
+	spec := domainjob.UpdateSpec{
+		ID:      42,
+		Version: 1,
+		CreateSpec: domainjob.CreateSpec{
+			TenantID:             "tenant-a",
+			Name:                 "updated-job",
+			Priority:             5,
+			TriggerType:          domainjob.TriggerTypeManual,
+			Timezone:             "UTC",
+			HandlerType:          "http",
+			HandlerPayload:       map[string]any{},
+			TimeoutSec:           60,
+			RetryLimit:           3,
+			RetryBackoffSec:      10,
+			RetryBackoffStrategy: domainjob.RetryBackoffFixed,
+			ConcurrencyPolicy:    domainjob.ConcurrencyAllow,
+			MisfirePolicy:        domainjob.MisfireSkip,
+		},
+	}
+
+	mock.ExpectBegin()
+
+	mock.ExpectExec("SELECT set_config").
+		WithArgs("tenant-a").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	// UPDATE fails with generic DB error (not ErrNoRows)
+	mock.ExpectQuery("UPDATE jobs").
+		WithArgs(
+			"tenant-a", int64(42), "updated-job", 5, nil,
+			"manual", (*string)(nil), "UTC", "http", sqlmock.AnyArg(),
+			60, 3, 10, "fixed", "allow", "skip", (*time.Time)(nil),
+			1,
+		).
+		WillReturnError(errors.New("db connection lost"))
+
+	_, err = repo.Update(context.Background(), spec, "control-plane-user")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "update job") {
+		t.Fatalf("expected update job error, got %v", err)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sqlmock expectations: %v", err)
+	}
+}
