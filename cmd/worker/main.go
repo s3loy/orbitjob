@@ -29,6 +29,7 @@ import (
 type runtimeConfig struct {
 	TenantID          string
 	WorkerID          string
+	HealthPort        string
 	PollInterval      time.Duration
 	HeartbeatInterval time.Duration
 	LeaseDuration     time.Duration
@@ -119,9 +120,15 @@ func loadWorkerRuntimeConfig() (runtimeConfig, error) {
 		return runtimeConfig{}, err
 	}
 
+	healthPort := os.Getenv("WORKER_HEALTH_PORT")
+	if healthPort == "" {
+		healthPort = "6062"
+	}
+
 	return runtimeConfig{
 		TenantID:          tenantID,
 		WorkerID:          workerID,
+		HealthPort:        healthPort,
 		PollInterval:      time.Duration(pollIntervalSec) * time.Second,
 		HeartbeatInterval: time.Duration(heartbeatIntervalSec) * time.Second,
 		LeaseDuration:     time.Duration(leaseDurationSec) * time.Second,
@@ -218,19 +225,16 @@ func heartbeatLoop(
 	for {
 		select {
 		case <-ctx.Done():
-			// Phase 1: mark draining — stop accepting new work
 			drainCtx, drainCancel := context.WithTimeout(context.Background(), 3*time.Second)
 			sendHeartbeat(drainCtx, hb, cfg, nowFn, domainworker.StatusDraining)
 			drainCancel()
 
-			// Phase 2: wait for in-flight tasks to complete
 			select {
 			case <-loopDone:
 			case <-time.After(shutdownDeadline):
 				slog.Warn("shutdown deadline exceeded, forcing offline")
 			}
 
-			// Phase 3: send offline heartbeat
 			offCtx, offCancel := context.WithTimeout(context.Background(), 3*time.Second)
 			sendHeartbeat(offCtx, hb, cfg, nowFn, domainworker.StatusOffline)
 			offCancel()
@@ -302,9 +306,14 @@ func run(ctx context.Context) error {
 	runner := buildRunnerFn(db)
 	hb := buildHeartbeaterFn(db)
 
+	healthCtx, healthCancel := context.WithCancel(context.Background())
+	defer healthCancel()
+	go startComponentHealthServer(healthCtx, db, cfg.HealthPort, "worker")
+
 	slog.Info("worker starting",
 		"worker_id", cfg.WorkerID,
 		"tenant_id", cfg.TenantID,
+		"health_port", cfg.HealthPort,
 		"poll_interval", cfg.PollInterval,
 		"lease_duration", cfg.LeaseDuration,
 		"capacity", cfg.Capacity,
@@ -313,6 +322,46 @@ func run(ctx context.Context) error {
 	runLoopFn(ctx, runner, hb, cfg, newWallClockTicker, time.Now)
 
 	return nil
+}
+
+// startComponentHealthServer runs a minimal HTTP server with /healthz and /readyz.
+// Shared pattern with scheduler and dispatcher.
+func startComponentHealthServer(ctx context.Context, db *sql.DB, port, component string) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprintf(w, `{"status":"ok","component":"%s"}`+"\n", component)
+	})
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		pingCtx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		if err := db.PingContext(pingCtx); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = fmt.Fprintf(w, `{"status":"not ready","error":"%s"}`+"\n", err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprintf(w, `{"status":"ready","component":"%s"}`+"\n", component)
+	})
+
+	srv := &http.Server{Addr: ":" + port, Handler: mux}
+	slog.Info(component+" health server listening", "addr", srv.Addr)
+
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			slog.Error(component+" health server shutdown error", "error", err)
+		}
+	}()
+
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		slog.Error(component+" health server error", "error", err)
+	}
 }
 
 func shortUUID() string {

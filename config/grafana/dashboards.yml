@@ -1,0 +1,13 @@
+# Grafana — Dashboard provisioning
+# Auto-loads JSON dashboards from /etc/grafana/dashboards/.
+
+apiVersion: 1
+
+providers:
+  - name: OrbitJob
+    folder: OrbitJob
+    type: file
+    options:
+      path: /etc/grafana/dashboards
+    allowUiUpdates: true
+    updateIntervalSeconds: 30

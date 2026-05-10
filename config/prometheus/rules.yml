@@ -1,0 +1,85 @@
+# OrbitJob — Prometheus alert rules
+#
+# 5 rules derived from architecture.doc:
+#   1. SchedulerStalled   — no instances created for 5 min → critical
+#   2. ScheduleDelayHigh  — P95 tick duration > 30s → warning
+#   3. NoActiveWorkers    — no active task executions → critical
+#   4. QueueBacklog       — pending+retry_wait > 1000 → warning
+#   5. HighFailureRate    — execution failure ratio > 10% → warning
+
+groups:
+  - name: orbitjob
+    rules:
+      # ── 1. Scheduler stalled ─────────────────────────────
+      - alert: SchedulerStalled
+        expr: |
+          increase(orbitjob_scheduler_instances_created_total[5m]) == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Scheduler has produced no instances for 5 minutes"
+          description: >
+            The scheduler has not created any job instances in the last
+            5 minutes. Check scheduler logs and database connectivity.
+
+      # ── 2. Schedule delay too high ────────────────────────
+      - alert: ScheduleDelayHigh
+        expr: |
+          histogram_quantile(0.95, rate(orbitjob_scheduler_tick_duration_seconds_bucket[10m])) > 30
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Scheduler P95 tick latency > 30 s"
+          description: >
+            The P95 scheduler tick duration exceeds 30 seconds.
+            This may indicate database performance issues or
+            an unusually high number of due jobs.
+
+      # ── 3. No active workers ──────────────────────────────
+      - alert: NoActiveWorkers
+        expr: |
+          orbitjob_executions_active < 1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No active workers executing tasks"
+          description: >
+            There are zero in-flight task executions across all
+            workers. Verify worker processes are online and
+            capable of claiming dispatched instances.
+
+      # ── 4. Queue backlog ──────────────────────────────────
+      - alert: QueueBacklog
+        expr: |
+          sum(orbitjob_dispatcher_queue_depth) > 1000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Dispatch queue depth exceeds 1 000"
+          description: >
+            The total number of pending + retry_wait instances
+            across all tenants exceeds 1 000. Consider scaling
+            out workers or investigating dispatch throughput.
+
+      # ── 5. High failure rate ──────────────────────────────
+      - alert: HighFailureRate
+        expr: |
+          (
+            sum(rate(orbitjob_executions_total{result="failed"}[5m]))
+            /
+            sum(rate(orbitjob_executions_total[5m]))
+          ) > 0.10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Task execution failure rate > 10 %"
+          description: >
+            More than 10 % of handler executions are failing
+            over the last 5 minutes. Check worker logs for
+            root cause (timeouts, external service errors,
+            malformed payloads).

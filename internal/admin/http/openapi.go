@@ -426,8 +426,8 @@ func adminAPIRoutes() []routeDefinition {
 				description:         "Cancel a dispatched or running instance using optimistic locking by version.",
 				tags:                []string{"Instances"},
 				parameterModels:     []any{instanceRunIDURI{}},
-				requestBodyModel:    domaininstance.Snapshot{},
-				requestBodyRequired: false,
+				requestBodyModel:    CancelInstanceRequest{},
+				requestBodyRequired: true,
 				responses: []responseDefinition{
 					{statusCode: stdhttp.StatusOK, description: "Canceled instance", model: domaininstance.Snapshot{}},
 					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
@@ -721,7 +721,7 @@ func (r *schemaRegistry) applySchemaDefaults(name string, schema *Schema) {
 		schema.Properties["concurrency_policy"] = property
 	}
 	if property, ok := schema.Properties["misfire_policy"]; ok {
-		property.Default = "skip"
+		property.Default = "fire_now"
 		schema.Properties["misfire_policy"] = property
 	}
 	if property, ok := schema.Properties["cron_expr"]; ok {
