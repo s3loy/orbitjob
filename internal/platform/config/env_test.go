@@ -338,16 +338,21 @@ func TestFindDotenv_NotFound(t *testing.T) {
 }
 
 func TestFindDotenvFrom_StatError(t *testing.T) {
-	// Use a path with a character that is invalid in Windows filenames, causing
-	// os.Stat to return a non-ErrNotExist error (syntax error).
+	// Create a regular file, then stat a path through it as if it were a
+	// directory. os.Stat("file/sub") returns ENOTDIR on Linux (not
+	// ErrNotExist) but maps to ErrNotExist on Windows. Skip when the OS
+	// maps it to ErrNotExist.
 	root := t.TempDir()
-	badPath := filepath.Join(root, "bad<name", ".env")
-	_, err := findDotenvFrom(badPath, ".env")
+	filePath := filepath.Join(root, "some-file")
+	if err := os.WriteFile(filePath, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := findDotenvFrom(filepath.Join(filePath, "sub"), ".env")
 	if err == nil {
-		t.Fatalf("expected an error for path with invalid character")
+		t.Fatal("expected an error when a path component is a file")
 	}
 	if errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("expected an error other than ErrNotExist, got %v", err)
+		t.Skip("ENOTDIR maps to ErrNotExist on this OS")
 	}
 }
 
