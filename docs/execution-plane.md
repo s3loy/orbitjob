@@ -31,7 +31,7 @@
 flowchart LR
     Control["Control Plane<br/>job definitions"] --> Scheduler["Scheduler"]
     Scheduler --> InstanceRepo["job_instances"]
-    Manual["Manual Trigger API<br/>(planned)"] -.-> InstanceRepo
+    Manual["Manual Trigger API"] --> InstanceRepo
     Dispatcher["Dispatcher"] --> InstanceRepo
     Dispatcher --> WorkerRepo["workers"]
     Worker["Worker"] --> WorkerRepo
@@ -44,7 +44,7 @@ flowchart LR
 | --- | --- |
 | `priority` | 基础优先级，dispatcher 选取 runnable instance 时作为排序依据，值越大优先级越高 |
 | `partition_key` | 逻辑分片键，用于 worker 路由、队列分区或租户隔离 |
-| `handler_type` | 执行器类型标识（如 `http` / `worker`） |
+| `handler_type` | 执行器类型标识（如 `http` / `exec`） |
 | `handler_payload` | 具体 handler 配置，worker 侧按 `handler_type` 解释并执行 |
 
 ## Job Instance 状态机
@@ -195,7 +195,6 @@ Worker 采用 capacity-driven 并发执行：
 
 ## 后续工作
 
-- Manual trigger API
-- Instance query API
-- 标签路由（`WorkerRepository.ListByLabels` + task-to-worker matching）
-- Worker 心跳回收集成到 dispatcher tick（`RecoverExpiredWorkers` 已就绪）
+- Job definition 自动发现与同步
+- 执行结果 webhook 回调
+- 多集群 worker 联邦调度

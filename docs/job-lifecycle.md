@@ -4,11 +4,11 @@
 
 本文档描述 OrbitJob control plane 中 job definition 的状态模型、允许的状态流转，以及对应的 HTTP 接口契约。
 
-## 当前实现状态（2026-04-20）
+## 当前实现状态（2026-05-10）
 
 - `pause` / `resume` 已在 HTTP handler、application command、repository 全链路落地
 - 状态变更通过 optimistic locking（`jobs.version`）实现并发控制，审计记录在同一事务内写入
-- `delete` 不在当前生命周期范围内
+- `delete` 软删除：`DELETE /api/v1/jobs/:id` → `SET deleted_at = now()`，通过 `WHERE deleted_at IS NULL` 过滤
 
 ## 状态图
 
@@ -17,6 +17,8 @@ stateDiagram-v2
     [*] --> active
     active --> paused: POST /api/v1/jobs/:id/pause
     paused --> active: POST /api/v1/jobs/:id/resume
+    active --> deleted: DELETE /api/v1/jobs/:id
+    paused --> deleted: DELETE /api/v1/jobs/:id
 ```
 
 ## 状态定义
@@ -25,6 +27,7 @@ stateDiagram-v2
 | --- | --- |
 | `active` | job definition 处于启用状态，scheduler 会将其纳入调度评估 |
 | `paused` | job definition 已暂停，保留定义数据但 scheduler 不会为其生成新的 instance |
+| `deleted` | job definition 已被软删除（`deleted_at` 非 NULL），不可恢复 |
 
 ## 允许的状态流转
 
@@ -32,8 +35,10 @@ stateDiagram-v2
 | --- | --- | --- | --- |
 | `active` | pause | `paused` | `POST /api/v1/jobs/:id/pause` |
 | `paused` | resume | `active` | `POST /api/v1/jobs/:id/resume` |
+| `active` | delete | `deleted` | `DELETE /api/v1/jobs/:id` |
+| `paused` | delete | `deleted` | `DELETE /api/v1/jobs/:id` |
 
-对已处于目标状态的 job 执行相同操作属于非法流转，由 domain 层拒绝。
+对已处于目标状态的 job 执行相同操作属于非法流转，由 domain 层拒绝。已删除的 job 不可执行进一步操作。
 
 ## HTTP 接口契约
 

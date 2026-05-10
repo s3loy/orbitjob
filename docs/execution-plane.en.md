@@ -31,7 +31,7 @@ This document defines the data model, state semantics, and behavioral contracts 
 flowchart LR
     Control["Control Plane<br/>job definitions"] --> Scheduler["Scheduler"]
     Scheduler --> InstanceRepo["job_instances"]
-    Manual["Manual Trigger API<br/>(planned)"] -.-> InstanceRepo
+    Manual["Manual Trigger API"] --> InstanceRepo
     Dispatcher["Dispatcher"] --> InstanceRepo
     Dispatcher --> WorkerRepo["workers"]
     Worker["Worker"] --> WorkerRepo
@@ -196,7 +196,6 @@ Workers use a capacity-driven concurrent execution model:
 
 ## Follow-up Work
 
-- Manual trigger API
-- Instance query API
-- Label-based routing (`WorkerRepository.ListByLabels` + task-to-worker matching)
-- Worker heartbeat reaper integration into dispatcher tick (`RecoverExpiredWorkers` ready, pending integration)
+- Automatic job definition discovery and sync
+- Execution result webhook callbacks
+- Multi-cluster worker federation
