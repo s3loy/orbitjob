@@ -456,6 +456,27 @@ func TestDispatchOne_NoCandidateRollbackError(t *testing.T) {
 	assertMock(t, mock)
 }
 
+func TestDispatchOne_SetTenantContextError(t *testing.T) {
+	repo, mock := newDispatchRepoMock(t)
+	now := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
+	spec := makeClaimSpec(now)
+
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").
+		WithArgs(spec.TenantID).
+		WillReturnError(errors.New("set_config boom"))
+	mock.ExpectRollback()
+
+	_, found, err := repo.DispatchOne(context.Background(), spec, domaininstance.DecideDispatch)
+	if err == nil || !strings.Contains(err.Error(), "set tenant context") {
+		t.Fatalf("expected set tenant context error, got %v", err)
+	}
+	if found {
+		t.Fatalf("expected found=false")
+	}
+	assertMock(t, mock)
+}
+
 func TestDispatchOne_DecideRequired(t *testing.T) {
 	repo := NewDispatchRepository(nil)
 	now := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
@@ -624,6 +645,199 @@ func TestRefreshEffectivePriority_Error(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// RecoverExpiredWorkers tests
+// ---------------------------------------------------------------------------
+
+func TestRecoverExpiredWorkers_Success(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewDispatchRepository(db)
+	now := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
+
+	mock.ExpectExec("UPDATE workers").
+		WithArgs(now).
+		WillReturnResult(sqlmock.NewResult(0, 3))
+
+	n, err := repo.RecoverExpiredWorkers(context.Background(), now)
+	if err != nil {
+		t.Fatalf("RecoverExpiredWorkers() error = %v", err)
+	}
+	if n != 3 {
+		t.Fatalf("expected n=3, got %d", n)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sqlmock expectations: %v", err)
+	}
+}
+
+func TestRecoverExpiredWorkers_Error(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewDispatchRepository(db)
+	now := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
+
+	mock.ExpectExec("UPDATE workers").
+		WithArgs(now).
+		WillReturnError(errors.New("recover boom"))
+
+	_, err = repo.RecoverExpiredWorkers(context.Background(), now)
+	if err == nil || !strings.Contains(err.Error(), "recover expired workers") {
+		t.Fatalf("expected recover expired workers error, got %v", err)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sqlmock expectations: %v", err)
+	}
+}
+
+func TestRecoverExpiredWorkers_NoMatch(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewDispatchRepository(db)
+	now := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
+
+	mock.ExpectExec("UPDATE workers").
+		WithArgs(now).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	n, err := repo.RecoverExpiredWorkers(context.Background(), now)
+	if err != nil {
+		t.Fatalf("RecoverExpiredWorkers() error = %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("expected n=0, got %d", n)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sqlmock expectations: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ListActiveTenantIDs tests
+// ---------------------------------------------------------------------------
+
+func TestListActiveTenantIDs_Success(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewDispatchRepository(db)
+
+	mock.ExpectQuery("SELECT id FROM tenants").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).
+			AddRow("tenant-a").
+			AddRow("tenant-b").
+			AddRow("tenant-c"))
+
+	ids, err := repo.ListActiveTenantIDs(context.Background())
+	if err != nil {
+		t.Fatalf("ListActiveTenantIDs() error = %v", err)
+	}
+	if len(ids) != 3 {
+		t.Fatalf("expected 3 ids, got %d", len(ids))
+	}
+	if ids[0] != "tenant-a" || ids[1] != "tenant-b" || ids[2] != "tenant-c" {
+		t.Fatalf("unexpected tenant ids: %v", ids)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sqlmock expectations: %v", err)
+	}
+}
+
+func TestListActiveTenantIDs_Empty(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewDispatchRepository(db)
+
+	mock.ExpectQuery("SELECT id FROM tenants").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+
+	ids, err := repo.ListActiveTenantIDs(context.Background())
+	if err != nil {
+		t.Fatalf("ListActiveTenantIDs() error = %v", err)
+	}
+	if ids == nil {
+		t.Fatal("expected non-nil slice")
+	}
+	if len(ids) != 0 {
+		t.Fatalf("expected 0 ids, got %d", len(ids))
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sqlmock expectations: %v", err)
+	}
+}
+
+func TestListActiveTenantIDs_QueryError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewDispatchRepository(db)
+
+	mock.ExpectQuery("SELECT id FROM tenants").
+		WillReturnError(errors.New("query boom"))
+
+	_, err = repo.ListActiveTenantIDs(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "list active tenant ids") {
+		t.Fatalf("expected list active tenant ids error, got %v", err)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sqlmock expectations: %v", err)
+	}
+}
+
+func TestListActiveTenantIDs_ScanError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewDispatchRepository(db)
+
+	// RowError after valid rows triggers rows.Err()
+	rows := sqlmock.NewRows([]string{"id"}).
+		AddRow("tenant-a").
+		RowError(0, errors.New("scan boom"))
+	mock.ExpectQuery("SELECT id FROM tenants").
+		WillReturnRows(rows)
+
+	_, err = repo.ListActiveTenantIDs(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "iterate tenant rows") {
+		t.Fatalf("expected iterate tenant rows error, got %v", err)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sqlmock expectations: %v", err)
+	}
+}
+
 func TestRecoverLeaseOrphans_RunningError(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -646,4 +860,374 @@ func TestRecoverLeaseOrphans_RunningError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "recover running orphans") {
 		t.Fatalf("expected recover running orphans error, got %v", err)
 	}
+}
+
+func TestRecoverLeaseOrphans_DispatchedScanError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewDispatchRepository(db)
+	now := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
+
+	// Phase 1 returns a row that fails on scan (wrong column type)
+	rows := sqlmock.NewRows([]string{"run_id", "tenant_id"}).
+		AddRow(nil, "tenant-x") // nil run_id causes scan error
+	mock.ExpectQuery("UPDATE job_instances").
+		WithArgs(now).
+		WillReturnRows(rows)
+
+	_, _, err = repo.RecoverLeaseOrphans(context.Background(), now)
+	if err == nil || !strings.Contains(err.Error(), "scan dispatched orphan") {
+		t.Fatalf("expected scan dispatched orphan error, got %v", err)
+	}
+}
+
+func TestRecoverLeaseOrphans_DispatchedIterateError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewDispatchRepository(db)
+	now := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
+
+	// RowError after valid rows triggers rows.Err() during iteration
+	rows := sqlmock.NewRows([]string{"run_id", "tenant_id"}).
+		AddRow("run-d1", "tenant-x").
+		RowError(0, errors.New("iterate boom"))
+	mock.ExpectQuery("UPDATE job_instances").
+		WithArgs(now).
+		WillReturnRows(rows)
+
+	_, _, err = repo.RecoverLeaseOrphans(context.Background(), now)
+	if err == nil || !strings.Contains(err.Error(), "iterate dispatched orphans") {
+		t.Fatalf("expected iterate dispatched orphans error, got %v", err)
+	}
+}
+
+func TestRecoverLeaseOrphans_DispatchedAuditInsertError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewDispatchRepository(db)
+	now := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
+
+	orphanDispatchedRows := sqlmock.NewRows([]string{"run_id", "tenant_id"}).
+		AddRow("run-d1", "tenant-x")
+	mock.ExpectQuery("UPDATE job_instances").
+		WithArgs(now).
+		WillReturnRows(orphanDispatchedRows)
+
+	mock.ExpectExec("INSERT INTO audit_events").
+		WithArgs("tenant-x", "system", "dispatcher", "instance.orphan_recovered", "instance", "run-d1", sqlmock.AnyArg()).
+		WillReturnError(errors.New("audit boom"))
+
+	_, _, err = repo.RecoverLeaseOrphans(context.Background(), now)
+	if err == nil || !strings.Contains(err.Error(), "insert audit event") {
+		t.Fatalf("expected insert audit event error, got %v", err)
+	}
+}
+
+func TestRecoverLeaseOrphans_RunningScanError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewDispatchRepository(db)
+	now := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
+
+	// Phase 1: no dispatched orphans
+	noRows := sqlmock.NewRows([]string{"run_id", "tenant_id"})
+	mock.ExpectQuery("UPDATE job_instances").
+		WithArgs(now).
+		WillReturnRows(noRows)
+
+	// Phase 2: running orphan with bad column type
+	rRows := sqlmock.NewRows([]string{"run_id", "tenant_id"}).
+		AddRow(nil, "tenant-y")
+	mock.ExpectQuery("UPDATE job_instances").
+		WithArgs(now).
+		WillReturnRows(rRows)
+
+	_, _, err = repo.RecoverLeaseOrphans(context.Background(), now)
+	if err == nil || !strings.Contains(err.Error(), "scan running orphan") {
+		t.Fatalf("expected scan running orphan error, got %v", err)
+	}
+}
+
+func TestRecoverLeaseOrphans_RunningIterateError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewDispatchRepository(db)
+	now := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
+
+	// Phase 1: no dispatched orphans
+	noRows := sqlmock.NewRows([]string{"run_id", "tenant_id"})
+	mock.ExpectQuery("UPDATE job_instances").
+		WithArgs(now).
+		WillReturnRows(noRows)
+
+	// Phase 2: RowError after valid row
+	rRows := sqlmock.NewRows([]string{"run_id", "tenant_id"}).
+		AddRow("run-r1", "tenant-y").
+		RowError(0, errors.New("iterate boom"))
+	mock.ExpectQuery("UPDATE job_instances").
+		WithArgs(now).
+		WillReturnRows(rRows)
+
+	_, _, err = repo.RecoverLeaseOrphans(context.Background(), now)
+	if err == nil || !strings.Contains(err.Error(), "iterate running orphans") {
+		t.Fatalf("expected iterate running orphans error, got %v", err)
+	}
+}
+
+func TestRecoverLeaseOrphans_RunningAuditInsertError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewDispatchRepository(db)
+	now := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
+
+	// Phase 1: no dispatched orphans
+	noRows := sqlmock.NewRows([]string{"run_id", "tenant_id"})
+	mock.ExpectQuery("UPDATE job_instances").
+		WithArgs(now).
+		WillReturnRows(noRows)
+
+	// Phase 2: one running orphan
+	rRows := sqlmock.NewRows([]string{"run_id", "tenant_id"}).
+		AddRow("run-r1", "tenant-y")
+	mock.ExpectQuery("UPDATE job_instances").
+		WithArgs(now).
+		WillReturnRows(rRows)
+
+	// Audit insert for running orphan fails
+	mock.ExpectExec("INSERT INTO audit_events").
+		WithArgs("tenant-y", "system", "dispatcher", "instance.orphan_recovered", "instance", "run-r1", sqlmock.AnyArg()).
+		WillReturnError(errors.New("audit boom"))
+
+	_, _, err = repo.RecoverLeaseOrphans(context.Background(), now)
+	if err == nil || !strings.Contains(err.Error(), "insert audit event") {
+		t.Fatalf("expected insert audit event error, got %v", err)
+	}
+}
+
+func TestRefreshEffectivePriority_RowsAffectedError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewDispatchRepository(db)
+	now := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
+
+	// Return a result that fails RowsAffected
+	mock.ExpectExec("UPDATE job_instances").
+		WithArgs(now).
+		WillReturnResult(sqlmock.NewErrorResult(errors.New("rows affected boom")))
+
+	_, err = repo.RefreshEffectivePriority(context.Background(), now)
+	if err == nil || !strings.Contains(err.Error(), "refresh rows affected") {
+		t.Fatalf("expected refresh rows affected error, got %v", err)
+	}
+}
+
+func TestRefreshEffectivePriority_AuditInsertError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewDispatchRepository(db)
+	now := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
+
+	mock.ExpectExec("UPDATE job_instances").
+		WithArgs(now).
+		WillReturnResult(sqlmock.NewResult(0, 5))
+
+	// Audit insert fails — function logs error but returns success
+	mock.ExpectExec("INSERT INTO audit_events").
+		WithArgs("system", "dispatcher", "instance.status_changed", "audit", "effective_priority_refresh", sqlmock.AnyArg()).
+		WillReturnError(errors.New("audit boom"))
+
+	n, err := repo.RefreshEffectivePriority(context.Background(), now)
+	if err != nil {
+		t.Fatalf("RefreshEffectivePriority() should not fail on audit error, got %v", err)
+	}
+	if n != 5 {
+		t.Fatalf("expected n=5, got %d", n)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sqlmock expectations: %v", err)
+	}
+}
+
+func TestRefreshEffectivePriority_ZeroRowsAffected(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewDispatchRepository(db)
+	now := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
+
+	// Zero rows affected → no audit insert
+	mock.ExpectExec("UPDATE job_instances").
+		WithArgs(now).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	n, err := repo.RefreshEffectivePriority(context.Background(), now)
+	if err != nil {
+		t.Fatalf("RefreshEffectivePriority() error = %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("expected n=0, got %d", n)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sqlmock expectations: %v", err)
+	}
+}
+
+func TestDispatchOne_updateInstanceToDispatchedAuditError(t *testing.T) {
+	repo, mock := newDispatchRepoMock(t)
+	now := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
+	spec := makeClaimSpec(now)
+
+	mock.ExpectBegin()
+	expectClaimOneCandidate(mock, spec, 1, now)
+	expectPolicyLookup(mock, spec.TenantID, 101, "allow")
+	expectRunningCount(mock, spec.TenantID, 101, 0)
+
+	// UPDATE succeeds (returns dispatched snapshot)
+	rows := sqlmock.NewRows(instanceColumns)
+	addInstanceRow(rows, 1, "run-1", spec.TenantID, 101, "schedule", "dispatched", 5, now.Add(-time.Minute), now)
+	mock.ExpectQuery("UPDATE job_instances").
+		WithArgs(now, now.Add(30*time.Second), int64(1)).
+		WillReturnRows(rows)
+
+	// Audit insert fails
+	mock.ExpectExec("INSERT INTO audit_events").
+		WithArgs(spec.TenantID, "system", "dispatcher", "instance.status_changed", "instance", "run-1", sqlmock.AnyArg()).
+		WillReturnError(errors.New("audit boom"))
+	mock.ExpectRollback()
+
+	_, found, err := repo.DispatchOne(context.Background(), spec, domaininstance.DecideDispatch)
+	if err == nil || !strings.Contains(err.Error(), "insert audit event") {
+		t.Fatalf("expected insert audit event error, got %v", err)
+	}
+	if found {
+		t.Fatalf("expected found=false")
+	}
+	assertMock(t, mock)
+}
+
+func TestDispatchOne_cancelRunningInstancesScanError(t *testing.T) {
+	repo, mock := newDispatchRepoMock(t)
+	now := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
+	spec := makeClaimSpec(now)
+
+	mock.ExpectBegin()
+	expectClaimOneCandidate(mock, spec, 1, now)
+	expectPolicyLookup(mock, spec.TenantID, 101, "replace")
+	expectRunningCount(mock, spec.TenantID, 101, 1)
+
+	// Cancel returns row with wrong type causing scan error
+	canceledRows := sqlmock.NewRows([]string{"run_id", "status"}).
+		AddRow(nil, "dispatched") // nil run_id scan error
+	mock.ExpectQuery("UPDATE job_instances").
+		WithArgs(spec.TenantID, int64(101), now).
+		WillReturnRows(canceledRows)
+	mock.ExpectRollback()
+
+	_, found, err := repo.DispatchOne(context.Background(), spec, domaininstance.DecideDispatch)
+	if err == nil || !strings.Contains(err.Error(), "scan canceled instance") {
+		t.Fatalf("expected scan canceled instance error, got %v", err)
+	}
+	if found {
+		t.Fatalf("expected found=false")
+	}
+	assertMock(t, mock)
+}
+
+func TestDispatchOne_cancelRunningInstancesIterateError(t *testing.T) {
+	repo, mock := newDispatchRepoMock(t)
+	now := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
+	spec := makeClaimSpec(now)
+
+	mock.ExpectBegin()
+	expectClaimOneCandidate(mock, spec, 1, now)
+	expectPolicyLookup(mock, spec.TenantID, 101, "replace")
+	expectRunningCount(mock, spec.TenantID, 101, 1)
+
+	// RowError after valid row triggers rows.Err()
+	canceledRows := sqlmock.NewRows([]string{"run_id", "status"}).
+		AddRow("run-c1", "dispatched").
+		RowError(0, errors.New("iterate boom"))
+	mock.ExpectQuery("UPDATE job_instances").
+		WithArgs(spec.TenantID, int64(101), now).
+		WillReturnRows(canceledRows)
+	mock.ExpectRollback()
+
+	_, found, err := repo.DispatchOne(context.Background(), spec, domaininstance.DecideDispatch)
+	if err == nil || !strings.Contains(err.Error(), "iterate canceled instances") {
+		t.Fatalf("expected iterate canceled instances error, got %v", err)
+	}
+	if found {
+		t.Fatalf("expected found=false")
+	}
+	assertMock(t, mock)
+}
+
+func TestDispatchOne_cancelRunningInstancesAuditError(t *testing.T) {
+	repo, mock := newDispatchRepoMock(t)
+	now := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
+	spec := makeClaimSpec(now)
+
+	mock.ExpectBegin()
+	expectClaimOneCandidate(mock, spec, 1, now)
+	expectPolicyLookup(mock, spec.TenantID, 101, "replace")
+	expectRunningCount(mock, spec.TenantID, 101, 1)
+
+	// Cancel succeeds
+	canceledRows := sqlmock.NewRows([]string{"run_id", "status"}).
+		AddRow("run-c1", "dispatched")
+	mock.ExpectQuery("UPDATE job_instances").
+		WithArgs(spec.TenantID, int64(101), now).
+		WillReturnRows(canceledRows)
+
+	// Audit insert fails
+	mock.ExpectExec("INSERT INTO audit_events").
+		WithArgs(spec.TenantID, "system", "dispatcher", "instance.status_changed", "instance", "run-c1", sqlmock.AnyArg()).
+		WillReturnError(errors.New("audit boom"))
+	mock.ExpectRollback()
+
+	_, found, err := repo.DispatchOne(context.Background(), spec, domaininstance.DecideDispatch)
+	if err == nil || !strings.Contains(err.Error(), "insert audit event") {
+		t.Fatalf("expected insert audit event error, got %v", err)
+	}
+	if found {
+		t.Fatalf("expected found=false")
+	}
+	assertMock(t, mock)
 }
