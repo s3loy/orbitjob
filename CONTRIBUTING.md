@@ -50,7 +50,24 @@ go test -race ./...
 
 ## Commit 格式
 
-`type(scope): description`，Conventional Commits。类型：feat/fix/refactor/test/docs/chore。scope 见 CLAUDE.md。
+`type(scope): description`，Conventional Commits。类型：feat/fix/refactor/test/docs/chore。
+
+Scope 取值：
+
+| Scope | 含义 |
+|-------|------|
+| `core/domain` | 领域规则变更 |
+| `core/store` | 写库变更 |
+| `core/app` | 用例层变更 |
+| `admin/http` | HTTP handler 变更 |
+| `admin/store` | 读库变更 |
+| `admin/app` | admin 用例层变更 |
+| `schedule` | 调度器进程 |
+| `dispatcher` | 分发器进程 |
+| `worker` | 执行器进程 |
+| `ci` | CI/CD 配置 |
+| `docs` | 文档 |
+| `platform` | 基础设施层 |
 
 ## PR 流程
 
