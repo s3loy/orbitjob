@@ -8,6 +8,20 @@ import (
 	"orbitjob/internal/domain/validation"
 )
 
+func TestNormalizeCreate_ManualTrigger(t *testing.T) {
+	spec, err := NormalizeCreate(CreateInput{
+		JobID:         42,
+		TriggerSource: TriggerSourceManual,
+		ScheduledAt:   time.Date(2026, 4, 13, 0, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("NormalizeCreate() error = %v", err)
+	}
+	if spec.TriggerSource != TriggerSourceManual {
+		t.Fatalf("expected trigger_source=%q, got %q", TriggerSourceManual, spec.TriggerSource)
+	}
+}
+
 func TestNormalizeCreate_DefaultsAndTrim(t *testing.T) {
 	partitionKey := " shard-a "
 	idempotencyKey := " request-1 "
@@ -97,6 +111,76 @@ func TestNormalizeCreate_InvalidInput(t *testing.T) {
 			},
 			wantField:   "scheduled_at",
 			wantMessage: "is required",
+		},
+		{
+			name: "tenant id too long",
+			input: CreateInput{
+				JobID:       1,
+				ScheduledAt: time.Now().UTC(),
+				TenantID:    strings.Repeat("t", 65),
+			},
+			wantField:   "tenant_id",
+			wantMessage: "must be <= 64 characters",
+		},
+		{
+			name: "invalid trigger source",
+			input: CreateInput{
+				JobID:         1,
+				ScheduledAt:   time.Now().UTC(),
+				TriggerSource: "delay",
+			},
+			wantField:   "trigger_source",
+			wantMessage: "must be one of: schedule, manual",
+		},
+		{
+			name: "idempotency scope too long",
+			input: CreateInput{
+				JobID:            1,
+				ScheduledAt:      time.Now().UTC(),
+				IdempotencyScope: strings.Repeat("s", 65),
+			},
+			wantField:   "idempotency_scope",
+			wantMessage: "must be <= 64 characters",
+		},
+		{
+			name: "max attempt negative",
+			input: CreateInput{
+				JobID:       1,
+				ScheduledAt: time.Now().UTC(),
+				MaxAttempt:  -1,
+			},
+			wantField:   "max_attempt",
+			wantMessage: "must be >= 1",
+		},
+		{
+			name: "idempotency key too long",
+			input: CreateInput{
+				JobID:          1,
+				ScheduledAt:    time.Now().UTC(),
+				IdempotencyKey: func() *string { v := strings.Repeat("k", 129); return &v }(),
+			},
+			wantField:   "idempotency_key",
+			wantMessage: "must be <= 128 characters",
+		},
+		{
+			name: "routing key too long",
+			input: CreateInput{
+				JobID:       1,
+				ScheduledAt: time.Now().UTC(),
+				RoutingKey:  func() *string { v := strings.Repeat("r", 129); return &v }(),
+			},
+			wantField:   "routing_key",
+			wantMessage: "must be <= 128 characters",
+		},
+		{
+			name: "trace id too long",
+			input: CreateInput{
+				JobID:       1,
+				ScheduledAt: time.Now().UTC(),
+				TraceID:     func() *string { v := strings.Repeat("t", 65); return &v }(),
+			},
+			wantField:   "trace_id",
+			wantMessage: "must be <= 64 characters",
 		},
 	}
 

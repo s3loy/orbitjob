@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	domainjob "orbitjob/internal/core/domain/job"
 	"orbitjob/internal/domain/validation"
 )
 
@@ -120,21 +119,5 @@ func TestNormalizeListInput_InvalidInput(t *testing.T) {
 				t.Fatalf("expected message=%q, got %q", tt.wantMessage, validationErr.Message)
 			}
 		})
-	}
-}
-
-func TestBuildScheduleSummary(t *testing.T) {
-	cronExpr := "*/5 * * * *"
-
-	if got := BuildScheduleSummary(domainjob.TriggerTypeManual, nil, ""); got != "manual" {
-		t.Fatalf("expected manual summary, got %q", got)
-	}
-
-	if got := BuildScheduleSummary(domainjob.TriggerTypeCron, &cronExpr, "Asia/Shanghai"); got != "cron: */5 * * * * (Asia/Shanghai)" {
-		t.Fatalf("unexpected cron summary: %q", got)
-	}
-
-	if got := BuildScheduleSummary(domainjob.TriggerTypeCron, nil, ""); got != "cron (UTC)" {
-		t.Fatalf("unexpected empty cron summary: %q", got)
 	}
 }

@@ -8,9 +8,10 @@ import (
 )
 
 type stubSchedulerRepo struct {
-	calls int
-	found []bool
-	errAt int
+	calls   int
+	found   []bool
+	errAt   int
+	traceID string // non-empty when the result should carry a TraceID
 }
 
 func (s *stubSchedulerRepo) ScheduleOneDueCron(
@@ -27,7 +28,7 @@ func (s *stubSchedulerRepo) ScheduleOneDueCron(
 	if i >= len(s.found) {
 		return ScheduledOneResult{}, false, nil
 	}
-	return ScheduledOneResult{}, s.found[i], nil
+	return ScheduledOneResult{TraceID: s.traceID}, s.found[i], nil
 }
 
 func TestTickUseCase_RunBatch_StopsOnNoMoreJobs(t *testing.T) {
@@ -51,6 +52,18 @@ func TestTickUseCase_RunBatch_ReturnsPartialCountOnError(t *testing.T) {
 	}
 	if count != 2 {
 		t.Fatalf("expected partial handled count=2, got %d", count)
+	}
+}
+
+func TestTickUseCase_RunBatch_TraceID(t *testing.T) {
+	repo := &stubSchedulerRepo{found: []bool{true, true, false}, errAt: -1, traceID: "trace-abc"}
+	uc := NewTickUseCase(repo)
+	count, err := uc.RunBatch(context.Background(), time.Now().UTC(), 10)
+	if err != nil {
+		t.Fatalf("RunBatch() error = %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("expected handled count=2, got %d", count)
 	}
 }
 

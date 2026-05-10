@@ -231,3 +231,68 @@ func TestUpdateJobRequest_ToUpdateInputSwitchingToManualClearsCron(t *testing.T)
 		t.Fatalf("expected cron_expr to be cleared when switching to manual")
 	}
 }
+
+func TestMapValueOrDefault_ProvidesHandlerPayload(t *testing.T) {
+	// When HandlerPayload is provided in the request, it should be cloned (non-nil branch).
+	handlerPayload := map[string]any{"custom": "value"}
+	req := UpdateJobRequest{
+		ID:             42,
+		Version:        1,
+		HandlerPayload: handlerPayload,
+	}
+
+	current := query.GetItem{
+		ID:             42,
+		Name:           "test-job",
+		HandlerPayload: map[string]any{"old": "data"},
+	}
+
+	got := req.ToUpdateInput(current, "user")
+
+	if got.HandlerPayload["custom"] != "value" {
+		t.Fatalf("expected request HandlerPayload to be used, got %+v", got.HandlerPayload)
+	}
+	if len(got.HandlerPayload) != 1 {
+		t.Fatalf("expected only the request's payload keys, got %d", len(got.HandlerPayload))
+	}
+	// Verify it's a clone, not the same reference (defensive copy)
+	handlerPayload["custom"] = "mutated"
+	if got.HandlerPayload["custom"] != "value" {
+		t.Fatalf("expected cloned map to not alias original, got %+v", got.HandlerPayload)
+	}
+}
+
+func TestMapValueOrDefault_NilFallbackClone(t *testing.T) {
+	// When value is nil, fallback should be cloned.
+	fallback := map[string]any{"a": "b"}
+	req := UpdateJobRequest{
+		ID:      42,
+		Version: 1,
+	}
+
+	current := query.GetItem{
+		ID:             42,
+		Name:           "test-job",
+		HandlerPayload: fallback,
+	}
+
+	got := req.ToUpdateInput(current, "user")
+
+	if got.HandlerPayload["a"] != "b" {
+		t.Fatalf("expected fallback payload, got %+v", got.HandlerPayload)
+	}
+	fallback["a"] = "mutated"
+	if got.HandlerPayload["a"] != "b" {
+		t.Fatalf("expected cloned fallback to not alias original")
+	}
+}
+
+func TestCloneMap_Empty(t *testing.T) {
+	got := cloneMap(nil)
+	if got == nil {
+		t.Fatal("expected non-nil empty map from cloneMap(nil)")
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected empty map, got %d entries", len(got))
+	}
+}

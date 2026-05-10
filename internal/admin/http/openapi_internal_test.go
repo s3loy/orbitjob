@@ -3,6 +3,7 @@ package http
 import (
 	"reflect"
 	"testing"
+	"time"
 )
 
 type pointerParameterModel struct {
@@ -255,5 +256,154 @@ func TestApplyStandardResponseHeaders_OverwritesAndKeepsMap(t *testing.T) {
 	}
 	if header.Schema.Type != "string" {
 		t.Fatalf("expected trace header schema type string, got %+v", header.Schema)
+	}
+}
+
+// --- Additional coverage for openapi reflection edge cases ---
+
+type dashJSONModel struct {
+	Hidden string `json:"-"`
+}
+
+type commaOnlyJSONNameModel struct {
+	Value string `json:",omitempty"`
+}
+
+type emptyJSONNameModel struct {
+	Value string `json:""`
+}
+
+type doublePtrModel struct {
+	ID *int64 `uri:"id" binding:"required,min=1"`
+}
+
+type unexportedFieldModel struct {
+	Exported  string `uri:"id" binding:"required"`
+	unexported string `uri:"hidden"`
+}
+
+func TestInlineSchemaForType_TimeAndRemainingTypes(t *testing.T) {
+	// Pointer to time.Time (isTimeType after deref)
+	timePtr := reflect.TypeOf(new(time.Time))
+	schema := inlineSchemaForType(timePtr)
+	if schema.Type != "string" || schema.Format != "date-time" {
+		t.Fatalf("expected date-time schema for *time.Time, got %+v", schema)
+	}
+
+	// int8 (non-int64 integer type)
+	if got := inlineSchemaForType(reflect.TypeOf(int8(1))); got.Type != "integer" || got.Format != "" {
+		t.Fatalf("expected integer (no format) for int8, got %+v", got)
+	}
+
+	// int16
+	if got := inlineSchemaForType(reflect.TypeOf(int16(1))); got.Type != "integer" {
+		t.Fatalf("expected integer for int16, got %+v", got)
+	}
+
+	// int32
+	if got := inlineSchemaForType(reflect.TypeOf(int32(1))); got.Type != "integer" {
+		t.Fatalf("expected integer for int32, got %+v", got)
+	}
+
+	// uint (non-uint64)
+	if got := inlineSchemaForType(reflect.TypeOf(uint(1))); got.Type != "integer" || got.Format != "" {
+		t.Fatalf("expected integer (no format) for uint, got %+v", got)
+	}
+
+	// uint8
+	if got := inlineSchemaForType(reflect.TypeOf(uint8(1))); got.Type != "integer" {
+		t.Fatalf("expected integer for uint8, got %+v", got)
+	}
+
+	// uint16
+	if got := inlineSchemaForType(reflect.TypeOf(uint16(1))); got.Type != "integer" {
+		t.Fatalf("expected integer for uint16, got %+v", got)
+	}
+
+	// uint32
+	if got := inlineSchemaForType(reflect.TypeOf(uint32(1))); got.Type != "integer" {
+		t.Fatalf("expected integer for uint32, got %+v", got)
+	}
+}
+
+func TestStructSchema_DashAndEmptyJSONTags(t *testing.T) {
+	registry := newSchemaRegistry()
+
+	// json:"-" should be skipped
+	schema := registry.structSchema(reflect.TypeOf(dashJSONModel{}), schemaModeResponse)
+	if _, ok := schema.Properties["hidden"]; ok {
+		t.Fatal("expected json:\"-\" field to be skipped")
+	}
+
+	// json:"" with empty tag value → skipped at jsonTag == "" check
+	emptySchema := registry.structSchema(reflect.TypeOf(emptyJSONNameModel{}), schemaModeResponse)
+	if _, ok := emptySchema.Properties["value"]; ok {
+		t.Fatal("expected field without json name to be skipped")
+	}
+
+	// json:"," with empty name before comma → skipped at name == "" check
+	commaSchema := registry.structSchema(reflect.TypeOf(commaOnlyJSONNameModel{}), schemaModeResponse)
+	if _, ok := commaSchema.Properties["value"]; ok {
+		t.Fatal("expected field with comma-only json name to be skipped")
+	}
+}
+
+func TestSchemaForType_NilType(t *testing.T) {
+	registry := newSchemaRegistry()
+	schema := registry.schemaForType(nil, schemaModeResponse)
+	if schema.Type != "" || schema.Ref != "" {
+		t.Fatalf("expected empty schema for nil type, got %+v", schema)
+	}
+}
+
+func TestParametersFromModel_DoublePointer(t *testing.T) {
+	model := &doublePtrModel{}
+	params := parametersFromModel(&model) // pointer to pointer
+	if len(params) != 1 {
+		t.Fatalf("expected 1 parameter for double pointer model, got %d", len(params))
+	}
+	if params[0].Name != "id" || params[0].Required != true {
+		t.Fatalf("expected required id parameter, got %+v", params[0])
+	}
+}
+
+func TestOpenAPIPathWithMultipleColons(t *testing.T) {
+	path := toOpenAPIPath("/api/v1/jobs/:id/trigger")
+	if path != "/api/v1/jobs/{id}/trigger" {
+		t.Fatalf("expected path transformation, got %q", path)
+	}
+}
+
+func TestParametersFromModel_NonPathRequired(t *testing.T) {
+	// actorIDHeaderRequest has binding:"required" on a header field.
+	// This exercises the hasBindingRule("required") path for non-path params.
+	params := parametersFromModel(actorIDHeaderRequest{})
+	if len(params) != 1 {
+		t.Fatalf("expected 1 parameter, got %d", len(params))
+	}
+	if !params[0].Required {
+		t.Fatal("expected X-Actor-ID parameter to be Required")
+	}
+	if params[0].Name != "X-Actor-ID" {
+		t.Fatalf("expected name X-Actor-ID, got %q", params[0].Name)
+	}
+	if params[0].In != "header" {
+		t.Fatalf("expected location header, got %q", params[0].In)
+	}
+}
+
+func TestParametersFromModel_UnexportedFieldSkip(t *testing.T) {
+	// unexported fields should be skipped by parametersFromModel
+	model := unexportedFieldModel{
+		Exported:   "visible",
+		unexported: "hidden",
+	}
+	_ = model.unexported // suppress unused field warning
+	params := parametersFromModel(model)
+	if len(params) != 1 {
+		t.Fatalf("expected 1 parameter (only exported field), got %d", len(params))
+	}
+	if params[0].Name != "id" {
+		t.Fatalf("expected id parameter, got %q", params[0].Name)
 	}
 }

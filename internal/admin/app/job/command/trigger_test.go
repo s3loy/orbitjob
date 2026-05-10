@@ -125,6 +125,43 @@ func TestTriggerJobUseCase_Trigger_InstanceCreateError(t *testing.T) {
 	}
 }
 
+func TestTriggerJobUseCase_Trigger_NormalizeCreateError(t *testing.T) {
+	// TenantID > 64 characters triggers a NormalizeCreate validation error.
+	longTenant := "this-tenant-id-is-way-too-long-and-exceeds-the-sixty-four-character-limit-imposed-by-domain-validation"
+	reader := &stubJobReader{
+		item: query.GetItem{
+			ID:       1,
+			Status:   domainjob.StatusActive,
+			TenantID: longTenant,
+		},
+	}
+	creator := &stubInstanceCreator{}
+	uc := NewTriggerJobUseCase(reader, creator)
+
+	_, err := uc.Trigger(context.Background(), TriggerInput{JobID: 1, TenantID: longTenant})
+	if err == nil {
+		t.Fatal("expected normalize create error, got nil")
+	}
+}
+
+func TestTriggerJobUseCase_Trigger_JobIDZero(t *testing.T) {
+	// JobID=0 triggers NormalizeCreate validation error (job_id must be >= 1).
+	reader := &stubJobReader{
+		item: query.GetItem{
+			ID:       0,
+			Status:   domainjob.StatusActive,
+			TenantID: "default",
+		},
+	}
+	creator := &stubInstanceCreator{}
+	uc := NewTriggerJobUseCase(reader, creator)
+
+	_, err := uc.Trigger(context.Background(), TriggerInput{JobID: 0, TenantID: "default"})
+	if err == nil {
+		t.Fatal("expected normalize create error for JobID=0, got nil")
+	}
+}
+
 func TestIdempotencyKeyPtr(t *testing.T) {
 	if p := idempotencyKeyPtr(""); p != nil {
 		t.Fatalf("expected nil for empty string, got %v", *p)

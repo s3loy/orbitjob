@@ -144,3 +144,110 @@ func TestGetTenantID(t *testing.T) {
 		t.Fatalf("expected x-tenant-id, got %q", GetTenantSource(c))
 	}
 }
+
+// --- validateAPIKey edge cases ---
+
+func TestValidateAPIKey_NilDB(t *testing.T) {
+	auth := &Auth{DB: nil}
+	_, ok := auth.validateAPIKey(context.Background(), "otj_a1b2c3d4e5f6g7h8")
+	if ok {
+		t.Fatal("expected false when DB is nil")
+	}
+}
+
+func TestValidateAPIKey_MissingPrefix(t *testing.T) {
+	db, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	auth := NewAuth(db)
+	_, ok := auth.validateAPIKey(context.Background(), "badprefix_a1b2c")
+	if ok {
+		t.Fatal("expected false for key without otj_ prefix")
+	}
+}
+
+func TestValidateAPIKey_TooShort(t *testing.T) {
+	db, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	auth := NewAuth(db)
+	_, ok := auth.validateAPIKey(context.Background(), "otj_short")
+	if ok {
+		t.Fatal("expected false for key shorter than 12 chars")
+	}
+}
+
+func TestValidateAPIKey_BcryptMismatch(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	key := "otj_a1b2c3d4e5f6g7h8"
+	otherKey := "otj_0000000000000000"
+	hash, _ := bcrypt.GenerateFromPassword([]byte(otherKey), bcrypt.MinCost)
+
+	mock.ExpectQuery("SELECT ak.id, ak.tenant_id, ak.key_hash").
+		WithArgs("otj_a1b2c3d4").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "key_hash", "revoked", "expired"}).
+			AddRow("ak_001", "tenant-42", string(hash), nil, nil))
+
+	auth := NewAuth(db)
+	_, ok := auth.validateAPIKey(context.Background(), key)
+	if ok {
+		t.Fatal("expected false for bcrypt mismatch")
+	}
+}
+
+func TestValidateAPIKey_Revoked(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	key := "otj_a1b2c3d4e5f6g7h8"
+	hash, _ := bcrypt.GenerateFromPassword([]byte(key), bcrypt.MinCost)
+	revoked := "2026-01-01"
+
+	mock.ExpectQuery("SELECT ak.id, ak.tenant_id, ak.key_hash").
+		WithArgs("otj_a1b2c3d4").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "key_hash", "revoked", "expired"}).
+			AddRow("ak_001", "tenant-42", string(hash), &revoked, nil))
+
+	auth := NewAuth(db)
+	_, ok := auth.validateAPIKey(context.Background(), key)
+	if ok {
+		t.Fatal("expected false for revoked key")
+	}
+}
+
+func TestValidateAPIKey_Expired(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	key := "otj_a1b2c3d4e5f6g7h8"
+	hash, _ := bcrypt.GenerateFromPassword([]byte(key), bcrypt.MinCost)
+	expired := "2020-01-01"
+
+	mock.ExpectQuery("SELECT ak.id, ak.tenant_id, ak.key_hash").
+		WithArgs("otj_a1b2c3d4").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "key_hash", "revoked", "expired"}).
+			AddRow("ak_001", "tenant-42", string(hash), nil, &expired))
+
+	auth := NewAuth(db)
+	_, ok := auth.validateAPIKey(context.Background(), key)
+	if ok {
+		t.Fatal("expected false for expired key")
+	}
+}

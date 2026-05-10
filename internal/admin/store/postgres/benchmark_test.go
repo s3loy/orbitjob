@@ -43,9 +43,9 @@ func BenchmarkListJobs(b *testing.B) {
 	db := postgrestest.BenchDB(b)
 
 	scales := []struct {
-		name  string
-		rows  int
-		limit int
+		name   string
+		rows   int
+		limit  int
 		offset int
 	}{
 		{"rows=100_limit=10_offset=0", 100, 10, 0},
