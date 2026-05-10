@@ -1,0 +1,288 @@
+# OrbitJob — Production docker-compose deployment
+# 11 services: PostgreSQL + PgBouncer + migration + 4 Go components + observability stack
+
+x-go-defaults: &go-defaults
+  env_file: .env
+  cap_drop:
+    - ALL
+  read_only: true
+  restart: unless-stopped
+  networks:
+    - backend
+
+services:
+  # ── PostgreSQL 17 ──────────────────────────────────────────────
+  pg:
+    image: postgres:17-alpine
+    env_file: .env
+    environment:
+      POSTGRES_DB: orbitjob
+      POSTGRES_USER: orbitjob
+      POSTGRES_PASSWORD: ${PG_PASSWORD}
+    command:
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - effective_cache_size=1536MB
+      - -c
+      - max_connections=50
+      - -c
+      - work_mem=16MB
+      - -c
+      - synchronous_commit=off
+      - -c
+      - wal_level=replica
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - autovacuum_naptime=15s
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orbitjob -d orbitjob"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2GB
+    restart: unless-stopped
+
+  # ── PgBouncer ──────────────────────────────────────────────────
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    env_file: .env
+    environment:
+      DB_HOST: pg
+      DB_PORT: "5432"
+      DB_USER: orbitjob
+      DB_PASSWORD: ${PG_PASSWORD}
+      DB_NAME: orbitjob
+      POOL_MODE: transaction
+      DEFAULT_POOL_SIZE: "20"
+      MAX_CLIENT_CONN: "200"
+      MAX_DB_CONNECTIONS: "50"
+      LISTEN_PORT: "6432"
+    depends_on:
+      pg:
+        condition: service_healthy
+    networks:
+      - backend
+    restart: unless-stopped
+
+  # ── Database migration ─────────────────────────────────────────
+  # Runs exactly once, mounting migrations read-only, applying each
+  # .sql file in sorted order directly against PG.
+  migrate:
+    image: postgres:17-alpine
+    env_file: .env
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        echo "=== Running database migrations ==="
+        for f in $$(ls -1 /migrations/*.sql 2>/dev/null | sort); do
+          echo "--- Applying $$(basename $$f) ---"
+          psql "postgres://orbitjob:$${PG_PASSWORD}@pg:5432/orbitjob?sslmode=disable" -f "$$f"
+        done
+        echo "=== Migrations complete ==="
+    volumes:
+      - ./db/migrations:/migrations:ro
+    depends_on:
+      pg:
+        condition: service_healthy
+    networks:
+      - backend
+    restart: "no"
+
+  # ── Admin API ──────────────────────────────────────────────────
+  admin-api:
+    <<: *go-defaults
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: admin
+    ports:
+      - "8080:8080"
+    environment:
+      APP_ENV: production
+      ADMIN_DSN: "postgres://orbitjob:${PG_PASSWORD}@pgbouncer:6432/orbitjob?sslmode=disable"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256MB
+    stop_grace_period: 10s
+
+  # ── Scheduler ──────────────────────────────────────────────────
+  scheduler:
+    <<: *go-defaults
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: scheduler
+    environment:
+      APP_ENV: production
+      SCHEDULER_HEALTH_PORT: "6060"
+      SCHEDULER_DSN: "postgres://orbitjob:${PG_PASSWORD}@pgbouncer:6432/orbitjob?sslmode=disable"
+      GOMAXPROCS: "1"
+      GOMEMLIMIT: 100MiB
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:6060/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128MB
+    stop_grace_period: 40s
+
+  # ── Dispatcher ─────────────────────────────────────────────────
+  dispatcher:
+    <<: *go-defaults
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dispatcher
+    environment:
+      APP_ENV: production
+      DISPATCHER_HEALTH_PORT: "6061"
+      DISPATCHER_DSN: "postgres://orbitjob:${PG_PASSWORD}@pgbouncer:6432/orbitjob?sslmode=disable"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:6061/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 256MB
+    stop_grace_period: 40s
+
+  # ── Worker ─────────────────────────────────────────────────────
+  # Note: scratch image has no wget, so Docker HEALTHCHECK is
+  # skipped. Use `docker compose exec worker wget ...` or monitor
+  # Prometheus metrics for worker health.
+  worker:
+    <<: *go-defaults
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: worker
+    environment:
+      APP_ENV: production
+      WORKER_HEALTH_PORT: "6062"
+      WORKER_DSN: "postgres://orbitjob:${PG_PASSWORD}@pgbouncer:6432/orbitjob?sslmode=disable"
+      WORKER_CAPACITY: "5"
+      GOMEMLIMIT: 400MiB
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    tmpfs:
+      - /tmp:size=64M
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 512MB
+    stop_grace_period: 45s
+
+  # ── Prometheus ─────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v3.3.0
+    env_file: .env
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./config/prometheus/rules.yml:/etc/prometheus/rules.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+    networks:
+      - backend
+    restart: unless-stopped
+
+  # ── Grafana ────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:11.7.0
+    env_file: .env
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./config/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ./config/grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ./config/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    networks:
+      - frontend
+      - backend
+    restart: unless-stopped
+
+  # ── Loki ───────────────────────────────────────────────────────
+  loki:
+    image: grafana/loki:3.4.0
+    volumes:
+      - ./config/loki.yml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - backend
+    restart: unless-stopped
+
+  # ── Promtail ───────────────────────────────────────────────────
+  promtail:
+    image: grafana/promtail:3.4.0
+    volumes:
+      - ./config/promtail.yml:/etc/promtail/config.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: -config.file=/etc/promtail/config.yml
+    networks:
+      - backend
+    restart: unless-stopped
+
+# ── Networks ─────────────────────────────────────────────────────
+networks:
+  frontend:
+    driver: bridge
+  backend:
+    driver: bridge
+    internal: true
+
+# ── Volumes ──────────────────────────────────────────────────────
+volumes:
+  pg_data:
+  prometheus_data:
+  loki_data:
+  grafana_data:

@@ -1,0 +1,65 @@
+# OrbitJob — Development overrides
+# Automatically merged with docker-compose.yml by `docker compose`.
+#
+# Usage:
+#   docker compose up -d          # production mode
+#   docker compose -f docker-compose.yml -f docker-compose.override.yml up -d  # dev mode
+
+services:
+  # ── PostgreSQL: expose port for local tooling ───────────────
+  pg:
+    ports:
+      - "5432:5432"
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1GB
+
+  # ── Admin API: hot-reload with devserver ────────────────────
+  admin-api:
+    environment:
+      APP_ENV: development
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128MB
+
+  # ── Scheduler: dev mode, lower resources ────────────────────
+  scheduler:
+    environment:
+      APP_ENV: development
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 64MB
+
+  # ── Dispatcher: dev mode, lower resources ───────────────────
+  dispatcher:
+    environment:
+      APP_ENV: development
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128MB
+
+  # ── Worker: dev mode, lower resources ───────────────────────
+  worker:
+    environment:
+      APP_ENV: development
+      WORKER_CAPACITY: "2"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 256MB
+
+  # ── Grafana: dev-friendly defaults ──────────────────────────
+  grafana:
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_LOG_LEVEL: debug
