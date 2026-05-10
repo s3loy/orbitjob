@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -245,5 +246,335 @@ func TestJobRepository_List_DBError(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestJobRepository_GetQuota_Success(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	quotas := map[string]any{
+		"max_jobs":       float64(10),
+		"max_concurrent": float64(3),
+	}
+	raw, err := json.Marshal(quotas)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rows := sqlmock.NewRows([]string{"quotas"}).AddRow(raw)
+	mock.ExpectQuery(`SELECT quotas FROM tenants WHERE id = \$1`).
+		WithArgs("default").
+		WillReturnRows(rows)
+
+	repo := NewJobRepository(db)
+	result, err := repo.GetQuota(context.Background(), "default")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil quotas map")
+	}
+	if result["max_jobs"] != float64(10) {
+		t.Fatalf("expected max_jobs=10, got %v", result["max_jobs"])
+	}
+}
+
+func TestJobRepository_GetQuota_TenantNotFound(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	mock.ExpectQuery(`SELECT quotas FROM tenants WHERE id = \$1`).
+		WithArgs("missing-tenant").
+		WillReturnError(sql.ErrNoRows)
+
+	repo := NewJobRepository(db)
+	result, err := repo.GetQuota(context.Background(), "missing-tenant")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != nil {
+		t.Fatalf("expected nil quotas for missing tenant, got %v", result)
+	}
+}
+
+func TestJobRepository_GetQuota_EmptyQuota(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	// Empty JSON bytes -> treated as nil quotas
+	rows := sqlmock.NewRows([]string{"quotas"}).AddRow([]byte{})
+	mock.ExpectQuery(`SELECT quotas FROM tenants WHERE id = \$1`).
+		WithArgs("default").
+		WillReturnRows(rows)
+
+	repo := NewJobRepository(db)
+	result, err := repo.GetQuota(context.Background(), "default")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != nil {
+		t.Fatalf("expected nil quotas for empty raw, got %v", result)
+	}
+}
+
+func TestJobRepository_GetQuota_DBError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	mock.ExpectQuery(`SELECT quotas FROM tenants WHERE id = \$1`).
+		WithArgs("default").
+		WillReturnError(errors.New("connection refused"))
+
+	repo := NewJobRepository(db)
+	_, err = repo.GetQuota(context.Background(), "default")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestJobRepository_GetQuota_InvalidJSON(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	rows := sqlmock.NewRows([]string{"quotas"}).AddRow([]byte("{invalid"))
+	mock.ExpectQuery(`SELECT quotas FROM tenants WHERE id = \$1`).
+		WithArgs("default").
+		WillReturnRows(rows)
+
+	repo := NewJobRepository(db)
+	_, err = repo.GetQuota(context.Background(), "default")
+	if err == nil {
+		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+// ===== scanJobGetItem edge cases =====
+
+func TestScanJobGetItem_EmptyPayload(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	now := time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC)
+	rows := sqlmock.NewRows([]string{
+		"id", "name", "tenant_id", "version", "priority",
+		"trigger_type", "partition_key", "cron_expr", "timezone",
+		"handler_type", "handler_payload",
+		"timeout_sec", "retry_limit", "retry_backoff_sec", "retry_backoff_strategy",
+		"concurrency_policy", "misfire_policy", "status",
+		"next_run_at", "last_scheduled_at", "created_at", "updated_at",
+	}).AddRow(
+		42, "demo-job", "default", 1, 5,
+		"manual", nil, nil, "UTC",
+		"http", []byte{}, // empty payload
+		60, 3, 10, "fixed",
+		"allow", "skip", "active",
+		nil, nil, now, now,
+	)
+
+	mock.ExpectQuery(`SELECT (.+) FROM jobs`).
+		WithArgs("default", int64(42)).
+		WillReturnRows(rows)
+
+	repo := NewJobRepository(db)
+	item, err := repo.Get(context.Background(), query.GetInput{ID: 42, TenantID: "default"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(item.HandlerPayload) != 0 {
+		t.Fatalf("expected empty handler payload, got %+v", item.HandlerPayload)
+	}
+}
+
+func TestScanJobGetItem_NilPayloadAfterUnmarshal(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	now := time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC)
+	rows := sqlmock.NewRows([]string{
+		"id", "name", "tenant_id", "version", "priority",
+		"trigger_type", "partition_key", "cron_expr", "timezone",
+		"handler_type", "handler_payload",
+		"timeout_sec", "retry_limit", "retry_backoff_sec", "retry_backoff_strategy",
+		"concurrency_policy", "misfire_policy", "status",
+		"next_run_at", "last_scheduled_at", "created_at", "updated_at",
+	}).AddRow(
+		42, "demo-job", "default", 1, 5,
+		"manual", nil, nil, "UTC",
+		"http", []byte("null"), // JSON null
+		60, 3, 10, "fixed",
+		"allow", "skip", "active",
+		nil, nil, now, now,
+	)
+
+	mock.ExpectQuery(`SELECT (.+) FROM jobs`).
+		WithArgs("default", int64(42)).
+		WillReturnRows(rows)
+
+	repo := NewJobRepository(db)
+	item, err := repo.Get(context.Background(), query.GetInput{ID: 42, TenantID: "default"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(item.HandlerPayload) != 0 {
+		t.Fatalf("expected empty handler payload for null JSON, got %+v", item.HandlerPayload)
+	}
+}
+
+func TestScanJobGetItem_InvalidJSON(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	now := time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC)
+	rows := sqlmock.NewRows([]string{
+		"id", "name", "tenant_id", "version", "priority",
+		"trigger_type", "partition_key", "cron_expr", "timezone",
+		"handler_type", "handler_payload",
+		"timeout_sec", "retry_limit", "retry_backoff_sec", "retry_backoff_strategy",
+		"concurrency_policy", "misfire_policy", "status",
+		"next_run_at", "last_scheduled_at", "created_at", "updated_at",
+	}).AddRow(
+		42, "demo-job", "default", 1, 5,
+		"manual", nil, nil, "UTC",
+		"http", []byte("{invalid"), // invalid JSON
+		60, 3, 10, "fixed",
+		"allow", "skip", "active",
+		nil, nil, now, now,
+	)
+
+	mock.ExpectQuery(`SELECT (.+) FROM jobs`).
+		WithArgs("default", int64(42)).
+		WillReturnRows(rows)
+
+	repo := NewJobRepository(db)
+	_, err = repo.Get(context.Background(), query.GetInput{ID: 42, TenantID: "default"})
+	if err == nil {
+		t.Fatal("expected error for invalid JSON payload")
+	}
+}
+
+// ===== List edge cases =====
+
+func TestJobRepository_List_WithOffset(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	rows := sqlmock.NewRows([]string{
+		"id", "name", "tenant_id", "priority",
+		"trigger_type", "partition_key", "cron_expr", "timezone",
+		"handler_type", "concurrency_policy", "misfire_policy", "status",
+		"next_run_at", "last_scheduled_at", "created_at", "updated_at",
+	})
+
+	mock.ExpectQuery(`SELECT (.+) FROM jobs WHERE tenant_id = \$1 AND deleted_at IS NULL ORDER BY id DESC LIMIT \$2 OFFSET \$3`).
+		WithArgs("default", 20, 10). // limit=20, offset=10
+		WillReturnRows(rows)
+
+	repo := NewJobRepository(db)
+	items, err := repo.List(context.Background(), query.ListInput{
+		TenantID: "default",
+		Limit:    20,
+		Offset:   10,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if items != nil {
+		t.Fatalf("expected nil slice for empty rows, got %+v", items)
+	}
+}
+
+func TestJobRepository_List_FilteredEmpty(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	rows := sqlmock.NewRows([]string{
+		"id", "name", "tenant_id", "priority",
+		"trigger_type", "partition_key", "cron_expr", "timezone",
+		"handler_type", "concurrency_policy", "misfire_policy", "status",
+		"next_run_at", "last_scheduled_at", "created_at", "updated_at",
+	})
+
+	mock.ExpectQuery(`SELECT (.+) FROM jobs WHERE tenant_id = \$1 AND deleted_at IS NULL AND status = \$2 ORDER BY id DESC LIMIT \$3 OFFSET \$4`).
+		WithArgs("default", "active", 50, 0).
+		WillReturnRows(rows)
+
+	repo := NewJobRepository(db)
+	items, err := repo.List(context.Background(), query.ListInput{
+		TenantID: "default",
+		Status:   "active",
+		Limit:    50,
+		Offset:   0,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if items != nil {
+		t.Fatalf("expected nil for empty filtered result, got %+v", items)
+	}
+}
+
+func TestJobRepository_List_ScanError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	now := time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC)
+	rows := sqlmock.NewRows([]string{
+		"id", "name", "tenant_id", "priority",
+		"trigger_type", "partition_key", "cron_expr", "timezone",
+		"handler_type", "concurrency_policy", "misfire_policy", "status",
+		"next_run_at", "last_scheduled_at", "created_at", "updated_at",
+	}).AddRow(
+		1, "job-1", "default", 3,
+		"manual", nil, nil, "UTC",
+		"http", "allow", "skip", "active",
+		nil, nil, now, now,
+	).RowError(0, errors.New("scan: conversion error"))
+
+	mock.ExpectQuery(`SELECT (.+) FROM jobs WHERE tenant_id = \$1 AND deleted_at IS NULL`).
+		WithArgs("default", 50, 0).
+		WillReturnRows(rows)
+
+	repo := NewJobRepository(db)
+	_, err = repo.List(context.Background(), query.ListInput{
+		TenantID: "default",
+		Limit:    50,
+		Offset:   0,
+	})
+	if err == nil {
+		t.Fatal("expected scan error, got nil")
 	}
 }
