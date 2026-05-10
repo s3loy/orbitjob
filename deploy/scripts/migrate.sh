@@ -20,14 +20,6 @@ echo "[$(date '+%Y-%m-%d %H:%M:%S')] Current migration version:"
 migrate -path "$MIGRATIONS_DIR" -database "$DATABASE_URL" version 2>&1 || true
 
 echo ""
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Dry-run: applying one migration..."
-migrate -path "$MIGRATIONS_DIR" -database "$DATABASE_URL" up 1
-
-echo ""
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Dry-run: rolling back one migration..."
-migrate -path "$MIGRATIONS_DIR" -database "$DATABASE_URL" down 1
-
-echo ""
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Applying all pending migrations..."
 migrate -path "$MIGRATIONS_DIR" -database "$DATABASE_URL" up
 

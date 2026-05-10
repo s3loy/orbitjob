@@ -214,7 +214,7 @@ services:
 
   # ── Prometheus ─────────────────────────────────────────────────
   prometheus:
-    image: prom/prometheus:v3.3.0
+    image: prom/prometheus:latest
     env_file: .env
     volumes:
       - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
@@ -231,11 +231,11 @@ services:
 
   # ── Grafana ────────────────────────────────────────────────────
   grafana:
-    image: grafana/grafana:11.7.0
+    image: grafana/grafana:latest
     env_file: .env
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?GRAFANA_PASSWORD must be set in .env}
       GF_AUTH_ANONYMOUS_ENABLED: "false"
     ports:
       - "3000:3000"
@@ -251,7 +251,7 @@ services:
 
   # ── Loki ───────────────────────────────────────────────────────
   loki:
-    image: grafana/loki:3.4.0
+    image: grafana/loki:latest
     volumes:
       - ./config/loki.yml:/etc/loki/local-config.yaml:ro
       - loki_data:/loki
@@ -262,7 +262,7 @@ services:
 
   # ── Promtail ───────────────────────────────────────────────────
   promtail:
-    image: grafana/promtail:3.4.0
+    image: grafana/promtail:latest
     volumes:
       - ./config/promtail.yml:/etc/promtail/config.yml:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro

@@ -15,11 +15,18 @@ Embed as a library, or deploy as standalone services.
 
 ## Quick Start
 
-Currently requires manual PostgreSQL setup.
+### Docker Compose
 
 ```bash
-# 1. Start PostgreSQL, then the API server
-DATABASE_DSN="postgres://user:pass@localhost:5432/orbitjob?sslmode=disable" \
+docker compose up -d
+curl http://localhost:8080/healthz
+```
+
+### From source
+
+```bash
+# 1. Start PostgreSQL and the API server
+DATABASE_DSN="postgres://user:<YOUR_PASSWORD>@localhost:5432/orbitjob?sslmode=disable" \
   go run ./cmd/admin-api
 
 # 2. Create a job
@@ -28,7 +35,7 @@ curl -X POST http://localhost:8080/api/v1/jobs \
   -H "X-Actor-ID: admin" \
   -d '{"name":"hello-world","trigger_type":"manual"}'
 
-# 3. Start background components (WORKER_ID is optional — auto-generated if unset)
+# 3. Start background components (WORKER_ID is optional — auto-generated)
 go run ./cmd/scheduler &
 go run ./cmd/dispatcher &
 go run ./cmd/worker &
@@ -38,6 +45,17 @@ All-in-one dev mode:
 
 ```bash
 go run ./cmd/devserver
+```
+
+### Production
+
+See `deploy/` for systemd units, env templates, and deployment scripts.
+
+```bash
+make build-all
+DATABASE_URL="postgres://..." make migrate-up
+sudo cp deploy/systemd/*.service /etc/systemd/system/
+sudo systemctl enable --now orbitjob-*
 ```
 
 ## Development
@@ -70,14 +88,17 @@ go run ./cmd/openapi-gen     # OpenAPI generation
 | `TEST_DATABASE_DSN` | Integration test DSN | — |
 | `APP_ENV` | Log mode (development / production) | — |
 | `ADMIN_PORT` | API listen port | `8080` |
+| `SCHEDULER_HEALTH_PORT` | Health HTTP port | `6060` |
 | `SCHEDULER_BATCH_SIZE` | Max jobs per tick | `100` |
 | `SCHEDULER_TICK_INTERVAL_SEC` | Tick interval (seconds) | `5` |
 | `DISPATCHER_TENANT_ID` | Dispatcher tenant scope | `default` |
+| `DISPATCHER_HEALTH_PORT` | Health HTTP port | `6061` |
 | `DISPATCHER_BATCH_SIZE` | Max claims per tick | `50` |
 | `DISPATCHER_TICK_INTERVAL_SEC` | Tick interval (seconds) | `2` |
 | `DISPATCHER_LEASE_DURATION_SEC` | Lease duration (seconds) | `30` |
 | `WORKER_ID` | Worker identifier | {hostname}-{uuid8} |
 | `WORKER_TENANT_ID` | Worker tenant scope | `default` |
+| `WORKER_HEALTH_PORT` | Health HTTP port | `6062` |
 | `WORKER_POLL_INTERVAL_SEC` | Poll interval (seconds) | `2` |
 | `WORKER_HEARTBEAT_INTERVAL_SEC` | Heartbeat interval (seconds) | `10` |
 | `WORKER_LEASE_DURATION_SEC` | Lease duration (seconds) | `60` |
@@ -87,11 +108,12 @@ go run ./cmd/openapi-gen     # OpenAPI generation
 ### Testing
 
 ```bash
-go test ./...                                                    # Unit tests
-go test -tags integration ./internal/platform/postgrestest        # Integration tests
-go test -tags integration ./internal/admin/store/postgres ./internal/core/store/postgres
-golangci-lint run                                                # Lint
-go run ./cmd/openapi-gen -check -out api/openapi.yaml            # OpenAPI drift check
+make test                  # Unit tests
+make test-cover            # With coverage report
+make test-race             # Race detector
+make integration           # Integration tests (requires PostgreSQL)
+make lint                  # golangci-lint
+make check                 # All quality gates (lint + vet + race + openapi + tidy)
 ```
 
 ## License

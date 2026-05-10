@@ -225,6 +225,11 @@ type instanceRunIDURI struct {
 	RunID string `uri:"run_id" binding:"required,min=1,max=64"`
 }
 
+// CancelInstanceRequest defines the HTTP payload for canceling an instance.
+type CancelInstanceRequest struct {
+	Version int `json:"version" binding:"required,min=1"`
+}
+
 type ListInstancesRequest struct {
 	Status string `form:"status" binding:"omitempty,oneof=pending dispatched running retry_wait success failed canceled"`
 	Limit  int    `form:"limit" binding:"omitempty,min=1,max=100"`

@@ -162,10 +162,11 @@ paths:
           minLength: 1
           maxLength: 64
       requestBody:
+        required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/Snapshot"
+              $ref: "#/components/schemas/CancelInstanceRequest"
       responses:
         "200":
           description: Canceled instance
@@ -896,6 +897,14 @@ components:
       required:
       - code
       - message
+    CancelInstanceRequest:
+      type: object
+      properties:
+        version:
+          type: integer
+          minimum: 1
+      required:
+      - version
     ChangeStatusRequest:
       type: object
       properties:
@@ -962,7 +971,7 @@ components:
           - skip
           - fire_now
           - catch_up
-          default: skip
+          default: fire_now
         name:
           type: string
           maxLength: 128

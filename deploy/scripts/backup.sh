@@ -22,6 +22,14 @@ pg_dump \
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Backup complete: $(du -h "$BACKUP_FILE" | cut -f1)"
 
+# Verify dump integrity
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Verifying backup integrity..."
+if ! pg_restore --list "$BACKUP_FILE" > /dev/null 2>&1; then
+    echo "ERROR: Backup verification failed — dump may be corrupt: ${BACKUP_FILE}"
+    exit 1
+fi
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Backup verified successfully"
+
 # Rotate old backups
 if [ -d "$BACKUP_DIR" ]; then
     DELETED=$(find "$BACKUP_DIR" -name "orbitjob_*.dump" -type f -mtime +"$RETENTION_DAYS" -print -delete | wc -l)

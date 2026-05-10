@@ -61,5 +61,5 @@ services:
   grafana:
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
-      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
       GF_LOG_LEVEL: debug
