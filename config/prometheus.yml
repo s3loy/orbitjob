@@ -1,0 +1,55 @@
+# OrbitJob — Prometheus scrape configuration
+
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/rules.yml
+
+scrape_configs:
+  # ── Admin API ──────────────────────────────────────────────
+  - job_name: admin-api
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - admin-api:8080
+        labels:
+          component: admin-api
+
+  # ── Scheduler ──────────────────────────────────────────────
+  - job_name: scheduler
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - scheduler:6060
+        labels:
+          component: scheduler
+
+  # ── Dispatcher ─────────────────────────────────────────────
+  - job_name: dispatcher
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - dispatcher:6061
+        labels:
+          component: dispatcher
+
+  # ── Worker ─────────────────────────────────────────────────
+  - job_name: worker
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - worker:6062
+        labels:
+          component: worker
+
+  # ── PostgreSQL Exporter ────────────────────────────────────
+  - job_name: postgres-exporter
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - postgres-exporter:9187
+        labels:
+          component: postgres-exporter
