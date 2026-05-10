@@ -425,6 +425,48 @@ func TestNormalizeCreate_InvalidHandlerPayload(t *testing.T) {
 // Benchmarks
 // ---------------------------------------------------------------------------
 
+func TestNormalizeOptionalString_EmptyAfterTrim(t *testing.T) {
+	value := "   "
+	out, err := normalizeOptionalString(&value, "test_field", 32)
+	if err != nil {
+		t.Fatalf("normalizeOptionalString() error = %v", err)
+	}
+	if out != nil {
+		t.Fatalf("expected nil for whitespace-only string, got %q", *out)
+	}
+}
+
+func TestValidateHandlerPayload_Nil(t *testing.T) {
+	if err := validateHandlerPayload(nil); err != nil {
+		t.Fatalf("validateHandlerPayload(nil) error = %v, want nil", err)
+	}
+}
+
+func TestValidateHandlerPayload_EmptyMap(t *testing.T) {
+	if err := validateHandlerPayload(map[string]any{}); err != nil {
+		t.Fatalf("validateHandlerPayload() error = %v, want nil for empty map", err)
+	}
+}
+
+func TestCloneHandlerPayload_EmptyMap(t *testing.T) {
+	original := map[string]any{}
+	cloned := cloneHandlerPayload(original)
+
+	// Clone of empty map should be non-nil (for JSON round-trip).
+	if cloned == nil {
+		t.Fatal("expected non-nil clone for empty map")
+	}
+	if len(cloned) != 0 {
+		t.Fatalf("expected empty cloned map, got len=%d", len(cloned))
+	}
+
+	// Mutating the clone must not affect the original.
+	cloned["new_key"] = "value"
+	if _, ok := original["new_key"]; ok {
+		t.Fatal("mutating cloned empty map affected the original")
+	}
+}
+
 func BenchmarkNormalizeCreate(b *testing.B) {
 	now := time.Date(2026, 3, 18, 0, 58, 0, 0, time.UTC)
 	cronExpr := "0 9 * * *"

@@ -27,6 +27,9 @@ var metadataIP = net.IPv4(169, 254, 169, 254)
 // validateCallbackURL is overridable for tests.
 var validateCallbackURL = validateURLImpl
 
+// lookupIP is overridable for tests.
+var lookupIP = net.LookupIP
+
 // isBlockedIP is overridable for tests. The transport-level check uses this
 // to enforce DNS rebinding protection at connection time.
 var isBlockedIP = func(ip net.IP) bool {
@@ -51,7 +54,7 @@ func validateURLImpl(rawURL string) error {
 	}
 
 	host := u.Hostname()
-	ips, err := net.LookupIP(host)
+	ips, err := lookupIP(host)
 	if err != nil {
 		return fmt.Errorf("DNS resolution failed for %q: %w", host, err)
 	}

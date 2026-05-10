@@ -32,12 +32,32 @@ func TestResumeTransition(t *testing.T) {
 	}
 }
 
+func TestPauseTransition_NegativeVersion(t *testing.T) {
+	_, err := Pause(StatusActive, -1)
+	if err == nil {
+		t.Fatal("expected validation error, got nil")
+	}
+	if err.Error() != "version: must be >= 1" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestResumeTransitionValidationError(t *testing.T) {
 	_, err := Resume(StatusActive, 0)
 	if err == nil {
 		t.Fatal("expected validation error, got nil")
 	}
 	if err.Error() != "version: must be >= 1" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestResumeTransition_WrongStatus(t *testing.T) {
+	_, err := Resume(StatusActive, 5)
+	if err == nil {
+		t.Fatal("expected validation error, got nil")
+	}
+	if err.Error() != "status: only paused jobs can be resumed" {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
