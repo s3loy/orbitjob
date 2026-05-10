@@ -4,11 +4,11 @@
 
 This document describes the state model for job definitions in the OrbitJob control plane, the allowed state transitions, and the corresponding HTTP endpoint contracts.
 
-## Current Implementation Status (2026-04-20)
+## Current Implementation Status (2026-05-10)
 
 - `pause` and `resume` are fully wired through the HTTP handler, application command, and repository layers
 - State changes use optimistic locking (`jobs.version`) for concurrency control, with audit rows written in the same transaction
-- `delete` is not part of the current lifecycle scope
+- `delete` soft-delete: `DELETE /api/v1/jobs/:id` → `SET deleted_at = now()`, filtered by `WHERE deleted_at IS NULL`
 
 ## State Diagram
 
@@ -17,6 +17,8 @@ stateDiagram-v2
     [*] --> active
     active --> paused: POST /api/v1/jobs/:id/pause
     paused --> active: POST /api/v1/jobs/:id/resume
+    active --> deleted: DELETE /api/v1/jobs/:id
+    paused --> deleted: DELETE /api/v1/jobs/:id
 ```
 
 ## State Definitions
@@ -25,6 +27,7 @@ stateDiagram-v2
 | --- | --- |
 | `active` | The job definition is enabled; the scheduler includes it in scheduling evaluation |
 | `paused` | The job definition is suspended; its data is retained but the scheduler will not generate new instances for it |
+| `deleted` | The job definition has been soft-deleted (`deleted_at` non-NULL), irreversible |
 
 ## Allowed Transitions
 
@@ -32,8 +35,10 @@ stateDiagram-v2
 | --- | --- | --- | --- |
 | `active` | pause | `paused` | `POST /api/v1/jobs/:id/pause` |
 | `paused` | resume | `active` | `POST /api/v1/jobs/:id/resume` |
+| `active` | delete | `deleted` | `DELETE /api/v1/jobs/:id` |
+| `paused` | delete | `deleted` | `DELETE /api/v1/jobs/:id` |
 
-Attempting an operation on a job that is already in the target state is an invalid transition and is rejected at the domain layer.
+Attempting an operation on a job that is already in the target state is an invalid transition and is rejected at the domain layer. Deleted jobs cannot be operated on further.
 
 ## HTTP Endpoint Contract
 
