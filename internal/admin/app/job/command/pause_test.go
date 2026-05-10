@@ -175,6 +175,43 @@ func TestChangeStatusUseCase_GetError(t *testing.T) {
 	}
 }
 
+func TestChangeStatusUseCase_NormalizeGetInputError_IDZero(t *testing.T) {
+	reader := &testJobStatusReader{}
+	repo := &testJobStatusRepo{}
+	uc := NewChangeStatusUseCase(reader, repo)
+
+	_, err := uc.Pause(context.Background(), ChangeStatusInput{
+		ID:       0,
+		TenantID: "tenant-a",
+		Version:  4,
+	})
+	if err == nil {
+		t.Fatal("expected NormalizeGetInput error for ID=0, got nil")
+	}
+	if reader.called {
+		t.Fatal("expected reader.Get not to be called on validation error")
+	}
+}
+
+func TestChangeStatusUseCase_NormalizeGetInputError_LongTenantID(t *testing.T) {
+	reader := &testJobStatusReader{}
+	repo := &testJobStatusRepo{}
+	uc := NewChangeStatusUseCase(reader, repo)
+
+	longTenant := "this-tenant-id-is-way-too-long-and-exceeds-the-sixty-four-character-limit-xx"
+	_, err := uc.Resume(context.Background(), ChangeStatusInput{
+		ID:       42,
+		TenantID: longTenant,
+		Version:  7,
+	})
+	if err == nil {
+		t.Fatal("expected NormalizeGetInput error for long tenant_id, got nil")
+	}
+	if reader.called {
+		t.Fatal("expected reader.Get not to be called on validation error")
+	}
+}
+
 func TestChangeStatusUseCase_RepoError(t *testing.T) {
 	repoErr := errors.New("change job status: db down")
 	reader := &testJobStatusReader{
