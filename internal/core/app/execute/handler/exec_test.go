@@ -139,6 +139,7 @@ func TestIsBlacklisted(t *testing.T) {
 		// Explicity blacklisted
 		{"LD_PRELOAD", "LD_PRELOAD", true},
 		{"LD_LIBRARY_PATH", "LD_LIBRARY_PATH", true},
+		{"LD_AUDIT", "LD_AUDIT", true},
 		{"PYTHONPATH", "PYTHONPATH", true},
 		{"PERL5LIB", "PERL5LIB", true},
 		{"RUBYLIB", "RUBYLIB", true},

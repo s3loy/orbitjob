@@ -20,6 +20,8 @@ var privateNetworks = []*net.IPNet{
 	{IP: net.IPv4(172, 16, 0, 0), Mask: net.CIDRMask(12, 32)},
 	{IP: net.IPv4(192, 168, 0, 0), Mask: net.CIDRMask(16, 32)},
 	{IP: net.IPv4(127, 0, 0, 0), Mask: net.CIDRMask(8, 32)},
+	{IP: net.IP{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}, Mask: net.CIDRMask(128, 128)}, // ::1/128 IPv6 loopback
+	{IP: net.IP{0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, Mask: net.CIDRMask(10, 128)}, // fe80::/10 IPv6 link-local
 }
 
 var metadataIP = net.IPv4(169, 254, 169, 254)

@@ -29,6 +29,7 @@ var envWhitelist = map[string]bool{
 var envBlacklist = map[string]bool{
 	"LD_PRELOAD":      true,
 	"LD_LIBRARY_PATH": true,
+	"LD_AUDIT":        true,
 	"PYTHONPATH":      true,
 	"PERL5LIB":        true,
 	"RUBYLIB":         true,

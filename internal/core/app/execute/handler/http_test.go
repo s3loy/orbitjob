@@ -305,6 +305,8 @@ func TestValidateURLImpl_BlockedIPs(t *testing.T) {
 		{"127.0.0.0/8 loopback", "http://127.0.0.1/", true},
 		{"127.0.0.0/8 other", "http://127.99.88.77/", true},
 		{"metadata IP", "http://169.254.169.254/", true},
+		{"IPv6 loopback ::1", "http://[::1]/", true},
+		{"IPv6 link-local fe80::1", "http://[fe80::1]/", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -564,19 +566,24 @@ func TestValidateURLImpl_Success(t *testing.T) {
 }
 
 func TestValidateURLImpl_IPv6Loopback(t *testing.T) {
-	// IPv6 loopback ::1 is NOT in our IPv4-only private networks.
-	// validateURLImpl should succeed (no blocked IP found).
+	// IPv6 loopback ::1 should be blocked now that IPv6 SSRF protection is in place.
 	err := validateURLImpl("http://[::1]/")
-	if err != nil {
-		t.Fatalf("expected success for IPv6 loopback (not in IPv4 blocks), got: %v", err)
+	if err == nil {
+		t.Fatal("expected ssrf_blocked for IPv6 loopback ::1")
+	}
+	if !strings.Contains(err.Error(), "blocked IP") {
+		t.Errorf("expected 'blocked IP' error, got: %v", err)
 	}
 }
 
 func TestValidateURLImpl_IPv6LinkLocal(t *testing.T) {
-	// fe80::/10 link-local addresses are IPv6-only and not blocked.
+	// fe80::/10 link-local addresses should be blocked now that IPv6 SSRF protection is in place.
 	err := validateURLImpl("http://[fe80::1]/")
-	if err != nil {
-		t.Fatalf("expected success for IPv6 link-local, got: %v", err)
+	if err == nil {
+		t.Fatal("expected ssrf_blocked for IPv6 link-local fe80::1")
+	}
+	if !strings.Contains(err.Error(), "blocked IP") {
+		t.Errorf("expected 'blocked IP' error, got: %v", err)
 	}
 }
 
