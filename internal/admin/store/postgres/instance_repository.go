@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 
+	"orbitjob/internal/platform/scan"
+
 	domaininstance "orbitjob/internal/core/domain/instance"
 )
 
@@ -161,18 +163,18 @@ func scanInstanceSnapshot(scanner interface {
 		return domaininstance.Snapshot{}, fmt.Errorf("scan instance snapshot: %w", err)
 	}
 
-	out.PartitionKey = nullStringPtr(partitionKey)
-	out.IdempotencyKey = nullStringPtr(idempotencyKey)
-	out.RoutingKey = nullStringPtr(routingKey)
-	out.WorkerID = nullStringPtr(workerID)
-	out.StartedAt = nullTimePtr(startedAt)
-	out.FinishedAt = nullTimePtr(finishedAt)
-	out.LeaseExpiresAt = nullTimePtr(leaseExpiresAt)
-	out.DispatchedAt = nullTimePtr(dispatchedAt)
-	out.RetryAt = nullTimePtr(retryAt)
-	out.ResultCode = nullStringPtr(resultCode)
-	out.ErrorMsg = nullStringPtr(errorMsg)
-	out.TraceID = nullStringPtr(traceID)
+	out.PartitionKey = scan.NullStringPtr(partitionKey)
+	out.IdempotencyKey = scan.NullStringPtr(idempotencyKey)
+	out.RoutingKey = scan.NullStringPtr(routingKey)
+	out.WorkerID = scan.NullStringPtr(workerID)
+	out.StartedAt = scan.NullTimePtr(startedAt)
+	out.FinishedAt = scan.NullTimePtr(finishedAt)
+	out.LeaseExpiresAt = scan.NullTimePtr(leaseExpiresAt)
+	out.DispatchedAt = scan.NullTimePtr(dispatchedAt)
+	out.RetryAt = scan.NullTimePtr(retryAt)
+	out.ResultCode = scan.NullStringPtr(resultCode)
+	out.ErrorMsg = scan.NullStringPtr(errorMsg)
+	out.TraceID = scan.NullStringPtr(traceID)
 
 	return out, nil
 }

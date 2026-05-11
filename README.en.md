@@ -22,6 +22,18 @@ docker compose up -d
 curl http://localhost:8080/healthz
 ```
 
+### API surface
+
+- `POST /api/v1/jobs` create a job
+- `POST /api/v1/jobs/:id/trigger` manual trigger, requires `X-OrbitJob-Idempotency-Key`
+- `POST /api/v1/jobs/:id/pause` pause a job
+- `POST /api/v1/jobs/:id/resume` resume a job
+- `DELETE /api/v1/jobs/:id` delete a job
+- `GET /api/v1/instances` list instances
+- `GET /api/v1/instances/:run_id` inspect one instance
+- `POST /api/v1/instances/:run_id/cancel` cancel an instance
+- `/openapi.json` machine-readable API contract
+
 ### From source
 
 ```bash
@@ -87,7 +99,7 @@ go run ./cmd/openapi-gen     # OpenAPI generation
 | `DEV_DSN` | Devserver DSN | — |
 | `TEST_DATABASE_DSN` | Integration test DSN | — |
 | `APP_ENV` | Log mode (development / production) | — |
-| `ADMIN_PORT` | API listen port | `8080` |
+| `ADMIN_PORT` | API listen port for `cmd/devserver`; standalone `cmd/admin-api` always uses `8080` | `8080` |
 | `SCHEDULER_HEALTH_PORT` | Health HTTP port | `6060` |
 | `SCHEDULER_BATCH_SIZE` | Max jobs per tick | `100` |
 | `SCHEDULER_TICK_INTERVAL_SEC` | Tick interval (seconds) | `5` |

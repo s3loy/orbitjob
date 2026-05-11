@@ -103,7 +103,7 @@ func (r *DispatchRepository) DispatchOne(
 		if err = tx.Commit(); err != nil {
 			return domaininstance.Snapshot{}, false, fmt.Errorf("commit dispatch tx: %w", err)
 		}
-			metrics.DispatcherDispatchTotal.WithLabelValues(candidate.TenantID, "dispatch").Inc()
+		metrics.DispatcherDispatchTotal.WithLabelValues(candidate.TenantID, "dispatch").Inc()
 		return updated, true, nil
 
 	case domaininstance.DispatchActionSkip:
@@ -111,7 +111,7 @@ func (r *DispatchRepository) DispatchOne(
 			return domaininstance.Snapshot{}, false, fmt.Errorf("rollback skip dispatch tx: %w", rbErr)
 		}
 		// Skip: candidate stays pending, return not-found so the loop continues.
-			metrics.DispatcherDispatchTotal.WithLabelValues(candidate.TenantID, "skip").Inc()
+		metrics.DispatcherDispatchTotal.WithLabelValues(candidate.TenantID, "skip").Inc()
 		return domaininstance.Snapshot{}, false, nil
 
 	case domaininstance.DispatchActionReplace:
@@ -128,7 +128,7 @@ func (r *DispatchRepository) DispatchOne(
 		if err = tx.Commit(); err != nil {
 			return domaininstance.Snapshot{}, false, fmt.Errorf("commit dispatch tx: %w", err)
 		}
-			metrics.DispatcherDispatchTotal.WithLabelValues(candidate.TenantID, "replace").Inc()
+		metrics.DispatcherDispatchTotal.WithLabelValues(candidate.TenantID, "replace").Inc()
 		return updated, true, nil
 
 	default:
@@ -450,6 +450,8 @@ func (r *DispatchRepository) RefreshEffectivePriority(ctx context.Context, now t
 }
 
 // RecoverExpiredWorkers marks workers whose lease has expired as offline.
+// After recovery it updates the WorkersActive gauge with the current count
+// of online workers.
 // Returns the number of workers affected.
 func (r *DispatchRepository) RecoverExpiredWorkers(ctx context.Context, now time.Time) (int64, error) {
 	result, err := r.db.ExecContext(ctx, `
@@ -461,6 +463,16 @@ func (r *DispatchRepository) RecoverExpiredWorkers(ctx context.Context, now time
 	if err != nil {
 		return 0, fmt.Errorf("recover expired workers: %w", err)
 	}
+
+	// Update online worker gauge
+	var onlineCount int64
+	if err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM workers
+		WHERE status = 'online' AND lease_expires_at > $1
+	`, now).Scan(&onlineCount); err == nil {
+		metrics.WorkersActive.Set(float64(onlineCount))
+	}
+
 	return result.RowsAffected()
 }
 

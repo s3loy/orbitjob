@@ -22,6 +22,18 @@ docker compose up -d
 curl http://localhost:8080/healthz
 ```
 
+### API surface
+
+- `POST /api/v1/jobs` create a job
+- `POST /api/v1/jobs/:id/trigger` manual trigger, requires `X-OrbitJob-Idempotency-Key`
+- `POST /api/v1/jobs/:id/pause` pause a job
+- `POST /api/v1/jobs/:id/resume` resume a job
+- `DELETE /api/v1/jobs/:id` delete a job
+- `GET /api/v1/instances` list instances
+- `GET /api/v1/instances/:run_id` inspect one instance
+- `POST /api/v1/instances/:run_id/cancel` cancel an instance
+- `/openapi.json` machine-readable API contract
+
 ### 源码启动
 
 ```bash
@@ -87,7 +99,7 @@ go run ./cmd/openapi-gen     # OpenAPI 生成
 | `DEV_DSN` | Devserver 专用连接串 | — |
 | `TEST_DATABASE_DSN` | 集成测试连接串 | — |
 | `APP_ENV` | 日志模式（development / production） | — |
-| `ADMIN_PORT` | API 监听端口 | `8080` |
+| `ADMIN_PORT` | `cmd/devserver` 的 API 监听端口；standalone `cmd/admin-api` 固定为 `8080` | `8080` |
 | `SCHEDULER_HEALTH_PORT` | 健康检查端口 | `6060` |
 | `SCHEDULER_BATCH_SIZE` | 每 tick 最大 job 数 | `100` |
 | `SCHEDULER_TICK_INTERVAL_SEC` | Tick 间隔（秒） | `5` |

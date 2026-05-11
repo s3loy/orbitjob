@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+
+	"orbitjob/internal/admin/http/middleware"
 )
 
 // --- loadDevPositiveInt ---
@@ -180,7 +182,7 @@ func TestLoadDevWorkerConfig_CustomValues(t *testing.T) {
 func TestTraceMiddleware_GeneratesTraceID(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(traceMiddleware())
+	r.Use(middleware.TraceMiddleware())
 	r.GET("/test", func(c *gin.Context) {
 		traceID, _ := c.Get("trace_id")
 		if traceID == nil || traceID == "" {
@@ -204,7 +206,7 @@ func TestTraceMiddleware_GeneratesTraceID(t *testing.T) {
 func TestTraceMiddleware_ForwardsExistingTraceID(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(traceMiddleware())
+	r.Use(middleware.TraceMiddleware())
 	r.GET("/test", func(c *gin.Context) {
 		traceID, _ := c.Get("trace_id")
 		if traceID != "existing-trace-123" {

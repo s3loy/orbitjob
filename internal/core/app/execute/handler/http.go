@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"orbitjob/internal/core/app/execute"
 )
@@ -20,6 +21,10 @@ var privateNetworks = []*net.IPNet{
 	{IP: net.IPv4(172, 16, 0, 0), Mask: net.CIDRMask(12, 32)},
 	{IP: net.IPv4(192, 168, 0, 0), Mask: net.CIDRMask(16, 32)},
 	{IP: net.IPv4(127, 0, 0, 0), Mask: net.CIDRMask(8, 32)},
+	{IP: net.IPv4(169, 254, 0, 0), Mask: net.CIDRMask(16, 32)}, // link-local
+	{IP: net.IP{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}, Mask: net.CIDRMask(128, 128)}, // ::1/128 IPv6 loopback
+	{IP: net.IP{0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, Mask: net.CIDRMask(10, 128)}, // fe80::/10 IPv6 link-local
+	{IP: net.IP{0xfd, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, Mask: net.CIDRMask(8, 128)}, // fd00::/8 IPv6 ULA
 }
 
 var metadataIP = net.IPv4(169, 254, 169, 254)
@@ -101,14 +106,20 @@ func newSecureTransport(base http.RoundTripper) http.RoundTripper {
 }
 
 type HTTP struct {
-	client *http.Client
+	client  *http.Client
+	secure  http.RoundTripper
+	timeout time.Duration
 }
 
 func NewHTTP(client *http.Client) *HTTP {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	return &HTTP{client: client}
+	return &HTTP{
+		client:  client,
+		secure:  newSecureTransport(client.Transport),
+		timeout: client.Timeout,
+	}
 }
 
 func (h *HTTP) Execute(ctx context.Context, task execute.AssignedTask) execute.Result {
@@ -148,9 +159,9 @@ func (h *HTTP) Execute(ctx context.Context, task execute.AssignedTask) execute.R
 	}
 
 	client := &http.Client{
-		Transport:     newSecureTransport(h.client.Transport),
+		Transport:     h.secure,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse },
-		Timeout:       h.client.Timeout,
+		Timeout:       h.timeout,
 	}
 
 	resp, err := client.Do(req)

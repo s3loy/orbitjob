@@ -55,7 +55,7 @@ services:
 
   # ── PgBouncer ──────────────────────────────────────────────────
   pgbouncer:
-    image: edoburu/pgbouncer:latest
+    image: edoburu/pgbouncer:v1.25.1-p0
     env_file: .env
     environment:
       DB_HOST: pg
@@ -116,7 +116,7 @@ services:
       migrate:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      test: ["CMD", "/healthcheck", "http://localhost:8080/healthz"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -145,7 +145,7 @@ services:
       migrate:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:6060/healthz"]
+      test: ["CMD", "/healthcheck", "http://localhost:6060/healthz"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -172,7 +172,7 @@ services:
       migrate:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:6061/healthz"]
+      test: ["CMD", "/healthcheck", "http://localhost:6061/healthz"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -185,9 +185,6 @@ services:
     stop_grace_period: 40s
 
   # ── Worker ─────────────────────────────────────────────────────
-  # Note: scratch image has no wget, so Docker HEALTHCHECK is
-  # skipped. Use `docker compose exec worker wget ...` or monitor
-  # Prometheus metrics for worker health.
   worker:
     <<: *go-defaults
     build:
@@ -214,7 +211,7 @@ services:
 
   # ── Prometheus ─────────────────────────────────────────────────
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.3.1
     env_file: .env
     volumes:
       - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
@@ -231,7 +228,7 @@ services:
 
   # ── Grafana ────────────────────────────────────────────────────
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:11.6.0
     env_file: .env
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
@@ -251,7 +248,7 @@ services:
 
   # ── Loki ───────────────────────────────────────────────────────
   loki:
-    image: grafana/loki:latest
+    image: grafana/loki:3.6.10
     volumes:
       - ./config/loki.yml:/etc/loki/local-config.yaml:ro
       - loki_data:/loki
@@ -262,7 +259,7 @@ services:
 
   # ── Promtail ───────────────────────────────────────────────────
   promtail:
-    image: grafana/promtail:latest
+    image: grafana/promtail:3.6.10
     volumes:
       - ./config/promtail.yml:/etc/promtail/config.yml:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro

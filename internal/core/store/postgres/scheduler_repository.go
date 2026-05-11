@@ -11,6 +11,8 @@ import (
 
 	"orbitjob/internal/core/app/schedule"
 	tenant "orbitjob/internal/core/domain/tenant"
+	"orbitjob/internal/platform/metrics"
+	"orbitjob/internal/platform/scan"
 )
 
 // SchedulerRepository owns scheduler-side persistence operations.
@@ -100,6 +102,7 @@ func (r *SchedulerRepository) ScheduleOneDueCron(
 		if err != nil {
 			return schedule.ScheduledOneResult{}, false, err
 		}
+		metrics.ScheduleLag.Observe(now.Sub(*decision.ScheduledAt).Seconds())
 
 		diffBytes, err := json.Marshal(map[string]any{
 			"job_id":         job.ID,
@@ -179,7 +182,7 @@ func claimOneDueCronJob(ctx context.Context, tx *sql.Tx, now time.Time) (dueCron
 		return dueCronJobRecord{}, false, fmt.Errorf("claim one due cron job: %w", err)
 	}
 
-	out.PartitionKey = nullStringPtr(partitionKey)
+	out.PartitionKey = scan.NullStringPtr(partitionKey)
 	return out, true, nil
 }
 

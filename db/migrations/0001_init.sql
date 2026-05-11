@@ -275,7 +275,7 @@ CREATE TABLE IF NOT EXISTS job_instances (
   -- retry_wait is treated as "previous attempt finished, waiting next retry".
   CONSTRAINT chk_instances_status_timestamps CHECK (
     (
-      status IN ('pending', 'dispatching', 'dispatched')
+      status IN ('pending', 'dispatched')
       AND started_at IS NULL
       AND finished_at IS NULL
     ) OR (

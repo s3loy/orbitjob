@@ -9,6 +9,7 @@ import (
 	domaininstance "orbitjob/internal/core/domain/instance"
 	domainjob "orbitjob/internal/core/domain/job"
 	"orbitjob/internal/admin/http/middleware"
+	"orbitjob/internal/domain/resource"
 )
 
 type jobReader interface {
@@ -54,7 +55,11 @@ func (uc *TriggerJobUseCase) Trigger(ctx context.Context, in TriggerInput) (Trig
 		return TriggerResult{}, fmt.Errorf("read job for trigger: %w", err)
 	}
 	if job.Status != domainjob.StatusActive {
-		return TriggerResult{}, fmt.Errorf("cannot trigger job with status %q", job.Status)
+		return TriggerResult{}, &resource.ConflictError{
+			Resource: "job",
+			Field:    "status",
+			Message:  fmt.Sprintf("cannot trigger job with status %q", job.Status),
+		}
 	}
 	spec, err := domaininstance.NormalizeCreate(domaininstance.CreateInput{
 		TenantID:         in.TenantID,

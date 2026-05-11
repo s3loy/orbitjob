@@ -12,6 +12,9 @@ import (
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
 
 	domaininstance "orbitjob/internal/core/domain/instance"
+
+	"orbitjob/internal/platform/config"
+	"orbitjob/internal/platform/health"
 )
 
 // ---------------------------------------------------------------------------
@@ -21,7 +24,7 @@ import (
 func TestLoadPositiveIntEnv_Zero(t *testing.T) {
 	t.Setenv("TEST_DISPATCHER_KEY", "0")
 
-	_, err := loadPositiveIntEnv("TEST_DISPATCHER_KEY", 50)
+	_, err := config.LoadPositiveIntEnv("TEST_DISPATCHER_KEY", 50)
 	if err == nil || !strings.Contains(err.Error(), "must be >= 1") {
 		t.Fatalf("expected 'must be >= 1' error, got %v", err)
 	}
@@ -30,7 +33,7 @@ func TestLoadPositiveIntEnv_Zero(t *testing.T) {
 func TestLoadPositiveIntEnv_Negative(t *testing.T) {
 	t.Setenv("TEST_DISPATCHER_KEY", "-1")
 
-	_, err := loadPositiveIntEnv("TEST_DISPATCHER_KEY", 50)
+	_, err := config.LoadPositiveIntEnv("TEST_DISPATCHER_KEY", 50)
 	if err == nil || !strings.Contains(err.Error(), "must be >= 1") {
 		t.Fatalf("expected 'must be >= 1' error, got %v", err)
 	}
@@ -104,7 +107,7 @@ func TestStartComponentHealthServer_Healthz(t *testing.T) {
 	defer cancel()
 
 	port := "19980"
-	go startComponentHealthServer(ctx, db, port, "dispatcher")
+	go health.StartComponentHealthServer(ctx, db, port, "dispatcher")
 
 	// Give the server time to start
 	time.Sleep(50 * time.Millisecond)
@@ -133,7 +136,7 @@ func TestStartComponentHealthServer_Readyz(t *testing.T) {
 	defer cancel()
 
 	port := "19981"
-	go startComponentHealthServer(ctx, db, port, "dispatcher")
+	go health.StartComponentHealthServer(ctx, db, port, "dispatcher")
 	time.Sleep(50 * time.Millisecond)
 
 	resp, err := http.Get("http://localhost:" + port + "/readyz")
@@ -160,7 +163,7 @@ func TestStartComponentHealthServer_ReadyzDBError(t *testing.T) {
 	defer cancel()
 
 	port := "19982"
-	go startComponentHealthServer(ctx, db, port, "dispatcher")
+	go health.StartComponentHealthServer(ctx, db, port, "dispatcher")
 	time.Sleep(50 * time.Millisecond)
 
 	resp, err := http.Get("http://localhost:" + port + "/readyz")
@@ -186,7 +189,7 @@ func TestStartComponentHealthServer_Shutdown(t *testing.T) {
 	port := "19983"
 	done := make(chan struct{})
 	go func() {
-		startComponentHealthServer(ctx, db, port, "dispatcher")
+		health.StartComponentHealthServer(ctx, db, port, "dispatcher")
 		close(done)
 	}()
 

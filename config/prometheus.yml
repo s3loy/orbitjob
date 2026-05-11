@@ -44,12 +44,3 @@ scrape_configs:
           - worker:6062
         labels:
           component: worker
-
-  # ── PostgreSQL Exporter ────────────────────────────────────
-  - job_name: postgres-exporter
-    metrics_path: /metrics
-    static_configs:
-      - targets:
-          - postgres-exporter:9187
-        labels:
-          component: postgres-exporter

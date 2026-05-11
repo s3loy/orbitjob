@@ -7,9 +7,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	command "orbitjob/internal/admin/app/job/command"
 	instancecommand "orbitjob/internal/admin/app/instance/command"
 	instancequery "orbitjob/internal/admin/app/instance/query"
+	command "orbitjob/internal/admin/app/job/command"
 	query "orbitjob/internal/admin/app/job/query"
 	"orbitjob/internal/admin/http/middleware"
 	domaininstance "orbitjob/internal/core/domain/instance"
@@ -101,10 +101,10 @@ func NewHandler(
 	}
 }
 
-func (h *Handler) SetDeleteJobUseCase(uc deleteJobUseCase)        { h.deleteJobUC = uc }
-func (h *Handler) SetTriggerJobUseCase(uc triggerJobUseCase)       { h.triggerJobUC = uc }
-func (h *Handler) SetListInstancesUseCase(uc listInstancesUseCase) { h.listInstancesUC = uc }
-func (h *Handler) SetGetInstanceUseCase(uc getInstanceUseCase)     { h.getInstanceUC = uc }
+func (h *Handler) SetDeleteJobUseCase(uc deleteJobUseCase)           { h.deleteJobUC = uc }
+func (h *Handler) SetTriggerJobUseCase(uc triggerJobUseCase)         { h.triggerJobUC = uc }
+func (h *Handler) SetListInstancesUseCase(uc listInstancesUseCase)   { h.listInstancesUC = uc }
+func (h *Handler) SetGetInstanceUseCase(uc getInstanceUseCase)       { h.getInstanceUC = uc }
 func (h *Handler) SetCancelInstanceUseCase(uc cancelInstanceUseCase) { h.cancelInstanceUC = uc }
 
 // Register mounts HTTP routes for the admin API.
@@ -348,13 +348,17 @@ func (h *Handler) changeJobStatus(c *gin.Context, action string) {
 }
 
 const idempotencyKeyHeader = "X-OrbitJob-Idempotency-Key"
+const maxIdempotencyKeyLen = 128
 
-func parseIdempotencyKey(c *gin.Context) *string {
+func parseIdempotencyKey(c *gin.Context) (*string, error) {
 	key := strings.TrimSpace(c.GetHeader(idempotencyKeyHeader))
 	if key == "" {
-		return nil
+		return nil, nil
 	}
-	return &key
+	if len(key) > maxIdempotencyKeyLen {
+		return nil, validation.New("idempotency_key", "must be <= 128 characters")
+	}
+	return &key, nil
 }
 
 // TriggerJob handles manual trigger requests.
@@ -372,19 +376,27 @@ func (h *Handler) TriggerJob(c *gin.Context) {
 	}
 
 	reqCtx := c.Request.Context()
-	if key := parseIdempotencyKey(c); key != nil {
+	if key, err := parseIdempotencyKey(c); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
+		return
+	} else if key != nil {
 		reqCtx = middleware.WithIdempotencyKey(reqCtx, *key)
 	}
 
 	out, err := h.triggerJobUC.Trigger(reqCtx, in)
 	if err != nil {
 		apiErr := toAPIError(err)
-		if apiErr.Code == ErrCodeValidation {
+		switch apiErr.Code {
+		case ErrCodeValidation:
 			writeAPIError(c, stdhttp.StatusBadRequest, apiErr)
-			return
+		case ErrCodeNotFound:
+			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
+		case ErrCodeConflict:
+			writeAPIError(c, stdhttp.StatusConflict, apiErr)
+		default:
+			_ = c.Error(err)
+			writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
 		}
-		_ = c.Error(err)
-		writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
 		return
 	}
 

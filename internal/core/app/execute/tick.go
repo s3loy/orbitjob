@@ -93,10 +93,11 @@ func (uc *TickUseCase) executeTask(
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
+				slog.Error("handler panic recovered", "panic", r, "stack", string(debug.Stack()))
 				result = Result{
 					Success:    false,
 					ResultCode: "panic",
-					ErrorMsg:   fmt.Sprintf("handler panic: %v\n%s", r, debug.Stack()),
+					ErrorMsg:   fmt.Sprintf("handler panic: %v", r),
 				}
 			}
 		}()

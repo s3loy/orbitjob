@@ -35,5 +35,6 @@ go.work.sum
 .gomodcache/
 .golangci-cache/
 .worktrees/
+.rtk/
 
 docs/superpowers/
