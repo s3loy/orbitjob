@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	command "orbitjob/internal/admin/app/job/command"
@@ -24,21 +23,9 @@ import (
 	platformlogger "orbitjob/internal/platform/logger"
 )
 
-func traceMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		traceID := c.GetHeader("X-Trace-ID")
-		if traceID == "" {
-			traceID = uuid.New().String()
-		}
-		c.Set("trace_id", traceID)
-		c.Header("X-Trace-ID", traceID)
-		c.Next()
-	}
-}
-
 func newRouter(handler *adminhttp.Handler, auth *middleware.Auth, rl *middleware.RateLimiter) *gin.Engine {
 	r := gin.Default()
-	r.Use(traceMiddleware())
+	r.Use(middleware.TraceMiddleware())
 	if auth != nil {
 		r.Use(auth.Middleware())
 	}

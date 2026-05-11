@@ -6,10 +6,8 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
-	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
@@ -18,8 +16,10 @@ import (
 	domaininstance "orbitjob/internal/core/domain/instance"
 	corepostgres "orbitjob/internal/core/store/postgres"
 	"orbitjob/internal/platform/config"
+	"orbitjob/internal/platform/health"
 	platformlogger "orbitjob/internal/platform/logger"
 	"orbitjob/internal/platform/metrics"
+	platformticker "orbitjob/internal/platform/ticker"
 )
 
 type runtimeConfig struct {
@@ -40,10 +40,6 @@ type schedulerTicker interface {
 	Stop()
 }
 
-type wallClockTicker struct {
-	t *time.Ticker
-}
-
 const startupDBPingTimeout = 5 * time.Second
 
 var (
@@ -58,32 +54,22 @@ var (
 	runLoopFn = runLoop
 )
 
-func (w wallClockTicker) Chan() <-chan time.Time {
-	return w.t.C
-}
-
-func (w wallClockTicker) Stop() {
-	w.t.Stop()
-}
-
-func newWallClockTicker(interval time.Duration) schedulerTicker {
-	return wallClockTicker{t: time.NewTicker(interval)}
-}
+var newWallClockTicker = func(d time.Duration) schedulerTicker { return platformticker.New(d) }
 
 func loadDispatcherRuntimeConfig() (runtimeConfig, error) {
 	tenantID := os.Getenv("DISPATCHER_TENANT_ID")
 
-	batchSize, err := loadPositiveIntEnv("DISPATCHER_BATCH_SIZE", 50)
+	batchSize, err := config.LoadPositiveIntEnv("DISPATCHER_BATCH_SIZE", 50)
 	if err != nil {
 		return runtimeConfig{}, err
 	}
 
-	tickIntervalSec, err := loadPositiveIntEnv("DISPATCHER_TICK_INTERVAL_SEC", 2)
+	tickIntervalSec, err := config.LoadPositiveIntEnv("DISPATCHER_TICK_INTERVAL_SEC", 2)
 	if err != nil {
 		return runtimeConfig{}, err
 	}
 
-	leaseDurationSec, err := loadPositiveIntEnv("DISPATCHER_LEASE_DURATION_SEC", 30)
+	leaseDurationSec, err := config.LoadPositiveIntEnv("DISPATCHER_LEASE_DURATION_SEC", 30)
 	if err != nil {
 		return runtimeConfig{}, err
 	}
@@ -100,23 +86,6 @@ func loadDispatcherRuntimeConfig() (runtimeConfig, error) {
 		LeaseDuration: time.Duration(leaseDurationSec) * time.Second,
 		HealthPort:    healthPort,
 	}, nil
-}
-
-func loadPositiveIntEnv(key string, defaultValue int) (int, error) {
-	raw := os.Getenv(key)
-	if raw == "" {
-		return defaultValue, nil
-	}
-
-	value, err := strconv.Atoi(raw)
-	if err != nil {
-		return 0, fmt.Errorf("%s must be an integer: %w", key, err)
-	}
-	if value < 1 {
-		return 0, fmt.Errorf("%s must be >= 1", key)
-	}
-
-	return value, nil
 }
 
 func tenantIDs(cfg runtimeConfig, runner tickRunner, ctx context.Context) []string {
@@ -220,40 +189,12 @@ func run(ctx context.Context) error {
 	// Health HTTP server
 	healthCtx, healthCancel := context.WithCancel(context.Background())
 	defer healthCancel()
-	go startComponentHealthServer(healthCtx, db, cfg.HealthPort, "dispatcher")
+	go health.StartComponentHealthServer(healthCtx, db, cfg.HealthPort, "dispatcher")
 
 	runner := buildRunnerFn(db)
 	runLoopFn(ctx, runner, cfg, newWallClockTicker, time.Now)
 
 	return nil
-}
-
-func startComponentHealthServer(ctx context.Context, db *sql.DB, port, component string) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
-	})
-	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		if err := db.PingContext(r.Context()); err != nil {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = w.Write([]byte("db ping failed"))
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ready"))
-	})
-	srv := &http.Server{Addr: ":" + port, Handler: mux}
-	go func() {
-		slog.Info(component+" health server listening", "addr", srv.Addr)
-		if err := srv.ListenAndServe(); err != http.ErrServerClosed {
-			slog.Error(component+" health server error", "error", err)
-		}
-	}()
-	<-ctx.Done()
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_ = srv.Shutdown(shutdownCtx)
 }
 
 func main() {

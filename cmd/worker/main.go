@@ -23,7 +23,9 @@ import (
 	domainworker "orbitjob/internal/core/domain/worker"
 	corepostgres "orbitjob/internal/core/store/postgres"
 	"orbitjob/internal/platform/config"
+	"orbitjob/internal/platform/health"
 	platformlogger "orbitjob/internal/platform/logger"
+	platformticker "orbitjob/internal/platform/ticker"
 )
 
 type runtimeConfig struct {
@@ -51,10 +53,6 @@ type workerTicker interface {
 	Stop()
 }
 
-type wallClockTicker struct {
-	t *time.Ticker
-}
-
 const startupDBPingTimeout = 5 * time.Second
 
 var (
@@ -76,12 +74,7 @@ var (
 	runLoopFn = runLoop
 )
 
-func (w wallClockTicker) Chan() <-chan time.Time { return w.t.C }
-func (w wallClockTicker) Stop()                  { w.t.Stop() }
-
-func newWallClockTicker(interval time.Duration) workerTicker {
-	return wallClockTicker{t: time.NewTicker(interval)}
-}
+var newWallClockTicker = func(d time.Duration) workerTicker { return platformticker.New(d) }
 
 func loadWorkerRuntimeConfig() (runtimeConfig, error) {
 	workerID := strings.TrimSpace(os.Getenv("WORKER_ID"))
@@ -308,7 +301,7 @@ func run(ctx context.Context) error {
 
 	healthCtx, healthCancel := context.WithCancel(context.Background())
 	defer healthCancel()
-	go startComponentHealthServer(healthCtx, db, cfg.HealthPort, "worker")
+	go health.StartComponentHealthServer(healthCtx, db, cfg.HealthPort, "worker")
 
 	slog.Info("worker starting",
 		"worker_id", cfg.WorkerID,
@@ -326,44 +319,6 @@ func run(ctx context.Context) error {
 
 // startComponentHealthServer runs a minimal HTTP server with /healthz and /readyz.
 // Shared pattern with scheduler and dispatcher.
-func startComponentHealthServer(ctx context.Context, db *sql.DB, port, component string) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = fmt.Fprintf(w, `{"status":"ok","component":"%s"}`+"\n", component)
-	})
-	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		pingCtx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-		defer cancel()
-		if err := db.PingContext(pingCtx); err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = fmt.Fprintf(w, `{"status":"not ready","error":"%s"}`+"\n", err.Error())
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = fmt.Fprintf(w, `{"status":"ready","component":"%s"}`+"\n", component)
-	})
-
-	srv := &http.Server{Addr: ":" + port, Handler: mux}
-	slog.Info(component+" health server listening", "addr", srv.Addr)
-
-	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := srv.Shutdown(shutdownCtx); err != nil {
-			slog.Error(component+" health server shutdown error", "error", err)
-		}
-	}()
-
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		slog.Error(component+" health server error", "error", err)
-	}
-}
-
 func shortUUID() string {
 	return uuid.New().String()[:8]
 }

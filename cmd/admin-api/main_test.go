@@ -12,6 +12,7 @@ import (
 	command "orbitjob/internal/admin/app/job/command"
 	query "orbitjob/internal/admin/app/job/query"
 	adminhttp "orbitjob/internal/admin/http"
+	"orbitjob/internal/admin/http/middleware"
 	domainjob "orbitjob/internal/core/domain/job"
 
 	"github.com/gin-gonic/gin"
@@ -213,7 +214,7 @@ func TestTraceMiddleware(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	router := gin.New()
-	router.Use(traceMiddleware())
+	router.Use(middleware.TraceMiddleware())
 	router.GET("/test", func(c *gin.Context) {
 		traceID, _ := c.Get("trace_id")
 		c.JSON(http.StatusOK, gin.H{"trace_id": traceID})

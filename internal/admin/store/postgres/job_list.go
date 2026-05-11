@@ -5,9 +5,9 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
-	"time"
 
 	query "orbitjob/internal/admin/app/job/query"
+	"orbitjob/internal/platform/scan"
 )
 
 // List queries control-plane job list items.
@@ -111,32 +111,14 @@ func scanJobListItem(scanner rowScanner) (query.ListItem, error) {
 		return query.ListItem{}, fmt.Errorf("scan job list item: %w", err)
 	}
 
-	out.PartitionKey = nullStringPtr(partitionKey)
-	out.NextRunAt = nullTimePtr(nextRunAt)
-	out.LastScheduledAt = nullTimePtr(lastScheduledAt)
+	out.PartitionKey = scan.NullStringPtr(partitionKey)
+	out.NextRunAt = scan.NullTimePtr(nextRunAt)
+	out.LastScheduledAt = scan.NullTimePtr(lastScheduledAt)
 	out.ScheduleSummary = query.BuildScheduleSummary(
 		out.TriggerType,
-		nullStringPtr(cronExpr),
+		scan.NullStringPtr(cronExpr),
 		timezone,
 	)
 
 	return out, nil
-}
-
-func nullTimePtr(in sql.NullTime) *time.Time {
-	if !in.Valid {
-		return nil
-	}
-
-	t := in.Time
-	return &t
-}
-
-func nullStringPtr(in sql.NullString) *string {
-	if !in.Valid {
-		return nil
-	}
-
-	s := in.String
-	return &s
 }

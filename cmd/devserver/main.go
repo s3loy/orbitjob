@@ -362,7 +362,7 @@ func setupDevAdminServer(db *sql.DB) *http.Server {
 	auth := middleware.NewAuth(db)
 
 	r := gin.Default()
-	r.Use(traceMiddleware())
+	r.Use(middleware.TraceMiddleware())
 	if auth != nil {
 		r.Use(auth.Middleware())
 	}
@@ -401,18 +401,6 @@ func runDevAdmin(ctx context.Context, wg *sync.WaitGroup, srv *http.Server, port
 }
 
 // --- Shared utilities ---
-
-func traceMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		traceID := c.GetHeader("X-Trace-ID")
-		if traceID == "" {
-			traceID = uuid.New().String()
-		}
-		c.Set("trace_id", traceID)
-		c.Header("X-Trace-ID", traceID)
-		c.Next()
-	}
-}
 
 func loadDevPositiveInt(key string, defaultValue int) (int, error) {
 	raw := os.Getenv(key)

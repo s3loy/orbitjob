@@ -10,6 +10,7 @@ import (
 
 	query "orbitjob/internal/admin/app/job/query"
 	"orbitjob/internal/domain/resource"
+	"orbitjob/internal/platform/scan"
 )
 
 // Get queries one control-plane job detail item.
@@ -103,10 +104,10 @@ func scanJobGetItem(scanner rowScanner) (query.GetItem, error) {
 		return query.GetItem{}, err
 	}
 
-	out.PartitionKey = nullStringPtr(partitionKey)
-	out.CronExpr = nullStringPtr(cronExpr)
-	out.NextRunAt = nullTimePtr(nextRunAt)
-	out.LastScheduledAt = nullTimePtr(lastScheduledAt)
+	out.PartitionKey = scan.NullStringPtr(partitionKey)
+	out.CronExpr = scan.NullStringPtr(cronExpr)
+	out.NextRunAt = scan.NullTimePtr(nextRunAt)
+	out.LastScheduledAt = scan.NullTimePtr(lastScheduledAt)
 	out.ScheduleSummary = query.BuildScheduleSummary(out.TriggerType, out.CronExpr, out.Timezone)
 
 	if len(payloadBytes) == 0 {
