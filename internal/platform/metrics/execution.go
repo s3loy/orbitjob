@@ -23,4 +23,10 @@ var (
 		Name: "orbitjob_lease_extension_failures_total",
 		Help: "Total number of failed lease extension attempts.",
 	})
+
+	// WorkersActive tracks the number of workers currently online.
+	WorkersActive = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "orbitjob_workers_active",
+		Help: "Number of workers currently online.",
+	})
 )

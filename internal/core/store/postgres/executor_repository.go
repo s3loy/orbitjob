@@ -13,6 +13,7 @@ import (
 	"orbitjob/internal/core/app/execute"
 	domaininstance "orbitjob/internal/core/domain/instance"
 	tenant "orbitjob/internal/core/domain/tenant"
+	"orbitjob/internal/platform/scan"
 	"orbitjob/internal/platform/metrics"
 )
 
@@ -336,7 +337,7 @@ func scanAssignedTask(scanner rowScanner) (execute.AssignedTask, error) {
 		return execute.AssignedTask{}, fmt.Errorf("scan assigned task: %w", err)
 	}
 
-	task.TraceID = nullStringPtr(traceID)
+	task.TraceID = scan.NullStringPtr(traceID)
 	if leaseExpiresAt.Valid {
 		task.LeaseExpiresAt = leaseExpiresAt.Time
 	}
