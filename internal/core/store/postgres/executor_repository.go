@@ -257,12 +257,18 @@ func (r *ExecutorRepository) ExtendLease(
 	workerID string,
 	newExpiry time.Time,
 ) error {
-	// Set tenant context for RLS
-	if _, err := r.db.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID); err != nil {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin extend lease tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Set tenant context for RLS (scoped to this transaction)
+	if _, err := tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID); err != nil {
 		return fmt.Errorf("set tenant context: %w", err)
 	}
 
-	result, err := r.db.ExecContext(ctx, `
+	result, err := tx.ExecContext(ctx, `
 		UPDATE job_instances
 		SET lease_expires_at = $1
 		WHERE tenant_id = $2
@@ -281,7 +287,7 @@ func (r *ExecutorRepository) ExtendLease(
 		return ErrInstanceNotClaimed
 	}
 
-	// Audit log.
+	// Audit log inside the same transaction.
 	diff := map[string]any{
 		"new_lease_expires_at": newExpiry,
 	}
@@ -289,7 +295,7 @@ func (r *ExecutorRepository) ExtendLease(
 	if err != nil {
 		return fmt.Errorf("marshal lease audit diff: %w", err)
 	}
-	if _, err = r.db.ExecContext(ctx, `
+	if _, err = tx.ExecContext(ctx, `
 			INSERT INTO audit_events (tenant_id, actor_type, actor_id, event_type, resource_type, resource_id, diff)
 			VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
 		`,
@@ -304,6 +310,9 @@ func (r *ExecutorRepository) ExtendLease(
 		return fmt.Errorf("insert lease audit event: %w", err)
 	}
 
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit extend lease tx: %w", err)
+	}
 	return nil
 }
 

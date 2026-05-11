@@ -266,11 +266,13 @@ func TestExtendLease_Success(t *testing.T) {
 	repo, mock := newExecutorRepoMock(t)
 	newExpiry := time.Date(2026, 4, 20, 12, 1, 0, 0, time.UTC)
 
+	mock.ExpectBegin()
 	expectSetTenantContext(mock, "tenant-a")
 	mock.ExpectExec("UPDATE job_instances").
 		WithArgs(newExpiry, "tenant-a", int64(1), "worker-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	expectAuditInsertExecutor(mock, "tenant-a", "1", "instance.status_changed")
+	mock.ExpectCommit()
 
 	err := repo.ExtendLease(context.Background(), "tenant-a", 1, "worker-1", newExpiry)
 	if err != nil {
@@ -283,10 +285,12 @@ func TestExtendLease_NotClaimed(t *testing.T) {
 	repo, mock := newExecutorRepoMock(t)
 	newExpiry := time.Date(2026, 4, 20, 12, 1, 0, 0, time.UTC)
 
+	mock.ExpectBegin()
 	expectSetTenantContext(mock, "tenant-a")
 	mock.ExpectExec("UPDATE job_instances").
 		WithArgs(newExpiry, "tenant-a", int64(1), "worker-1").
 		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectRollback()
 
 	err := repo.ExtendLease(context.Background(), "tenant-a", 1, "worker-1", newExpiry)
 	if !errors.Is(err, ErrInstanceNotClaimed) {
@@ -612,9 +616,11 @@ func TestExtendLease_SetTenantContextError(t *testing.T) {
 	repo, mock := newExecutorRepoMock(t)
 	newExpiry := time.Date(2026, 4, 20, 12, 1, 0, 0, time.UTC)
 
+	mock.ExpectBegin()
 	mock.ExpectExec("SELECT set_config").
 		WithArgs("tenant-a").
 		WillReturnError(errors.New("set_config boom"))
+	mock.ExpectRollback()
 
 	err := repo.ExtendLease(context.Background(), "tenant-a", 1, "worker-1", newExpiry)
 	if err == nil || !strings.Contains(err.Error(), "set tenant context") {
@@ -627,10 +633,12 @@ func TestExtendLease_ExecError(t *testing.T) {
 	repo, mock := newExecutorRepoMock(t)
 	newExpiry := time.Date(2026, 4, 20, 12, 1, 0, 0, time.UTC)
 
+	mock.ExpectBegin()
 	expectSetTenantContext(mock, "tenant-a")
 	mock.ExpectExec("UPDATE job_instances").
 		WithArgs(newExpiry, "tenant-a", int64(1), "worker-1").
 		WillReturnError(errors.New("exec boom"))
+	mock.ExpectRollback()
 
 	err := repo.ExtendLease(context.Background(), "tenant-a", 1, "worker-1", newExpiry)
 	if err == nil || !strings.Contains(err.Error(), "extend lease") {
@@ -643,10 +651,12 @@ func TestExtendLease_RowsAffectedError(t *testing.T) {
 	repo, mock := newExecutorRepoMock(t)
 	newExpiry := time.Date(2026, 4, 20, 12, 1, 0, 0, time.UTC)
 
+	mock.ExpectBegin()
 	expectSetTenantContext(mock, "tenant-a")
 	mock.ExpectExec("UPDATE job_instances").
 		WithArgs(newExpiry, "tenant-a", int64(1), "worker-1").
 		WillReturnResult(sqlmock.NewErrorResult(errors.New("rows affected boom")))
+	mock.ExpectRollback()
 
 	err := repo.ExtendLease(context.Background(), "tenant-a", 1, "worker-1", newExpiry)
 	if err == nil || !strings.Contains(err.Error(), "extend lease rows affected") {
@@ -659,6 +669,7 @@ func TestExtendLease_AuditInsertError(t *testing.T) {
 	repo, mock := newExecutorRepoMock(t)
 	newExpiry := time.Date(2026, 4, 20, 12, 1, 0, 0, time.UTC)
 
+	mock.ExpectBegin()
 	expectSetTenantContext(mock, "tenant-a")
 	mock.ExpectExec("UPDATE job_instances").
 		WithArgs(newExpiry, "tenant-a", int64(1), "worker-1").
@@ -666,6 +677,7 @@ func TestExtendLease_AuditInsertError(t *testing.T) {
 	mock.ExpectExec("INSERT INTO audit_events").
 		WithArgs("tenant-a", "system", "worker", "instance.status_changed", "instance", "1", sqlmock.AnyArg()).
 		WillReturnError(errors.New("audit boom"))
+	mock.ExpectRollback()
 
 	err := repo.ExtendLease(context.Background(), "tenant-a", 1, "worker-1", newExpiry)
 	if err == nil || !strings.Contains(err.Error(), "insert lease audit event") {
