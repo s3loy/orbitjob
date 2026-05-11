@@ -13,8 +13,8 @@ import (
 	"orbitjob/internal/core/app/execute"
 	domaininstance "orbitjob/internal/core/domain/instance"
 	tenant "orbitjob/internal/core/domain/tenant"
-	"orbitjob/internal/platform/scan"
 	"orbitjob/internal/platform/metrics"
+	"orbitjob/internal/platform/scan"
 )
 
 var ErrInstanceNotClaimed = errors.New("instance not claimed: row not found or status changed")
@@ -112,7 +112,7 @@ func (r *ExecutorRepository) ClaimNextDispatched(
 		if err != nil {
 			return nil, fmt.Errorf("marshal claim audit diff: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, `
+		if _, err = tx.ExecContext(ctx, `
 			INSERT INTO audit_events (tenant_id, actor_type, actor_id, event_type, resource_type, resource_id, diff)
 			VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
 		`,
@@ -289,10 +289,10 @@ func (r *ExecutorRepository) ExtendLease(
 	if err != nil {
 		return fmt.Errorf("marshal lease audit diff: %w", err)
 	}
-	if _, err := r.db.ExecContext(ctx, `
-		INSERT INTO audit_events (tenant_id, actor_type, actor_id, event_type, resource_type, resource_id, diff)
-		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-	`,
+	if _, err = r.db.ExecContext(ctx, `
+			INSERT INTO audit_events (tenant_id, actor_type, actor_id, event_type, resource_type, resource_id, diff)
+			VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+		`,
 		tenantID,
 		tenant.ActorTypeSystem,
 		"worker",

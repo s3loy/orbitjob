@@ -46,7 +46,19 @@ golangci-lint run
 go build ./...
 go vet ./...
 go test -race ./...
+go run ./cmd/openapi-gen -check -out api/openapi.yaml
+go mod tidy && git diff --exit-code go.sum
+gitleaks detect --no-git
 ```
+
+如改到数据库、仓储、迁移或集成路径，再补跑：
+
+```bash
+go test -count=1 -tags integration ./internal/platform/postgrestest ./internal/admin/store/postgres ./internal/core/store/postgres
+```
+
+如需要依赖漏洞确认，再补跑 `go_vulncheck` / `govulncheck`。
+
 
 ## Commit 格式
 

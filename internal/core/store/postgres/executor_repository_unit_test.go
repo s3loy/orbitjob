@@ -9,6 +9,7 @@ import (
 	"time"
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
+	"github.com/lib/pq"
 
 	domaininstance "orbitjob/internal/core/domain/instance"
 )
@@ -138,9 +139,38 @@ func TestClaimNextDispatched_QueryError(t *testing.T) {
 	assertMock(t, mock)
 }
 
-// ---------------------------------------------------------------------------
-// CompleteInstance
-// ---------------------------------------------------------------------------
+func TestClaimNextDispatched_WithRoutingKeyLabels(t *testing.T) {
+	repo, mock := newExecutorRepoMock(t)
+	now := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
+	lease := now.Add(60 * time.Second)
+	dispatchedAt := now.Add(-5 * time.Second)
+	labels := map[string]any{"queue": "video", "zone": 5}
+
+	mock.ExpectBegin()
+	expectSetTenantContext(mock, "tenant-a")
+	rows := sqlmock.NewRows(claimTaskColumns).AddRow(
+		int64(1), "run-abc", "tenant-a", int64(42),
+		"exec", []byte(`{"command":"echo","args":["hello"]}`), 30,
+		10, "fixed",
+		5, 5, 1, 3,
+		nil, now, dispatchedAt, lease,
+	)
+	mock.ExpectQuery("WITH claimed").
+		WithArgs("tenant-a", 1, "worker-1", now, lease, pq.Array([]string{"video"})).
+		WillReturnRows(rows)
+	expectAuditInsertExecutor(mock, "tenant-a", "1", "instance.status_changed")
+	mock.ExpectCommit()
+
+	tasks, err := repo.ClaimNextDispatched(context.Background(), "tenant-a", "worker-1", 1, lease, now, labels)
+	if err != nil {
+		t.Fatalf("ClaimNextDispatched() error = %v", err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(tasks))
+	}
+	assertMock(t, mock)
+}
+
 
 func TestCompleteInstance_Success(t *testing.T) {
 	repo, mock := newExecutorRepoMock(t)
@@ -331,7 +361,7 @@ func TestClaimNextDispatched_RowsErr(t *testing.T) {
 	mock.ExpectQuery("WITH claimed").
 		WithArgs("tenant-a", 1, "worker-1", now, lease, sqlmock.AnyArg()).
 		WillReturnRows(rows)
-	// Note: err is shadowed by := in the loop, so rollback doesn't fire for rows.Err()
+	mock.ExpectRollback()
 
 	_, err := repo.ClaimNextDispatched(context.Background(), "tenant-a", "worker-1", 1, lease, now, nil)
 	if err == nil || !strings.Contains(err.Error(), "iterate claimed instances") {
@@ -361,7 +391,7 @@ func TestClaimNextDispatched_AuditInsertError(t *testing.T) {
 	mock.ExpectExec("INSERT INTO audit_events").
 		WithArgs("tenant-a", "system", "worker", "instance.status_changed", "instance", "1", sqlmock.AnyArg()).
 		WillReturnError(errors.New("audit boom"))
-	// Note: err is shadowed by := in audit loop, so rollback doesn't fire
+	mock.ExpectRollback()
 
 	_, err := repo.ClaimNextDispatched(context.Background(), "tenant-a", "worker-1", 1, lease, now, nil)
 	if err == nil || !strings.Contains(err.Error(), "insert claim audit event") {
@@ -503,7 +533,7 @@ func TestCompleteInstance_AttemptInsertError(t *testing.T) {
 	mock.ExpectExec("INSERT INTO job_instance_attempts").
 		WithArgs("tenant-a", int64(1), 1, "worker-1", "success", now, nil, nil).
 		WillReturnError(errors.New("attempt insert boom"))
-	// Note: err is shadowed by := in if block, so rollback doesn't fire
+	mock.ExpectRollback()
 
 	err := repo.CompleteInstance(context.Background(), domaininstance.CompleteSpec{
 		TenantID:   "tenant-a",

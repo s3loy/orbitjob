@@ -15,7 +15,7 @@
 - `workers` 的 heartbeat 与 lease upsert 已落地
 - Scheduler MVP tick loop + misfire 策略 + 原子调度事务
 - Dispatcher runtime：原子 claim + concurrency policy + priority aging + lease recovery + graceful shutdown + 多租户
-- **Worker**：并发执行模型（capacity-driven goroutine pool）+ 四阶段优雅关闭 + 自检（GetByID/draining）+ audit 全链路 + `job_instance_attempts` 持久化 + Prometheus metrics
+- **Worker**：并发执行模型（capacity-driven goroutine pool）+ 四阶段优雅关闭 + 运行时 draining + audit 全链路 + `job_instance_attempts` 持久化 + Prometheus metrics
 - `job_instances` version 列（乐观锁）
 - **Manual trigger API**：`POST /api/v1/jobs/:id/trigger` + idempotency_key 防重
 - **Instance query/cancel API**：`GET /api/v1/instances`（列表+分页）、`GET /api/v1/instances/:run_id`（详情）、`POST /api/v1/instances/:run_id/cancel`

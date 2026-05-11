@@ -103,7 +103,7 @@ func (r *DispatchRepository) DispatchOne(
 		if err = tx.Commit(); err != nil {
 			return domaininstance.Snapshot{}, false, fmt.Errorf("commit dispatch tx: %w", err)
 		}
-			metrics.DispatcherDispatchTotal.WithLabelValues(candidate.TenantID, "dispatch").Inc()
+		metrics.DispatcherDispatchTotal.WithLabelValues(candidate.TenantID, "dispatch").Inc()
 		return updated, true, nil
 
 	case domaininstance.DispatchActionSkip:
@@ -111,7 +111,7 @@ func (r *DispatchRepository) DispatchOne(
 			return domaininstance.Snapshot{}, false, fmt.Errorf("rollback skip dispatch tx: %w", rbErr)
 		}
 		// Skip: candidate stays pending, return not-found so the loop continues.
-			metrics.DispatcherDispatchTotal.WithLabelValues(candidate.TenantID, "skip").Inc()
+		metrics.DispatcherDispatchTotal.WithLabelValues(candidate.TenantID, "skip").Inc()
 		return domaininstance.Snapshot{}, false, nil
 
 	case domaininstance.DispatchActionReplace:
@@ -128,7 +128,7 @@ func (r *DispatchRepository) DispatchOne(
 		if err = tx.Commit(); err != nil {
 			return domaininstance.Snapshot{}, false, fmt.Errorf("commit dispatch tx: %w", err)
 		}
-			metrics.DispatcherDispatchTotal.WithLabelValues(candidate.TenantID, "replace").Inc()
+		metrics.DispatcherDispatchTotal.WithLabelValues(candidate.TenantID, "replace").Inc()
 		return updated, true, nil
 
 	default:

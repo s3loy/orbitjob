@@ -349,18 +349,20 @@ func TestValidateURLImpl_NoHost(t *testing.T) {
 	}
 }
 
-func TestValidateURLImpl_DNSRebindingProtection(t *testing.T) {
-	save := isBlockedIP
-	defer func() { isBlockedIP = save }()
+func TestValidateURLImpl_MixedDNSAnswers(t *testing.T) {
+	save := lookupIP
+	defer func() { lookupIP = save }()
 
-	isBlockedIP = func(ip net.IP) bool { return true }
-
-	err := validateURLImpl("http://10.0.0.1/")
-	if err == nil {
-		t.Fatal("expected error when all IPs are blocked")
+	lookupIP = func(host string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("8.8.8.8"), net.ParseIP("10.0.0.1")}, nil
 	}
-	if !strings.Contains(err.Error(), "URL resolves to blocked IP") {
-		t.Errorf("expected 'URL resolves to blocked IP' error, got: %v", err)
+
+	err := validateURLImpl("http://example.com/")
+	if err == nil {
+		t.Fatal("expected error when any resolved IP is blocked")
+	}
+	if !strings.Contains(err.Error(), "blocked IP") {
+		t.Fatalf("expected blocked IP error, got: %v", err)
 	}
 }
 

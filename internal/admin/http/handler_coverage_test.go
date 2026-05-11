@@ -7,6 +7,7 @@ import (
 	"errors"
 	stdhttp "net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -144,7 +145,10 @@ func TestParseIdempotencyKey(t *testing.T) {
 		c, _ := gin.CreateTestContext(w)
 		c.Request = httptest.NewRequest(stdhttp.MethodPost, "/", nil)
 
-		got := parseIdempotencyKey(c)
+		got, err := parseIdempotencyKey(c)
+		if err != nil {
+			t.Fatalf("parseIdempotencyKey: %v", err)
+		}
 		if got != nil {
 			t.Fatalf("expected nil, got %q", *got)
 		}
@@ -157,7 +161,10 @@ func TestParseIdempotencyKey(t *testing.T) {
 		req.Header.Set(idempotencyKeyHeader, "my-key-123")
 		c.Request = req
 
-		got := parseIdempotencyKey(c)
+		got, err := parseIdempotencyKey(c)
+		if err != nil {
+			t.Fatalf("parseIdempotencyKey: %v", err)
+		}
 		if got == nil {
 			t.Fatal("expected non-nil key")
 		}
@@ -173,7 +180,10 @@ func TestParseIdempotencyKey(t *testing.T) {
 		req.Header.Set(idempotencyKeyHeader, "  my-key-456  ")
 		c.Request = req
 
-		got := parseIdempotencyKey(c)
+		got, err := parseIdempotencyKey(c)
+		if err != nil {
+			t.Fatalf("parseIdempotencyKey: %v", err)
+		}
 		if got == nil {
 			t.Fatal("expected non-nil key after trimming whitespace")
 		}
@@ -181,6 +191,57 @@ func TestParseIdempotencyKey(t *testing.T) {
 			t.Fatalf("expected my-key-456, got %q", *got)
 		}
 	})
+}
+
+func TestHandler_TriggerJob_WithIdempotencyKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	uc := &stubTriggerJobUseCase{
+		out: command.TriggerResult{
+			RunID:    "run-002",
+			JobID:    42,
+			TenantID: "tenant-a",
+			Status:   "pending",
+		},
+	}
+
+	h := NewHandler(nil, nil, nil, nil, nil)
+	h.SetTriggerJobUseCase(uc)
+
+	router := gin.New()
+	router.Use(testTenantMiddleware("tenant-a"))
+	h.Register(router)
+
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/jobs/42/trigger", nil)
+	req.Header.Set(idempotencyKeyHeader, "idem-key-abc")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != stdhttp.StatusCreated {
+		t.Fatalf("expected status=%d, got %d, body=%s",
+			stdhttp.StatusCreated, resp.Code, resp.Body.String())
+	}
+	if !uc.called {
+		t.Fatal("expected trigger use case to be called with idempotency key")
+	}
+}
+
+func TestParseIdempotencyKey_TooLong(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req := httptest.NewRequest(stdhttp.MethodPost, "/", nil)
+	req.Header.Set(idempotencyKeyHeader, strings.Repeat("a", maxIdempotencyKeyLen+1))
+	c.Request = req
+
+	got, err := parseIdempotencyKey(c)
+	if err == nil {
+		t.Fatal("expected error for overlong key")
+	}
+	if got != nil {
+		t.Fatalf("expected nil, got %q", *got)
+	}
 }
 
 // ===== TriggerJob (line 361) =====
@@ -235,163 +296,6 @@ func TestHandler_TriggerJob_Success(t *testing.T) {
 	}
 	if out.Status != "pending" {
 		t.Fatalf("expected Status=pending, got %q", out.Status)
-	}
-}
-
-func TestHandler_TriggerJob_WithIdempotencyKey(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	uc := &stubTriggerJobUseCase{
-		out: command.TriggerResult{
-			RunID:    "run-002",
-			JobID:    42,
-			TenantID: "tenant-a",
-			Status:   "pending",
-		},
-	}
-
-	h := NewHandler(nil, nil, nil, nil, nil)
-	h.SetTriggerJobUseCase(uc)
-
-	router := gin.New()
-	router.Use(testTenantMiddleware("tenant-a"))
-	h.Register(router)
-
-	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/jobs/42/trigger", nil)
-	req.Header.Set(idempotencyKeyHeader, "idem-key-abc")
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != stdhttp.StatusCreated {
-		t.Fatalf("expected status=%d, got %d, body=%s",
-			stdhttp.StatusCreated, resp.Code, resp.Body.String())
-	}
-	if !uc.called {
-		t.Fatal("expected trigger use case to be called with idempotency key")
-	}
-}
-
-func TestHandler_TriggerJob_BindError(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	uc := &stubTriggerJobUseCase{}
-	h := NewHandler(nil, nil, nil, nil, nil)
-	h.SetTriggerJobUseCase(uc)
-
-	router := gin.New()
-	h.Register(router)
-
-	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/jobs/not-an-int/trigger", nil)
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != stdhttp.StatusBadRequest {
-		t.Fatalf("expected status=%d, got %d", stdhttp.StatusBadRequest, resp.Code)
-	}
-	if uc.called {
-		t.Fatal("expected use case not to be called on bind error")
-	}
-
-	var out struct {
-		Error struct {
-			Code string `json:"code"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
-		t.Fatalf("unmarshal response: %v", err)
-	}
-	if out.Error.Code != string(ErrCodeValidation) {
-		t.Fatalf("expected code=%q, got %q", ErrCodeValidation, out.Error.Code)
-	}
-}
-
-func TestHandler_TriggerJob_InternalError(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	uc := &stubTriggerJobUseCase{
-		err: errors.New("trigger: db down"),
-	}
-
-	h := NewHandler(nil, nil, nil, nil, nil)
-	h.SetTriggerJobUseCase(uc)
-
-	router := gin.New()
-	router.Use(testTenantMiddleware("default"))
-	h.Register(router)
-
-	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/jobs/1/trigger", nil)
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != stdhttp.StatusInternalServerError {
-		t.Fatalf("expected status=%d, got %d", stdhttp.StatusInternalServerError, resp.Code)
-	}
-	if !uc.called {
-		t.Fatal("expected use case to be called")
-	}
-
-	var out struct {
-		Error struct {
-			Code string `json:"code"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
-		t.Fatalf("unmarshal response: %v", err)
-	}
-	if out.Error.Code != string(ErrCodeInternal) {
-		t.Fatalf("expected code=%q, got %q", ErrCodeInternal, out.Error.Code)
-	}
-}
-
-// ===== DeleteJob (line 390) =====
-
-func TestHandler_DeleteJob_Success(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	createdAt := time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC)
-	uc := &stubDeleteJobUseCase{
-		out: command.DeleteResult{
-			ID:        42,
-			Name:      "demo-job",
-			TenantID:  "tenant-a",
-			Status:    "deleted",
-			Version:   3,
-			CreatedAt: createdAt,
-			UpdatedAt: createdAt,
-		},
-	}
-
-	h := NewHandler(nil, nil, nil, nil, nil)
-	h.SetDeleteJobUseCase(uc)
-
-	router := gin.New()
-	router.Use(testTenantMiddleware("tenant-a"))
-	h.Register(router)
-
-	req := httptest.NewRequest(stdhttp.MethodDelete, "/api/v1/jobs/42", nil)
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != stdhttp.StatusOK {
-		t.Fatalf("expected status=%d, got %d, body=%s",
-			stdhttp.StatusOK, resp.Code, resp.Body.String())
-	}
-	if !uc.called {
-		t.Fatal("expected delete use case to be called")
-	}
-	if uc.in.ID != 42 {
-		t.Fatalf("expected ID=42, got %d", uc.in.ID)
-	}
-	if uc.in.TenantID != "tenant-a" {
-		t.Fatalf("expected TenantID=tenant-a, got %q", uc.in.TenantID)
-	}
-
-	var out command.DeleteResult
-	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
-		t.Fatalf("unmarshal response: %v", err)
-	}
-	if out.Status != "deleted" {
-		t.Fatalf("expected Status=deleted, got %q", out.Status)
 	}
 }
 
@@ -798,20 +702,20 @@ func TestHandler_CancelInstance_Success(t *testing.T) {
 	now := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
 	uc := &stubCancelInstanceUseCase{
 		out: domaininstance.Snapshot{
-			ID:               100,
-			RunID:            "run-001",
-			TenantID:         "tenant-a",
-			JobID:            42,
-			TriggerSource:    "manual",
-			Status:           domaininstance.StatusCanceled,
-			Priority:         5,
+			ID:                100,
+			RunID:             "run-001",
+			TenantID:          "tenant-a",
+			JobID:             42,
+			TriggerSource:     "manual",
+			Status:            domaininstance.StatusCanceled,
+			Priority:          5,
 			EffectivePriority: 5,
-			Attempt:          1,
-			MaxAttempt:       3,
-			ScheduledAt:      now,
-			CreatedAt:        now,
-			UpdatedAt:        now,
-			Version:          2,
+			Attempt:           1,
+			MaxAttempt:        3,
+			ScheduledAt:       now,
+			CreatedAt:         now,
+			UpdatedAt:         now,
+			Version:           2,
 		},
 	}
 

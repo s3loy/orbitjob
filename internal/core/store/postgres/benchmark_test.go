@@ -52,6 +52,70 @@ func benchSeedDispatchedInstance(b *testing.B, db *sql.DB, tenantID string, jobI
 	return id
 }
 
+func benchSeedRoutedDispatchedInstance(b *testing.B, db *sql.DB, tenantID string, jobID int64, priority int, scheduledAt time.Time, routingKey string) int64 {
+	b.Helper()
+	var id int64
+	err := db.QueryRowContext(context.Background(), `
+		INSERT INTO job_instances (tenant_id, job_id, status, priority, effective_priority, scheduled_at, dispatched_at, routing_key, attempt, max_attempt)
+		VALUES ($1, $2, 'dispatched', $3, $3, $4, $4, $5, 1, 1)
+		RETURNING id
+	`, tenantID, jobID, priority, scheduledAt, routingKey).Scan(&id)
+	if err != nil {
+		b.Fatalf("seed routed dispatched instance: %v", err)
+	}
+	return id
+}
+
+func benchSeedRunningInstance(b *testing.B, db *sql.DB, tenantID string, jobID int64, priority int, scheduledAt time.Time, workerID string, startedAt time.Time) int64 {
+	b.Helper()
+	var id int64
+	err := db.QueryRowContext(context.Background(), `
+		INSERT INTO job_instances (tenant_id, job_id, status, priority, effective_priority, scheduled_at, worker_id, started_at, attempt, max_attempt)
+		VALUES ($1, $2, 'running', $3, $3, $4, $5, $6, 1, 1)
+		RETURNING id
+	`, tenantID, jobID, priority, scheduledAt, workerID, startedAt).Scan(&id)
+	if err != nil {
+		b.Fatalf("seed running instance: %v", err)
+	}
+	return id
+}
+
+func benchSeedWorker(b *testing.B, db *sql.DB, tenantID, workerID, status string, leaseExpiresAt time.Time) {
+	b.Helper()
+	_, err := db.ExecContext(context.Background(), `
+		INSERT INTO workers (worker_id, tenant_id, status, last_heartbeat_at, lease_expires_at, capacity, labels)
+		VALUES ($1, $2, $3, $4, $5, 1, '{}'::jsonb)
+	`, workerID, tenantID, status, leaseExpiresAt.Add(-time.Minute), leaseExpiresAt)
+	if err != nil {
+		b.Fatalf("seed worker: %v", err)
+	}
+}
+
+func benchSeedTenant(b *testing.B, db *sql.DB, tenantID string) {
+	b.Helper()
+	_, err := db.ExecContext(context.Background(), `
+		INSERT INTO tenants (id, name, status)
+		VALUES ($1, $1, 'active')
+		ON CONFLICT (id) DO NOTHING
+	`, tenantID)
+	if err != nil {
+		b.Fatalf("seed tenant: %v", err)
+	}
+}
+
+func benchCompleteSpec(tenantID string, instanceID int64, workerID string, now time.Time) domaininstance.CompleteSpec {
+	resultCode := "0"
+	return domaininstance.CompleteSpec{
+		TenantID:   tenantID,
+		InstanceID: instanceID,
+		WorkerID:   workerID,
+		Status:     domaininstance.StatusSuccess,
+		Attempt:    1,
+		ResultCode: &resultCode,
+		FinishedAt: now,
+	}
+}
+
 func benchSeedPending(b *testing.B, db *sql.DB, tenantID string, jobID int64, priority int, scheduledAt time.Time) int64 {
 	b.Helper()
 	var id int64
@@ -98,26 +162,29 @@ func benchSeedOrphanRunning(b *testing.B, db *sql.DB, tenantID string, jobID int
 // ClaimNextDispatched — single-operation latency
 // ---------------------------------------------------------------------------
 
-func BenchmarkClaimNextDispatched(b *testing.B) {
+func BenchmarkClaimNextDispatched_RoutingKey(b *testing.B) {
 	db := postgrestest.BenchDB(b)
 	postgrestest.BenchTruncate(b, db)
 
 	now := time.Now().UTC().Truncate(time.Second)
-	jobID := postgrestest.BenchSeedJob(b, db, "claim-bench", "tenant-claim", "http", 5)
+	jobID := postgrestest.BenchSeedJob(b, db, "claim-route-bench", "tenant-claim", "http", 5)
 	leaseExpiresAt := now.Add(30 * time.Second)
 	repo := NewExecutorRepository(db)
+	labels := map[string]any{"queue": "video"}
 
 	b.ReportAllocs()
 	for b.Loop() {
 		b.StopTimer()
 		postgrestest.BenchTruncate(b, db)
-		jobID = postgrestest.BenchSeedJob(b, db, "claim-bench", "tenant-claim", "http", 5)
-		benchSeedDispatchedInstance(b, db, "tenant-claim", jobID, 5, now.Add(-time.Minute))
+		jobID = postgrestest.BenchSeedJob(b, db, "claim-route-bench", "tenant-claim", "http", 5)
+		benchSeedRoutedDispatchedInstance(b, db, "tenant-claim", jobID, 5, now.Add(-time.Minute), "video")
+		benchSeedRoutedDispatchedInstance(b, db, "tenant-claim", jobID, 4, now.Add(-2*time.Minute), "batch")
 		b.StartTimer()
 
-		_, _ = repo.ClaimNextDispatched(context.Background(), "tenant-claim", "worker-1", 1, leaseExpiresAt, now, nil)
+		_, _ = repo.ClaimNextDispatched(context.Background(), "tenant-claim", "worker-1", 1, leaseExpiresAt, now, labels)
 	}
 }
+
 
 // ---------------------------------------------------------------------------
 // ClaimNextDispatched — concurrent (SKIP LOCKED contention)
@@ -356,26 +423,105 @@ func BenchmarkDispatchOne(b *testing.B) {
 // CreateInstance — INSERT + audit
 // ---------------------------------------------------------------------------
 
-func BenchmarkCreateInstance(b *testing.B) {
+func BenchmarkCompleteInstance(b *testing.B) {
 	db := postgrestest.BenchDB(b)
-
+	repo := NewExecutorRepository(db)
 	now := time.Now().UTC().Truncate(time.Second)
-	repo := NewInstanceRepository(db)
 
 	b.ReportAllocs()
 	for b.Loop() {
 		b.StopTimer()
 		postgrestest.BenchTruncate(b, db)
-		jobID := postgrestest.BenchSeedJob(b, db, "inst-bench", "tenant-inst", "http", 5)
+		jobID := postgrestest.BenchSeedJob(b, db, "complete-bench", "tenant-complete", "exec", 5)
+		instanceID := benchSeedRunningInstance(b, db, "tenant-complete", jobID, 5, now.Add(-time.Minute), "worker-1", now.Add(-30*time.Second))
 		b.StartTimer()
 
-		_, _ = repo.Create(context.Background(), domaininstance.CreateSpec{
-			TenantID:      "tenant-inst",
-			JobID:         jobID,
-			TriggerSource: "manual",
-			ScheduledAt:   now,
-			Priority:      5,
-			MaxAttempt:    3,
+		_ = repo.CompleteInstance(context.Background(), benchCompleteSpec("tenant-complete", instanceID, "worker-1", now))
+	}
+}
+
+func BenchmarkExtendLease(b *testing.B) {
+	db := postgrestest.BenchDB(b)
+	repo := NewExecutorRepository(db)
+	now := time.Now().UTC().Truncate(time.Second)
+	newExpiry := now.Add(90 * time.Second)
+
+	b.ReportAllocs()
+	for b.Loop() {
+		b.StopTimer()
+		postgrestest.BenchTruncate(b, db)
+		jobID := postgrestest.BenchSeedJob(b, db, "lease-bench", "tenant-lease", "exec", 5)
+		instanceID := benchSeedRunningInstance(b, db, "tenant-lease", jobID, 5, now.Add(-time.Minute), "worker-1", now.Add(-30*time.Second))
+		b.StartTimer()
+
+		_ = repo.ExtendLease(context.Background(), "tenant-lease", instanceID, "worker-1", newExpiry)
+	}
+}
+
+func BenchmarkRecoverExpiredWorkers(b *testing.B) {
+	db := postgrestest.BenchDB(b)
+	repo := NewDispatchRepository(db)
+	now := time.Now().UTC().Truncate(time.Second)
+	expired := now.Add(-time.Second)
+
+	scales := []struct {
+		name    string
+		online  int
+		draining int
+	}{
+		{"workers=10", 10, 0},
+		{"workers=100", 80, 20},
+	}
+
+	for _, sc := range scales {
+		b.Run(sc.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				b.StopTimer()
+				postgrestest.BenchTruncate(b, db)
+				for i := 0; i < sc.online; i++ {
+					benchSeedWorker(b, db, "tenant-workers", fmt.Sprintf("online-%d", i), "online", expired)
+				}
+				for i := 0; i < sc.draining; i++ {
+					benchSeedWorker(b, db, "tenant-workers", fmt.Sprintf("draining-%d", i), "draining", expired)
+				}
+				b.StartTimer()
+
+				_, _ = repo.RecoverExpiredWorkers(context.Background(), now)
+			}
+		})
+	}
+}
+
+func BenchmarkListActiveTenantIDs(b *testing.B) {
+	db := postgrestest.BenchDB(b)
+	repo := NewDispatchRepository(db)
+
+	scales := []struct {
+		name   string
+		tenants int
+	}{
+		{"tenants=10", 10},
+		{"tenants=100", 100},
+	}
+
+	for _, sc := range scales {
+		b.Run(sc.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				b.StopTimer()
+				postgrestest.BenchTruncate(b, db)
+				_, err := db.ExecContext(context.Background(), `TRUNCATE TABLE tenants RESTART IDENTITY CASCADE`)
+				if err != nil {
+					b.Fatalf("truncate tenants: %v", err)
+				}
+				for i := 0; i < sc.tenants; i++ {
+					benchSeedTenant(b, db, fmt.Sprintf("tenant-%03d", i))
+				}
+				b.StartTimer()
+
+				_, _ = repo.ListActiveTenantIDs(context.Background())
+			}
 		})
 	}
 }
