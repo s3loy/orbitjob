@@ -99,7 +99,8 @@ go run ./cmd/openapi-gen     # OpenAPI generation
 | `DEV_DSN` | Devserver DSN | — |
 | `TEST_DATABASE_DSN` | Integration test DSN | — |
 | `APP_ENV` | Log mode (development / production) | — |
-| `ADMIN_PORT` | API listen port for `cmd/devserver`; standalone `cmd/admin-api` always uses `8080` | `8080` |
+| `ADMIN_PORT` | API listen port for `cmd/devserver` | `8080` |
+| `PORT` | HTTP listen port for `cmd/admin-api` | `8080` |
 | `SCHEDULER_HEALTH_PORT` | Health HTTP port | `6060` |
 | `SCHEDULER_BATCH_SIZE` | Max jobs per tick | `100` |
 | `SCHEDULER_TICK_INTERVAL_SEC` | Tick interval (seconds) | `5` |
@@ -116,6 +117,10 @@ go run ./cmd/openapi-gen     # OpenAPI generation
 | `WORKER_LEASE_DURATION_SEC` | Lease duration (seconds) | `60` |
 | `WORKER_CAPACITY` | Max concurrent executions | `1` |
 | `WORKER_LABELS` | Worker labels (JSON) | `{}` |
+| `RATELIMIT_READ_RPS` | Read endpoint rate limit (RPS) | `100` |
+| `RATELIMIT_WRITE_RPS` | Write endpoint rate limit (RPS) | `10` |
+| `RATELIMIT_TRIGGER_RPS` | Trigger endpoint rate limit (RPS) | `5` |
+| `RATELIMIT_ADMIN_RPS` | Admin endpoint rate limit (RPS) | `5` |
 
 ### Testing
 

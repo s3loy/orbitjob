@@ -81,6 +81,7 @@ Scope 取值：
 | `deploy` | 部署脚本、systemd、compose |
 | `ci` | CI/CD 配置 |
 | `docs` | 文档 |
+| `openapi` | OpenAPI 生成器 |
 | `platform` | 基础设施层 |
 
 ## PR 流程

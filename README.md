@@ -99,7 +99,8 @@ go run ./cmd/openapi-gen     # OpenAPI 生成
 | `DEV_DSN` | Devserver 专用连接串 | — |
 | `TEST_DATABASE_DSN` | 集成测试连接串 | — |
 | `APP_ENV` | 日志模式（development / production） | — |
-| `ADMIN_PORT` | `cmd/devserver` 的 API 监听端口；standalone `cmd/admin-api` 固定为 `8080` | `8080` |
+| `ADMIN_PORT` | `cmd/devserver` 的 API 监听端口 | `8080` |
+| `PORT` | `cmd/admin-api` 的 HTTP 监听端口 | `8080` |
 | `SCHEDULER_HEALTH_PORT` | 健康检查端口 | `6060` |
 | `SCHEDULER_BATCH_SIZE` | 每 tick 最大 job 数 | `100` |
 | `SCHEDULER_TICK_INTERVAL_SEC` | Tick 间隔（秒） | `5` |
@@ -116,6 +117,10 @@ go run ./cmd/openapi-gen     # OpenAPI 生成
 | `WORKER_LEASE_DURATION_SEC` | Lease 有效期（秒） | `60` |
 | `WORKER_CAPACITY` | 最大并发执行数 | `1` |
 | `WORKER_LABELS` | Worker 标签（JSON） | `{}` |
+| `RATELIMIT_READ_RPS` | 读取端点速率限制（RPS） | `100` |
+| `RATELIMIT_WRITE_RPS` | 写入端点速率限制（RPS） | `10` |
+| `RATELIMIT_TRIGGER_RPS` | Trigger 端点速率限制（RPS） | `5` |
+| `RATELIMIT_ADMIN_RPS` | Admin 端点速率限制（RPS） | `5` |
 
 ### 测试
 
