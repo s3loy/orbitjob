@@ -197,7 +197,7 @@ func TestTriggerJobUseCase_ManualTriggerSource(t *testing.T) {
 	if captor.captured.TriggerSource != domaininstance.TriggerSourceManual {
 		t.Fatalf("expected TriggerSource=%q, got %q", domaininstance.TriggerSourceManual, captor.captured.TriggerSource)
 	}
-	if captor.captured.MaxAttempt != 1 { // RetryLimit 0 + 1
+	if captor.captured.MaxAttempt != 1 { // stub RetryLimit is 0, so 0 + 1 = 1
 		t.Fatalf("expected MaxAttempt=1, got %d", captor.captured.MaxAttempt)
 	}
 	if captor.captured.ScheduledAt.IsZero() {

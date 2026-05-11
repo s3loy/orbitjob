@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"testing"
 
@@ -48,7 +49,7 @@ func TestGetInstanceUseCase_Get(t *testing.T) {
 }
 
 func TestGetInstanceUseCase_Get_NotFound(t *testing.T) {
-	repo := &stubGetter{err: errors.New("sql: no rows")}
+	repo := &stubGetter{err: sql.ErrNoRows}
 	uc := NewGetInstanceUseCase(repo)
 
 	_, err := uc.Get(context.Background(), "run-missing")
