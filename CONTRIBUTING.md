@@ -77,6 +77,8 @@ Scope 取值：
 | `schedule` | 调度器进程 |
 | `dispatcher` | 分发器进程 |
 | `worker` | 执行器进程 |
+| `healthcheck` | 容器健康检查二进制 |
+| `deploy` | 部署脚本、systemd、compose |
 | `ci` | CI/CD 配置 |
 | `docs` | 文档 |
 | `platform` | 基础设施层 |
