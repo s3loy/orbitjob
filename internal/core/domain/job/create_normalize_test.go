@@ -38,6 +38,9 @@ func TestNormalizeCreate_ManualDefaults(t *testing.T) {
 	if out.TimeoutSec != DefaultTimeoutSec {
 		t.Fatalf("expected timeout_sec=%d, got %d", DefaultTimeoutSec, out.TimeoutSec)
 	}
+	if out.RetryLimit != DefaultRetryLimit {
+		t.Fatalf("expected retry_limit=%d, got %d", DefaultRetryLimit, out.RetryLimit)
+	}
 	if out.RetryBackoffStrategy != RetryBackoffFixed {
 		t.Fatalf("expected retry_backoff_strategy=%q, got %q", RetryBackoffFixed, out.RetryBackoffStrategy)
 	}

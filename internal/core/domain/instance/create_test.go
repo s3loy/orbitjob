@@ -46,8 +46,8 @@ func TestNormalizeCreate_DefaultsAndTrim(t *testing.T) {
 	if spec.TriggerSource != TriggerSourceSchedule {
 		t.Fatalf("expected trigger_source=%q, got %q", TriggerSourceSchedule, spec.TriggerSource)
 	}
-	if spec.MaxAttempt != 1 {
-		t.Fatalf("expected max_attempt=1, got %d", spec.MaxAttempt)
+	if spec.MaxAttempt != 3 {
+		t.Fatalf("expected max_attempt=3, got %d", spec.MaxAttempt)
 	}
 	if spec.PartitionKey == nil || *spec.PartitionKey != "shard-a" {
 		t.Fatalf("expected partition_key=%q, got %+v", "shard-a", spec.PartitionKey)

@@ -87,7 +87,7 @@ func NormalizeCreate(in CreateInput) (CreateSpec, error) {
 
 	maxAttempt := in.MaxAttempt
 	if maxAttempt == 0 {
-		maxAttempt = 1
+		maxAttempt = 3
 	}
 	if maxAttempt < 1 {
 		return CreateSpec{}, validationError("max_attempt", "must be >= 1")

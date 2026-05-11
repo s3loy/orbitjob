@@ -14,7 +14,7 @@ func NormalizeCreate(now time.Time, in CreateInput) (CreateSpec, error) {
 		return CreateSpec{}, err
 	}
 
-	handlerType, err := normalizeRequiredString(in.HandlerType, "handler_type", 32)
+	handlerType, err := normalizeHandlerType(in.HandlerType)
 	if err != nil {
 		return CreateSpec{}, err
 	}
@@ -117,6 +117,20 @@ func normalizeTriggerType(in string) (string, error) {
 	return value, nil
 }
 
+func normalizeHandlerType(in string) (string, error) {
+	value := strings.TrimSpace(in)
+	if value == "" {
+		return "", validationError("handler_type", "is required")
+	}
+	if len(value) > 32 {
+		return "", validationError("handler_type", "must be <= 32 characters")
+	}
+	if !isOneOf(value, HandlerTypeExec, HandlerTypeHTTP) {
+		return "", validationErrorf("handler_type", "must be one of: %s, %s", HandlerTypeExec, HandlerTypeHTTP)
+	}
+	return value, nil
+}
+
 func normalizeTenantID(in string) (string, error) {
 	value := strings.TrimSpace(in)
 	if value == "" {
@@ -173,6 +187,9 @@ func normalizeTimeoutSec(in int) (int, error) {
 func normalizeRetrySettings(retryLimit int, retryBackoffSec int, retryBackoffStrategy string) (int, int, string, error) {
 	if retryLimit < 0 {
 		return 0, 0, "", validationError("retry_limit", "must be >= 0")
+	}
+	if retryLimit == 0 {
+		retryLimit = DefaultRetryLimit
 	}
 	if retryBackoffSec < 0 {
 		return 0, 0, "", validationError("retry_backoff_sec", "must be >= 0")
