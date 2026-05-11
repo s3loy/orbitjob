@@ -94,7 +94,7 @@ func runLoop(
 		if err != nil {
 			metrics.SchedulerCronErrors.Inc()
 			slog.Error("scheduler tick failed", "error", err.Error())
-		} else {
+		} else if handled > 0 {
 			metrics.SchedulerInstancesCreated.Add(float64(handled))
 			slog.Info("scheduler tick completed", "handled_due_jobs", handled)
 		}
@@ -144,7 +144,6 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	db.SetMaxOpenConns(25)
 	defer func() { _ = db.Close() }()
 
 	pingCtx, cancel := context.WithTimeout(ctx, startupDBPingTimeout)

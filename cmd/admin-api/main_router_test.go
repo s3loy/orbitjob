@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -50,7 +51,7 @@ func TestNewRouter_WithAuth(t *testing.T) {
 func TestNewRouter_WithRateLimiter(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	rl := middleware.NewRateLimiter()
+	rl := middleware.NewRateLimiter(context.Background())
 
 	handler := adminhttp.NewHandler(
 		&stubCreateJobUseCase{},
@@ -89,7 +90,7 @@ func TestNewRouter_WithAuthAndRateLimiter(t *testing.T) {
 		&stubChangeStatusUseCase{},
 	)
 	auth := middleware.NewAuth(db)
-	rl := middleware.NewRateLimiter()
+	rl := middleware.NewRateLimiter(context.Background())
 
 	router := newRouter(handler, auth, rl)
 

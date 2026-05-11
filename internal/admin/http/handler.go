@@ -379,12 +379,17 @@ func (h *Handler) TriggerJob(c *gin.Context) {
 	out, err := h.triggerJobUC.Trigger(reqCtx, in)
 	if err != nil {
 		apiErr := toAPIError(err)
-		if apiErr.Code == ErrCodeValidation {
+		switch apiErr.Code {
+		case ErrCodeValidation:
 			writeAPIError(c, stdhttp.StatusBadRequest, apiErr)
-			return
+		case ErrCodeNotFound:
+			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
+		case ErrCodeConflict:
+			writeAPIError(c, stdhttp.StatusConflict, apiErr)
+		default:
+			_ = c.Error(err)
+			writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
 		}
-		_ = c.Error(err)
-		writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
 		return
 	}
 

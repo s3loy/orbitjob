@@ -116,7 +116,7 @@ services:
       migrate:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      test: ["/healthcheck", "http://localhost:8080/healthz"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -145,7 +145,7 @@ services:
       migrate:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:6060/healthz"]
+      test: ["/healthcheck", "http://localhost:6060/healthz"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -172,7 +172,7 @@ services:
       migrate:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:6061/healthz"]
+      test: ["/healthcheck", "http://localhost:6061/healthz"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -185,9 +185,6 @@ services:
     stop_grace_period: 40s
 
   # ── Worker ─────────────────────────────────────────────────────
-  # Note: scratch image has no wget, so Docker HEALTHCHECK is
-  # skipped. Use `docker compose exec worker wget ...` or monitor
-  # Prometheus metrics for worker health.
   worker:
     <<: *go-defaults
     build:

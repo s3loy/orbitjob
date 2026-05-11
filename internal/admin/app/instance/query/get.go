@@ -2,6 +2,9 @@ package query
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"fmt"
 
 	domaininstance "orbitjob/internal/core/domain/instance"
 	"orbitjob/internal/domain/resource"
@@ -22,7 +25,10 @@ func NewGetInstanceUseCase(repo instanceGetter) *GetInstanceUseCase {
 func (uc *GetInstanceUseCase) Get(ctx context.Context, runID string) (*InstanceItem, error) {
 	s, err := uc.repo.GetByRunID(ctx, runID)
 	if err != nil {
-		return nil, &resource.NotFoundError{Resource: "instance", ID: runID}
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, &resource.NotFoundError{Resource: "instance", ID: runID}
+		}
+		return nil, fmt.Errorf("get instance: %w", err)
 	}
 	return &InstanceItem{
 		RunID:             s.RunID,

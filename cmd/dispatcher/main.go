@@ -136,7 +136,9 @@ func runLoop(
 	for {
 		now := nowFn().UTC()
 		handled := dispatchTick(ctx, runner, cfg, now)
-		slog.Info("dispatcher tick completed", "dispatched", handled)
+		if handled > 0 {
+			slog.Info("dispatcher tick completed", "dispatched", handled)
+		}
 
 		select {
 		case <-ctx.Done():
@@ -177,7 +179,6 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	db.SetMaxOpenConns(25)
 	defer func() { _ = db.Close() }()
 
 	pingCtx, cancel := context.WithTimeout(ctx, startupDBPingTimeout)

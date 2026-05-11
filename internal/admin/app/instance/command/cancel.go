@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	domaininstance "orbitjob/internal/core/domain/instance"
+	"orbitjob/internal/domain/resource"
 )
 
 type instanceCanceler interface {
@@ -35,10 +36,14 @@ func (uc *CancelInstanceUseCase) Cancel(ctx context.Context, in CancelInstanceIn
 		return domaininstance.Snapshot{}, fmt.Errorf("read instance for cancel: %w", err)
 	}
 	if current.Status != domaininstance.StatusDispatched && current.Status != domaininstance.StatusRunning {
-		return domaininstance.Snapshot{}, fmt.Errorf("cannot cancel instance in status %q", current.Status)
+		return domaininstance.Snapshot{}, &resource.ConflictError{
+			Resource: "instance",
+			Field:    "status",
+			Message:  fmt.Sprintf("cannot cancel instance in status %q", current.Status),
+		}
 	}
 
-	out, err := uc.repo.Cancel(ctx, in.RunID, current.Version)
+	out, err := uc.repo.Cancel(ctx, in.RunID, in.Version)
 	if err != nil {
 		return domaininstance.Snapshot{}, fmt.Errorf("cancel instance: %w", err)
 	}

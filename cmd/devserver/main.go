@@ -388,7 +388,7 @@ func runDevAdmin(ctx context.Context, wg *sync.WaitGroup, srv *http.Server, port
 	go func() {
 		slog.Info("admin API listening", "addr", srv.Addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatal(err)
+			slog.Error("admin API listen failed", "error", err)
 		}
 	}()
 

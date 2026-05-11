@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -51,8 +53,14 @@ func newRouter(handler *adminhttp.Handler, auth *middleware.Auth, rl *middleware
 }
 
 func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	if err := config.LoadDotenv(); err != nil {
 		log.Fatal(err)
+	}
+	if os.Getenv("GIN_MODE") == "" && os.Getenv("APP_ENV") == "production" {
+		gin.SetMode(gin.ReleaseMode)
 	}
 	logger := platformlogger.New(os.Getenv("APP_ENV"))
 	slog.SetDefault(logger)
@@ -69,15 +77,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	db.SetMaxOpenConns(25)
-	defer func() {
-		_ = db.Close()
-	}()
+	defer func() { _ = db.Close() }()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-
-	if err := db.PingContext(ctx); err != nil {
+	pingCtx, pingCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer pingCancel()
+	if err := db.PingContext(pingCtx); err != nil {
 		log.Fatal(err)
 	}
 
@@ -105,9 +109,28 @@ func main() {
 	handler.SetGetInstanceUseCase(getInstanceUC)
 	handler.SetCancelInstanceUseCase(cancelInstanceUC)
 	auth := middleware.NewAuth(db)
-	rl := middleware.NewRateLimiter()
+	rl := middleware.NewRateLimiter(ctx)
 
-	if err := newRouter(handler, auth, rl).Run(":8080"); err != nil {
-		log.Fatal(err)
+	srv := &http.Server{
+		Addr:         ":8080",
+		Handler:      newRouter(handler, auth, rl),
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	go func() {
+		slog.Info("admin-api listening", "addr", srv.Addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal(err)
+		}
+	}()
+
+	<-ctx.Done()
+	slog.Info("admin-api shutting down")
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("admin-api shutdown error", "error", err)
 	}
 }

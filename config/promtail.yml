@@ -32,7 +32,11 @@ scrape_configs:
         regex: "/promtail.*"
         action: drop
     pipeline_stages:
-      - cri: {}
+      - json:
+          expressions:
+            level: level
+            msg: msg
       - labels:
+          level:
           service:
           container:

@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"os"
 	"strconv"
 	"sync"
@@ -46,7 +47,7 @@ type tokenBucket struct {
 	lastUsed time.Time
 }
 
-func NewRateLimiter() *RateLimiter {
+func NewRateLimiter(ctx context.Context) *RateLimiter {
 	limits := make(map[endpointGroup]groupConfig, len(defaultLimits))
 	for g, c := range defaultLimits {
 		limits[g] = groupConfig{
@@ -58,7 +59,7 @@ func NewRateLimiter() *RateLimiter {
 		limits:  limits,
 		buckets: make(map[endpointGroup]map[string]*tokenBucket),
 	}
-	go rl.reapLoop(30 * time.Minute)
+	go rl.reapLoop(ctx, 30*time.Minute)
 	return rl
 }
 
@@ -104,7 +105,10 @@ func (rl *RateLimiter) Middleware() gin.HandlerFunc {
 		if !rl.tryAllow(group, tenantID, cfg) {
 			metrics.RateLimitHits.WithLabelValues(tenantID, string(group)).Inc()
 			c.Header("Retry-After", "1")
-			c.AbortWithStatus(429)
+			c.AbortWithStatusJSON(429, gin.H{
+				"code":    "RATE_LIMITED",
+				"message": "rate limit exceeded",
+			})
 			return
 		}
 
@@ -164,19 +168,24 @@ func (rl *RateLimiter) tryAllow(group endpointGroup, tenantID string, cfg groupC
 	return false
 }
 
-func (rl *RateLimiter) reapLoop(interval time.Duration) {
+func (rl *RateLimiter) reapLoop(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	for range ticker.C {
-		rl.mu.Lock()
-		cutoff := time.Now().Add(-interval)
-		for _, groupBuckets := range rl.buckets {
-			for tid, entry := range groupBuckets {
-				if entry.lastUsed.Before(cutoff) {
-					delete(groupBuckets, tid)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			rl.mu.Lock()
+			cutoff := time.Now().Add(-interval)
+			for _, groupBuckets := range rl.buckets {
+				for tid, entry := range groupBuckets {
+					if entry.lastUsed.Before(cutoff) {
+						delete(groupBuckets, tid)
+					}
 				}
 			}
+			rl.mu.Unlock()
 		}
-		rl.mu.Unlock()
 	}
 }

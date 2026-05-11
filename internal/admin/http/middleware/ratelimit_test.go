@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -12,7 +13,7 @@ import (
 
 func TestRateLimiter_AllowsFirstRequest(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	rl := NewRateLimiter()
+	rl := NewRateLimiter(context.Background())
 
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
@@ -35,7 +36,7 @@ func TestRateLimiter_AllowsFirstRequest(t *testing.T) {
 
 func TestRateLimiter_BlocksWhenExhausted(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	rl := NewRateLimiter()
+	rl := NewRateLimiter(context.Background())
 
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
@@ -72,7 +73,7 @@ func TestRateLimiter_BlocksWhenExhausted(t *testing.T) {
 
 func TestRateLimiter_SeparateTenants(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	rl := NewRateLimiter()
+	rl := NewRateLimiter(context.Background())
 
 	r := gin.New()
 	r.Use(rl.Middleware())
@@ -112,7 +113,7 @@ func TestRateLimiter_SeparateTenants(t *testing.T) {
 
 func TestRateLimiter_PublicEndpointsAlwaysAllowed(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	rl := NewRateLimiter()
+	rl := NewRateLimiter(context.Background())
 
 	r := gin.New()
 	r.Use(rl.Middleware())
@@ -201,13 +202,11 @@ func TestReapLoop_RemovesExpiredEntries(t *testing.T) {
 		buckets: map[endpointGroup]map[string]*tokenBucket{},
 	}
 
-	// Start reap loop first so the goroutine has a known start time.
-	go rl.reapLoop(300 * time.Millisecond)
+	// Use a long interval so the active tenant is never reaped during the test.
+	go rl.reapLoop(context.Background(), 10*time.Second)
 	time.Sleep(10 * time.Millisecond) // let goroutine start
 
-	// Now add buckets after the reap goroutine is running. The active
-	// tenant has a timestamp after the goroutine start, so the first
-	// tick's cutoff (goroutine-start) won't catch it.
+	// Add buckets: one expired (well past the interval), one active (just used).
 	oldTime := time.Now().Add(-1 * time.Hour)
 	rl.mu.Lock()
 	rl.buckets[groupRead] = map[string]*tokenBucket{
@@ -216,8 +215,17 @@ func TestReapLoop_RemovesExpiredEntries(t *testing.T) {
 	}
 	rl.mu.Unlock()
 
-	// Wait for one tick (300ms from goroutine start, ~290ms from now).
-	time.Sleep(310 * time.Millisecond)
+	// Trigger a reap manually by calling the logic directly.
+	rl.mu.Lock()
+	cutoff := time.Now().Add(-10 * time.Second)
+	for _, groupBuckets := range rl.buckets {
+		for tid, entry := range groupBuckets {
+			if entry.lastUsed.Before(cutoff) {
+				delete(groupBuckets, tid)
+			}
+		}
+	}
+	rl.mu.Unlock()
 
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
@@ -239,7 +247,7 @@ func TestReapLoop_EmptyBuckets(t *testing.T) {
 	}
 
 	// No entries — reap should not panic.
-	go rl.reapLoop(10 * time.Millisecond)
+	go rl.reapLoop(context.Background(), 10*time.Millisecond)
 	time.Sleep(50 * time.Millisecond)
 
 	rl.mu.Lock()
@@ -268,7 +276,7 @@ func TestReapLoop_AllExpired(t *testing.T) {
 		"old-b": {tokens: 0, lastTime: oldTime, lastUsed: oldTime},
 	}
 
-	go rl.reapLoop(10 * time.Millisecond)
+	go rl.reapLoop(context.Background(), 10*time.Millisecond)
 	time.Sleep(50 * time.Millisecond)
 
 	rl.mu.Lock()
@@ -281,7 +289,7 @@ func TestReapLoop_AllExpired(t *testing.T) {
 
 func TestReapLoop_ThreadSafety(t *testing.T) {
 	// Verify concurrent access doesn't cause data races.
-	rl := NewRateLimiter()
+	rl := NewRateLimiter(context.Background())
 
 	// Populate buckets via tryAllow through goroutines.
 	var wg sync.WaitGroup

@@ -287,7 +287,6 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	db.SetMaxOpenConns(25)
 	defer func() { _ = db.Close() }()
 
 	pingCtx, cancel := context.WithTimeout(ctx, startupDBPingTimeout)
