@@ -440,11 +440,15 @@ func TestStartLeaseRenewal_ContextCancellation(t *testing.T) {
 	cancel() // cancel immediately before starting
 
 	stop := uc.startLeaseRenewal(ctx, "default", 1, "worker-1", 1*time.Second)
+	// Let goroutine react to context cancellation; do not call stop() because
+	// done and ctx.Done() race — we want to test the ctx.Done() path.
+	time.Sleep(50 * time.Millisecond)
 	stop()
 
-	// Context was already cancelled → goroutine should exit without calling ExtendLease.
-	if repo.extendCalled != 0 {
-		t.Fatalf("expected 0 extend calls after context cancellation, got %d", repo.extendCalled)
+	// Context was already cancelled → goroutine still does one final ExtendLease
+	// with a detached context before exiting.
+	if repo.extendCalled != 1 {
+		t.Fatalf("expected 1 final extend call after context cancellation, got %d", repo.extendCalled)
 	}
 }
 

@@ -42,6 +42,7 @@ func TestJobRepository_CreateUnit_Success(t *testing.T) {
 		NextRunAt:            &nextRun,
 	}
 
+	mock.ExpectBegin()
 	mock.ExpectQuery("INSERT INTO jobs").
 		WithArgs(
 			"test-job", "tenant-a", 5, nil, "cron", "*/5 * * * *", "UTC", "http",
@@ -55,6 +56,7 @@ func TestJobRepository_CreateUnit_Success(t *testing.T) {
 	mock.ExpectExec("INSERT INTO audit_events").
 		WithArgs("tenant-a", tenant.ActorTypeSystem, "system", tenant.EventTypeJobCreated, tenant.ResourceTypeJob, "1", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
 
 	out, err := repo.Create(context.Background(), spec)
 	if err != nil {
@@ -110,12 +112,14 @@ func TestJobRepository_CreateUnit_InsertError(t *testing.T) {
 		NextRunAt:            &nextRun,
 	}
 
+	mock.ExpectBegin()
 	mock.ExpectQuery("INSERT INTO jobs").
 		WithArgs(
 			"test-job", "tenant-a", 5, nil, "cron", "*/5 * * * *", "UTC", "http",
 			sqlmock.AnyArg(), 60, 3, 10, "fixed", "allow", "skip", &nextRun,
 		).
 		WillReturnError(errors.New("insert boom"))
+	mock.ExpectRollback()
 
 	_, err = repo.Create(context.Background(), spec)
 	if err == nil {
@@ -180,6 +184,7 @@ func TestJobRepository_CreateUnit_AuditInsertError(t *testing.T) {
 		MisfirePolicy:        domainjob.MisfireSkip,
 	}
 
+	mock.ExpectBegin()
 	mock.ExpectQuery("INSERT INTO jobs").
 		WithArgs(
 			"test-job", "tenant-a", 5, nil, "manual", (*string)(nil), "UTC", "http",
@@ -189,17 +194,18 @@ func TestJobRepository_CreateUnit_AuditInsertError(t *testing.T) {
 			"id", "name", "tenant_id", "status", "version", "next_run_at", "created_at", "updated_at",
 		}).AddRow(int64(1), "test-job", "tenant-a", "active", 1, nil, now, now))
 
-	// Audit insert fails — function logs error but returns success
+	// Audit insert fails — transaction rolls back and error is returned
 	mock.ExpectExec("INSERT INTO audit_events").
 		WithArgs("tenant-a", tenant.ActorTypeSystem, "system", tenant.EventTypeJobCreated, tenant.ResourceTypeJob, "1", sqlmock.AnyArg()).
 		WillReturnError(errors.New("audit boom"))
+	mock.ExpectRollback()
 
-	out, err := repo.Create(context.Background(), spec)
-	if err != nil {
-		t.Fatalf("Create() should not fail on audit error, got %v", err)
+	_, err = repo.Create(context.Background(), spec)
+	if err == nil {
+		t.Fatal("expected error on audit failure, got nil")
 	}
-	if out.ID != 1 {
-		t.Fatalf("expected id=1, got %d", out.ID)
+	if !strings.Contains(err.Error(), "insert audit event") {
+		t.Fatalf("expected insert audit event error, got %v", err)
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {

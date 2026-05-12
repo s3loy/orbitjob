@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 
 	domainjob "orbitjob/internal/core/domain/job"
 	tenant "orbitjob/internal/core/domain/tenant"
@@ -23,10 +22,16 @@ func (r *JobRepository) Create(ctx context.Context, in domainjob.CreateSpec) (do
 		return domainjob.Snapshot{}, fmt.Errorf("marshal handler_payload: %w", err)
 	}
 
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domainjob.Snapshot{}, fmt.Errorf("begin create tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	var out domainjob.Snapshot
 	var nextRunAt sql.NullTime
 
-	err = r.db.QueryRowContext(ctx, `
+	err = tx.QueryRowContext(ctx, `
 					INSERT INTO jobs (
 							name,
 							tenant_id,
@@ -78,10 +83,6 @@ func (r *JobRepository) Create(ctx context.Context, in domainjob.CreateSpec) (do
 		&out.UpdatedAt,
 	)
 	if err != nil {
-		slog.Error("job create failed",
-			"error", err.Error(),
-			"tenant_id", in.TenantID,
-		)
 		return domainjob.Snapshot{}, fmt.Errorf("insert job: %w", err)
 	}
 
@@ -96,8 +97,9 @@ func (r *JobRepository) Create(ctx context.Context, in domainjob.CreateSpec) (do
 		"handler_type": in.HandlerType,
 	})
 	if err != nil {
-		slog.Error("marshal audit diff failed", "error", err.Error())
-	} else if _, err = r.db.ExecContext(ctx, `
+		return domainjob.Snapshot{}, fmt.Errorf("marshal audit diff: %w", err)
+	}
+	if _, err = tx.ExecContext(ctx, `
 		INSERT INTO audit_events (tenant_id, actor_type, actor_id, event_type, resource_type, resource_id, diff)
 		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
 	`,
@@ -109,11 +111,11 @@ func (r *JobRepository) Create(ctx context.Context, in domainjob.CreateSpec) (do
 		fmt.Sprintf("%d", out.ID),
 		string(diffBytes),
 	); err != nil {
-		slog.Error("insert audit event failed",
-			"error", err.Error(),
-			"tenant_id", in.TenantID,
-			"job_id", out.ID,
-		)
+		return domainjob.Snapshot{}, fmt.Errorf("insert audit event: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return domainjob.Snapshot{}, fmt.Errorf("commit create tx: %w", err)
 	}
 
 	return out, nil
