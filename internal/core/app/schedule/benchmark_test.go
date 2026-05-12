@@ -59,7 +59,7 @@ func BenchmarkScheduleTick(b *testing.B) {
 			b.ResetTimer()
 			for b.Loop() {
 				repo := &benchSchedulerRepo{results: fakeResults}
-				uc := NewTickUseCase(repo)
+				uc := NewTickUseCase(repo, testClassify)
 				_, _ = uc.RunBatch(context.Background(), now, tt.limit)
 			}
 		})
@@ -68,7 +68,7 @@ func BenchmarkScheduleTick(b *testing.B) {
 
 func BenchmarkScheduleTick_NoDueJobs(b *testing.B) {
 	repo := &benchSchedulerRepo{results: nil} // returns found=false immediately
-	uc := NewTickUseCase(repo)
+	uc := NewTickUseCase(repo, testClassify)
 	now := time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC)
 
 	b.ReportAllocs()
