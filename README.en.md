@@ -33,6 +33,9 @@ curl http://localhost:8080/healthz
 - `GET /api/v1/instances/:run_id` inspect one instance
 - `POST /api/v1/instances/:run_id/cancel` cancel an instance
 - `/openapi.json` machine-readable API contract
+- `/healthz` liveness check (all components)
+- `/readyz` readiness check (includes DB ping; scheduler :6060, dispatcher :6061, worker :6062)
+- `/metrics` Prometheus metrics endpoint
 
 ### From source
 

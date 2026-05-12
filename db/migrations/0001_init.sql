@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   timeout_sec INT NOT NULL DEFAULT 60,
 
   -- Maximum retry attempts after failure
-  retry_limit INT NOT NULL DEFAULT 0,
+  retry_limit INT NOT NULL DEFAULT 2,
 
   -- Delay between retries in seconds
   retry_backoff_sec INT NOT NULL DEFAULT 0,
@@ -120,6 +120,10 @@ CREATE TABLE IF NOT EXISTS jobs (
   -- Validate misfire policy
   CONSTRAINT chk_jobs_misfire_policy
     CHECK (misfire_policy IN ('skip', 'fire_now', 'catch_up')),
+
+  -- Validate handler type
+  CONSTRAINT chk_jobs_handler_type
+    CHECK (handler_type IN ('exec', 'http')),
 
   -- Enforce cron_expr when using cron trigger
   CONSTRAINT chk_jobs_cron_expr_required CHECK (
@@ -210,7 +214,7 @@ CREATE TABLE IF NOT EXISTS job_instances (
   attempt INT NOT NULL DEFAULT 1,
 
   -- Maximum attempts allowed
-  max_attempt INT NOT NULL DEFAULT 1,
+  max_attempt INT NOT NULL DEFAULT 3,
 
   -- Actual execution start time
   started_at TIMESTAMPTZ,
@@ -442,7 +446,7 @@ ON job_instances(tenant_id, status, effective_priority DESC, scheduled_at)
 WHERE status IN ('pending', 'retry_wait');
 
 -- Concurrency policy lookup index for forbid/replace checks:
---   WHERE tenant_id = ? AND job_id = ? AND status IN ('dispatching','running')
+--   WHERE tenant_id = ? AND job_id = ? AND status IN ('dispatched','running')
 CREATE INDEX IF NOT EXISTS idx_instances_job_running
 ON job_instances(tenant_id, job_id, status)
 WHERE status IN ('dispatched', 'running');
@@ -451,6 +455,30 @@ WHERE status IN ('dispatched', 'running');
 CREATE INDEX IF NOT EXISTS idx_instances_dispatched_claim
 ON job_instances(tenant_id, effective_priority DESC, scheduled_at)
 WHERE status = 'dispatched';
+
+-- Partition key lookup for shard-based routing.
+CREATE INDEX IF NOT EXISTS idx_instances_partition_key
+ON job_instances(tenant_id, partition_key)
+WHERE partition_key IS NOT NULL;
+
+-- Routing key lookup for worker queue routing.
+CREATE INDEX IF NOT EXISTS idx_instances_routing_key
+ON job_instances(tenant_id, routing_key)
+WHERE routing_key IS NOT NULL;
+
+-- Job-level instance lookup.
+CREATE INDEX IF NOT EXISTS idx_instances_job_id
+ON job_instances(job_id);
+
+-- Orphan recovery and lease scanning for dispatched instances.
+CREATE INDEX IF NOT EXISTS idx_instances_dispatched_lease
+ON job_instances(status, lease_expires_at)
+WHERE status = 'dispatched';
+
+-- Orphan recovery and lease scanning for running instances.
+CREATE INDEX IF NOT EXISTS idx_instances_running_lease
+ON job_instances(status, lease_expires_at)
+WHERE status = 'running';
 
 -- ============================================================
 -- Worker execution lookup index

@@ -114,7 +114,7 @@ A pending instance gains +1 effective priority for each minute it has been waiti
 | Candidate Condition | Rule |
 | --- | --- |
 | `pending` | Directly eligible |
-| `retry_wait` | Must satisfy `retry_at <= now()` and `attempt < max_attempt` |
+| `retry_wait` | Must satisfy `retry_at <= now()` and `attempt <= max_attempt` |
 
 ### Claim Writes
 

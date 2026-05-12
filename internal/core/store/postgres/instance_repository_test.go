@@ -22,7 +22,7 @@ func TestInstanceRepository_Create(t *testing.T) {
 		TenantID:    "tenant-instance-create",
 		TriggerType: domainjob.TriggerTypeManual,
 		Timezone:    "UTC",
-		HandlerType: "worker",
+		HandlerType: "http",
 	})
 
 	partitionKey := "tenant-instance-create:video"

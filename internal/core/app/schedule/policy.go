@@ -1,6 +1,7 @@
 package schedule
 
 import (
+	"log/slog"
 	"strings"
 	"time"
 )
@@ -25,7 +26,9 @@ func DecideSchedule(now time.Time, job DueCronJob) (ScheduleDecision, error) {
 	tz := defaultIfEmpty(job.Timezone, "UTC")
 	schedule, loc, err := getCachedSchedule(job.CronExpr, tz)
 	if err != nil {
-		return ScheduleDecision{}, err
+		slog.Warn("invalid cron expression, skipping job for 24h", "cron_expr", job.CronExpr, "timezone", tz, "error", err)
+		farFuture := now.Add(24 * time.Hour).UTC()
+		return ScheduleDecision{CreateInstance: false, NextRunAt: &farFuture}, nil
 	}
 
 	nowInLoc := now.In(loc)

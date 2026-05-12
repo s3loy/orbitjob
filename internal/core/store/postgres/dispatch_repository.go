@@ -152,7 +152,7 @@ func claimOneDispatchCandidate(ctx context.Context, tx *sql.Tx, spec domaininsta
 		       status = 'retry_wait'
 		       AND retry_at IS NOT NULL
 		       AND retry_at <= $2
-		       AND attempt < max_attempt))
+		       AND attempt <= max_attempt))
 		ORDER BY effective_priority DESC, scheduled_at ASC, id ASC
 		FOR UPDATE SKIP LOCKED
 		LIMIT 1
