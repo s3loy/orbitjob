@@ -68,29 +68,41 @@ func TestDecideSchedule_CatchUp_CreatesAtMissedSlot(t *testing.T) {
 	}
 }
 
-func TestDecideSchedule_InvalidTimezone_ReturnsError(t *testing.T) {
+func TestDecideSchedule_InvalidTimezone_Skips(t *testing.T) {
 	now := time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC)
-	_, err := DecideSchedule(now, DueCronJob{
+	decision, err := DecideSchedule(now, DueCronJob{
 		CronExpr:      "*/5 * * * *",
 		Timezone:      "Mars/Olympus",
 		MisfirePolicy: "fire_now",
 		NextRunAt:     now,
 	})
-	if err == nil {
-		t.Fatalf("expected error for invalid timezone")
+	if err != nil {
+		t.Fatalf("DecideSchedule() error = %v", err)
+	}
+	if decision.CreateInstance {
+		t.Fatalf("expected CreateInstance=false for invalid timezone")
+	}
+	if decision.NextRunAt == nil || !decision.NextRunAt.After(now) {
+		t.Fatalf("expected next_run_at to advance when timezone is invalid")
 	}
 }
 
-func TestDecideSchedule_InvalidCron_ReturnsError(t *testing.T) {
+func TestDecideSchedule_InvalidCron_Skips(t *testing.T) {
 	now := time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC)
-	_, err := DecideSchedule(now, DueCronJob{
+	decision, err := DecideSchedule(now, DueCronJob{
 		CronExpr:      "not-a-cron",
 		Timezone:      "UTC",
 		MisfirePolicy: "fire_now",
 		NextRunAt:     now,
 	})
-	if err == nil {
-		t.Fatalf("expected error for invalid cron")
+	if err != nil {
+		t.Fatalf("DecideSchedule() error = %v", err)
+	}
+	if decision.CreateInstance {
+		t.Fatalf("expected CreateInstance=false for invalid cron")
+	}
+	if decision.NextRunAt == nil || !decision.NextRunAt.After(now) {
+		t.Fatalf("expected next_run_at to advance when cron is invalid")
 	}
 }
 
