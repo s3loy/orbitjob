@@ -71,7 +71,7 @@ func TestLoadDevSchedulerConfig_Defaults(t *testing.T) {
 }
 
 func TestLoadDevSchedulerConfig_CustomEnv(t *testing.T) {
-	t.Setenv("SCHEDULER_BATCH_SIZE", "200")
+	t.Setenv("SCHEDULER_BATCH_SIZE_MAX", "200")
 	t.Setenv("SCHEDULER_TICK_INTERVAL_SEC", "10")
 	cfg := loadDevSchedulerConfig()
 	if cfg.BatchSize != 200 {
@@ -83,7 +83,7 @@ func TestLoadDevSchedulerConfig_CustomEnv(t *testing.T) {
 }
 
 func TestLoadDevSchedulerConfig_InvalidFallback(t *testing.T) {
-	t.Setenv("SCHEDULER_BATCH_SIZE", "not-a-number")
+	t.Setenv("SCHEDULER_BATCH_SIZE_MAX", "not-a-number")
 	cfg := loadDevSchedulerConfig()
 	// Invalid values fall back to 0 (loadDevPositiveInt returns 0 on error)
 	if cfg.BatchSize != 0 {

@@ -31,4 +31,35 @@ var (
 		Help:    "End-to-end delay from cron due time to instance execution start.",
 		Buckets: []float64{0.1, 0.5, 1, 5, 10, 30, 60, 300},
 	})
+
+	// SchedulerLimit tracks the current batch limit computed by the adaptive controller.
+	SchedulerLimit = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "orbitjob_scheduler_limit",
+		Help: "Current batch limit computed by the adaptive controller.",
+	})
+
+	// SchedulerPhase tracks the current operational phase (0=Discovery, 1=Steady, 2=Protect, 3=HalfOpen).
+	SchedulerPhase = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "orbitjob_scheduler_phase",
+		Help: "Current operational phase: 0=Discovery, 1=Steady, 2=Protect, 3=HalfOpen.",
+	})
+
+	// SchedulerProbeRTT tracks SELECT 1 probe round-trip time in seconds.
+	SchedulerProbeRTT = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "orbitjob_scheduler_probe_rtt_seconds",
+		Help:    "Probe RTT in seconds (SELECT 1).",
+		Buckets: []float64{0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5},
+	})
+
+	// SchedulerDBPressure tracks the Vegas dbPressure estimate (unitless, relative).
+	SchedulerDBPressure = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "orbitjob_scheduler_db_pressure",
+		Help: "Vegas estimated database pressure (unitless, relative).",
+	})
+
+	// SchedulerBreakerTransitions counts circuit breaker state transitions.
+	SchedulerBreakerTransitions = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "orbitjob_scheduler_breaker_transitions_total",
+		Help: "Total circuit breaker state transitions.",
+	})
 )

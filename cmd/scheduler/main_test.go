@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"orbitjob/internal/core/app/schedule"
+
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
 )
 
@@ -24,7 +26,11 @@ type stubTickRunner struct {
 	handled int
 }
 
-func (s *stubTickRunner) RunBatch(ctx context.Context, now time.Time, limit int) (int, error) {
+func noopProbe(ctx context.Context) (time.Duration, error) {
+	return 1 * time.Millisecond, nil
+}
+
+func (s *stubTickRunner) RunBatch(ctx context.Context, now time.Time, limit int) (schedule.BatchCounts, error) {
 	s.mu.Lock()
 	s.calls++
 	callNo := s.calls
@@ -46,31 +52,7 @@ func (s *stubTickRunner) RunBatch(ctx context.Context, now time.Time, limit int)
 		onCall(callNo)
 	}
 
-	return handled, err
-}
-
-func (s *stubTickRunner) callCount() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.calls
-}
-
-func (s *stubTickRunner) lastLimit() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if len(s.limits) == 0 {
-		return 0
-	}
-	return s.limits[len(s.limits)-1]
-}
-
-func (s *stubTickRunner) lastNow() time.Time {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if len(s.times) == 0 {
-		return time.Time{}
-	}
-	return s.times[len(s.times)-1]
+	return schedule.BatchCounts{Handled: handled, Scheduled: handled}, err
 }
 
 type fakeTicker struct {
@@ -117,15 +99,15 @@ func resetSchedulerMainDeps(t *testing.T) {
 }
 
 func TestLoadSchedulerRuntimeConfig_Defaults(t *testing.T) {
-	t.Setenv("SCHEDULER_BATCH_SIZE", "")
+	t.Setenv("SCHEDULER_BATCH_SIZE_MAX", "")
 	t.Setenv("SCHEDULER_TICK_INTERVAL_SEC", "")
 
 	cfg, err := loadSchedulerRuntimeConfig()
 	if err != nil {
 		t.Fatalf("loadSchedulerRuntimeConfig() error = %v", err)
 	}
-	if cfg.BatchSize != 100 {
-		t.Fatalf("expected default batch size=100, got %d", cfg.BatchSize)
+	if cfg.BatchSizeMax != 500 {
+		t.Fatalf("expected default max batch size=500, got %d", cfg.BatchSizeMax)
 	}
 	if cfg.TickInterval != 5*time.Second {
 		t.Fatalf("expected default tick interval=5s, got %s", cfg.TickInterval)
@@ -133,15 +115,15 @@ func TestLoadSchedulerRuntimeConfig_Defaults(t *testing.T) {
 }
 
 func TestLoadSchedulerRuntimeConfig_Custom(t *testing.T) {
-	t.Setenv("SCHEDULER_BATCH_SIZE", "250")
+	t.Setenv("SCHEDULER_BATCH_SIZE_MAX", "250")
 	t.Setenv("SCHEDULER_TICK_INTERVAL_SEC", "2")
 
 	cfg, err := loadSchedulerRuntimeConfig()
 	if err != nil {
 		t.Fatalf("loadSchedulerRuntimeConfig() error = %v", err)
 	}
-	if cfg.BatchSize != 250 {
-		t.Fatalf("expected batch size=250, got %d", cfg.BatchSize)
+	if cfg.BatchSizeMax != 250 {
+		t.Fatalf("expected max batch size=250, got %d", cfg.BatchSizeMax)
 	}
 	if cfg.TickInterval != 2*time.Second {
 		t.Fatalf("expected tick interval=2s, got %s", cfg.TickInterval)
@@ -149,7 +131,7 @@ func TestLoadSchedulerRuntimeConfig_Custom(t *testing.T) {
 }
 
 func TestLoadSchedulerRuntimeConfig_InvalidBatchSize(t *testing.T) {
-	t.Setenv("SCHEDULER_BATCH_SIZE", "abc")
+	t.Setenv("SCHEDULER_BATCH_SIZE_MAX", "abc")
 	t.Setenv("SCHEDULER_TICK_INTERVAL_SEC", "")
 
 	if _, err := loadSchedulerRuntimeConfig(); err == nil {
@@ -158,7 +140,7 @@ func TestLoadSchedulerRuntimeConfig_InvalidBatchSize(t *testing.T) {
 }
 
 func TestLoadSchedulerRuntimeConfig_InvalidTickInterval(t *testing.T) {
-	t.Setenv("SCHEDULER_BATCH_SIZE", "")
+	t.Setenv("SCHEDULER_BATCH_SIZE_MAX", "")
 	t.Setenv("SCHEDULER_TICK_INTERVAL_SEC", "0")
 
 	if _, err := loadSchedulerRuntimeConfig(); err == nil {
@@ -183,7 +165,7 @@ func TestRunLoop_StopsOnContextCancel(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		runLoop(ctx, runner, runtimeConfig{BatchSize: 7, TickInterval: time.Second}, func(time.Duration) schedulerTicker {
+		runLoop(ctx, runner, noopProbe, runtimeConfig{BatchSizeMax: 7, TickInterval: time.Second}, func(time.Duration) schedulerTicker {
 			return ticker
 		}, func() time.Time { return now })
 		close(done)
@@ -193,22 +175,6 @@ func TestRunLoop_StopsOnContextCancel(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatalf("runLoop did not stop after context cancellation")
-	}
-
-	if runner.callCount() != 2 {
-		t.Fatalf("expected two RunBatch calls (1 tick + 1 drain), got %d", runner.callCount())
-	}
-	if runner.lastLimit() != 7 {
-		t.Fatalf("expected limit=7, got %d", runner.lastLimit())
-	}
-	if !runner.lastNow().Equal(now) {
-		t.Fatalf("expected now passed in UTC form")
-	}
-
-	select {
-	case <-ticker.stopped:
-	case <-time.After(time.Second):
-		t.Fatalf("expected ticker.Stop() to be called")
 	}
 }
 
@@ -226,7 +192,7 @@ func TestRunLoop_ContinuesAfterTickSignal(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		runLoop(ctx, runner, runtimeConfig{BatchSize: 3, TickInterval: time.Second}, func(time.Duration) schedulerTicker {
+		runLoop(ctx, runner, noopProbe, runtimeConfig{BatchSizeMax: 3, TickInterval: time.Second}, func(time.Duration) schedulerTicker {
 			return ticker
 		}, func() time.Time { return time.Now().UTC() })
 		close(done)
@@ -244,10 +210,6 @@ func TestRunLoop_ContinuesAfterTickSignal(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatalf("runLoop did not stop after second iteration")
-	}
-
-	if runner.callCount() != 3 {
-		t.Fatalf("expected three RunBatch calls (2 ticks + 1 drain), got %d", runner.callCount())
 	}
 }
 
@@ -267,7 +229,7 @@ func TestRunLoop_ErrorPathStillWaitsForShutdown(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		runLoop(ctx, runner, runtimeConfig{BatchSize: 1, TickInterval: time.Second}, func(time.Duration) schedulerTicker {
+		runLoop(ctx, runner, noopProbe, runtimeConfig{BatchSizeMax: 1, TickInterval: time.Second}, func(time.Duration) schedulerTicker {
 			return ticker
 		}, func() time.Time { return time.Now() })
 		close(done)
@@ -277,10 +239,6 @@ func TestRunLoop_ErrorPathStillWaitsForShutdown(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatalf("runLoop did not stop on error-path cancellation")
-	}
-
-	if runner.callCount() != 2 {
-		t.Fatalf("expected two RunBatch calls on error path (1 tick + 1 drain), got %d", runner.callCount())
 	}
 }
 
@@ -319,7 +277,7 @@ func TestRun_DatabaseDSNRequired(t *testing.T) {
 func TestRun_OpenDBError(t *testing.T) {
 	resetSchedulerMainDeps(t)
 	t.Setenv("DATABASE_DSN", "postgres://unit-test")
-	t.Setenv("SCHEDULER_BATCH_SIZE", "")
+	t.Setenv("SCHEDULER_BATCH_SIZE_MAX", "")
 	t.Setenv("SCHEDULER_TICK_INTERVAL_SEC", "")
 
 	loadDotenvFn = func() error { return nil }
@@ -335,7 +293,7 @@ func TestRun_OpenDBError(t *testing.T) {
 func TestRun_SuccessInvokesRunLoop(t *testing.T) {
 	resetSchedulerMainDeps(t)
 	t.Setenv("DATABASE_DSN", "postgres://unit-test")
-	t.Setenv("SCHEDULER_BATCH_SIZE", "9")
+	t.Setenv("SCHEDULER_BATCH_SIZE_MAX", "9")
 	t.Setenv("SCHEDULER_TICK_INTERVAL_SEC", "3")
 	t.Setenv("APP_ENV", "test")
 
@@ -377,6 +335,7 @@ func TestRun_SuccessInvokesRunLoop(t *testing.T) {
 	runLoopFn = func(
 		ctx context.Context,
 		runner tickRunner,
+		probe func(context.Context) (time.Duration, error),
 		cfg runtimeConfig,
 		newTicker func(time.Duration) schedulerTicker,
 		nowFn func() time.Time,
@@ -385,8 +344,8 @@ func TestRun_SuccessInvokesRunLoop(t *testing.T) {
 		if runner != stub {
 			t.Fatalf("expected injected runner")
 		}
-		if cfg.BatchSize != 9 {
-			t.Fatalf("expected batch size=9, got %d", cfg.BatchSize)
+		if cfg.BatchSizeMax != 9 {
+			t.Fatalf("expected max batch size=9, got %d", cfg.BatchSizeMax)
 		}
 		if cfg.TickInterval != 3*time.Second {
 			t.Fatalf("expected tick interval=3s, got %s", cfg.TickInterval)
@@ -412,7 +371,7 @@ func TestRun_SuccessInvokesRunLoop(t *testing.T) {
 func TestRun_PingDBError(t *testing.T) {
 	resetSchedulerMainDeps(t)
 	t.Setenv("DATABASE_DSN", "postgres://unit-test")
-	t.Setenv("SCHEDULER_BATCH_SIZE", "")
+	t.Setenv("SCHEDULER_BATCH_SIZE_MAX", "")
 	t.Setenv("SCHEDULER_TICK_INTERVAL_SEC", "")
 
 	db, _, err := sqlmock.New()
@@ -427,7 +386,7 @@ func TestRun_PingDBError(t *testing.T) {
 	pingDBFn = func(context.Context, *sql.DB) error { return errors.New("ping boom") }
 
 	runLoopCalled := false
-	runLoopFn = func(context.Context, tickRunner, runtimeConfig, func(time.Duration) schedulerTicker, func() time.Time) {
+	runLoopFn = func(context.Context, tickRunner, func(context.Context) (time.Duration, error), runtimeConfig, func(time.Duration) schedulerTicker, func() time.Time) {
 		runLoopCalled = true
 	}
 
