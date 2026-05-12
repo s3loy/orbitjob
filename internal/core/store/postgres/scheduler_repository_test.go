@@ -175,7 +175,7 @@ func seedDueCronJob(t *testing.T, db *sql.DB, in dueJobSeed) int64 {
 			misfire_policy,
 			next_run_at
 		)
-		VALUES ($1, $2, $3, 'cron', $4, $5, 'worker', $6, $7, $8)
+		VALUES ($1, $2, $3, 'cron', $4, $5, 'http', $6, $7, $8)
 		RETURNING id
 	`,
 		in.Name,

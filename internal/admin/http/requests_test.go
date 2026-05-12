@@ -143,7 +143,7 @@ func TestUpdateJobRequest_ToUpdateInput(t *testing.T) {
 		Priority:             5,
 		TriggerType:          "manual",
 		Timezone:             "UTC",
-		HandlerType:          "worker",
+		HandlerType:          "http",
 		HandlerPayload:       map[string]any{"queue": "jobs"},
 		TimeoutSec:           60,
 		RetryLimit:           3,

@@ -272,7 +272,7 @@ func seedDispatchJob(t *testing.T, db *sql.DB, in dispatchJobSeed) int64 {
 	var id int64
 	err := db.QueryRowContext(context.Background(), `
 		INSERT INTO jobs (name, tenant_id, priority, trigger_type, handler_type, concurrency_policy)
-		VALUES ($1, $2, $3, 'manual', 'worker', $4)
+		VALUES ($1, $2, $3, 'manual', 'http', $4)
 		RETURNING id
 	`, in.Name, in.TenantID, in.Priority, in.ConcurrencyPolicy).Scan(&id)
 	if err != nil {
