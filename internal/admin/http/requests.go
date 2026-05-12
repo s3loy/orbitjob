@@ -16,7 +16,7 @@ type CreateJobRequest struct {
 	CronExpr     *string `json:"cron_expr"`
 	Timezone     string  `json:"timezone" binding:"omitempty,max=64"`
 
-	HandlerType    string         `json:"handler_type" binding:"required,max=32"`
+	HandlerType    string         `json:"handler_type" binding:"required,oneof=exec http,max=32"`
 	HandlerPayload map[string]any `json:"handler_payload"`
 
 	TimeoutSec           int    `json:"timeout_sec" binding:"omitempty,min=1"`
@@ -105,7 +105,7 @@ type UpdateJobRequest struct {
 	CronExpr     *string `json:"cron_expr"`
 	Timezone     *string `json:"timezone" binding:"omitempty,max=64"`
 
-	HandlerType    *string        `json:"handler_type" binding:"omitempty,max=32"`
+	HandlerType    *string        `json:"handler_type" binding:"omitempty,oneof=exec http,max=32"`
 	HandlerPayload map[string]any `json:"handler_payload"`
 
 	TimeoutSec           *int    `json:"timeout_sec" binding:"omitempty,min=1"`

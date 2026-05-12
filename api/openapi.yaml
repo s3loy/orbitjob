@@ -964,6 +964,9 @@ components:
           additionalProperties: true
         handler_type:
           type: string
+          enum:
+          - exec
+          - http
           maxLength: 32
         misfire_policy:
           type: string
@@ -1354,6 +1357,9 @@ components:
           additionalProperties: true
         handler_type:
           type: string
+          enum:
+          - exec
+          - http
           nullable: true
           maxLength: 32
         misfire_policy:
