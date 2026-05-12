@@ -108,15 +108,6 @@ var blockedCommands = map[string]bool{
 	"csh": true, "tcsh": true, "dash": true, "ksh": true,
 }
 
-func containsAny(s, chars string) bool {
-	for i := 0; i < len(chars); i++ {
-		if strings.ContainsRune(s, rune(chars[i])) {
-			return true
-		}
-	}
-	return false
-}
-
 func validateCommand(cmd string) error {
 	if cmd == "" {
 		return fmt.Errorf("command must be non-empty")
