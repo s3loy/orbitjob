@@ -299,6 +299,139 @@ func TestHandler_TriggerJob_Success(t *testing.T) {
 	}
 }
 
+func TestHandler_TriggerJob_BindError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	uc := &stubTriggerJobUseCase{}
+	h := NewHandler(nil, nil, nil, nil, nil)
+	h.SetTriggerJobUseCase(uc)
+
+	router := gin.New()
+	h.Register(router)
+
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/jobs/not-an-int/trigger", nil)
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != stdhttp.StatusBadRequest {
+		t.Fatalf("expected status=%d, got %d", stdhttp.StatusBadRequest, resp.Code)
+	}
+	if uc.called {
+		t.Fatal("expected use case not to be called on bind error")
+	}
+}
+
+func TestHandler_TriggerJob_NotFound(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	uc := &stubTriggerJobUseCase{
+		err: &resource.NotFoundError{Resource: "job", ID: 42},
+	}
+	h := NewHandler(nil, nil, nil, nil, nil)
+	h.SetTriggerJobUseCase(uc)
+
+	router := gin.New()
+	router.Use(testTenantMiddleware("tenant-a"))
+	h.Register(router)
+
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/jobs/42/trigger", nil)
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != stdhttp.StatusNotFound {
+		t.Fatalf("expected status=%d, got %d", stdhttp.StatusNotFound, resp.Code)
+	}
+	if !uc.called {
+		t.Fatal("expected use case to be called")
+	}
+
+	var out struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if out.Error.Code != string(ErrCodeNotFound) {
+		t.Fatalf("expected code=%q, got %q", ErrCodeNotFound, out.Error.Code)
+	}
+}
+
+func TestHandler_TriggerJob_Conflict(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	uc := &stubTriggerJobUseCase{
+		err: &resource.ConflictError{Resource: "job", Field: "status", Message: "cannot trigger job with status paused"},
+	}
+	h := NewHandler(nil, nil, nil, nil, nil)
+	h.SetTriggerJobUseCase(uc)
+
+	router := gin.New()
+	router.Use(testTenantMiddleware("tenant-a"))
+	h.Register(router)
+
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/jobs/42/trigger", nil)
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != stdhttp.StatusConflict {
+		t.Fatalf("expected status=%d, got %d", stdhttp.StatusConflict, resp.Code)
+	}
+	if !uc.called {
+		t.Fatal("expected use case to be called")
+	}
+
+	var out struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if out.Error.Code != string(ErrCodeConflict) {
+		t.Fatalf("expected code=%q, got %q", ErrCodeConflict, out.Error.Code)
+	}
+}
+
+func TestHandler_TriggerJob_InternalError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	uc := &stubTriggerJobUseCase{
+		err: errors.New("trigger job: db down"),
+	}
+	h := NewHandler(nil, nil, nil, nil, nil)
+	h.SetTriggerJobUseCase(uc)
+
+	router := gin.New()
+	router.Use(testTenantMiddleware("tenant-a"))
+	h.Register(router)
+
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/jobs/42/trigger", nil)
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != stdhttp.StatusInternalServerError {
+		t.Fatalf("expected status=%d, got %d", stdhttp.StatusInternalServerError, resp.Code)
+	}
+	if !uc.called {
+		t.Fatal("expected use case to be called")
+	}
+
+	var out struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if out.Error.Code != string(ErrCodeInternal) {
+		t.Fatalf("expected code=%q, got %q", ErrCodeInternal, out.Error.Code)
+	}
+}
+
 func TestHandler_DeleteJob_BindError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

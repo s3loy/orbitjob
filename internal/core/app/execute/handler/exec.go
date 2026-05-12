@@ -101,6 +101,33 @@ func (h *Exec) Execute(ctx context.Context, task execute.AssignedTask) execute.R
 	}
 }
 
+var shellMetacharacters = `;&|$\(){}[]<>!*?#'"` + "\n\r\t"
+
+var blockedCommands = map[string]bool{
+	"sh": true, "bash": true, "zsh": true,
+	"csh": true, "tcsh": true, "dash": true, "ksh": true,
+}
+
+func validateCommand(cmd string) error {
+	if cmd == "" {
+		return fmt.Errorf("command must be non-empty")
+	}
+	if strings.ContainsAny(cmd, "/\\") {
+		return fmt.Errorf("command must not contain path separators")
+	}
+	if blockedCommands[cmd] {
+		return fmt.Errorf("command is not allowed")
+	}
+	return nil
+}
+
+func validateArg(arg string) error {
+	if strings.ContainsAny(arg, shellMetacharacters) {
+		return fmt.Errorf("arg contains disallowed characters")
+	}
+	return nil
+}
+
 func parseExecPayload(p map[string]any) (command string, args []string, env map[string]string, err error) {
 	cmdRaw, ok := p["command"]
 	if !ok {
@@ -109,6 +136,9 @@ func parseExecPayload(p map[string]any) (command string, args []string, env map[
 	command, ok = cmdRaw.(string)
 	if !ok || command == "" {
 		return "", nil, nil, fmt.Errorf("command must be a non-empty string")
+	}
+	if err := validateCommand(command); err != nil {
+		return "", nil, nil, err
 	}
 
 	if argsRaw, ok := p["args"]; ok {
@@ -120,6 +150,9 @@ func parseExecPayload(p map[string]any) (command string, args []string, env map[
 			s, ok := a.(string)
 			if !ok {
 				return "", nil, nil, fmt.Errorf("args[%d] must be a string", i)
+			}
+			if err := validateArg(s); err != nil {
+				return "", nil, nil, fmt.Errorf("args[%d]: %w", i, err)
 			}
 			args = append(args, s)
 		}

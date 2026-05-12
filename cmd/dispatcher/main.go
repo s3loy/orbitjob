@@ -144,11 +144,11 @@ func runLoop(
 		case <-ctx.Done():
 			slog.Info("dispatcher draining, running final tick")
 			drainCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
 			now := nowFn().UTC()
 			if handled := dispatchTick(drainCtx, runner, cfg, now); handled > 0 {
 				slog.Info("dispatcher drain tick completed", "dispatched", handled)
 			}
+			cancel()
 			return
 		case <-ticker.Chan():
 		}

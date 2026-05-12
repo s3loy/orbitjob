@@ -3,13 +3,17 @@ package job
 const (
 	DefaultTenantID   = "default"
 	DefaultTimezone   = "UTC"
-	DefaultTimeoutSec = 60
+	DefaultTimeoutSec  = 60
+	DefaultRetryLimit  = 2
 
 	TriggerTypeCron   = "cron"
 	TriggerTypeManual = "manual"
 
 	RetryBackoffFixed       = "fixed"
 	RetryBackoffExponential = "exponential"
+
+	HandlerTypeExec = "exec"
+	HandlerTypeHTTP = "http"
 
 	ConcurrencyAllow   = "allow"
 	ConcurrencyForbid  = "forbid"

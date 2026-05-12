@@ -111,8 +111,12 @@ func main() {
 	auth := middleware.NewAuth(db)
 	rl := middleware.NewRateLimiter(ctx)
 
+	addr := ":" + os.Getenv("PORT")
+	if addr == ":" {
+		addr = ":8080"
+	}
 	srv := &http.Server{
-		Addr:         ":8080",
+		Addr:         addr,
 		Handler:      newRouter(handler, auth, rl),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 30 * time.Second,

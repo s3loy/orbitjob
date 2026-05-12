@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"log/slog"
@@ -232,6 +233,7 @@ type devWorkerConfig struct {
 	HeartbeatInterval time.Duration
 	LeaseDuration     time.Duration
 	Capacity          int
+	Labels            map[string]any
 }
 
 func loadDevWorkerConfig() devWorkerConfig {
@@ -248,6 +250,7 @@ func loadDevWorkerConfig() devWorkerConfig {
 	hb, _ := loadDevPositiveInt("WORKER_HEARTBEAT_INTERVAL_SEC", 10)
 	lease, _ := loadDevPositiveInt("WORKER_LEASE_DURATION_SEC", 60)
 	capacity, _ := loadDevPositiveInt("WORKER_CAPACITY", 1)
+	labels := loadDevJSONMapEnv("WORKER_LABELS")
 	return devWorkerConfig{
 		TenantID:          tenant,
 		WorkerID:          workerID,
@@ -255,6 +258,7 @@ func loadDevWorkerConfig() devWorkerConfig {
 		HeartbeatInterval: time.Duration(hb) * time.Second,
 		LeaseDuration:     time.Duration(lease) * time.Second,
 		Capacity:          capacity,
+		Labels:            labels,
 	}
 }
 
@@ -291,7 +295,7 @@ func runDevWorker(ctx context.Context, wg *sync.WaitGroup, db *sql.DB, cfg devWo
 }
 
 func runDevWorkerOnce(ctx context.Context, runner *execute.TickUseCase, cfg devWorkerConfig) {
-	n, err := runner.RunOnce(ctx, cfg.TenantID, cfg.WorkerID, cfg.Capacity, cfg.LeaseDuration, nil)
+	n, err := runner.RunOnce(ctx, cfg.TenantID, cfg.WorkerID, cfg.Capacity, cfg.LeaseDuration, cfg.Labels)
 	if err != nil {
 		slog.Error("worker tick failed", "error", err)
 	} else if n > 0 {
@@ -415,4 +419,16 @@ func loadDevPositiveInt(key string, defaultValue int) (int, error) {
 		return 0, fmt.Errorf("%s must be >= 1", key)
 	}
 	return value, nil
+}
+
+func loadDevJSONMapEnv(key string) map[string]any {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return map[string]any{}
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return map[string]any{}
+	}
+	return m
 }

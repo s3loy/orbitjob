@@ -175,7 +175,7 @@ func runLoop(
 	defer ticker.Stop()
 
 	for {
-		n, err := runner.RunOnce(ctx, cfg.TenantID, cfg.WorkerID, cfg.Capacity, cfg.LeaseDuration, nil)
+		n, err := runner.RunOnce(ctx, cfg.TenantID, cfg.WorkerID, cfg.Capacity, cfg.LeaseDuration, cfg.Labels)
 		if err != nil {
 			slog.Error("worker tick failed", "error", err.Error())
 		} else if n > 0 {

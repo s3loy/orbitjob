@@ -3,7 +3,6 @@ package middleware
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"net/http"
 	"strings"
 
@@ -31,32 +30,50 @@ func NewAuth(db *sql.DB) *Auth {
 
 func (a *Auth) Middleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		tid, src := a.resolveTenant(c)
-		if tid != "" {
+		// Public endpoints bypass auth entirely.
+		if isPublicPath(c.Request.URL.Path) {
+			c.Next()
+			return
+		}
+
+		tid, src, ok := a.resolveTenant(c)
+		if ok {
 			ctx := WithTenantID(c.Request.Context(), tid, src)
 			c.Request = c.Request.WithContext(ctx)
+			c.Next()
+			return
 		}
-		c.Next()
+		// Auth required but failed → abort.
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+			"code":    "UNAUTHORIZED",
+			"message": "valid Bearer token required",
+		})
 	}
 }
 
-func (a *Auth) resolveTenant(c *gin.Context) (string, string) {
+func isPublicPath(path string) bool {
+	switch path {
+	case "/healthz", "/openapi.json", "/metrics":
+		return true
+	}
+	return false
+}
+
+// resolveTenant validates credentials. Returns (tenantID, source, ok).
+// ok=true  → caller should set tenant in context and continue.
+// ok=false → caller should abort with 401.
+func (a *Auth) resolveTenant(c *gin.Context) (string, string, bool) {
 	authHeader := c.GetHeader("Authorization")
 	if strings.HasPrefix(authHeader, "Bearer ") {
 		key := strings.TrimPrefix(authHeader, "Bearer ")
 		if tid, ok := a.validateAPIKey(c.Request.Context(), key); ok {
-			return tid, TenantSourceAPIKey
+			return tid, TenantSourceAPIKey, true
 		}
-		_ = c.AbortWithError(http.StatusUnauthorized, fmt.Errorf("invalid api key"))
-		return "", ""
+		return "", "", false
 	}
 
-	// Fallback: X-OrbitJob-Tenant-Id header
-	if tid := strings.TrimSpace(c.GetHeader("X-OrbitJob-Tenant-Id")); tid != "" {
-		return tid, TenantSourceHeader
-	}
-
-	return "", TenantSourceDefault
+	// No Bearer token → reject.
+	return "", "", false
 }
 
 func (a *Auth) validateAPIKey(ctx context.Context, key string) (string, bool) {

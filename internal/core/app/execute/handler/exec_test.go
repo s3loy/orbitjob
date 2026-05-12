@@ -30,7 +30,7 @@ func failCommand() (string, []any) {
 	if runtime.GOOS == "windows" {
 		return "cmd", []any{"/C", "exit /b 42"}
 	}
-	return "sh", []any{"-c", "exit 42"}
+	return "false", []any{}
 }
 
 func makeTask(payload map[string]any) execute.AssignedTask {
@@ -69,8 +69,8 @@ func TestExec_ExitError(t *testing.T) {
 	if result.Success {
 		t.Fatal("expected failure")
 	}
-	if result.ResultCode != "42" {
-		t.Fatalf("expected result_code=42, got %q", result.ResultCode)
+	if result.ResultCode == "0" || result.ResultCode == "" {
+		t.Fatalf("expected non-zero result_code, got %q", result.ResultCode)
 	}
 }
 
@@ -82,8 +82,8 @@ func TestExec_Timeout(t *testing.T) {
 	var cmd string
 	var args []any
 	if runtime.GOOS == "windows" {
-		cmd = "cmd"
-		args = []any{"/C", "ping -n 10 127.0.0.1 >nul"}
+		cmd = "ping"
+		args = []any{"-n", "10", "127.0.0.1"}
 	} else {
 		cmd = "sleep"
 		args = []any{"10"}
@@ -452,6 +452,24 @@ func TestParseExecPayload(t *testing.T) {
 			wantErr:     true,
 			errContains: "must be a string",
 		},
+		{
+			name:        "command with path separator",
+			payload:     map[string]any{"command": "/bin/rm"},
+			wantErr:     true,
+			errContains: "path separators",
+		},
+		{
+			name:        "blocked shell command",
+			payload:     map[string]any{"command": "bash"},
+			wantErr:     true,
+			errContains: "not allowed",
+		},
+		{
+			name:        "arg with shell metacharacter",
+			payload:     map[string]any{"command": "echo", "args": []any{"hello; rm -rf /"}},
+			wantErr:     true,
+			errContains: "disallowed characters",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -496,7 +514,7 @@ func TestParseExecPayload(t *testing.T) {
 func TestExec_CommandNotFound(t *testing.T) {
 	h := &Exec{}
 	result := h.Execute(context.Background(), makeTask(map[string]any{
-		"command": "/nonexistent/binary/xyz",
+		"command": "nonexistent_binary_xyz",
 	}))
 	if result.Success {
 		t.Fatal("expected failure")

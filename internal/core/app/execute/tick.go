@@ -53,7 +53,12 @@ func (uc *TickUseCase) RunOnce(
 	for _, task := range tasks {
 		wg.Add(1)
 		go func(t AssignedTask) {
-			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("executeTask panic recovered", "panic", r, "stack", string(debug.Stack()))
+				}
+				wg.Done()
+			}()
 			uc.executeTask(ctx, tenantID, workerID, t, leaseDuration)
 		}(task)
 	}
@@ -188,6 +193,12 @@ func (uc *TickUseCase) startLeaseRenewal(
 			case <-done:
 				return
 			case <-ctx.Done():
+				// One final extension with a detached context so the running task
+				// has time to finish before its lease expires and gets stolen.
+				writeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				newExpiry := time.Now().Add(leaseDuration)
+				_ = uc.repo.ExtendLease(writeCtx, tenantID, instanceID, workerID, newExpiry)
+				cancel()
 				return
 			case <-ticker.C:
 				newExpiry := time.Now().Add(leaseDuration)

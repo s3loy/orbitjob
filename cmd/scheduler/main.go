@@ -104,7 +104,6 @@ func runLoop(
 			slog.Info("scheduler draining, running final tick")
 			drainStart := time.Now()
 			drainCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
 			now := nowFn().UTC()
 			if handled, err := runner.RunBatch(drainCtx, now, cfg.BatchSize); err != nil {
 				metrics.SchedulerCronErrors.Inc()
@@ -114,6 +113,7 @@ func runLoop(
 				metrics.SchedulerInstancesCreated.Add(float64(handled))
 				slog.Info("scheduler drain tick completed", "handled_due_jobs", handled)
 			}
+			cancel()
 			return
 		case <-ticker.Chan():
 		}
