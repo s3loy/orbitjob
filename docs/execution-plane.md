@@ -113,7 +113,7 @@ effective_priority = min(base_priority + floor(minutes_since_scheduled), base_pr
 | 候选条件 | 规则 |
 | --- | --- |
 | `pending` | 直接符合候选条件 |
-| `retry_wait` | 需满足 `retry_at <= now()` 且 `attempt < max_attempt` |
+| `retry_wait` | 需满足 `retry_at <= now()` 且 `attempt <= max_attempt` |
 
 ### Claim 写入
 
