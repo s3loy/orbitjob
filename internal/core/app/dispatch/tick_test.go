@@ -3,6 +3,7 @@ package dispatch
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,6 +23,11 @@ type stubDispatcherRepo struct {
 	listTenantIDsResult     []string
 	listTenantIDsErr        error
 	snapTraceID             *string // non-nil when the snapshot should carry a TraceID
+	tryAdvisoryLockErr      error
+	tryAdvisoryLockFail     bool // when true, TryAdvisoryLock returns (false, nil)
+	releaseAdvisoryLockErr  error
+	countQueueDepthResult   int64
+	countQueueDepthErr      error
 }
 
 func (s *stubDispatcherRepo) DispatchBatch(
@@ -75,6 +81,25 @@ func (s *stubDispatcherRepo) ListActiveTenantIDs(ctx context.Context) ([]string,
 		return s.listTenantIDsResult, nil
 	}
 	return []string{"default"}, nil
+}
+
+func (s *stubDispatcherRepo) TryAdvisoryLock(ctx context.Context) (bool, error) {
+	if s.tryAdvisoryLockErr != nil {
+		return false, s.tryAdvisoryLockErr
+	}
+	if s.tryAdvisoryLockFail {
+		return false, nil
+	}
+	return true, nil
+}
+func (s *stubDispatcherRepo) ReleaseAdvisoryLock(ctx context.Context) error {
+	return s.releaseAdvisoryLockErr
+}
+func (s *stubDispatcherRepo) CountQueueDepth(ctx context.Context, tenantID string, now time.Time) (int64, error) {
+	if s.countQueueDepthErr != nil {
+		return 0, s.countQueueDepthErr
+	}
+	return s.countQueueDepthResult, nil
 }
 
 func makeTestClaimSpec() domaininstance.ClaimSpec {
@@ -138,7 +163,7 @@ func TestTickUseCase_RunBatch_LimitReached(t *testing.T) {
 	}
 }
 
-func TestTickUseCase_RunBatch_RecoversOrphansBeforeDispatch(t *testing.T) {
+func TestTickUseCase_RunBatch_DoesNotRunHousekeeping(t *testing.T) {
 	repo := &stubDispatcherRepo{found: []bool{true, false}, errAt: -1}
 	uc := NewTickUseCase(repo)
 	spec := makeTestClaimSpec()
@@ -146,39 +171,48 @@ func TestTickUseCase_RunBatch_RecoversOrphansBeforeDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunBatch() error = %v", err)
 	}
+	if repo.recoverOrphansCalls != 0 {
+		t.Fatalf("expected 0 RecoverLeaseOrphans calls in RunBatch, got %d", repo.recoverOrphansCalls)
+	}
+}
+
+func TestTickUseCase_RunHousekeeping_RecoversOrphans(t *testing.T) {
+	repo := &stubDispatcherRepo{}
+	uc := NewTickUseCase(repo)
+	err := uc.RunHousekeeping(context.Background(), time.Now())
+	if err != nil {
+		t.Fatalf("RunHousekeeping() error = %v", err)
+	}
 	if repo.recoverOrphansCalls != 1 {
 		t.Fatalf("expected 1 RecoverLeaseOrphans call, got %d", repo.recoverOrphansCalls)
 	}
 }
 
-func TestTickUseCase_RunBatch_ReturnsErrorOnOrphanRecoveryFailure(t *testing.T) {
-	repo := &stubDispatcherRepo{found: []bool{true, false}, errAt: -1}
+func TestTickUseCase_RunHousekeeping_ReturnsErrorOnOrphanRecoveryFailure(t *testing.T) {
+	repo := &stubDispatcherRepo{}
 	repo.recoverOrphansErr = errors.New("recover boom")
 	uc := NewTickUseCase(repo)
-	spec := makeTestClaimSpec()
-	_, err := uc.RunBatch(context.Background(), spec, 10)
+	err := uc.RunHousekeeping(context.Background(), time.Now())
 	if err == nil || !errors.Is(err, repo.recoverOrphansErr) {
 		t.Fatalf("expected orphan recovery error, got %v", err)
 	}
 }
 
-func TestTickUseCase_RunBatch_ReturnsErrorOnRefreshPriorityFailure(t *testing.T) {
+func TestTickUseCase_RunHousekeeping_ReturnsErrorOnRefreshPriorityFailure(t *testing.T) {
 	repo := &stubDispatcherRepo{}
 	repo.refreshPriorityErr = errors.New("refresh boom")
 	uc := NewTickUseCase(repo)
-	spec := makeTestClaimSpec()
-	_, err := uc.RunBatch(context.Background(), spec, 10)
+	err := uc.RunHousekeeping(context.Background(), time.Now())
 	if err == nil || !errors.Is(err, repo.refreshPriorityErr) {
 		t.Fatalf("expected refresh priority error, got %v", err)
 	}
 }
 
-func TestTickUseCase_RunBatch_ReturnsErrorOnRecoverExpiredWorkersFailure(t *testing.T) {
-	repo := &stubDispatcherRepo{found: []bool{true, false}, errAt: -1}
+func TestTickUseCase_RunHousekeeping_ReturnsErrorOnRecoverExpiredWorkersFailure(t *testing.T) {
+	repo := &stubDispatcherRepo{}
 	repo.recoverWorkersErr = errors.New("worker recovery boom")
 	uc := NewTickUseCase(repo)
-	spec := makeTestClaimSpec()
-	_, err := uc.RunBatch(context.Background(), spec, 10)
+	err := uc.RunHousekeeping(context.Background(), time.Now())
 	if err == nil || !errors.Is(err, repo.recoverWorkersErr) {
 		t.Fatalf("expected recover expired workers error, got %v", err)
 	}
@@ -237,41 +271,29 @@ func TestTickUseCase_RunBatch_DispatchTraceID(t *testing.T) {
 	}
 }
 
-func TestTickUseCase_RunBatch_OrphanRecoveryMetrics(t *testing.T) {
+func TestTickUseCase_RunHousekeeping_OrphanRecoveryMetrics(t *testing.T) {
 	repo := &stubDispatcherRepo{
-		found:                    []bool{true, false},
-		errAt:                    -1,
 		recoverOrphansDispatched: 3,
 		recoverOrphansRunning:    2,
 	}
 	uc := NewTickUseCase(repo)
-	spec := makeTestClaimSpec()
-	count, err := uc.RunBatch(context.Background(), spec, 10)
+	err := uc.RunHousekeeping(context.Background(), time.Now())
 	if err != nil {
-		t.Fatalf("RunBatch() error = %v", err)
-	}
-	if count != 1 {
-		t.Fatalf("expected handled count=1, got %d", count)
+		t.Fatalf("RunHousekeeping() error = %v", err)
 	}
 	if repo.recoverOrphansCalls != 1 {
 		t.Fatalf("expected 1 RecoverLeaseOrphans call, got %d", repo.recoverOrphansCalls)
 	}
 }
 
-func TestTickUseCase_RunBatch_RecoveredWorkersMetrics(t *testing.T) {
+func TestTickUseCase_RunHousekeeping_RecoveredWorkersMetrics(t *testing.T) {
 	repo := &stubDispatcherRepo{
-		found:                []bool{true, false},
-		errAt:                -1,
 		recoverWorkersResult: 1,
 	}
 	uc := NewTickUseCase(repo)
-	spec := makeTestClaimSpec()
-	count, err := uc.RunBatch(context.Background(), spec, 10)
+	err := uc.RunHousekeeping(context.Background(), time.Now())
 	if err != nil {
-		t.Fatalf("RunBatch() error = %v", err)
-	}
-	if count != 1 {
-		t.Fatalf("expected handled count=1, got %d", count)
+		t.Fatalf("RunHousekeeping() error = %v", err)
 	}
 }
 
@@ -298,6 +320,49 @@ func TestTickUseCase_QuickTick_NormalizesLimit(t *testing.T) {
 	count, err := uc.QuickTick(context.Background(), spec, 0)
 	if err != nil {
 		t.Fatalf("QuickTick() error = %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected handled count=1, got %d", count)
+	}
+}
+
+func TestTickUseCase_RunHousekeeping_LockNotAcquired(t *testing.T) {
+	repo := &stubDispatcherRepo{tryAdvisoryLockFail: true}
+	uc := NewTickUseCase(repo)
+	err := uc.RunHousekeeping(context.Background(), time.Now())
+	if err != nil {
+		t.Fatalf("RunHousekeeping() error = %v", err)
+	}
+	if repo.recoverOrphansCalls != 0 {
+		t.Fatalf("expected 0 RecoverLeaseOrphans calls when lock not acquired, got %d", repo.recoverOrphansCalls)
+	}
+}
+
+func TestTickUseCase_RunHousekeeping_LockError(t *testing.T) {
+	repo := &stubDispatcherRepo{tryAdvisoryLockErr: errors.New("lock boom")}
+	uc := NewTickUseCase(repo)
+	err := uc.RunHousekeeping(context.Background(), time.Now())
+	if err == nil || !strings.Contains(err.Error(), "acquire housekeeping lock") {
+		t.Fatalf("expected lock error, got %v", err)
+	}
+}
+
+func TestTickUseCase_RunHousekeeping_ReleaseLockError(t *testing.T) {
+	repo := &stubDispatcherRepo{releaseAdvisoryLockErr: errors.New("release boom")}
+	uc := NewTickUseCase(repo)
+	err := uc.RunHousekeeping(context.Background(), time.Now())
+	if err != nil {
+		t.Fatalf("RunHousekeeping() should not fail on release lock error, got %v", err)
+	}
+}
+
+func TestTickUseCase_RunBatch_QueueDepthError(t *testing.T) {
+	repo := &stubDispatcherRepo{found: []bool{true}, errAt: -1, countQueueDepthErr: errors.New("depth boom")}
+	uc := NewTickUseCase(repo)
+	spec := makeTestClaimSpec()
+	count, err := uc.RunBatch(context.Background(), spec, 10)
+	if err != nil {
+		t.Fatalf("RunBatch() error = %v", err)
 	}
 	if count != 1 {
 		t.Fatalf("expected handled count=1, got %d", count)

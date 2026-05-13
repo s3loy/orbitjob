@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/lib/pq"
+
 	domaininstance "orbitjob/internal/core/domain/instance"
 	tenant "orbitjob/internal/core/domain/tenant"
 	"orbitjob/internal/platform/metrics"
@@ -185,9 +187,15 @@ func (r *DispatchRepository) DispatchBatch(
 
 	metrics.DispatcherBatchClaimTotal.WithLabelValues(claimSpec.TenantID).Inc()
 
+	// Preload job policies and running counts to avoid N queries per candidate.
+	jobPolicies, runningCounts, err := preloadJobInfo(ctx, tx, candidates)
+	if err != nil {
+		return 0, err
+	}
+
 	handled = 0
 	for _, candidate := range candidates {
-		action, err := dispatchOneFromCandidate(ctx, tx, candidate, claimSpec, decide)
+		action, err := dispatchOneFromCandidate(ctx, tx, candidate, claimSpec, decide, jobPolicies, runningCounts)
 		if err != nil {
 			return handled, err
 		}
@@ -336,36 +344,24 @@ func dispatchOneFromCandidate(
 	candidate domaininstance.Snapshot,
 	claimSpec domaininstance.ClaimSpec,
 	decide func(domaininstance.DispatchInput) domaininstance.DispatchDecision,
+	jobPolicies map[int64]string,
+	runningCounts map[int64]int,
 ) (string, error) {
-	var concurrencyPolicy string
-	err := tx.QueryRowContext(ctx, `
-		SELECT concurrency_policy FROM jobs
-		WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
-		FOR UPDATE
-	`, candidate.TenantID, candidate.JobID).Scan(&concurrencyPolicy)
-	if err != nil {
-		return "", fmt.Errorf("lookup concurrency policy: %w", err)
+	policy, ok := jobPolicies[candidate.JobID]
+	if !ok {
+		return "", fmt.Errorf("job %d not found or deleted", candidate.JobID)
 	}
-
-	var runningCount int
-	err = tx.QueryRowContext(ctx, `
-		SELECT count(*) FROM job_instances
-		WHERE tenant_id = $1 AND job_id = $2 AND status IN ('dispatched', 'running')
-	`, candidate.TenantID, candidate.JobID).Scan(&runningCount)
-	if err != nil {
-		return "", fmt.Errorf("count running instances: %w", err)
-	}
+	running := runningCounts[candidate.JobID]
 
 	decision := decide(domaininstance.DispatchInput{
 		InstanceSnapshot:  candidate,
-		ConcurrencyPolicy: concurrencyPolicy,
-		RunningCount:      runningCount,
+		ConcurrencyPolicy: policy,
+		RunningCount:      running,
 	})
 
 	switch decision.Action {
 	case domaininstance.DispatchActionDispatch:
-		_, err = updateInstanceToDispatched(ctx, tx, candidate, claimSpec)
-		if err != nil {
+		if _, err := updateInstanceToDispatched(ctx, tx, candidate, claimSpec); err != nil {
 			return "", err
 		}
 		metrics.DispatcherDispatchTotal.WithLabelValues(candidate.TenantID, "dispatch").Inc()
@@ -376,12 +372,10 @@ func dispatchOneFromCandidate(
 		return domaininstance.DispatchActionSkip, nil
 
 	case domaininstance.DispatchActionReplace:
-		err = cancelRunningInstances(ctx, tx, candidate.TenantID, candidate.JobID, claimSpec.Now)
-		if err != nil {
+		if err := cancelRunningInstances(ctx, tx, candidate.TenantID, candidate.JobID, claimSpec.Now); err != nil {
 			return "", err
 		}
-		_, err = updateInstanceToDispatched(ctx, tx, candidate, claimSpec)
-		if err != nil {
+		if _, err := updateInstanceToDispatched(ctx, tx, candidate, claimSpec); err != nil {
 			return "", err
 		}
 		metrics.DispatcherDispatchTotal.WithLabelValues(candidate.TenantID, "replace").Inc()
@@ -619,6 +613,9 @@ func (r *DispatchRepository) RecoverLeaseOrphans(ctx context.Context, now time.T
 // RefreshEffectivePriority recomputes the materialized effective_priority
 // for all pending and retry_wait instances.
 func (r *DispatchRepository) RefreshEffectivePriority(ctx context.Context, now time.Time) (int64, error) {
+	// Incremental refresh: only update instances whose effective_priority
+	// could have changed since the last tick. Tasks scheduled >1h ago have
+	// already saturated at priority+60 and never need refreshing.
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE job_instances
 		SET effective_priority = LEAST(
@@ -626,6 +623,8 @@ func (r *DispatchRepository) RefreshEffectivePriority(ctx context.Context, now t
 		        priority + FLOOR(EXTRACT(EPOCH FROM ($1 - scheduled_at)) / 60)::int),
 		    priority + 60)
 		WHERE status IN ('pending', 'retry_wait')
+		  AND scheduled_at <= $1
+		  AND scheduled_at >= $1 - INTERVAL '1 hour'
 	`, now)
 	if err != nil {
 		return 0, fmt.Errorf("refresh effective priority: %w", err)
@@ -675,6 +674,103 @@ func (r *DispatchRepository) RecoverExpiredWorkers(ctx context.Context, now time
 	}
 
 	return result.RowsAffected()
+}
+
+func preloadJobInfo(ctx context.Context, tx *sql.Tx, candidates []domaininstance.Snapshot) (map[int64]string, map[int64]int, error) {
+	if len(candidates) == 0 {
+		return nil, nil, nil
+	}
+
+	jobIDSet := make(map[int64]struct{})
+	for _, c := range candidates {
+		jobIDSet[c.JobID] = struct{}{}
+	}
+	jobIDs := make([]int64, 0, len(jobIDSet))
+	for id := range jobIDSet {
+		jobIDs = append(jobIDs, id)
+	}
+
+	policies := make(map[int64]string, len(jobIDs))
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id, concurrency_policy FROM jobs
+		WHERE id = ANY($1) AND deleted_at IS NULL
+		FOR UPDATE
+	`, pq.Array(jobIDs))
+	if err != nil {
+		return nil, nil, fmt.Errorf("preload job policies: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id int64
+		var policy string
+		if err := rows.Scan(&id, &policy); err != nil {
+			return nil, nil, fmt.Errorf("scan job policy: %w", err)
+		}
+		policies[id] = policy
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, fmt.Errorf("iterate job policies: %w", err)
+	}
+
+	counts := make(map[int64]int, len(jobIDs))
+	rows, err = tx.QueryContext(ctx, `
+		SELECT job_id, count(*) FROM job_instances
+		WHERE job_id = ANY($1) AND status IN ('dispatched', 'running')
+		GROUP BY job_id
+	`, pq.Array(jobIDs))
+	if err != nil {
+		return nil, nil, fmt.Errorf("preload running counts: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id int64
+		var count int
+		if err := rows.Scan(&id, &count); err != nil {
+			return nil, nil, fmt.Errorf("scan running count: %w", err)
+		}
+		counts[id] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, fmt.Errorf("iterate running counts: %w", err)
+	}
+
+	return policies, counts, nil
+}
+
+const housekeepingAdvisoryLockID = 42
+
+func (r *DispatchRepository) TryAdvisoryLock(ctx context.Context) (bool, error) {
+	var acquired bool
+	err := r.db.QueryRowContext(ctx, `SELECT pg_try_advisory_lock($1)`, housekeepingAdvisoryLockID).Scan(&acquired)
+	if err != nil {
+		return false, fmt.Errorf("try advisory lock: %w", err)
+	}
+	return acquired, nil
+}
+
+func (r *DispatchRepository) ReleaseAdvisoryLock(ctx context.Context) error {
+	_, err := r.db.ExecContext(ctx, `SELECT pg_advisory_unlock($1)`, housekeepingAdvisoryLockID)
+	if err != nil {
+		return fmt.Errorf("release advisory lock: %w", err)
+	}
+	return nil
+}
+
+func (r *DispatchRepository) CountQueueDepth(ctx context.Context, tenantID string, now time.Time) (int64, error) {
+	var count int64
+	err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM job_instances
+		WHERE tenant_id = $1
+		  AND (status = 'pending' OR (
+		       status = 'retry_wait'
+		       AND retry_at IS NOT NULL
+		       AND retry_at <= $2
+		       AND attempt <= max_attempt))
+	`, tenantID, now).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count queue depth: %w", err)
+	}
+	return count, nil
 }
 
 func (r *DispatchRepository) ListActiveTenantIDs(ctx context.Context) ([]string, error) {

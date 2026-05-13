@@ -53,6 +53,12 @@ func (m *benchDispatchRepo) DispatchBatch(
 	return handled, nil
 }
 
+func (m *benchDispatchRepo) TryAdvisoryLock(_ context.Context) (bool, error)   { return true, nil }
+func (m *benchDispatchRepo) ReleaseAdvisoryLock(_ context.Context) error       { return nil }
+func (m *benchDispatchRepo) CountQueueDepth(_ context.Context, _ string, _ time.Time) (int64, error) {
+	return 0, nil
+}
+
 // ---------------------------------------------------------------------------
 // Benchmarks
 // ---------------------------------------------------------------------------

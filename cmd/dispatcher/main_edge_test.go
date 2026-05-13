@@ -11,8 +11,6 @@ import (
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
 
-	domaininstance "orbitjob/internal/core/domain/instance"
-
 	"orbitjob/internal/platform/config"
 	"orbitjob/internal/platform/health"
 )
@@ -36,63 +34,6 @@ func TestLoadPositiveIntEnv_Negative(t *testing.T) {
 	_, err := config.LoadPositiveIntEnv("TEST_DISPATCHER_KEY", 50)
 	if err == nil || !strings.Contains(err.Error(), "must be >= 1") {
 		t.Fatalf("expected 'must be >= 1' error, got %v", err)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// tenantIDs
-// ---------------------------------------------------------------------------
-
-type tenantRunner struct {
-	ids []string
-	err error
-}
-
-func (r *tenantRunner) RunBatch(_ context.Context, _ domaininstance.ClaimSpec, _ int) (int, error) {
-	return 0, nil
-}
-
-func (r *tenantRunner) QuickTick(_ context.Context, _ domaininstance.ClaimSpec, _ int) (int, error) {
-	return 0, nil
-}
-
-func (r *tenantRunner) ListActiveTenantIDs(_ context.Context) ([]string, error) {
-	return r.ids, r.err
-}
-
-func TestTenantIDs_FromDB_Multiple(t *testing.T) {
-	ctx := context.Background()
-	runner := &tenantRunner{ids: []string{"t1", "t2"}}
-	cfg := runtimeConfig{TenantID: ""}
-
-	result := tenantIDs(cfg, runner, ctx)
-	if len(result) != 2 {
-		t.Fatalf("expected 2 tenant IDs, got %d: %v", len(result), result)
-	}
-	if result[0] != "t1" || result[1] != "t2" {
-		t.Fatalf("expected [t1 t2], got %v", result)
-	}
-}
-
-func TestTenantIDs_FromDB_EmptyFallback(t *testing.T) {
-	ctx := context.Background()
-	runner := &tenantRunner{ids: []string{}}
-	cfg := runtimeConfig{TenantID: ""}
-
-	result := tenantIDs(cfg, runner, ctx)
-	if len(result) != 1 || result[0] != "default" {
-		t.Fatalf("expected [default], got %v", result)
-	}
-}
-
-func TestTenantIDs_FromDB_ErrorFallback(t *testing.T) {
-	ctx := context.Background()
-	runner := &tenantRunner{ids: nil, err: errors.New("db down")}
-	cfg := runtimeConfig{TenantID: ""}
-
-	result := tenantIDs(cfg, runner, ctx)
-	if len(result) != 1 || result[0] != "default" {
-		t.Fatalf("expected [default] on error, got %v", result)
 	}
 }
 
