@@ -10,7 +10,6 @@ import (
 )
 
 type stubDispatcherRepo struct {
-	calls                   int
 	found                   []bool
 	errAt                   int
 	recoverOrphansCalls     int
@@ -25,21 +24,25 @@ type stubDispatcherRepo struct {
 	snapTraceID             *string // non-nil when the snapshot should carry a TraceID
 }
 
-func (s *stubDispatcherRepo) DispatchOne(
+func (s *stubDispatcherRepo) DispatchBatch(
 	ctx context.Context,
 	spec domaininstance.ClaimSpec,
+	limit int,
 	decide func(domaininstance.DispatchInput) domaininstance.DispatchDecision,
-) (domaininstance.Snapshot, bool, error) {
-	i := s.calls
-	s.calls++
-
-	if s.errAt >= 0 && i == s.errAt {
-		return domaininstance.Snapshot{}, false, errors.New("boom")
+) (int, error) {
+	handled := 0
+	for i := 0; i < limit; i++ {
+		if s.errAt >= 0 && i == s.errAt {
+			return handled, errors.New("boom")
+		}
+		if i >= len(s.found) {
+			break
+		}
+		if s.found[i] {
+			handled++
+		}
 	}
-	if i >= len(s.found) {
-		return domaininstance.Snapshot{}, false, nil
-	}
-	return domaininstance.Snapshot{TraceID: s.snapTraceID}, s.found[i], nil
+	return handled, nil
 }
 
 func (s *stubDispatcherRepo) RecoverLeaseOrphans(ctx context.Context, now time.Time) (int64, int64, error) {
@@ -132,9 +135,6 @@ func TestTickUseCase_RunBatch_LimitReached(t *testing.T) {
 	}
 	if count != 2 {
 		t.Fatalf("expected handled count=2, got %d", count)
-	}
-	if repo.calls != 2 {
-		t.Fatalf("expected exactly 2 repo calls, got %d", repo.calls)
 	}
 }
 
@@ -269,6 +269,35 @@ func TestTickUseCase_RunBatch_RecoveredWorkersMetrics(t *testing.T) {
 	count, err := uc.RunBatch(context.Background(), spec, 10)
 	if err != nil {
 		t.Fatalf("RunBatch() error = %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected handled count=1, got %d", count)
+	}
+}
+
+func TestTickUseCase_QuickTick_SkipsHousekeeping(t *testing.T) {
+	repo := &stubDispatcherRepo{found: []bool{true, false}, errAt: -1}
+	uc := NewTickUseCase(repo)
+	spec := makeTestClaimSpec()
+	count, err := uc.QuickTick(context.Background(), spec, 10)
+	if err != nil {
+		t.Fatalf("QuickTick() error = %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected handled count=1, got %d", count)
+	}
+	if repo.recoverOrphansCalls != 0 {
+		t.Fatalf("expected 0 RecoverLeaseOrphans calls, got %d", repo.recoverOrphansCalls)
+	}
+}
+
+func TestTickUseCase_QuickTick_NormalizesLimit(t *testing.T) {
+	repo := &stubDispatcherRepo{found: []bool{true}, errAt: -1}
+	uc := NewTickUseCase(repo)
+	spec := makeTestClaimSpec()
+	count, err := uc.QuickTick(context.Background(), spec, 0)
+	if err != nil {
+		t.Fatalf("QuickTick() error = %v", err)
 	}
 	if count != 1 {
 		t.Fatalf("expected handled count=1, got %d", count)

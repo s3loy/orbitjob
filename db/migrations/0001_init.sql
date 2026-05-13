@@ -688,3 +688,20 @@ CREATE POLICY tenants_isolation ON tenants
 --   - job_change_audits     : audit trail; application-level access control
 --     is sufficient.
 -- ============================================================
+
+-- ============================================================
+-- NOTIFY/LISTEN trigger for dispatcher event-driven wake
+-- ============================================================
+CREATE OR REPLACE FUNCTION notify_job_event()
+RETURNS TRIGGER AS $$
+BEGIN
+    PERFORM pg_notify('job_events', '');
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_job_instance_notify
+AFTER INSERT OR UPDATE OF status ON job_instances
+FOR EACH ROW
+WHEN (NEW.status IN ('pending', 'retry_wait'))
+EXECUTE FUNCTION notify_job_event();

@@ -30,4 +30,34 @@ var (
 		Name: "orbitjob_dispatcher_queue_depth",
 		Help: "Number of pending + retry_wait instances, labeled by tenant_id.",
 	}, []string{"tenant_id"})
+
+	// DispatcherBatchClaimTotal counts batch claim attempts.
+	DispatcherBatchClaimTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "orbitjob_dispatcher_batch_claim_total",
+		Help: "Total batch claim attempts.",
+	}, []string{"tenant_id"})
+
+	// DispatcherBatchClaimEmptyTotal counts empty batch claims.
+	DispatcherBatchClaimEmptyTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "orbitjob_dispatcher_batch_claim_empty_total",
+		Help: "Total empty batch claims (no candidates).",
+	}, []string{"tenant_id"})
+
+	// DispatcherEventWakeTotal counts wakes from NOTIFY events.
+	DispatcherEventWakeTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "orbitjob_dispatcher_event_wake_total",
+		Help: "Total wakes from NOTIFY events.",
+	}, []string{"tenant_id"})
+
+	// DispatcherIdleTicksTotal counts idle ticks.
+	DispatcherIdleTicksTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "orbitjob_dispatcher_idle_ticks_total",
+		Help: "Total idle ticks (no work dispatched).",
+	}, []string{"tenant_id"})
+
+	// DispatcherLongIntervalTotal counts switches to long interval mode.
+	DispatcherLongIntervalTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "orbitjob_dispatcher_long_interval_total",
+		Help: "Total switches to long interval mode.",
+	}, []string{"tenant_id"})
 )

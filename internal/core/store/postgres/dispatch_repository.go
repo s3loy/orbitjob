@@ -137,6 +137,112 @@ func (r *DispatchRepository) DispatchOne(
 	}
 }
 
+// DispatchBatch claims up to limit candidate instances in a single transaction,
+// then dispatches each one within the same transaction. This reduces SQL round-trips
+// from ~6 per instance to ~3 per batch (claim N + loop + commit).
+func (r *DispatchRepository) DispatchBatch(
+	ctx context.Context,
+	claimSpec domaininstance.ClaimSpec,
+	limit int,
+	decide func(domaininstance.DispatchInput) domaininstance.DispatchDecision,
+) (handled int, _ error) {
+	if limit < 1 {
+		limit = 1
+	}
+	if decide == nil {
+		return 0, fmt.Errorf("decide policy is required")
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin dispatch tx: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", claimSpec.TenantID); err != nil {
+		return 0, fmt.Errorf("set tenant context: %w", err)
+	}
+
+	if _, err = tx.ExecContext(ctx, "SET LOCAL lock_timeout = '1s'"); err != nil {
+		return 0, fmt.Errorf("set lock timeout: %w", err)
+	}
+
+	candidates, err := claimDispatchCandidates(ctx, tx, claimSpec, limit)
+	if err != nil {
+		return 0, err
+	}
+	if len(candidates) == 0 {
+		if rbErr := tx.Rollback(); rbErr != nil {
+			return 0, fmt.Errorf("rollback empty dispatch tx: %w", rbErr)
+		}
+		metrics.DispatcherBatchClaimEmptyTotal.WithLabelValues(claimSpec.TenantID).Inc()
+		return 0, nil
+	}
+
+	metrics.DispatcherBatchClaimTotal.WithLabelValues(claimSpec.TenantID).Inc()
+
+	handled = 0
+	for _, candidate := range candidates {
+		action, err := dispatchOneFromCandidate(ctx, tx, candidate, claimSpec, decide)
+		if err != nil {
+			return handled, err
+		}
+		if action == domaininstance.DispatchActionDispatch || action == domaininstance.DispatchActionReplace {
+			handled++
+		}
+	}
+
+	if err = tx.Commit(); err != nil {
+		return handled, fmt.Errorf("commit dispatch tx: %w", err)
+	}
+
+	return handled, nil
+}
+
+func claimDispatchCandidates(ctx context.Context, tx *sql.Tx, spec domaininstance.ClaimSpec, limit int) ([]domaininstance.Snapshot, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id, run_id::text, tenant_id, job_id, trigger_source,
+		       status, priority, effective_priority, partition_key,
+		       idempotency_key, idempotency_scope, routing_key, worker_id,
+		       attempt, max_attempt, scheduled_at, started_at,
+		       finished_at, lease_expires_at, dispatched_at, retry_at,
+		       result_code, error_msg, trace_id, created_at, updated_at,
+		       version
+		FROM job_instances
+		WHERE tenant_id = $1
+		  AND (status = 'pending' OR (
+		       status = 'retry_wait'
+		       AND retry_at IS NOT NULL
+		       AND retry_at <= $2
+		       AND attempt <= max_attempt))
+		ORDER BY effective_priority DESC, scheduled_at ASC, id ASC
+		FOR UPDATE SKIP LOCKED
+		LIMIT $3
+	`, spec.TenantID, spec.Now, limit)
+	if err != nil {
+		return nil, fmt.Errorf("claim dispatch candidates: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var candidates []domaininstance.Snapshot
+	for rows.Next() {
+		snap, err := scanInstanceSnapshot(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan dispatch candidate: %w", err)
+		}
+		candidates = append(candidates, snap)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate dispatch candidates: %w", err)
+	}
+
+	return candidates, nil
+}
+
 func claimOneDispatchCandidate(ctx context.Context, tx *sql.Tx, spec domaininstance.ClaimSpec) (domaininstance.Snapshot, bool, error) {
 	row := tx.QueryRowContext(ctx, `
 		SELECT id, run_id::text, tenant_id, job_id, trigger_source,
@@ -145,7 +251,7 @@ func claimOneDispatchCandidate(ctx context.Context, tx *sql.Tx, spec domaininsta
 		       attempt, max_attempt, scheduled_at, started_at,
 		       finished_at, lease_expires_at, dispatched_at, retry_at,
 		       result_code, error_msg, trace_id, created_at, updated_at,
-			       version
+		       version
 		FROM job_instances
 		WHERE tenant_id = $1
 		  AND (status = 'pending' OR (
@@ -224,6 +330,68 @@ func updateInstanceToDispatched(ctx context.Context, tx *sql.Tx, snap domaininst
 	return out, nil
 }
 
+func dispatchOneFromCandidate(
+	ctx context.Context,
+	tx *sql.Tx,
+	candidate domaininstance.Snapshot,
+	claimSpec domaininstance.ClaimSpec,
+	decide func(domaininstance.DispatchInput) domaininstance.DispatchDecision,
+) (string, error) {
+	var concurrencyPolicy string
+	err := tx.QueryRowContext(ctx, `
+		SELECT concurrency_policy FROM jobs
+		WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
+		FOR UPDATE
+	`, candidate.TenantID, candidate.JobID).Scan(&concurrencyPolicy)
+	if err != nil {
+		return "", fmt.Errorf("lookup concurrency policy: %w", err)
+	}
+
+	var runningCount int
+	err = tx.QueryRowContext(ctx, `
+		SELECT count(*) FROM job_instances
+		WHERE tenant_id = $1 AND job_id = $2 AND status IN ('dispatched', 'running')
+	`, candidate.TenantID, candidate.JobID).Scan(&runningCount)
+	if err != nil {
+		return "", fmt.Errorf("count running instances: %w", err)
+	}
+
+	decision := decide(domaininstance.DispatchInput{
+		InstanceSnapshot:  candidate,
+		ConcurrencyPolicy: concurrencyPolicy,
+		RunningCount:      runningCount,
+	})
+
+	switch decision.Action {
+	case domaininstance.DispatchActionDispatch:
+		_, err = updateInstanceToDispatched(ctx, tx, candidate, claimSpec)
+		if err != nil {
+			return "", err
+		}
+		metrics.DispatcherDispatchTotal.WithLabelValues(candidate.TenantID, "dispatch").Inc()
+		return domaininstance.DispatchActionDispatch, nil
+
+	case domaininstance.DispatchActionSkip:
+		metrics.DispatcherDispatchTotal.WithLabelValues(candidate.TenantID, "skip").Inc()
+		return domaininstance.DispatchActionSkip, nil
+
+	case domaininstance.DispatchActionReplace:
+		err = cancelRunningInstances(ctx, tx, candidate.TenantID, candidate.JobID, claimSpec.Now)
+		if err != nil {
+			return "", err
+		}
+		_, err = updateInstanceToDispatched(ctx, tx, candidate, claimSpec)
+		if err != nil {
+			return "", err
+		}
+		metrics.DispatcherDispatchTotal.WithLabelValues(candidate.TenantID, "replace").Inc()
+		return domaininstance.DispatchActionReplace, nil
+
+	default:
+		return "", fmt.Errorf("unknown dispatch action: %s", decision.Action)
+	}
+}
+
 func cancelRunningInstances(ctx context.Context, tx *sql.Tx, tenantID string, jobID int64, now time.Time) error {
 	rows, err := tx.QueryContext(ctx, `
 		UPDATE job_instances
@@ -285,36 +453,47 @@ func cancelRunningInstances(ctx context.Context, tx *sql.Tx, tenantID string, jo
 // RecoverLeaseOrphans reclaims dispatched instances whose lease has expired
 // (dispatcher crashed after claiming) AND running instances whose lease has
 // expired (worker crashed). Returns counts for each recovery category.
+// Phase 1 and Phase 2 are each wrapped in their own transaction for atomicity.
 func (r *DispatchRepository) RecoverLeaseOrphans(ctx context.Context, now time.Time) (dispatched, running int64, _ error) {
-	// Phase 1: dispatched orphans → pending
-	dRows, err := r.db.QueryContext(ctx, `
-		UPDATE job_instances
-		SET status = 'pending',
-		    worker_id = NULL,
-		    lease_expires_at = NULL,
-		    dispatched_at = NULL,
-		    error_msg = 'orphaned: dispatcher lease expired'
-		WHERE status = 'dispatched'
-		  AND lease_expires_at < $1
-		RETURNING run_id::text, tenant_id
-	`, now)
-	if err != nil {
-		return 0, 0, fmt.Errorf("recover dispatched orphans: %w", err)
-	}
-	defer func() { _ = dRows.Close() }()
-
 	type orphanRow struct {
 		runID, tenantID string
 	}
+
+	// Phase 1: dispatched orphans → pending (with tx)
+	tx1, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, 0, fmt.Errorf("begin dispatched orphan tx: %w", err)
+	}
+
+	dRows, err := tx1.QueryContext(ctx, `
+			UPDATE job_instances
+			SET status = 'pending',
+			    worker_id = NULL,
+			    lease_expires_at = NULL,
+			    dispatched_at = NULL,
+			    error_msg = 'orphaned: dispatcher lease expired'
+			WHERE status = 'dispatched'
+			  AND lease_expires_at < $1
+			RETURNING run_id::text, tenant_id
+		`, now)
+	if err != nil {
+		_ = tx1.Rollback()
+		return 0, 0, fmt.Errorf("recover dispatched orphans: %w", err)
+	}
+
 	var dOrphans []orphanRow
 	for dRows.Next() {
 		var r orphanRow
 		if err := dRows.Scan(&r.runID, &r.tenantID); err != nil {
+			_ = dRows.Close()
+			_ = tx1.Rollback()
 			return 0, 0, fmt.Errorf("scan dispatched orphan: %w", err)
 		}
 		dOrphans = append(dOrphans, r)
 	}
 	if err := dRows.Err(); err != nil {
+		_ = dRows.Close()
+		_ = tx1.Rollback()
 		return 0, 0, fmt.Errorf("iterate dispatched orphans: %w", err)
 	}
 	_ = dRows.Close()
@@ -326,9 +505,10 @@ func (r *DispatchRepository) RecoverLeaseOrphans(ctx context.Context, now time.T
 			"to_status":   "pending",
 		})
 		if err != nil {
+			_ = tx1.Rollback()
 			return 0, 0, fmt.Errorf("marshal audit diff: %w", err)
 		}
-		if _, err = r.db.ExecContext(ctx, `
+		if _, err = tx1.ExecContext(ctx, `
 			INSERT INTO audit_events (tenant_id, actor_type, actor_id, event_type, resource_type, resource_id, diff)
 			VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
 		`,
@@ -340,27 +520,37 @@ func (r *DispatchRepository) RecoverLeaseOrphans(ctx context.Context, now time.T
 			o.runID,
 			string(diffBytes),
 		); err != nil {
+			_ = tx1.Rollback()
 			return 0, 0, fmt.Errorf("insert audit event: %w", err)
 		}
 	}
 
-	// Phase 2: running orphans → retry_wait or failed
-	rRows, err := r.db.QueryContext(ctx, `
+	if err = tx1.Commit(); err != nil {
+		return dispatched, 0, fmt.Errorf("commit dispatched orphan tx: %w", err)
+	}
+
+	// Phase 2: running orphans → retry_wait or failed (with tx)
+	tx2, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return dispatched, 0, fmt.Errorf("begin running orphan tx: %w", err)
+	}
+
+	rRows, err := tx2.QueryContext(ctx, `
 		UPDATE job_instances ji
 		SET status = CASE
-		        WHEN ji.attempt < ji.max_attempt THEN 'retry_wait'::VARCHAR
+		        WHEN ji.attempt <= ji.max_attempt THEN 'retry_wait'::VARCHAR
 		        ELSE 'failed'::VARCHAR
 		    END,
 		    worker_id = NULL,
 		    lease_expires_at = NULL,
 		    finished_at = $1,
 		    retry_at = CASE
-		        WHEN ji.attempt < ji.max_attempt
+		        WHEN ji.attempt <= ji.max_attempt
 		        THEN $1 + make_interval(secs => COALESCE(j.retry_backoff_sec, 0))
 		        ELSE NULL
 		    END,
 		    error_msg = CASE
-		        WHEN ji.attempt < ji.max_attempt THEN 'orphaned: worker lease expired, retrying'
+		        WHEN ji.attempt <= ji.max_attempt THEN 'orphaned: worker lease expired, retrying'
 		        ELSE 'orphaned: worker lease expired, no retries left'
 		    END
 		FROM jobs j
@@ -371,19 +561,23 @@ func (r *DispatchRepository) RecoverLeaseOrphans(ctx context.Context, now time.T
 		RETURNING ji.run_id::text, ji.tenant_id
 	`, now)
 	if err != nil {
+		_ = tx2.Rollback()
 		return dispatched, 0, fmt.Errorf("recover running orphans: %w", err)
 	}
-	defer func() { _ = rRows.Close() }()
 
 	var rOrphans []orphanRow
 	for rRows.Next() {
 		var r orphanRow
 		if err := rRows.Scan(&r.runID, &r.tenantID); err != nil {
+			_ = rRows.Close()
+			_ = tx2.Rollback()
 			return dispatched, 0, fmt.Errorf("scan running orphan: %w", err)
 		}
 		rOrphans = append(rOrphans, r)
 	}
 	if err := rRows.Err(); err != nil {
+		_ = rRows.Close()
+		_ = tx2.Rollback()
 		return dispatched, 0, fmt.Errorf("iterate running orphans: %w", err)
 	}
 	_ = rRows.Close()
@@ -395,9 +589,10 @@ func (r *DispatchRepository) RecoverLeaseOrphans(ctx context.Context, now time.T
 			"to_status":   "orphan_recovered",
 		})
 		if err != nil {
+			_ = tx2.Rollback()
 			return dispatched, 0, fmt.Errorf("marshal audit diff: %w", err)
 		}
-		if _, err = r.db.ExecContext(ctx, `
+		if _, err = tx2.ExecContext(ctx, `
 			INSERT INTO audit_events (tenant_id, actor_type, actor_id, event_type, resource_type, resource_id, diff)
 			VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
 		`,
@@ -409,9 +604,15 @@ func (r *DispatchRepository) RecoverLeaseOrphans(ctx context.Context, now time.T
 			o.runID,
 			string(diffBytes),
 		); err != nil {
+			_ = tx2.Rollback()
 			return dispatched, 0, fmt.Errorf("insert audit event: %w", err)
 		}
 	}
+
+	if err = tx2.Commit(); err != nil {
+		return dispatched, running, fmt.Errorf("commit running orphan tx: %w", err)
+	}
+
 	return dispatched, running, nil
 }
 

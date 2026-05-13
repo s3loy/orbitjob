@@ -52,6 +52,10 @@ func (r *tenantRunner) RunBatch(_ context.Context, _ domaininstance.ClaimSpec, _
 	return 0, nil
 }
 
+func (r *tenantRunner) QuickTick(_ context.Context, _ domaininstance.ClaimSpec, _ int) (int, error) {
+	return 0, nil
+}
+
 func (r *tenantRunner) ListActiveTenantIDs(_ context.Context) ([]string, error) {
 	return r.ids, r.err
 }

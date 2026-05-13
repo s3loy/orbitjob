@@ -3,7 +3,6 @@ package dispatch
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"time"
 
 	domaininstance "orbitjob/internal/core/domain/instance"
@@ -11,11 +10,12 @@ import (
 )
 
 type dispatcher interface {
-	DispatchOne(
+	DispatchBatch(
 		ctx context.Context,
 		spec domaininstance.ClaimSpec,
+		limit int,
 		decide func(domaininstance.DispatchInput) domaininstance.DispatchDecision,
-	) (_ domaininstance.Snapshot, found bool, _ error)
+	) (handled int, _ error)
 	RecoverLeaseOrphans(ctx context.Context, now time.Time) (dispatched, running int64, _ error)
 	RefreshEffectivePriority(ctx context.Context, now time.Time) (int64, error)
 	RecoverExpiredWorkers(ctx context.Context, now time.Time) (int64, error)
@@ -64,27 +64,22 @@ func (uc *TickUseCase) RunBatch(ctx context.Context, spec domaininstance.ClaimSp
 		return 0, fmt.Errorf("refresh effective priority: %w", err)
 	}
 
-	handled := 0
-	for i := 0; i < limit; i++ {
-		snap, found, err := uc.repo.DispatchOne(ctx, spec, domaininstance.DecideDispatch)
-		if err != nil {
-			return handled, err
-		}
-		if !found {
-			break
-		}
-		handled++
-
-		if snap.TraceID != nil {
-			slog.InfoContext(ctx, "instance dispatched",
-				"trace_id", *snap.TraceID,
-				"run_id", snap.RunID,
-				"action", "dispatch",
-			)
-		}
+	handled, err := uc.repo.DispatchBatch(ctx, spec, limit, domaininstance.DecideDispatch)
+	if err != nil {
+		return handled, err
 	}
 
 	return handled, nil
+}
+
+// QuickTick dispatches at most limit eligible instances without running
+// housekeeping (orphan recovery, worker recovery, priority refresh).
+// Used for event-driven fast path.
+func (uc *TickUseCase) QuickTick(ctx context.Context, spec domaininstance.ClaimSpec, limit int) (int, error) {
+	if limit < 1 {
+		limit = 1
+	}
+	return uc.repo.DispatchBatch(ctx, spec, limit, domaininstance.DecideDispatch)
 }
 
 	func (uc *TickUseCase) ListActiveTenantIDs(ctx context.Context) ([]string, error) {

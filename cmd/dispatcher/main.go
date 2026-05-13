@@ -32,6 +32,7 @@ type runtimeConfig struct {
 
 type tickRunner interface {
 	RunBatch(ctx context.Context, spec domaininstance.ClaimSpec, limit int) (int, error)
+	QuickTick(ctx context.Context, spec domaininstance.ClaimSpec, limit int) (int, error)
 	ListActiveTenantIDs(ctx context.Context) ([]string, error)
 }
 
@@ -51,7 +52,8 @@ var (
 		repo := corepostgres.NewDispatchRepository(db)
 		return dispatch.NewTickUseCase(repo)
 	}
-	runLoopFn = runLoop
+	runLoopFn          = runLoop
+	newEventListenerFn = corepostgres.NewEventListener
 )
 
 var newWallClockTicker = func(d time.Duration) schedulerTicker { return platformticker.New(d) }
@@ -103,7 +105,25 @@ func tenantIDs(cfg runtimeConfig, runner tickRunner, ctx context.Context) []stri
 	return ids
 }
 
-func dispatchTick(ctx context.Context, runner tickRunner, cfg runtimeConfig, now time.Time) int {
+func quickTick(ctx context.Context, runner tickRunner, cfg runtimeConfig, now time.Time) int {
+	var total int
+	for _, tid := range tenantIDs(cfg, runner, ctx) {
+		spec := domaininstance.ClaimSpec{
+			TenantID:       tid,
+			LeaseExpiresAt: now.Add(cfg.LeaseDuration),
+			Now:            now,
+		}
+		handled, err := runner.QuickTick(ctx, spec, cfg.BatchSize)
+		if err != nil {
+			slog.Error("dispatcher quick tick failed", "tenant_id", tid, "error", err.Error())
+			continue
+		}
+		total += handled
+	}
+	return total
+}
+
+func fullTick(ctx context.Context, runner tickRunner, cfg runtimeConfig, now time.Time) int {
 	var total int
 	tickStart := time.Now()
 	for _, tid := range tenantIDs(cfg, runner, ctx) {
@@ -114,7 +134,7 @@ func dispatchTick(ctx context.Context, runner tickRunner, cfg runtimeConfig, now
 		}
 		handled, err := runner.RunBatch(ctx, spec, cfg.BatchSize)
 		if err != nil {
-			slog.Error("dispatcher tick failed", "tenant_id", tid, "error", err.Error())
+			slog.Error("dispatcher full tick failed", "tenant_id", tid, "error", err.Error())
 			continue
 		}
 		total += handled
@@ -127,30 +147,55 @@ func runLoop(
 	ctx context.Context,
 	runner tickRunner,
 	cfg runtimeConfig,
+	eventCh <-chan struct{},
 	newTicker func(time.Duration) schedulerTicker,
 	nowFn func() time.Time,
 ) {
 	ticker := newTicker(cfg.TickInterval)
 	defer ticker.Stop()
 
+	idleCount := 0
+	const idleThreshold = 3
+	const longInterval = 30 * time.Second
+
 	for {
 		now := nowFn().UTC()
-		handled := dispatchTick(ctx, runner, cfg, now)
-		if handled > 0 {
-			slog.Info("dispatcher tick completed", "dispatched", handled)
-		}
 
 		select {
+		case <-eventCh:
+			handled := quickTick(ctx, runner, cfg, now)
+			if handled > 0 {
+				slog.Info("dispatcher quick tick completed", "dispatched", handled)
+				idleCount = 0
+			}
+			metrics.DispatcherEventWakeTotal.WithLabelValues(cfg.TenantID).Inc()
+			continue
+
+		case <-ticker.Chan():
+			handled := fullTick(ctx, runner, cfg, now)
+			if handled > 0 {
+				slog.Info("dispatcher full tick completed", "dispatched", handled)
+				idleCount = 0
+			} else {
+				idleCount++
+				metrics.DispatcherIdleTicksTotal.WithLabelValues(cfg.TenantID).Inc()
+				if idleCount >= idleThreshold {
+					ticker.Stop()
+					ticker = newTicker(longInterval)
+					metrics.DispatcherLongIntervalTotal.WithLabelValues(cfg.TenantID).Inc()
+					slog.Info("dispatcher switching to long interval", "interval_sec", longInterval.Seconds())
+				}
+			}
+
 		case <-ctx.Done():
 			slog.Info("dispatcher draining, running final tick")
 			drainCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			now := nowFn().UTC()
-			if handled := dispatchTick(drainCtx, runner, cfg, now); handled > 0 {
+			if handled := fullTick(drainCtx, runner, cfg, now); handled > 0 {
 				slog.Info("dispatcher drain tick completed", "dispatched", handled)
 			}
 			cancel()
 			return
-		case <-ticker.Chan():
 		}
 	}
 }
@@ -193,7 +238,16 @@ func run(ctx context.Context) error {
 	go health.StartComponentHealthServer(healthCtx, db, cfg.HealthPort, "dispatcher")
 
 	runner := buildRunnerFn(db)
-	runLoopFn(ctx, runner, cfg, newWallClockTicker, time.Now)
+
+	var eventCh <-chan struct{}
+	if el, err := newEventListenerFn(dsn); err != nil {
+		slog.Error("failed to start event listener, falling back to polling only", "error", err.Error())
+	} else {
+		defer func() { _ = el.Close() }()
+		eventCh = el.C()
+	}
+
+	runLoopFn(ctx, runner, cfg, eventCh, newWallClockTicker, time.Now)
 
 	return nil
 }
