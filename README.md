@@ -105,7 +105,7 @@ go run ./cmd/openapi-gen     # OpenAPI 生成
 | `ADMIN_PORT` | `cmd/devserver` 的 API 监听端口 | `8080` |
 | `PORT` | `cmd/admin-api` 的 HTTP 监听端口 | `8080` |
 | `SCHEDULER_HEALTH_PORT` | 健康检查端口 | `6060` |
-| `SCHEDULER_BATCH_SIZE` | 每 tick 最大 job 数 | `100` |
+| `SCHEDULER_BATCH_SIZE_MAX` | 自适应 batch 上限 | `500` |
 | `SCHEDULER_TICK_INTERVAL_SEC` | Tick 间隔（秒） | `5` |
 | `DISPATCHER_TENANT_ID` | Dispatcher 租户范围 | `default` |
 | `DISPATCHER_HEALTH_PORT` | 健康检查端口 | `6061` |

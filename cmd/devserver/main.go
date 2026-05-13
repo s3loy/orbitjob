@@ -118,7 +118,7 @@ type devSchedulerConfig struct {
 }
 
 func loadDevSchedulerConfig() devSchedulerConfig {
-	batch, _ := loadDevPositiveInt("SCHEDULER_BATCH_SIZE", 100)
+	batch, _ := loadDevPositiveInt("SCHEDULER_BATCH_SIZE_MAX", 100)
 	sec, _ := loadDevPositiveInt("SCHEDULER_TICK_INTERVAL_SEC", 5)
 	return devSchedulerConfig{
 		BatchSize:    batch,
@@ -129,18 +129,18 @@ func loadDevSchedulerConfig() devSchedulerConfig {
 func runDevScheduler(ctx context.Context, wg *sync.WaitGroup, db *sql.DB, cfg devSchedulerConfig) {
 	defer wg.Done()
 	repo := corepostgres.NewSchedulerRepository(db)
-	runner := schedule.NewTickUseCase(repo)
+	runner := schedule.NewTickUseCase(repo, corepostgres.ClassifyError)
 
 	ticker := time.NewTicker(cfg.TickInterval)
 	defer ticker.Stop()
 
 	for {
 		now := time.Now().UTC()
-		handled, err := runner.RunBatch(ctx, now, cfg.BatchSize)
+		counts, err := runner.RunBatch(ctx, now, cfg.BatchSize)
 		if err != nil {
 			slog.Error("scheduler tick failed", "error", err)
 		} else {
-			slog.Info("scheduler tick completed", "handled_due_jobs", handled)
+			slog.Info("scheduler tick completed", "handled_due_jobs", counts.Handled)
 		}
 
 		select {
@@ -148,10 +148,10 @@ func runDevScheduler(ctx context.Context, wg *sync.WaitGroup, db *sql.DB, cfg de
 				slog.Info("scheduler draining, running final tick")
 				drainCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				now := time.Now().UTC()
-				if handled, err := runner.RunBatch(drainCtx, now, cfg.BatchSize); err != nil {
+				if counts, err := runner.RunBatch(drainCtx, now, cfg.BatchSize); err != nil {
 					slog.Error("scheduler drain tick failed", "error", err)
 				} else {
-					slog.Info("scheduler drain tick completed", "handled_due_jobs", handled)
+					slog.Info("scheduler drain tick completed", "handled_due_jobs", counts.Handled)
 				}
 				cancel()
 				return

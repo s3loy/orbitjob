@@ -161,13 +161,13 @@ func TestStartComponentHealthServer_Shutdown(t *testing.T) {
 func TestRun_ConfigError(t *testing.T) {
 	resetSchedulerMainDeps(t)
 	t.Setenv("DATABASE_DSN", "postgres://unit-test")
-	t.Setenv("SCHEDULER_BATCH_SIZE", "bad")
+	t.Setenv("SCHEDULER_BATCH_SIZE_MAX", "bad")
 
 	loadDotenvFn = func() error { return nil }
 	newLoggerFn = func(string) *slog.Logger { return slog.Default() }
 
 	err := run(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "SCHEDULER_BATCH_SIZE") {
-		t.Fatalf("expected SCHEDULER_BATCH_SIZE error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "SCHEDULER_BATCH_SIZE_MAX") {
+		t.Fatalf("expected SCHEDULER_BATCH_SIZE_MAX error, got %v", err)
 	}
 }

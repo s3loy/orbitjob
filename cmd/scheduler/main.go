@@ -13,6 +13,7 @@ import (
 
 	adminpostgres "orbitjob/internal/admin/store/postgres"
 	"orbitjob/internal/core/app/schedule"
+	domain "orbitjob/internal/core/domain"
 	corepostgres "orbitjob/internal/core/store/postgres"
 	"orbitjob/internal/platform/config"
 	"orbitjob/internal/platform/health"
@@ -22,13 +23,13 @@ import (
 )
 
 type runtimeConfig struct {
-	BatchSize    int
+	BatchSizeMax int
 	TickInterval time.Duration
 	HealthPort   string
 }
 
 type tickRunner interface {
-	RunBatch(ctx context.Context, now time.Time, limit int) (int, error)
+	RunBatch(ctx context.Context, now time.Time, limit int) (schedule.BatchCounts, error)
 }
 
 type schedulerTicker interface {
@@ -45,7 +46,7 @@ var (
 	pingDBFn      = func(ctx context.Context, db *sql.DB) error { return db.PingContext(ctx) }
 	buildRunnerFn = func(db *sql.DB) tickRunner {
 		repo := corepostgres.NewSchedulerRepository(db)
-		return schedule.NewTickUseCase(repo)
+		return schedule.NewTickUseCase(repo, corepostgres.ClassifyError)
 	}
 	runLoopFn = runLoop
 )
@@ -53,7 +54,7 @@ var (
 var newWallClockTicker = func(d time.Duration) schedulerTicker { return platformticker.New(d) }
 
 func loadSchedulerRuntimeConfig() (runtimeConfig, error) {
-	batchSize, err := config.LoadPositiveIntEnv("SCHEDULER_BATCH_SIZE", 100)
+	batchSizeMax, err := config.LoadPositiveIntEnv("SCHEDULER_BATCH_SIZE_MAX", 500)
 	if err != nil {
 		return runtimeConfig{}, err
 	}
@@ -69,7 +70,7 @@ func loadSchedulerRuntimeConfig() (runtimeConfig, error) {
 	}
 
 	return runtimeConfig{
-		BatchSize:    batchSize,
+		BatchSizeMax: batchSizeMax,
 		TickInterval: time.Duration(tickIntervalSec) * time.Second,
 		HealthPort:   healthPort,
 	}, nil
@@ -78,44 +79,165 @@ func loadSchedulerRuntimeConfig() (runtimeConfig, error) {
 func runLoop(
 	ctx context.Context,
 	runner tickRunner,
+	probe func(context.Context) (time.Duration, error),
 	cfg runtimeConfig,
 	newTicker func(time.Duration) schedulerTicker,
 	nowFn func() time.Time,
 ) {
-	ticker := newTicker(cfg.TickInterval)
-	defer ticker.Stop()
+	state := &schedule.ControllerState{
+		MaxBatchSize: cfg.BatchSizeMax,
+	}
+	breakerCfg := schedule.BreakerConfig{
+		Path1Consecutive: 2,
+		Path2Consecutive: 3,
+		Path2Ratio:       5.0,
+		Path2MinAbs:      500 * time.Millisecond,
+		BackoffBase:      5 * time.Second,
+		BackoffMax:       300 * time.Second,
+	}
+	breaker := schedule.NewBreaker(breakerCfg)
+
+	probeWithTimeout := func(ctx context.Context) (time.Duration, error) {
+		probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		return probe(probeCtx)
+	}
+
+	runDiscoveryBatch := func(ctx context.Context, limit int) (int, domain.ErrorClass) {
+		counts, _ := runner.RunBatch(ctx, nowFn().UTC(), limit)
+		metrics.SchedulerInstancesCreated.Add(float64(counts.Scheduled))
+		class := domain.ClassNone
+		if counts.Fatal > 0 {
+			class = domain.FatalWorthy
+		} else if counts.Backoff > 0 {
+			class = domain.BackoffWorthy
+		}
+		return counts.Handled, class
+	}
+
+	curPhase := schedule.PhaseDiscovery
+	lastCounts := schedule.BatchCounts{}
+	mainTicker := newTicker(cfg.TickInterval)
 
 	for {
 		start := time.Now()
-		now := start.UTC()
-		handled, err := runner.RunBatch(ctx, now, cfg.BatchSize)
-		metrics.SchedulerTickDuration.Observe(time.Since(start).Seconds())
+		now := nowFn().UTC()
 
-		if err != nil {
-			metrics.SchedulerCronErrors.Inc()
-			slog.Error("scheduler tick failed", "error", err.Error())
-		} else if handled > 0 {
-			metrics.SchedulerInstancesCreated.Add(float64(handled))
-			slog.Info("scheduler tick completed", "handled_due_jobs", handled)
+		switch curPhase {
+		case schedule.PhaseDiscovery:
+			metrics.SchedulerPhase.Set(0)
+			d := schedule.NewDiscovery(probeWithTimeout, runDiscoveryBatch, state)
+			curPhase = d.Run(ctx)
+			metrics.SchedulerLimit.Set(float64(state.Limit))
+
+		case schedule.PhaseSteady:
+			metrics.SchedulerPhase.Set(1)
+			pRTT, pErr := probeWithTimeout(ctx)
+
+			var errClass domain.ErrorClass
+			if pErr != nil {
+				errClass = domain.BackoffWorthy
+			}
+
+			errorRate := 0.0
+			if lastCounts.Handled > 0 {
+				errorRate = float64(lastCounts.Backoff) / float64(lastCounts.Handled)
+			}
+
+			bPhase := breaker.Update(schedule.BreakerSignals{
+				ErrorRate:    errorRate,
+				ProbeRTT:     pRTT,
+				LongtermRtt:  state.LongtermRtt,
+				FatalTrigger: lastCounts.Fatal > 0,
+			})
+			if bPhase != schedule.PhaseSteady {
+				curPhase = bPhase
+				metrics.SchedulerBreakerTransitions.Inc()
+				metrics.SchedulerTickDuration.Observe(time.Since(start).Seconds())
+				select {
+				case <-ctx.Done():
+					mainTicker.Stop()
+					return
+				case <-mainTicker.Chan():
+				}
+				continue
+			}
+
+			_, dbPressure := schedule.UpdateSteady(state, pRTT, errClass, state.MaxBatchSize)
+			metrics.SchedulerLimit.Set(float64(state.Limit))
+			metrics.SchedulerDBPressure.Set(dbPressure)
+			metrics.SchedulerProbeRTT.Observe(pRTT.Seconds())
+
+			var runErr error
+			lastCounts, runErr = runner.RunBatch(ctx, now, state.Limit)
+			if runErr != nil {
+				slog.Error("steady tick error", "error", runErr.Error())
+			}
+			metrics.SchedulerInstancesCreated.Add(float64(lastCounts.Scheduled))
+
+			if lastCounts.Fatal > 0 {
+				breaker.Update(schedule.BreakerSignals{FatalTrigger: true})
+				metrics.SchedulerBreakerTransitions.Inc()
+				curPhase = schedule.PhaseProtect
+			}
+
+		case schedule.PhaseProtect:
+			metrics.SchedulerPhase.Set(2)
+			if breaker.State() == schedule.PhaseHalfOpen {
+				curPhase = schedule.PhaseHalfOpen
+				metrics.SchedulerTickDuration.Observe(time.Since(start).Seconds())
+				continue
+			}
+			breaker.Update(schedule.BreakerSignals{})
+			if breaker.State() == schedule.PhaseHalfOpen {
+				curPhase = schedule.PhaseHalfOpen
+				metrics.SchedulerTickDuration.Observe(time.Since(start).Seconds())
+				continue
+			}
+
+		case schedule.PhaseHalfOpen:
+			metrics.SchedulerPhase.Set(3)
+			hLimit := min(5, state.Limit/10)
+			if hLimit < 1 {
+				hLimit = 1
+			}
+
+			counts, runErr := runner.RunBatch(ctx, now, hLimit)
+			if runErr != nil {
+				slog.Error("halfopen probe error", "error", runErr.Error())
+			}
+			metrics.SchedulerInstancesCreated.Add(float64(counts.Scheduled))
+
+			if counts.Fatal > 0 || counts.Backoff > 0 {
+				breaker.HalfOpenFailure()
+				metrics.SchedulerBreakerTransitions.Inc()
+				curPhase = schedule.PhaseProtect
+			} else {
+				var newLimit int
+				curPhase, newLimit = breaker.HalfOpenSuccess(state.Limit)
+				state.Limit = newLimit
+				state.LongtermRtt = 0
+				metrics.SchedulerBreakerTransitions.Inc()
+			}
 		}
+
+		metrics.SchedulerTickDuration.Observe(time.Since(start).Seconds())
 
 		select {
 		case <-ctx.Done():
 			slog.Info("scheduler draining, running final tick")
-			drainStart := time.Now()
 			drainCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			now := nowFn().UTC()
-			if handled, err := runner.RunBatch(drainCtx, now, cfg.BatchSize); err != nil {
+			defer cancel()
+			if counts, err := runner.RunBatch(drainCtx, nowFn().UTC(), state.Limit); err != nil {
 				metrics.SchedulerCronErrors.Inc()
 				slog.Error("scheduler drain tick failed", "error", err.Error())
 			} else {
-				metrics.SchedulerTickDuration.Observe(time.Since(drainStart).Seconds())
-				metrics.SchedulerInstancesCreated.Add(float64(handled))
-				slog.Info("scheduler drain tick completed", "handled_due_jobs", handled)
+				metrics.SchedulerInstancesCreated.Add(float64(counts.Scheduled))
+				slog.Info("scheduler drain tick completed", "handled_due_jobs", counts.Handled)
 			}
-			cancel()
+			mainTicker.Stop()
 			return
-		case <-ticker.Chan():
+		case <-mainTicker.Chan():
 		}
 	}
 }
@@ -152,13 +274,19 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("ping database: %w", err)
 	}
 
-	// Health HTTP server
 	healthCtx, healthCancel := context.WithCancel(context.Background())
 	defer healthCancel()
 	go health.StartComponentHealthServer(healthCtx, db, cfg.HealthPort, "scheduler")
 
 	runner := buildRunnerFn(db)
-	runLoopFn(ctx, runner, cfg, newWallClockTicker, time.Now)
+	probe := func(ctx context.Context) (time.Duration, error) {
+		start := time.Now()
+		if err := db.PingContext(ctx); err != nil {
+			return 0, err
+		}
+		return time.Since(start), nil
+	}
+	runLoopFn(ctx, runner, probe, cfg, newWallClockTicker, time.Now)
 
 	return nil
 }

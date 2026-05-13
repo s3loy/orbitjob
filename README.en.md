@@ -105,7 +105,7 @@ go run ./cmd/openapi-gen     # OpenAPI generation
 | `ADMIN_PORT` | API listen port for `cmd/devserver` | `8080` |
 | `PORT` | HTTP listen port for `cmd/admin-api` | `8080` |
 | `SCHEDULER_HEALTH_PORT` | Health HTTP port | `6060` |
-| `SCHEDULER_BATCH_SIZE` | Max jobs per tick | `100` |
+| `SCHEDULER_BATCH_SIZE_MAX` | Adaptive batch limit ceiling | `500` |
 | `SCHEDULER_TICK_INTERVAL_SEC` | Tick interval (seconds) | `5` |
 | `DISPATCHER_TENANT_ID` | Dispatcher tenant scope | `default` |
 | `DISPATCHER_HEALTH_PORT` | Health HTTP port | `6061` |

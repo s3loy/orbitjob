@@ -26,7 +26,7 @@ func BenchmarkPipelineScheduleDispatch(b *testing.B) {
 	now := time.Now().UTC().Truncate(time.Second)
 	schedRepo := NewSchedulerRepository(db)
 	dispRepo := NewDispatchRepository(db)
-	schedUC := schedule.NewTickUseCase(schedRepo)
+	schedUC := schedule.NewTickUseCase(schedRepo, ClassifyError)
 	dispUC := dispatch.NewTickUseCase(dispRepo)
 
 	claimSpec := domaininstance.ClaimSpec{
@@ -60,12 +60,12 @@ func BenchmarkPipelineScheduleDispatch(b *testing.B) {
 				b.StartTimer()
 
 				// Phase 1: Schedule
-				scheduled, _ := schedUC.RunBatch(context.Background(), now, sc.schedLimit)
+				schedCounts, _ := schedUC.RunBatch(context.Background(), now, sc.schedLimit)
 
 				// Phase 2: Dispatch
 				dispatched, _ := dispUC.RunBatch(context.Background(), claimSpec, sc.dispLimit)
 
-				b.ReportMetric(float64(scheduled), "scheduled")
+				b.ReportMetric(float64(schedCounts.Scheduled), "scheduled")
 				b.ReportMetric(float64(dispatched), "dispatched")
 			}
 		})
@@ -127,7 +127,7 @@ func BenchmarkPipelineFull(b *testing.B) {
 	dispRepo := NewDispatchRepository(db)
 	execRepo := NewExecutorRepository(db)
 
-	schedUC := schedule.NewTickUseCase(schedRepo)
+	schedUC := schedule.NewTickUseCase(schedRepo, ClassifyError)
 	dispUC := dispatch.NewTickUseCase(dispRepo)
 	execUC := execute.NewTickUseCase(execRepo, map[string]execute.Handler{
 		"http": &benchExecHandler{},
@@ -144,8 +144,8 @@ func BenchmarkPipelineFull(b *testing.B) {
 		b.StartTimer()
 
 		// Phase 1: Schedule
-		scheduled, _ := schedUC.RunBatch(context.Background(), now, 50)
-		b.ReportMetric(float64(scheduled), "scheduled")
+		schedCounts, _ := schedUC.RunBatch(context.Background(), now, 50)
+		b.ReportMetric(float64(schedCounts.Scheduled), "scheduled")
 
 		// Phase 2: Dispatch
 		dispatched, _ := dispUC.RunBatch(context.Background(), claimSpec, 50)

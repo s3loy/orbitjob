@@ -5,76 +5,168 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	domain "orbitjob/internal/core/domain"
 )
 
-type stubSchedulerRepo struct {
+type classifiedStubRepo struct {
 	calls   int
-	found   []bool
-	errAt   int
-	traceID string // non-empty when the result should carry a TraceID
+	results []classifiedResult
 }
 
-func (s *stubSchedulerRepo) ScheduleOneDueCron(
+type classifiedResult struct {
+	result ScheduledOneResult
+	found  bool
+	err    error
+}
+
+func (s *classifiedStubRepo) ScheduleOneDueCron(
 	ctx context.Context,
 	now time.Time,
 	decide func(time.Time, DueCronJob) (ScheduleDecision, error),
 ) (ScheduledOneResult, bool, error) {
-	i := s.calls
-	s.calls++
-
-	if s.errAt >= 0 && i == s.errAt {
-		return ScheduledOneResult{}, false, errors.New("boom")
-	}
-	if i >= len(s.found) {
+	if s.calls >= len(s.results) {
 		return ScheduledOneResult{}, false, nil
 	}
-	return ScheduledOneResult{TraceID: s.traceID}, s.found[i], nil
+	r := s.results[s.calls]
+	s.calls++
+	return r.result, r.found, r.err
 }
 
-func TestTickUseCase_RunBatch_StopsOnNoMoreJobs(t *testing.T) {
-	repo := &stubSchedulerRepo{found: []bool{true, true, false}, errAt: -1}
-	uc := NewTickUseCase(repo)
-	count, err := uc.RunBatch(context.Background(), time.Now().UTC(), 10)
-	if err != nil {
-		t.Fatalf("RunBatch() error = %v", err)
-	}
-	if count != 2 {
-		t.Fatalf("expected handled count=2, got %d", count)
-	}
-}
-
-func TestTickUseCase_RunBatch_ReturnsPartialCountOnError(t *testing.T) {
-	repo := &stubSchedulerRepo{found: []bool{true, true, true}, errAt: 2}
-	uc := NewTickUseCase(repo)
-	count, err := uc.RunBatch(context.Background(), time.Now().UTC(), 10)
+func testClassify(err error) domain.ErrorClass {
 	if err == nil {
-		t.Fatalf("expected error, got nil")
+		return domain.ClassNone
 	}
-	if count != 2 {
-		t.Fatalf("expected partial handled count=2, got %d", count)
+	switch err.Error() {
+	case "fatal":
+		return domain.FatalWorthy
+	case "backoff":
+		return domain.BackoffWorthy
+	case "skip":
+		return domain.SkipWorthy
 	}
+	return domain.BackoffWorthy
 }
 
-func TestTickUseCase_RunBatch_TraceID(t *testing.T) {
-	repo := &stubSchedulerRepo{found: []bool{true, true, false}, errAt: -1, traceID: "trace-abc"}
-	uc := NewTickUseCase(repo)
-	count, err := uc.RunBatch(context.Background(), time.Now().UTC(), 10)
+func TestRunBatch_NormalFlow(t *testing.T) {
+	repo := &classifiedStubRepo{results: []classifiedResult{
+		{found: true, result: ScheduledOneResult{TraceID: "t1"}},
+		{found: true, result: ScheduledOneResult{TraceID: "t2"}},
+		{found: false},
+	}}
+	uc := NewTickUseCase(repo, testClassify)
+	counts, err := uc.RunBatch(context.Background(), time.Now().UTC(), 10)
 	if err != nil {
 		t.Fatalf("RunBatch() error = %v", err)
 	}
-	if count != 2 {
-		t.Fatalf("expected handled count=2, got %d", count)
+	if counts.Handled != 2 {
+		t.Fatalf("expected handled=2, got %d", counts.Handled)
+	}
+	if counts.Skipped != 0 || counts.Backoff != 0 || counts.Fatal != 0 {
+		t.Fatalf("expected no errors, got skip=%d backoff=%d fatal=%d", counts.Skipped, counts.Backoff, counts.Fatal)
 	}
 }
 
-func TestTickUseCase_RunBatch_NormalizesLimit(t *testing.T) {
-	repo := &stubSchedulerRepo{found: []bool{true, false}, errAt: -1}
-	uc := NewTickUseCase(repo)
-	count, err := uc.RunBatch(context.Background(), time.Now().UTC(), 0)
+func TestRunBatch_StopsOnNoMoreJobs(t *testing.T) {
+	repo := &classifiedStubRepo{results: []classifiedResult{
+		{found: true, result: ScheduledOneResult{}},
+		{found: true, result: ScheduledOneResult{}},
+		{found: false},
+	}}
+	uc := NewTickUseCase(repo, testClassify)
+	counts, err := uc.RunBatch(context.Background(), time.Now().UTC(), 10)
 	if err != nil {
 		t.Fatalf("RunBatch() error = %v", err)
 	}
-	if count != 1 {
-		t.Fatalf("expected handled count=1 when limit<=0, got %d", count)
+	if counts.Handled != 2 {
+		t.Fatalf("expected handled=2, got %d", counts.Handled)
+	}
+}
+
+func TestRunBatch_FatalTerminates(t *testing.T) {
+	repo := &classifiedStubRepo{results: []classifiedResult{
+		{found: true, result: ScheduledOneResult{TraceID: "t1"}},
+		{found: true, err: errors.New("fatal")},
+		{found: true, result: ScheduledOneResult{TraceID: "t3"}}, // never reached
+	}}
+	uc := NewTickUseCase(repo, testClassify)
+	counts, err := uc.RunBatch(context.Background(), time.Now().UTC(), 10)
+	if err != nil {
+		t.Fatalf("RunBatch() error = %v", err)
+	}
+	if counts.Handled != 2 {
+		t.Fatalf("expected handled=2 (stopped at fatal), got %d", counts.Handled)
+	}
+	if counts.Fatal != 1 {
+		t.Fatalf("expected fatal=1, got %d", counts.Fatal)
+	}
+}
+
+func TestRunBatch_BackoffContinues(t *testing.T) {
+	repo := &classifiedStubRepo{results: []classifiedResult{
+		{found: true, err: errors.New("backoff")},
+		{found: true, result: ScheduledOneResult{TraceID: "t2"}},
+		{found: false},
+	}}
+	uc := NewTickUseCase(repo, testClassify)
+	counts, err := uc.RunBatch(context.Background(), time.Now().UTC(), 10)
+	if err != nil {
+		t.Fatalf("RunBatch() error = %v", err)
+	}
+	if counts.Handled != 2 {
+		t.Fatalf("expected handled=2, got %d", counts.Handled)
+	}
+	if counts.Backoff != 1 {
+		t.Fatalf("expected backoff=1, got %d", counts.Backoff)
+	}
+}
+
+func TestRunBatch_SkipContinues(t *testing.T) {
+	repo := &classifiedStubRepo{results: []classifiedResult{
+		{found: true, err: errors.New("skip")},
+		{found: true, result: ScheduledOneResult{TraceID: "t2"}},
+		{found: false},
+	}}
+	uc := NewTickUseCase(repo, testClassify)
+	counts, err := uc.RunBatch(context.Background(), time.Now().UTC(), 10)
+	if err != nil {
+		t.Fatalf("RunBatch() error = %v", err)
+	}
+	if counts.Handled != 2 {
+		t.Fatalf("expected handled=2, got %d", counts.Handled)
+	}
+	if counts.Skipped != 1 {
+		t.Fatalf("expected skipped=1, got %d", counts.Skipped)
+	}
+}
+
+func TestRunBatch_NormalizesLimit(t *testing.T) {
+	repo := &classifiedStubRepo{results: []classifiedResult{
+		{found: true, result: ScheduledOneResult{}},
+		{found: false},
+	}}
+	uc := NewTickUseCase(repo, testClassify)
+	counts, err := uc.RunBatch(context.Background(), time.Now().UTC(), 0)
+	if err != nil {
+		t.Fatalf("RunBatch() error = %v", err)
+	}
+	if counts.Handled != 1 {
+		t.Fatalf("expected handled=1 when limit=0, got %d", counts.Handled)
+	}
+}
+
+func TestRunBatch_TraceID(t *testing.T) {
+	repo := &classifiedStubRepo{results: []classifiedResult{
+		{found: true, result: ScheduledOneResult{TraceID: "trace-abc"}},
+		{found: true, result: ScheduledOneResult{TraceID: "trace-abc"}},
+		{found: false},
+	}}
+	uc := NewTickUseCase(repo, testClassify)
+	counts, err := uc.RunBatch(context.Background(), time.Now().UTC(), 10)
+	if err != nil {
+		t.Fatalf("RunBatch() error = %v", err)
+	}
+	if counts.Handled != 2 {
+		t.Fatalf("expected handled=2, got %d", counts.Handled)
 	}
 }
