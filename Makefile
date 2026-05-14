@@ -36,6 +36,15 @@ test-race:
 bench:
 	go test -bench=. -benchmem ./...
 
+bench-etcd-memory:
+	go test -bench=. -benchmem -count=5 ./internal/platform/election/ ./internal/platform/discovery/
+
+bench-etcd:
+	go test -tags etcd -bench=. -benchmem -count=5 ./internal/platform/election/ ./internal/platform/discovery/
+
+bench-etcd-compare:
+	bash scripts/bench-etcd.sh
+
 integration:
 	go test -count=1 -tags integration ./internal/platform/postgrestest ./internal/admin/store/postgres ./internal/core/store/postgres
 

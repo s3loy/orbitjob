@@ -39,3 +39,7 @@ go.work.sum
 
 bin/
 docs/superpowers/
+
+# Benchmark temporary output files
+bench-*.txt
+bench-*.err
