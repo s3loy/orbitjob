@@ -30,7 +30,7 @@ type stubTickRunner struct {
 	callCh  chan struct{}
 }
 
-func (s *stubTickRunner) RunOnce(_ context.Context, _, _ string, _ int, _ time.Duration, _ map[string]any) (int, error) {
+func (s *stubTickRunner) SubmitNext(_ context.Context, _ *execute.WorkerPool, _, _ string, _ int, _ time.Duration, _ map[string]any) (int, error) {
 	s.mu.Lock()
 	s.calls++
 	callNo := s.calls
@@ -500,9 +500,9 @@ func TestAdaptiveTickRunner_ProbeAndQuery(t *testing.T) {
 	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM job_instances").WithArgs("t1").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(10))
 	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM workers").WithArgs("t1").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
 
-	n, err := runner.RunOnce(context.Background(), "t1", "w1", 1, 60*time.Second, map[string]any{})
+	n, err := runner.SubmitNext(context.Background(), nil, "t1", "w1", 1, 60*time.Second, map[string]any{})
 	if err != nil {
-		t.Fatalf("RunOnce() error = %v", err)
+		t.Fatalf("SubmitNext() error = %v", err)
 	}
 	if n != 3 {
 		t.Fatalf("expected n=3, got %d", n)
@@ -518,10 +518,10 @@ type capturingTickRunner struct {
 	lastLease        time.Duration
 }
 
-func (c *capturingTickRunner) RunOnce(ctx context.Context, tenantID, workerID string, limit int, leaseDuration time.Duration, labels map[string]any) (int, error) {
+func (c *capturingTickRunner) SubmitNext(ctx context.Context, pool *execute.WorkerPool, tenantID, workerID string, limit int, leaseDuration time.Duration, labels map[string]any) (int, error) {
 	c.lastLimit = limit
 	c.lastLease = leaseDuration
-	return c.stubTickRunner.RunOnce(ctx, tenantID, workerID, limit, leaseDuration, labels)
+	return c.stubTickRunner.SubmitNext(ctx, pool, tenantID, workerID, limit, leaseDuration, labels)
 }
 
 func TestAdaptiveTickRunner_AdaptiveCapNil(t *testing.T) {
@@ -543,9 +543,9 @@ func TestAdaptiveTickRunner_AdaptiveCapNil(t *testing.T) {
 	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM job_instances").WithArgs("t1").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM workers").WithArgs("t1").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 
-	_, err = runner.RunOnce(context.Background(), "t1", "w1", 5, 60*time.Second, map[string]any{})
+	_, err = runner.SubmitNext(context.Background(), nil, "t1", "w1", 5, 60*time.Second, map[string]any{})
 	if err != nil {
-		t.Fatalf("RunOnce() error = %v", err)
+		t.Fatalf("SubmitNext() error = %v", err)
 	}
 	if inner.lastLimit != 5 {
 		t.Fatalf("expected limit=5 when adaptiveCap is nil, got %d", inner.lastLimit)
@@ -574,9 +574,9 @@ func TestAdaptiveTickRunner_DynamicLeaseNil(t *testing.T) {
 	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM job_instances").WithArgs("t1").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM workers").WithArgs("t1").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 
-	_, err = runner.RunOnce(context.Background(), "t1", "w1", 1, 120*time.Second, map[string]any{})
+	_, err = runner.SubmitNext(context.Background(), nil, "t1", "w1", 1, 120*time.Second, map[string]any{})
 	if err != nil {
-		t.Fatalf("RunOnce() error = %v", err)
+		t.Fatalf("SubmitNext() error = %v", err)
 	}
 	if inner.lastLease != 120*time.Second {
 		t.Fatalf("expected lease=120s when dynamicLease is nil, got %s", inner.lastLease)
@@ -603,9 +603,9 @@ func TestAdaptiveTickRunner_DBProbeError(t *testing.T) {
 	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM job_instances").WithArgs("t1").WillReturnError(errors.New("query boom"))
 	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM workers").WithArgs("t1").WillReturnError(errors.New("query boom"))
 
-	n, err := runner.RunOnce(context.Background(), "t1", "w1", 1, 60*time.Second, map[string]any{})
+	n, err := runner.SubmitNext(context.Background(), nil, "t1", "w1", 1, 60*time.Second, map[string]any{})
 	if err != nil {
-		t.Fatalf("RunOnce() error = %v", err)
+		t.Fatalf("SubmitNext() error = %v", err)
 	}
 	if n != 1 {
 		t.Fatalf("expected n=1, got %d", n)

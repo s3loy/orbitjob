@@ -42,4 +42,22 @@ var (
 		Name: "orbitjob_worker_interval_mode",
 		Help: "Current poll interval mode: 0=short, 1=long, labeled by worker_id and tenant_id.",
 	}, []string{"worker_id", "tenant_id"})
+
+	// WorkerPoolActiveTasks tracks the number of tasks currently executing in the pool.
+	WorkerPoolActiveTasks = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "orbitjob_worker_pool_active_tasks",
+		Help: "Number of tasks currently executing in the worker pool, labeled by worker_id and tenant_id.",
+	}, []string{"worker_id", "tenant_id"})
+
+	// WorkerPoolSubmittedTotal counts tasks successfully submitted to the pool.
+	WorkerPoolSubmittedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "orbitjob_worker_pool_submitted_total",
+		Help: "Total tasks submitted to the worker pool, labeled by worker_id and tenant_id.",
+	}, []string{"worker_id", "tenant_id"})
+
+	// WorkerPoolRejectedTotal counts tasks rejected because the pool was at capacity.
+	WorkerPoolRejectedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "orbitjob_worker_pool_rejected_total",
+		Help: "Total tasks rejected because the worker pool was full, labeled by worker_id and tenant_id.",
+	}, []string{"worker_id", "tenant_id"})
 )

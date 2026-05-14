@@ -24,9 +24,12 @@ type stubExecutor struct {
 	extendCalled  int
 }
 
-func (s *stubExecutor) ClaimNextDispatched(_ context.Context, _, _ string, _ int, _, _ time.Time, _ map[string]any) ([]AssignedTask, error) {
+func (s *stubExecutor) ClaimNextDispatched(_ context.Context, _, _ string, limit int, _, _ time.Time, _ map[string]any) ([]AssignedTask, error) {
 	if s.claimErr != nil {
 		return nil, s.claimErr
+	}
+	if limit > 0 && limit < len(s.tasks) {
+		return s.tasks[:limit], nil
 	}
 	return s.tasks, nil
 }
@@ -504,5 +507,188 @@ func TestStartLeaseRenewal_ExtendLeaseError(t *testing.T) {
 
 	if repo.extendCalled < 1 {
 		t.Fatalf("expected >=1 extend calls, got %d", repo.extendCalled)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// SubmitNext tests (async pool)
+// ---------------------------------------------------------------------------
+
+func TestSubmitNext_WithPool(t *testing.T) {
+	repo := &stubExecutor{tasks: []AssignedTask{sampleTask()}}
+	handler := &stubHandler{result: Result{Success: true, ResultCode: "0"}}
+	uc := NewTickUseCase(repo, map[string]Handler{"test": handler})
+
+	pool := NewWorkerPool(2)
+
+	n, err := uc.SubmitNext(context.Background(), pool, "default", "worker-1", 1, 60*time.Second, nil)
+	if err != nil {
+		t.Fatalf("SubmitNext() error = %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expected n=1, got %d", n)
+	}
+
+	pool.Wait()
+
+	if len(repo.completeCalls) != 1 {
+		t.Fatalf("expected 1 complete call, got %d", len(repo.completeCalls))
+	}
+	if repo.completeCalls[0].Status != domaininstance.StatusSuccess {
+		t.Fatalf("expected status=success, got %q", repo.completeCalls[0].Status)
+	}
+}
+
+func TestSubmitNext_PoolFull(t *testing.T) {
+	repo := &stubExecutor{tasks: []AssignedTask{sampleTask()}}
+	uc := NewTickUseCase(repo, map[string]Handler{"test": &stubHandler{}})
+
+	pool := NewWorkerPool(1)
+
+	// Fill the pool.
+	block := make(chan struct{})
+	pool.Submit(context.Background(), func(ctx context.Context) {
+		<-block
+	})
+
+	// Pool is full — SubmitNext should return 0 without claiming.
+	n, err := uc.SubmitNext(context.Background(), pool, "default", "worker-1", 5, 60*time.Second, nil)
+	if err != nil {
+		t.Fatalf("SubmitNext() error = %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("expected n=0 when pool full, got %d", n)
+	}
+	if len(repo.completeCalls) != 0 {
+		t.Fatalf("expected 0 complete calls (nothing claimed), got %d", len(repo.completeCalls))
+	}
+
+	close(block)
+	pool.Wait()
+}
+
+func TestSubmitNext_PoolExecutesAsync(t *testing.T) {
+	t1 := sampleTask()
+	t1.InstanceID = 1
+	t2 := sampleTask()
+	t2.InstanceID = 2
+	repo := &stubExecutor{tasks: []AssignedTask{t1, t2}}
+	handler := &stubHandler{result: Result{Success: true, ResultCode: "0"}}
+	uc := NewTickUseCase(repo, map[string]Handler{"test": handler})
+
+	pool := NewWorkerPool(2)
+
+	n, err := uc.SubmitNext(context.Background(), pool, "default", "worker-1", 3, 60*time.Second, nil)
+	if err != nil {
+		t.Fatalf("SubmitNext() error = %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("expected n=2, got %d", n)
+	}
+
+	// Return immediately — tasks are running asynchronously in pool.
+	// Wait for them to finish.
+	pool.Wait()
+
+	if len(repo.completeCalls) != 2 {
+		t.Fatalf("expected 2 complete calls, got %d", len(repo.completeCalls))
+	}
+}
+
+func TestSubmitNext_NilPool(t *testing.T) {
+	repo := &stubExecutor{tasks: []AssignedTask{sampleTask()}}
+	handler := &stubHandler{result: Result{Success: true, ResultCode: "0"}}
+	uc := NewTickUseCase(repo, map[string]Handler{"test": handler})
+
+	// nil pool = synchronous execution (backward compat).
+	n, err := uc.SubmitNext(context.Background(), nil, "default", "worker-1", 1, 60*time.Second, nil)
+	if err != nil {
+		t.Fatalf("SubmitNext() error = %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expected n=1, got %d", n)
+	}
+	if len(repo.completeCalls) != 1 {
+		t.Fatalf("expected 1 complete call, got %d", len(repo.completeCalls))
+	}
+}
+
+func TestSubmitNext_ClaimLimitRespected(t *testing.T) {
+	// 3 tasks in repo, limit=2, pool capacity=5 → should only claim 2.
+	t1 := sampleTask()
+	t1.InstanceID = 1
+	t2 := sampleTask()
+	t2.InstanceID = 2
+	t3 := sampleTask()
+	t3.InstanceID = 3
+	repo := &stubExecutor{tasks: []AssignedTask{t1, t2, t3}}
+	handler := &stubHandler{result: Result{Success: true, ResultCode: "0"}}
+	uc := NewTickUseCase(repo, map[string]Handler{"test": handler})
+
+	pool := NewWorkerPool(5)
+
+	n, err := uc.SubmitNext(context.Background(), pool, "default", "worker-1", 2, 60*time.Second, nil)
+	if err != nil {
+		t.Fatalf("SubmitNext() error = %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("expected n=2 (limit=2), got %d", n)
+	}
+
+	pool.Wait()
+
+	if len(repo.completeCalls) != 2 {
+		t.Fatalf("expected 2 complete calls, got %d", len(repo.completeCalls))
+	}
+}
+
+type slowStubHandler struct{ delay time.Duration }
+
+func (h *slowStubHandler) Execute(_ context.Context, _ AssignedTask) Result {
+	time.Sleep(h.delay)
+	return Result{Success: true, ResultCode: "0"}
+}
+
+func TestSubmitNext_DynamicLeaseRecorded(t *testing.T) {
+	repo := &stubExecutor{tasks: []AssignedTask{sampleTask()}}
+	uc := NewTickUseCase(repo, map[string]Handler{"test": &slowStubHandler{delay: 50 * time.Millisecond}})
+	dl := NewDynamicLease(10*time.Second, 5*time.Minute, 0.1)
+	uc.SetDynamicLease(dl)
+
+	pool := NewWorkerPool(2)
+
+	_, _ = uc.SubmitNext(context.Background(), pool, "default", "worker-1", 1, 60*time.Second, nil)
+	pool.Wait()
+
+	if dl.emaDuration == 0 {
+		t.Fatal("expected dynamic lease EMA to be recorded")
+	}
+}
+
+// TestSubmitNext_PoolFullFallback covers the race where the pool becomes full
+// between claiming tasks and submitting them. When Submit returns false the
+// task is executed inline so the already-taken lease is not wasted.
+func TestSubmitNext_PoolFullFallback(t *testing.T) {
+	repo := &stubExecutor{tasks: []AssignedTask{sampleTask()}}
+	handler := &stubHandler{result: Result{Success: true, ResultCode: "0"}}
+	uc := NewTickUseCase(repo, map[string]Handler{"test": handler})
+
+	pool := NewWorkerPool(1)
+	pool.Stop() // closed=true but active=0 → available computation sees a free slot
+
+	n, err := uc.SubmitNext(context.Background(), pool, "default", "worker-1", 1, 60*time.Second, nil)
+	if err != nil {
+		t.Fatalf("SubmitNext() error = %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expected n=1, got %d", n)
+	}
+
+	// Task was executed inline because pool.Submit returned false (closed).
+	if len(repo.completeCalls) != 1 {
+		t.Fatalf("expected 1 complete call (inline fallback), got %d", len(repo.completeCalls))
+	}
+	if repo.completeCalls[0].Status != domaininstance.StatusSuccess {
+		t.Fatalf("expected status=success, got %q", repo.completeCalls[0].Status)
 	}
 }

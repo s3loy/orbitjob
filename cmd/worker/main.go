@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"log"
 	"log/slog"
 	"net"
@@ -46,7 +47,7 @@ type runtimeConfig struct {
 }
 
 type tickRunner interface {
-	RunOnce(ctx context.Context, tenantID, workerID string, limit int, leaseDuration time.Duration, labels map[string]any) (int, error)
+	SubmitNext(ctx context.Context, pool *execute.WorkerPool, tenantID, workerID string, limit int, leaseDuration time.Duration, labels map[string]any) (int, error)
 }
 
 type heartbeater interface {
@@ -83,9 +84,12 @@ var (
 	buildRunnerFn = func(db *sql.DB, httpClient *http.Client) tickRunner {
 		repo := corepostgres.NewExecutorRepository(db)
 		handlers := map[string]execute.Handler{
-			"exec": &handler.Exec{},
-			"http": handler.NewHTTP(httpClient),
+			"exec":      &handler.Exec{},
+			"http":      handler.NewHTTP(httpClient),
+			"webhook":   handler.NewWebhook(httpClient),
+			"pg_notify": handler.NewPGNotify(db),
 		}
+		maps.Copy(handlers, handler.GetRegistered())
 		return execute.NewTickUseCase(repo, handlers)
 	}
 	buildHeartbeaterFn = func(db *sql.DB) heartbeater {
@@ -105,8 +109,9 @@ type adaptiveTickRunner struct {
 	cfg          runtimeConfig
 }
 
-func (r *adaptiveTickRunner) RunOnce(
+func (r *adaptiveTickRunner) SubmitNext(
 	ctx context.Context,
+	pool *execute.WorkerPool,
 	tenantID, workerID string,
 	limit int, leaseDuration time.Duration,
 	labels map[string]any,
@@ -140,7 +145,7 @@ func (r *adaptiveTickRunner) RunOnce(
 		currentLease = r.dynamicLease.Current()
 	}
 
-	return r.inner.RunOnce(ctx, tenantID, workerID, currentLimit, currentLease, labels)
+	return r.inner.SubmitNext(ctx, pool, tenantID, workerID, currentLimit, currentLease, labels)
 }
 
 func loadWorkerRuntimeConfig() (runtimeConfig, error) {
@@ -279,6 +284,8 @@ func runLoop(
 	newTicker func(time.Duration) workerTicker,
 	nowFn func() time.Time,
 ) {
+	pool := execute.NewWorkerPool(cfg.Capacity)
+
 	loopDone := make(chan struct{})
 	go heartbeatLoop(ctx, loopDone, hb, cfg, newTicker, nowFn)
 
@@ -301,16 +308,18 @@ func runLoop(
 	}
 
 	for {
-		n, err := runner.RunOnce(ctx, cfg.TenantID, cfg.WorkerID, cfg.Capacity, cfg.LeaseDuration, cfg.Labels)
+		n, err := runner.SubmitNext(ctx, pool, cfg.TenantID, cfg.WorkerID, cfg.Capacity, cfg.LeaseDuration, cfg.Labels)
 		if err != nil {
 			slog.Error("worker tick failed", "error", err.Error())
 		} else if n > 0 {
-			slog.Info("worker executed task", "handled", n)
+			slog.Info("worker submitted tasks", "handled", n)
+			metrics.WorkerPoolSubmittedTotal.WithLabelValues(cfg.WorkerID, cfg.TenantID).Add(float64(n))
 			idleCount = 0
 			resetToShortInterval()
 			select {
 			case <-ctx.Done():
 				close(loopDone)
+				pool.Stop()
 				slog.Info("worker drain complete, shutting down")
 				return
 			default:
@@ -318,9 +327,12 @@ func runLoop(
 			}
 		}
 
+		metrics.WorkerPoolActiveTasks.WithLabelValues(cfg.WorkerID, cfg.TenantID).Set(float64(pool.Active()))
+
 		select {
 		case <-ctx.Done():
 			close(loopDone)
+			pool.Stop()
 			slog.Info("worker drain complete, shutting down")
 			return
 		case <-ticker.Chan():

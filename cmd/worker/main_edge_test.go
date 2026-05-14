@@ -200,10 +200,10 @@ func TestHeartbeatLoop_ShutdownGraceful(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// runLoop error path (RunOnce returns error)
+// runLoop error path (SubmitNext returns error)
 // ---------------------------------------------------------------------------
 
-func TestRunLoop_RunOnceError(t *testing.T) {
+func TestRunLoop_SubmitNextError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -242,7 +242,7 @@ func TestRunLoop_RunOnceError(t *testing.T) {
 
 	// Error path still goes through outer select -> ctx.Done() -> return
 	if runner.callCount() != 1 {
-		t.Fatalf("expected 1 RunOnce call (no drain when handled=0), got %d", runner.callCount())
+		t.Fatalf("expected 1 SubmitNext call (no drain when handled=0), got %d", runner.callCount())
 	}
 }
 
@@ -301,5 +301,61 @@ func TestLoadJSONMapEnv_Invalid(t *testing.T) {
 	_, err := loadJSONMapEnv("TEST_WORKER_LABELS_KEY")
 	if err == nil || !strings.Contains(err.Error(), "must be valid JSON") {
 		t.Fatalf("expected 'must be valid JSON' error, got %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// loadFloatEnv edge cases
+// ---------------------------------------------------------------------------
+
+func TestLoadFloatEnv_Empty(t *testing.T) {
+	// Ensure env is unset.
+	t.Setenv("TEST_WORKER_FLOAT", "")
+
+	v, err := loadFloatEnv("TEST_WORKER_FLOAT", 0.5)
+	if err != nil {
+		t.Fatalf("expected no error for empty env, got %v", err)
+	}
+	if v != 0.5 {
+		t.Fatalf("expected default value 0.5, got %v", v)
+	}
+}
+
+func TestLoadFloatEnv_Valid(t *testing.T) {
+	t.Setenv("TEST_WORKER_FLOAT", "0.75")
+
+	v, err := loadFloatEnv("TEST_WORKER_FLOAT", 0.5)
+	if err != nil {
+		t.Fatalf("expected no error for valid float, got %v", err)
+	}
+	if v != 0.75 {
+		t.Fatalf("expected value 0.75, got %v", v)
+	}
+}
+
+func TestLoadFloatEnv_Invalid(t *testing.T) {
+	t.Setenv("TEST_WORKER_FLOAT", "not-a-float")
+
+	_, err := loadFloatEnv("TEST_WORKER_FLOAT", 0.5)
+	if err == nil || !strings.Contains(err.Error(), "must be a float") {
+		t.Fatalf("expected 'must be a float' error, got %v", err)
+	}
+}
+
+func TestLoadFloatEnv_Zero(t *testing.T) {
+	t.Setenv("TEST_WORKER_FLOAT", "0")
+
+	_, err := loadFloatEnv("TEST_WORKER_FLOAT", 0.5)
+	if err == nil || !strings.Contains(err.Error(), "must be in (0, 1]") {
+		t.Fatalf("expected 'must be in (0, 1]' error, got %v", err)
+	}
+}
+
+func TestLoadFloatEnv_AboveOne(t *testing.T) {
+	t.Setenv("TEST_WORKER_FLOAT", "1.5")
+
+	_, err := loadFloatEnv("TEST_WORKER_FLOAT", 0.5)
+	if err == nil || !strings.Contains(err.Error(), "must be in (0, 1]") {
+		t.Fatalf("expected 'must be in (0, 1]' error, got %v", err)
 	}
 }

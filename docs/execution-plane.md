@@ -6,7 +6,7 @@
 
 > 权威来源：项目架构文档 · 更新时间 2026-05-09
 
-## 当前实现状态（2026-05-09）
+## 当前实现状态（2026-05-14）
 
 **已实现：**
 
@@ -15,12 +15,12 @@
 - `workers` 的 heartbeat 与 lease upsert 已落地
 - Scheduler MVP tick loop + misfire 策略 + 原子调度事务
 - Dispatcher runtime：原子 claim + concurrency policy + priority aging + lease recovery + graceful shutdown + 多租户
-- **Worker**：并发执行模型（capacity-driven goroutine pool）+ 四阶段优雅关闭 + 运行时 draining + audit 全链路 + `job_instance_attempts` 持久化 + Prometheus metrics
+- **Worker**：异步 Claim-Execute 解耦 + capacity-driven goroutine pool + 自适应容量 + 动态 lease + 四阶段优雅关闭 + 运行时 draining + audit 全链路 + `job_instance_attempts` 持久化 + Prometheus metrics
 - `job_instances` version 列（乐观锁）
 - **Manual trigger API**：`POST /api/v1/jobs/:id/trigger` + idempotency_key 防重
 - **Instance query/cancel API**：`GET /api/v1/instances`（列表+分页）、`GET /api/v1/instances/:run_id`（详情）、`POST /api/v1/instances/:run_id/cancel`
 - **Label-based routing**：`ClaimNextDispatched` 按 worker labels 过滤 `routing_key`（`routing_key IS NULL OR routing_key = ANY(label_values)`）
-- **Scheduler + Dispatcher metrics**：tick duration histogram + instances created counter + dispatch rate by action + orphan recovery
+- **Scheduler + Dispatcher + Worker metrics**：tick duration histogram + instances created counter + dispatch rate by action + orphan recovery + pool active/submitted/rejected
 - **Trace ID 传播**：scheduler → dispatcher → worker 全链路 `slog` 注入
 - **Tenant quota**：`max_jobs`（job create 检查）、`max_concurrent_instances`（scheduler 检查）
 - **API rate limiting**：per-tenant token bucket，5 端点分组
@@ -157,21 +157,24 @@ Worker 通过单次 upsert 操作同时完成注册与心跳刷新：
 
 ### Worker 执行模型
 
-Worker 采用 capacity-driven 并发执行：
+Worker 采用**异步 Claim-Execute 解耦** + capacity-driven goroutine pool：
 
-1. **Claim**：`ClaimNextDispatched(limit=N)` 原子 claim N 个 `dispatched` instance，写入 audit event
-2. **Execute**：每个 task 在独立 goroutine 中执行（handler + lease renewal + complete）
-3. **Complete**：写回 status → INSERT `job_instance_attempts` → INSERT audit event
-4. **Lease renew**：执行期间每 `leaseDuration/3` 续期，失败时记录 metrics + 日志
+1. **Claim Loop**：独立循环持续 claim 任务，直到 goroutine pool 满载。每次 tick 只 claim `min(limit, pool 剩余 slot)` 个任务，避免 lease 浪费
+2. **Pool Submit**：任务提交到 `WorkerPool`（buffered channel semaphore），pool 满时 `Submit` 非阻塞返回 `false`
+3. **Execute**：每个 task 在独立 goroutine 中执行（handler + lease renewal + complete）。若 claim 后 pool 突然变满（竞态），任务在当前 goroutine 内联执行，确保已 claim 的 lease 不被浪费
+4. **Complete**：写回 status → INSERT `job_instance_attempts` → INSERT audit event
+5. **Lease renew**：执行期间每 `leaseDuration/3` 续期，失败时记录 metrics + 日志
+6. **自适应容量**：根据 DB probe RTT、queue depth、在线 worker 数动态调整单次 claim limit（上限 `WORKER_CAPACITY_MAX`）
+7. **动态 lease**：根据任务执行耗时 EMA 自动调整 lease 时长，范围 `[WORKER_LEASE_MIN_SEC, WORKER_LEASE_DURATION_MAX]`
 
 ### 优雅关闭（四阶段）
 
 | 阶段 | 行为 |
 |------|------|
-| 1. 停止 claim | context 取消 → 不再调用 ClaimNextDispatched |
-| 2. 等待 handler | RunOnce 内 `wg.Wait()` 等待所有 goroutine |
+| 1. 停止 claim | context 取消 → `runLoop` 退出，不再调用 `SubmitNext` |
+| 2. 等待 pool | `pool.Stop()` → `wg.Wait()` 等待所有正在执行的 goroutine 完成 |
 | 3. Draining | heartbeat 发送 `StatusDraining` |
-| 4. Offline | 主循环关闭后发送 `StatusOffline`，关闭 DB |
+| 4. Offline | 所有任务完成后发送 `StatusOffline`，关闭 DB |
 
 ## Retry 边界
 
