@@ -36,4 +36,10 @@ var (
 		Name: "orbitjob_worker_idle_ticks_total",
 		Help: "Total idle ticks (no work dispatched), labeled by worker_id and tenant_id.",
 	}, []string{"worker_id", "tenant_id"})
+
+	// WorkerIntervalMode indicates whether the worker is in short (0) or long (1) poll interval.
+	WorkerIntervalMode = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "orbitjob_worker_interval_mode",
+		Help: "Current poll interval mode: 0=short, 1=long, labeled by worker_id and tenant_id.",
+	}, []string{"worker_id", "tenant_id"})
 )

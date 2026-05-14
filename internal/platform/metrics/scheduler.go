@@ -74,4 +74,23 @@ var (
 		Name: "orbitjob_scheduler_idle_ticks_total",
 		Help: "Total scheduler ticks with no due jobs found.",
 	})
+
+	// SchedulerIntervalMode indicates whether the scheduler is in short (0) or long (1) tick interval.
+	SchedulerIntervalMode = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "orbitjob_scheduler_interval_mode",
+		Help: "Current tick interval mode: 0=short, 1=long.",
+	})
+
+	// SchedulerDiscoveryIterations counts how many batch iterations the discovery phase ran.
+	SchedulerDiscoveryIterations = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "orbitjob_scheduler_discovery_iterations_total",
+		Help: "Total discovery phase batch iterations.",
+	})
+
+	// SchedulerDiscoveryDuration tracks how long each discovery phase takes.
+	SchedulerDiscoveryDuration = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "orbitjob_scheduler_discovery_duration_seconds",
+		Help:    "Discovery phase duration in seconds.",
+		Buckets: []float64{0.1, 0.5, 1, 5, 10, 30, 60},
+	})
 )

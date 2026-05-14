@@ -11,6 +11,8 @@ import (
 // AdaptiveCapacity controls how many tasks a worker claims per tick.
 // It uses queue depth, active worker count, and DB RTT to converge on a
 // stable capacity that maximizes throughput without overloading the database.
+//
+// Not safe for concurrent use; the caller must serialize calls to Update.
 type AdaptiveCapacity struct {
 	maxCapacity   int
 	rttThreshold  float64 // multiplier over baseline RTT that triggers reduction

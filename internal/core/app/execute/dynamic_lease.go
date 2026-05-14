@@ -10,6 +10,8 @@ import (
 // DynamicLease adapts lease duration based on observed task execution times.
 // Short-running tasks get short leases (less waste), long-running tasks get
 // long leases (less chance of being stolen by orphan recovery).
+//
+// Not safe for concurrent use; the caller must serialize calls to RecordExecution.
 type DynamicLease struct {
 	minDuration time.Duration
 	maxDuration time.Duration
