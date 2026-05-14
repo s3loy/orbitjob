@@ -11,6 +11,7 @@ import (
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
 
+	domain "orbitjob/internal/core/domain"
 	"orbitjob/internal/core/app/schedule"
 )
 
@@ -851,4 +852,276 @@ func TestToFloatInt(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ---------------------------------------------------------------------------
+// ScheduleBatch tests
+// ---------------------------------------------------------------------------
+
+func classifySchedulerError(err error) domain.ErrorClass {
+	if err == nil {
+		return domain.ClassNone
+	}
+	if strings.Contains(err.Error(), "fatal") {
+		return domain.FatalWorthy
+	}
+	return domain.BackoffWorthy
+}
+
+func TestScheduleBatch_NilDecide(t *testing.T) {
+	repo := NewSchedulerRepository(nil)
+	_, err := repo.ScheduleBatch(context.Background(), time.Now().UTC(), 1, nil, classifySchedulerError)
+	if err == nil {
+		t.Fatal("expected error when decide is nil")
+	}
+}
+
+func TestScheduleBatch_ZeroLimit(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewSchedulerRepository(db)
+	now := time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC)
+
+	mock.ExpectBegin()
+	columns := []string{"id", "tenant_id", "priority", "partition_key", "retry_limit", "cron_expr", "timezone", "misfire_policy", "next_run_at"}
+	rows := sqlmock.NewRows(columns)
+	mock.ExpectQuery("FOR UPDATE SKIP LOCKED").WithArgs(now, 1).WillReturnRows(rows)
+	mock.ExpectRollback()
+
+	counts, err := repo.ScheduleBatch(context.Background(), now, 0, schedule.DecideSchedule, classifySchedulerError)
+	if err != nil {
+		t.Fatalf("ScheduleBatch() error = %v", err)
+	}
+	if counts.Handled != 0 {
+		t.Fatalf("expected handled=0, got %d", counts.Handled)
+	}
+	assertMock(t, mock)
+}
+
+func TestScheduleBatch_BeginTxError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewSchedulerRepository(db)
+	mock.ExpectBegin().WillReturnError(errors.New("begin boom"))
+
+	counts, err := repo.ScheduleBatch(context.Background(), time.Now().UTC(), 1, schedule.DecideSchedule, classifySchedulerError)
+	if err != nil {
+		t.Fatalf("ScheduleBatch() should not return error for classified tx error, got %v", err)
+	}
+	if counts.Backoff != 1 || counts.Handled != 1 {
+		t.Fatalf("expected Backoff=1, Handled=1, got %+v", counts)
+	}
+	assertMock(t, mock)
+}
+
+func TestScheduleBatch_ClaimMultipleError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewSchedulerRepository(db)
+	now := time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("FOR UPDATE SKIP LOCKED").WithArgs(now, 1).WillReturnError(errors.New("claim boom"))
+	mock.ExpectRollback()
+
+	counts, err := repo.ScheduleBatch(context.Background(), now, 1, schedule.DecideSchedule, classifySchedulerError)
+	if err != nil {
+		t.Fatalf("ScheduleBatch() should not return error for classified claim error, got %v", err)
+	}
+	if counts.Backoff != 1 || counts.Handled != 1 {
+		t.Fatalf("expected Backoff=1, Handled=1, got %+v", counts)
+	}
+	assertMock(t, mock)
+}
+
+func TestScheduleBatch_NoJobs(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewSchedulerRepository(db)
+	now := time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC)
+
+	mock.ExpectBegin()
+	columns := []string{"id", "tenant_id", "priority", "partition_key", "retry_limit", "cron_expr", "timezone", "misfire_policy", "next_run_at"}
+	rows := sqlmock.NewRows(columns)
+	mock.ExpectQuery("FOR UPDATE SKIP LOCKED").WithArgs(now, 1).WillReturnRows(rows)
+	mock.ExpectRollback()
+
+	counts, err := repo.ScheduleBatch(context.Background(), now, 1, schedule.DecideSchedule, classifySchedulerError)
+	if err != nil {
+		t.Fatalf("ScheduleBatch() error = %v", err)
+	}
+	if counts.Handled != 0 {
+		t.Fatalf("expected handled=0, got %d", counts.Handled)
+	}
+	assertMock(t, mock)
+}
+
+func TestScheduleBatch_SingleJobSuccess(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewSchedulerRepository(db)
+	now := time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC)
+	next := now.Add(5 * time.Minute)
+
+	mock.ExpectBegin()
+	columns := []string{"id", "tenant_id", "priority", "partition_key", "retry_limit", "cron_expr", "timezone", "misfire_policy", "next_run_at"}
+	rows := sqlmock.NewRows(columns).AddRow(101, "tenant-a", 7, nil, 3, "*/5 * * * *", "UTC", "fire_now", now.Add(-time.Minute))
+	mock.ExpectQuery("FOR UPDATE SKIP LOCKED").WithArgs(now, 1).WillReturnRows(rows)
+
+	mock.ExpectExec("SAVEPOINT").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("SELECT set_config").WithArgs("tenant-a").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("UPDATE jobs").WithArgs("tenant-a", int64(101), sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("RELEASE SAVEPOINT").WillReturnResult(sqlmock.NewResult(0, 0))
+
+	mock.ExpectCommit()
+
+	counts, err := repo.ScheduleBatch(context.Background(), now, 1, func(time.Time, schedule.DueCronJob) (schedule.ScheduleDecision, error) {
+		return schedule.ScheduleDecision{CreateInstance: false, NextRunAt: &next}, nil
+	}, classifySchedulerError)
+	if err != nil {
+		t.Fatalf("ScheduleBatch() error = %v", err)
+	}
+	if counts.Handled != 1 {
+		t.Fatalf("expected handled=1, got %d", counts.Handled)
+	}
+	if counts.Scheduled != 0 {
+		t.Fatalf("expected scheduled=0 (no instance), got %d", counts.Scheduled)
+	}
+	assertMock(t, mock)
+}
+
+func TestScheduleBatch_JobError_BackoffWorthy(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewSchedulerRepository(db)
+	now := time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC)
+
+	mock.ExpectBegin()
+	columns := []string{"id", "tenant_id", "priority", "partition_key", "retry_limit", "cron_expr", "timezone", "misfire_policy", "next_run_at"}
+	rows := sqlmock.NewRows(columns).AddRow(101, "tenant-a", 7, nil, 3, "*/5 * * * *", "UTC", "fire_now", now.Add(-time.Minute))
+	mock.ExpectQuery("FOR UPDATE SKIP LOCKED").WithArgs(now, 1).WillReturnRows(rows)
+
+	mock.ExpectExec("SAVEPOINT").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("SELECT set_config").WithArgs("tenant-a").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("UPDATE jobs").WithArgs("tenant-a", int64(101), sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnError(errors.New("update boom"))
+	mock.ExpectExec("ROLLBACK TO SAVEPOINT").WillReturnResult(sqlmock.NewResult(0, 0))
+	// Job error classified as BackoffWorthy → continue, remaining jobs processed
+	// No more jobs → commit
+	mock.ExpectCommit()
+
+	counts, err := repo.ScheduleBatch(context.Background(), now, 1, func(time.Time, schedule.DueCronJob) (schedule.ScheduleDecision, error) {
+		next := now.Add(5 * time.Minute)
+		return schedule.ScheduleDecision{CreateInstance: false, NextRunAt: &next}, nil
+	}, classifySchedulerError)
+	if err != nil {
+		t.Fatalf("ScheduleBatch() error = %v", err)
+	}
+	if counts.Backoff != 1 || counts.Handled != 1 {
+		t.Fatalf("expected Backoff=1, Handled=1, got %+v", counts)
+	}
+	assertMock(t, mock)
+}
+
+func TestScheduleBatch_QuotaExceeded(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewSchedulerRepository(db)
+	now := time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC)
+	next := now.Add(5 * time.Minute)
+	scheduledAt := now
+
+	mock.ExpectBegin()
+	columns := []string{"id", "tenant_id", "priority", "partition_key", "retry_limit", "cron_expr", "timezone", "misfire_policy", "next_run_at"}
+	rows := sqlmock.NewRows(columns).AddRow(101, "tenant-a", 7, nil, 3, "*/5 * * * *", "UTC", "fire_now", now.Add(-time.Minute))
+	mock.ExpectQuery("FOR UPDATE SKIP LOCKED").WithArgs(now, 1).WillReturnRows(rows)
+
+	mock.ExpectExec("SAVEPOINT").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("SELECT set_config").WithArgs("tenant-a").WillReturnResult(sqlmock.NewResult(0, 0))
+
+	quotasJSON, _ := json.Marshal(map[string]any{"max_concurrent_instances": float64(1)})
+	mock.ExpectQuery("SELECT quotas FROM tenants").WithArgs("tenant-a").WillReturnRows(sqlmock.NewRows([]string{"quotas"}).AddRow(quotasJSON))
+	mock.ExpectQuery("SELECT count\\(\\*\\) FROM job_instances").WithArgs("tenant-a").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+
+	mock.ExpectExec("UPDATE jobs").WithArgs("tenant-a", int64(101), sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("RELEASE SAVEPOINT").WillReturnResult(sqlmock.NewResult(0, 0))
+
+	mock.ExpectCommit()
+
+	counts, err := repo.ScheduleBatch(context.Background(), now, 1, func(time.Time, schedule.DueCronJob) (schedule.ScheduleDecision, error) {
+		return schedule.ScheduleDecision{CreateInstance: true, ScheduledAt: &scheduledAt, NextRunAt: &next}, nil
+	}, classifySchedulerError)
+	if err != nil {
+		t.Fatalf("ScheduleBatch() error = %v", err)
+	}
+	if counts.Handled != 1 {
+		t.Fatalf("expected handled=1, got %d", counts.Handled)
+	}
+	if counts.Scheduled != 0 {
+		t.Fatalf("expected scheduled=0 (quota exceeded), got %d", counts.Scheduled)
+	}
+	assertMock(t, mock)
+}
+
+func TestScheduleBatch_CommitError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewSchedulerRepository(db)
+	now := time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC)
+	next := now.Add(5 * time.Minute)
+
+	mock.ExpectBegin()
+	columns := []string{"id", "tenant_id", "priority", "partition_key", "retry_limit", "cron_expr", "timezone", "misfire_policy", "next_run_at"}
+	rows := sqlmock.NewRows(columns).AddRow(101, "tenant-a", 7, nil, 3, "*/5 * * * *", "UTC", "fire_now", now.Add(-time.Minute))
+	mock.ExpectQuery("FOR UPDATE SKIP LOCKED").WithArgs(now, 1).WillReturnRows(rows)
+
+	mock.ExpectExec("SAVEPOINT").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("SELECT set_config").WithArgs("tenant-a").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("UPDATE jobs").WithArgs("tenant-a", int64(101), sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("RELEASE SAVEPOINT").WillReturnResult(sqlmock.NewResult(0, 0))
+
+	mock.ExpectCommit().WillReturnError(errors.New("commit boom"))
+
+	counts, err := repo.ScheduleBatch(context.Background(), now, 1, func(time.Time, schedule.DueCronJob) (schedule.ScheduleDecision, error) {
+		return schedule.ScheduleDecision{CreateInstance: false, NextRunAt: &next}, nil
+	}, classifySchedulerError)
+	if err != nil {
+		t.Fatalf("ScheduleBatch() should not return error for classified commit error, got %v", err)
+	}
+	// Handled=2: one from job processing + one from commit error classification
+	if counts.Backoff != 1 || counts.Handled != 2 {
+		t.Fatalf("expected Backoff=1, Handled=2, got %+v", counts)
+	}
+	assertMock(t, mock)
 }
