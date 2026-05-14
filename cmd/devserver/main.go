@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"maps"
 	"net/http"
 	"os"
 	"os/signal"
@@ -267,9 +268,12 @@ func runDevWorker(ctx context.Context, wg *sync.WaitGroup, db *sql.DB, cfg devWo
 
 	repo := corepostgres.NewExecutorRepository(db)
 	handlers := map[string]execute.Handler{
-		"exec": &handler.Exec{},
-		"http": handler.NewHTTP(http.DefaultClient),
+		"exec":      &handler.Exec{},
+		"http":      handler.NewHTTP(http.DefaultClient),
+		"webhook":   handler.NewWebhook(http.DefaultClient),
+		"pg_notify": handler.NewPGNotify(db),
 	}
+	maps.Copy(handlers, handler.GetRegistered())
 	runner := execute.NewTickUseCase(repo, handlers)
 
 	// Start heartbeat goroutine.

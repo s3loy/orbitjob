@@ -119,6 +119,10 @@ go run ./cmd/openapi-gen     # OpenAPI 生成
 | `WORKER_HEARTBEAT_INTERVAL_SEC` | 心跳间隔（秒） | `10` |
 | `WORKER_LEASE_DURATION_SEC` | Lease 有效期（秒） | `60` |
 | `WORKER_CAPACITY` | 最大并发执行数 | `1` |
+| `WORKER_CAPACITY_MAX` | 自适应容量上限 | `10` |
+| `WORKER_LEASE_MIN_SEC` | 动态 lease 下限（秒） | `10` |
+| `WORKER_LEASE_DURATION_MAX` | 动态 lease 上限（秒） | `300` |
+| `WORKER_LEASE_EMA_DECAY` | 动态 lease EMA 衰减系数 | `0.1` |
 | `WORKER_LABELS` | Worker 标签（JSON） | `{}` |
 | `RATELIMIT_READ_RPS` | 读取端点速率限制（RPS） | `100` |
 | `RATELIMIT_WRITE_RPS` | 写入端点速率限制（RPS） | `10` |

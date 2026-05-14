@@ -4,9 +4,9 @@
 
 This document defines the data model, state semantics, and behavioral contracts for the OrbitJob execution plane, providing a deterministic specification for collaboration between the scheduler, dispatcher, and worker components.
 
-> Authoritative source: Project architecture document · Last updated 2026-05-09
+> Authoritative source: Project architecture document · Last updated 2026-05-14
 
-## Current Implementation Status (2026-05-09)
+## Current Implementation Status (2026-05-14)
 
 **Implemented:**
 
@@ -15,12 +15,12 @@ This document defines the data model, state semantics, and behavioral contracts 
 - `workers` heartbeat and lease upsert with domain model, repository, and tests
 - Scheduler MVP tick loop + misfire strategies + atomic scheduling transaction
 - Dispatcher runtime: atomic claim + concurrency policy + priority aging + lease recovery + graceful shutdown + multi-tenant
-- **Worker**: capacity-driven concurrent execution + four-phase graceful shutdown + full audit trail + `job_instance_attempts` persistence + Prometheus metrics
+- **Worker**: async claim-execute decoupling + capacity-driven goroutine pool + adaptive capacity + dynamic lease + four-phase graceful shutdown + full audit trail + `job_instance_attempts` persistence + Prometheus metrics
 - `job_instances` version column (optimistic locking)
 - **Manual trigger API**: `POST /api/v1/jobs/:id/trigger` with idempotency_key dedup
 - **Instance query/cancel API**: list, detail, cancel endpoints
 - **Label-based routing**: `ClaimNextDispatched` filters by worker labels against instance `routing_key`
-- **Scheduler + Dispatcher metrics**: tick duration, dispatch rate, orphan recovery
+- **Scheduler + Dispatcher + Worker metrics**: tick duration, dispatch rate, orphan recovery, pool active/submitted/rejected
 - **Trace ID propagation**: scheduler → dispatcher → worker via `slog`
 - **Tenant quota**: `max_jobs` (job creation) + `max_concurrent_instances` (scheduler tick)
 - **API rate limiting**: per-tenant token bucket across 5 endpoint groups
@@ -158,21 +158,24 @@ Constraints:
 
 ### Worker Execution Model
 
-Workers use a capacity-driven concurrent execution model:
+Workers use an **async claim-execute decoupling** + capacity-driven goroutine pool:
 
-1. **Claim**: `ClaimNextDispatched(limit=N)` atomically claims up to N `dispatched` instances (`FOR UPDATE SKIP LOCKED`), writes an audit event per claimed instance
-2. **Execute**: Each claimed task runs in its own goroutine (handler execution + lease renewal + completion), tracked by the `ExecutionsActive` gauge
-3. **Complete**: Writes back result/status → INSERTs immutable `job_instance_attempts` record → INSERTs audit event
-4. **Lease renew**: Extends lease every `leaseDuration/3` during execution; failures are recorded in metrics and logs
+1. **Claim Loop**: An independent loop continuously claims tasks until the goroutine pool is saturated. Each tick claims only `min(limit, available pool slots)` to avoid lease waste
+2. **Pool Submit**: Tasks are submitted to a `WorkerPool` (buffered channel semaphore). When the pool is full, `Submit` returns `false` without blocking
+3. **Execute**: Each task runs in its own goroutine (handler + lease renewal + completion). If the pool becomes full between claim and submit (rare race), the task executes inline in the caller goroutine so the already-taken lease is not wasted
+4. **Complete**: Writes back result/status → INSERTs immutable `job_instance_attempts` record → INSERTs audit event
+5. **Lease renew**: Extends lease every `leaseDuration/3` during execution; failures are recorded in metrics and logs
+6. **Adaptive capacity**: Dynamically adjusts per-tick claim limit based on DB probe RTT, queue depth, and active worker count (capped at `WORKER_CAPACITY_MAX`)
+7. **Dynamic lease**: Automatically adjusts lease duration based on execution duration EMA, bounded by `[WORKER_LEASE_MIN_SEC, WORKER_LEASE_DURATION_MAX]`
 
 ### Graceful Shutdown (Four Phases)
 
 | Phase | Behavior |
 |------|----------|
-| 1. Stop claim | Context cancellation → no more `ClaimNextDispatched` calls |
-| 2. Wait handlers | `RunOnce` internal `wg.Wait()` for all goroutines |
+| 1. Stop claim | Context cancellation → `runLoop` exits, no more `SubmitNext` calls |
+| 2. Wait pool | `pool.Stop()` → `wg.Wait()` for all in-flight goroutines to finish |
 | 3. Draining | Heartbeat sends `StatusDraining` |
-| 4. Offline | Main loop exits → heartbeat sends `StatusOffline` → DB closed |
+| 4. Offline | All tasks complete → heartbeat sends `StatusOffline` → DB closed |
 
 ## Retry Boundaries
 

@@ -279,6 +279,9 @@ sudo systemctl enable --now orbitjob-scheduler orbitjob-dispatcher orbitjob-work
 | `orbitjob_executions_total` | Counter | 执行次数（按 handler_type、result_code） |
 | `orbitjob_executions_active` | Gauge | 正在执行的任务数 |
 | `orbitjob_lease_extension_failures_total` | Counter | lease 续约失败次数 |
+| `orbitjob_worker_pool_active_tasks` | Gauge | pool 当前活跃任务数 |
+| `orbitjob_worker_pool_submitted_total` | Counter | pool 累计提交任务数 |
+| `orbitjob_worker_pool_rejected_total` | Counter | pool 满拒绝次数 |
 
 #### Dispatcher 指标
 

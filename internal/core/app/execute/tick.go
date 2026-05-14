@@ -19,23 +19,45 @@ type executor interface {
 }
 
 type TickUseCase struct {
-	repo         executor
-	handlers     map[string]Handler
-	dynamicLease *DynamicLease
+	repo           executor
+	handlers       map[string]Handler
+	dynamicLease   *DynamicLease
+	dynamicLeaseMu sync.Mutex
 }
 
 func NewTickUseCase(repo executor, handlers map[string]Handler) *TickUseCase {
 	return &TickUseCase{repo: repo, handlers: handlers}
 }
 
-// SetDynamicLease attaches a dynamic lease controller. When set, RunOnce
-// records task execution durations to feed the lease EMA.
+// SetDynamicLease attaches a dynamic lease controller. When set, execution
+// durations are recorded to feed the lease EMA. Must be called before the
+// first tick; not safe for concurrent use with RunOnce/SubmitNext.
 func (uc *TickUseCase) SetDynamicLease(dl *DynamicLease) {
 	uc.dynamicLease = dl
 }
 
+// RunOnce claims tasks and executes them synchronously (backward-compatible).
+// For async execution use SubmitNext with a WorkerPool.
 func (uc *TickUseCase) RunOnce(
 	ctx context.Context,
+	tenantID, workerID string,
+	limit int, leaseDuration time.Duration,
+	labels map[string]any,
+) (int, error) {
+	return uc.SubmitNext(ctx, nil, tenantID, workerID, limit, leaseDuration, labels)
+}
+
+// SubmitNext claims up to limit tasks and submits them to pool for async
+// execution.  If pool is nil tasks execute synchronously (same as RunOnce).
+// It only claims as many tasks as the pool has free slots, avoiding lease
+// waste when the worker is already at capacity.
+//
+// Note: between claiming and submitting, the pool may fill up (another
+// goroutine submits). In that rare case the task is executed inline in the
+// caller's goroutine so the already-taken lease is not wasted.
+func (uc *TickUseCase) SubmitNext(
+	ctx context.Context,
+	pool *WorkerPool,
 	tenantID, workerID string,
 	limit int, leaseDuration time.Duration,
 	labels map[string]any,
@@ -44,10 +66,20 @@ func (uc *TickUseCase) RunOnce(
 		return 0, nil
 	}
 
+	available := limit
+	if pool != nil {
+		available = min(limit, pool.Capacity()-pool.Active())
+		if available <= 0 {
+			slog.Debug("pool full, skipping claim", "active", pool.Active(), "capacity", pool.Capacity())
+			metrics.WorkerPoolRejectedTotal.WithLabelValues(workerID, tenantID).Inc()
+			return 0, nil
+		}
+	}
+
 	now := time.Now().UTC()
 	leaseExpiresAt := now.Add(leaseDuration)
 
-	tasks, err := uc.repo.ClaimNextDispatched(ctx, tenantID, workerID, limit, leaseExpiresAt, now, labels)
+	tasks, err := uc.repo.ClaimNextDispatched(ctx, tenantID, workerID, available, leaseExpiresAt, now, labels)
 	if err != nil {
 		return 0, fmt.Errorf("claim dispatched: %w", err)
 	}
@@ -55,38 +87,33 @@ func (uc *TickUseCase) RunOnce(
 		return 0, nil
 	}
 
-	var wg sync.WaitGroup
-	durations := make([]time.Duration, len(tasks))
-	var mu sync.Mutex
-
-	for i, task := range tasks {
-		wg.Add(1)
-		go func(idx int, t AssignedTask) {
-			defer func() {
-				if r := recover(); r != nil {
-					slog.Error("executeTask panic recovered", "panic", r, "stack", string(debug.Stack()))
-				}
-				wg.Done()
-			}()
-			d := uc.executeTask(ctx, tenantID, workerID, t, leaseDuration)
-			mu.Lock()
-			durations[idx] = d
-			mu.Unlock()
-		}(i, task)
-	}
-
-	wg.Wait()
-
-	if uc.dynamicLease != nil {
-		for _, d := range durations {
-			if d > 0 {
-				uc.dynamicLease.RecordExecution(d)
+	submitted := 0
+	for _, task := range tasks {
+		t := task
+		if pool != nil {
+			if !pool.Submit(ctx, func(taskCtx context.Context) {
+				uc.runTask(taskCtx, tenantID, workerID, t, leaseDuration)
+			}) {
+				// Pool became full between claim and submit — execute inline so
+				// the lease we already took is not wasted.
+				uc.runTask(ctx, tenantID, workerID, t, leaseDuration)
 			}
+		} else {
+			uc.runTask(ctx, tenantID, workerID, t, leaseDuration)
 		}
-		metrics.WorkerLeaseDuration.WithLabelValues(workerID, tenantID).Set(uc.dynamicLease.Current().Seconds())
+		submitted++
 	}
 
-	return len(tasks), nil
+	return submitted, nil
+}
+
+func (uc *TickUseCase) runTask(ctx context.Context, tenantID, workerID string, task AssignedTask, leaseDuration time.Duration) {
+	d := uc.executeTask(ctx, tenantID, workerID, task, leaseDuration)
+	if uc.dynamicLease != nil && d > 0 {
+		uc.dynamicLeaseMu.Lock()
+		uc.dynamicLease.Update(d, workerID, tenantID)
+		uc.dynamicLeaseMu.Unlock()
+	}
 }
 
 func (uc *TickUseCase) executeTask(
