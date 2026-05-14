@@ -62,4 +62,16 @@ var (
 		Name: "orbitjob_scheduler_breaker_transitions_total",
 		Help: "Total circuit breaker state transitions.",
 	})
+
+	// SchedulerQueueDepth tracks the total number of active instances (backpressure signal).
+	SchedulerQueueDepth = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "orbitjob_scheduler_queue_depth",
+		Help: "Total active instances (pending + retry_wait + dispatched + running).",
+	})
+
+	// SchedulerIdleTicksTotal counts scheduler ticks that found no due jobs.
+	SchedulerIdleTicksTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "orbitjob_scheduler_idle_ticks_total",
+		Help: "Total scheduler ticks with no due jobs found.",
+	})
 )

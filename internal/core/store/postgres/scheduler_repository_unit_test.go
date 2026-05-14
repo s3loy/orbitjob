@@ -710,6 +710,9 @@ func TestSchedulerRepository_ScheduleOneDueCron_QuotaExceededRollbackError(t *te
 	mock.ExpectQuery("SELECT count\\(\\*\\) FROM job_instances").
 		WithArgs("tenant-a").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectExec("UPDATE jobs").
+		WithArgs("tenant-a", int64(101), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectRollback().WillReturnError(errors.New("rollback boom"))
 
 	_, found, err := repo.ScheduleOneDueCron(context.Background(), now, func(time.Time, schedule.DueCronJob) (schedule.ScheduleDecision, error) {
@@ -741,6 +744,9 @@ func TestSchedulerRepository_ScheduleOneDueCron_QuotaExceeded(t *testing.T) {
 	mock.ExpectQuery("SELECT count\\(\\*\\) FROM job_instances").
 		WithArgs("tenant-a").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
+	mock.ExpectExec("UPDATE jobs").
+		WithArgs("tenant-a", int64(101), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectRollback()
 
 	result, found, err := repo.ScheduleOneDueCron(context.Background(), now, func(time.Time, schedule.DueCronJob) (schedule.ScheduleDecision, error) {

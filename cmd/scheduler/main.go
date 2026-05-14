@@ -76,10 +76,24 @@ func loadSchedulerRuntimeConfig() (runtimeConfig, error) {
 	}, nil
 }
 
+func drainAndReturn(runner tickRunner, limit int, nowFn func() time.Time) {
+	slog.Info("scheduler draining, running final tick")
+	drainCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if counts, err := runner.RunBatch(drainCtx, nowFn().UTC(), limit); err != nil {
+		metrics.SchedulerCronErrors.Inc()
+		slog.Error("scheduler drain tick failed", "error", err.Error())
+	} else {
+		metrics.SchedulerInstancesCreated.Add(float64(counts.Scheduled))
+		slog.Info("scheduler drain tick completed", "handled_due_jobs", counts.Handled)
+	}
+}
+
 func runLoop(
 	ctx context.Context,
 	runner tickRunner,
 	probe func(context.Context) (time.Duration, error),
+	queueDepth func(context.Context) (int64, error),
 	cfg runtimeConfig,
 	newTicker func(time.Duration) schedulerTicker,
 	nowFn func() time.Time,
@@ -118,10 +132,33 @@ func runLoop(
 	curPhase := schedule.PhaseDiscovery
 	lastCounts := schedule.BatchCounts{}
 	mainTicker := newTicker(cfg.TickInterval)
+	defer mainTicker.Stop()
+
+	// Idle backoff state.
+	idleCount := 0
+	const idleThreshold = 3
+	const longInterval = 30 * time.Second
+	isLongInterval := false
+
+	resetToShortInterval := func() {
+		if isLongInterval {
+			mainTicker.Stop()
+			mainTicker = newTicker(cfg.TickInterval)
+			isLongInterval = false
+			slog.Info("scheduler switching back to short interval", "interval_sec", cfg.TickInterval.Seconds())
+		}
+	}
 
 	for {
 		start := time.Now()
 		now := nowFn().UTC()
+
+		// Sample queue depth for backpressure, but skip when idling to reduce DB load.
+		var qd int64
+		if queueDepth != nil && idleCount < idleThreshold {
+			qd, _ = queueDepth(ctx)
+			metrics.SchedulerQueueDepth.Set(float64(qd))
+		}
 
 		switch curPhase {
 		case schedule.PhaseDiscovery:
@@ -156,14 +193,13 @@ func runLoop(
 				metrics.SchedulerTickDuration.Observe(time.Since(start).Seconds())
 				select {
 				case <-ctx.Done():
-					mainTicker.Stop()
 					return
 				case <-mainTicker.Chan():
 				}
 				continue
 			}
 
-			_, dbPressure := schedule.UpdateSteady(state, pRTT, errClass, state.MaxBatchSize)
+			_, dbPressure := schedule.UpdateSteady(state, pRTT, errClass, state.MaxBatchSize, qd)
 			metrics.SchedulerLimit.Set(float64(state.Limit))
 			metrics.SchedulerDBPressure.Set(dbPressure)
 			metrics.SchedulerProbeRTT.Observe(pRTT.Seconds())
@@ -185,22 +221,26 @@ func runLoop(
 			metrics.SchedulerPhase.Set(2)
 			if breaker.State() == schedule.PhaseHalfOpen {
 				curPhase = schedule.PhaseHalfOpen
-				metrics.SchedulerTickDuration.Observe(time.Since(start).Seconds())
-				continue
+				break
 			}
 			breaker.Update(schedule.BreakerSignals{})
 			if breaker.State() == schedule.PhaseHalfOpen {
 				curPhase = schedule.PhaseHalfOpen
-				metrics.SchedulerTickDuration.Observe(time.Since(start).Seconds())
-				continue
+				break
 			}
+			// Degraded mode: schedule at most 1 job per tick instead of full halt.
+			counts, runErr := runner.RunBatch(ctx, now, 1)
+			if runErr != nil {
+				slog.Error("protect tick error", "error", runErr.Error())
+			} else if counts.Scheduled > 0 {
+				slog.Info("protect tick scheduled", "scheduled", counts.Scheduled)
+			}
+			metrics.SchedulerInstancesCreated.Add(float64(counts.Scheduled))
+			lastCounts = counts
 
 		case schedule.PhaseHalfOpen:
 			metrics.SchedulerPhase.Set(3)
-			hLimit := min(5, state.Limit/10)
-			if hLimit < 1 {
-				hLimit = 1
-			}
+			hLimit := max(min(20, state.Limit/4), 1)
 
 			counts, runErr := runner.RunBatch(ctx, now, hLimit)
 			if runErr != nil {
@@ -223,21 +263,31 @@ func runLoop(
 
 		metrics.SchedulerTickDuration.Observe(time.Since(start).Seconds())
 
+		// Idle detection: if no jobs handled, count idle tick.
+		handled := lastCounts.Handled
+		if curPhase == schedule.PhaseDiscovery {
+			// Discovery phase doesn't set lastCounts; skip idle logic there.
+			handled = -1
+		}
+
 		select {
 		case <-ctx.Done():
-			slog.Info("scheduler draining, running final tick")
-			drainCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			if counts, err := runner.RunBatch(drainCtx, nowFn().UTC(), state.Limit); err != nil {
-				metrics.SchedulerCronErrors.Inc()
-				slog.Error("scheduler drain tick failed", "error", err.Error())
-			} else {
-				metrics.SchedulerInstancesCreated.Add(float64(counts.Scheduled))
-				slog.Info("scheduler drain tick completed", "handled_due_jobs", counts.Handled)
-			}
-			mainTicker.Stop()
+			drainAndReturn(runner, state.Limit, nowFn)
 			return
 		case <-mainTicker.Chan():
+			if handled == 0 {
+				idleCount++
+				metrics.SchedulerIdleTicksTotal.Inc()
+				if idleCount >= idleThreshold {
+					mainTicker.Stop()
+					mainTicker = newTicker(longInterval)
+					isLongInterval = true
+					slog.Info("scheduler switching to long interval", "interval_sec", longInterval.Seconds())
+				}
+			} else if handled > 0 {
+				idleCount = 0
+				resetToShortInterval()
+			}
 		}
 	}
 }
@@ -279,6 +329,7 @@ func run(ctx context.Context) error {
 	go health.StartComponentHealthServer(healthCtx, db, cfg.HealthPort, "scheduler")
 
 	runner := buildRunnerFn(db)
+	repo := corepostgres.NewSchedulerRepository(db)
 	probe := func(ctx context.Context) (time.Duration, error) {
 		start := time.Now()
 		if err := db.PingContext(ctx); err != nil {
@@ -286,7 +337,10 @@ func run(ctx context.Context) error {
 		}
 		return time.Since(start), nil
 	}
-	runLoopFn(ctx, runner, probe, cfg, newWallClockTicker, time.Now)
+	queueDepth := func(ctx context.Context) (int64, error) {
+		return repo.CountActiveInstances(ctx)
+	}
+	runLoopFn(ctx, runner, probe, queueDepth, cfg, newWallClockTicker, time.Now)
 
 	return nil
 }

@@ -27,6 +27,7 @@ func NewDiscovery(probe ProbeFn, runBatch DiscoveryBatchFn, state *ControllerSta
 
 // Run executes the Discovery phase, probing the system to find the maximum
 // sustainable batch size. Returns the next phase (Steady or Protect).
+// Uses a single post-batch probe instead of before/after pair to halve RTT cost.
 func (d *Discovery) Run(ctx context.Context) Phase {
 	d.state.Limit = 1
 
@@ -35,11 +36,6 @@ func (d *Discovery) Run(ctx context.Context) Phase {
 		case <-ctx.Done():
 			return PhaseProtect
 		default:
-		}
-
-		before, err := d.probe(ctx)
-		if err != nil {
-			return PhaseProtect
 		}
 
 		handled, class := d.runBatch(ctx, d.state.Limit)
@@ -53,21 +49,24 @@ func (d *Discovery) Run(ctx context.Context) Phase {
 		}
 
 		if class == domain.BackoffWorthy {
-			d.state.Limit = d.state.Limit / 2
-			d.state.LongtermRtt = before
+			d.state.Limit = max(d.state.Limit/2, 1)
+			d.state.LongtermRtt = after
 			return PhaseSteady
 		}
 
-		// Dual confirmation: RTT degradation AND throughput drop
-		if after > time.Duration(float64(before)*1.5) && handled < int(float64(d.state.Limit)*0.9) {
-			d.state.Limit = d.state.Limit / 2
-			d.state.LongtermRtt = before
+		// First iteration: establish baseline, no congestion check.
+		if d.state.LongtermRtt == 0 {
+			d.state.LongtermRtt = after
+		} else if after > time.Duration(float64(d.state.LongtermRtt)*1.5) && handled < int(float64(d.state.Limit)*0.9) {
+			// RTT degradation vs baseline AND throughput drop.
+			d.state.Limit = max(d.state.Limit/2, 1)
 			return PhaseSteady
+		} else {
+			d.state.LongtermRtt = after
 		}
 
 		d.state.Limit = min(d.state.Limit*4, d.state.MaxBatchSize)
 		if d.state.Limit >= d.state.MaxBatchSize {
-			d.state.LongtermRtt = before
 			return PhaseSteady
 		}
 	}
