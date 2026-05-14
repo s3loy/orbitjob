@@ -56,12 +56,29 @@ type etcdCoordinator struct {
 	lockSession *concurrency.Session
 	ttl         time.Duration
 	mu          sync.Mutex
+	closed      bool
 }
 
 // monitorLockSession watches the reusable session and recreates it if it expires.
 func (e *etcdCoordinator) monitorLockSession(cli *clientv3.Client, ttl time.Duration) {
 	for {
-		<-e.lockSession.Done()
+		e.mu.Lock()
+		if e.closed {
+			e.mu.Unlock()
+			return
+		}
+		ls := e.lockSession
+		e.mu.Unlock()
+
+		<-ls.Done()
+
+		e.mu.Lock()
+		if e.closed {
+			e.mu.Unlock()
+			return
+		}
+		e.mu.Unlock()
+
 		metrics.EtcdSessionExpiresTotal.WithLabelValues("election").Inc()
 		slog.Warn("etcd lock session expired, recreating")
 
@@ -75,6 +92,11 @@ func (e *etcdCoordinator) monitorLockSession(cli *clientv3.Client, ttl time.Dura
 		}
 
 		e.mu.Lock()
+		if e.closed {
+			e.mu.Unlock()
+			_ = session.Close()
+			return
+		}
 		e.lockSession = session
 		e.mu.Unlock()
 		slog.Info("etcd lock session recreated")
@@ -163,6 +185,14 @@ func (e *etcdCoordinator) TryLock(ctx context.Context, lockName string) (UnlockF
 }
 
 func (e *etcdCoordinator) Close() error {
-	e.lockSession.Close()
+	e.mu.Lock()
+	e.closed = true
+	ls := e.lockSession
+	e.lockSession = nil
+	e.mu.Unlock()
+
+	if ls != nil {
+		_ = ls.Close()
+	}
 	return e.client.Close()
 }

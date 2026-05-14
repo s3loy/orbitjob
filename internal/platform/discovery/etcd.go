@@ -118,6 +118,8 @@ func (e *etcdRegistry) WatchInstances(ctx context.Context, serviceName string) (
 					case ch <- Event{Type: typ, Instance: Instance{ID: id}}:
 					case <-ctx.Done():
 						return
+					default:
+						// Channel full, caller not reading — drop event to prevent goroutine leak.
 					}
 				}
 			}
