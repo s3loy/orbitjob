@@ -169,7 +169,7 @@ func TestRunLoop_StopsOnContextCancel(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		runLoop(ctx, runner, noopProbe, noopQueueDepth, runtimeConfig{BatchSizeMax: 7, TickInterval: time.Second}, func(time.Duration) schedulerTicker {
+		runLoop(ctx, runner, noopProbe, noopQueueDepth, &runtimeConfig{BatchSizeMax: 7, TickInterval: time.Second}, func(time.Duration) schedulerTicker {
 			return ticker
 		}, func() time.Time { return now })
 		close(done)
@@ -196,7 +196,7 @@ func TestRunLoop_ContinuesAfterTickSignal(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		runLoop(ctx, runner, noopProbe, noopQueueDepth, runtimeConfig{BatchSizeMax: 3, TickInterval: time.Second}, func(time.Duration) schedulerTicker {
+		runLoop(ctx, runner, noopProbe, noopQueueDepth, &runtimeConfig{BatchSizeMax: 3, TickInterval: time.Second}, func(time.Duration) schedulerTicker {
 			return ticker
 		}, func() time.Time { return time.Now().UTC() })
 		close(done)
@@ -233,7 +233,7 @@ func TestRunLoop_ErrorPathStillWaitsForShutdown(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		runLoop(ctx, runner, noopProbe, noopQueueDepth, runtimeConfig{BatchSizeMax: 1, TickInterval: time.Second}, func(time.Duration) schedulerTicker {
+		runLoop(ctx, runner, noopProbe, noopQueueDepth, &runtimeConfig{BatchSizeMax: 1, TickInterval: time.Second}, func(time.Duration) schedulerTicker {
 			return ticker
 		}, func() time.Time { return time.Now() })
 		close(done)
@@ -341,7 +341,7 @@ func TestRun_SuccessInvokesRunLoop(t *testing.T) {
 		runner tickRunner,
 		probe func(context.Context) (time.Duration, error),
 		queueDepth func(context.Context) (int64, error),
-		cfg runtimeConfig,
+		cfg *runtimeConfig,
 		newTicker func(time.Duration) schedulerTicker,
 		nowFn func() time.Time,
 	) {
@@ -391,7 +391,7 @@ func TestRun_PingDBError(t *testing.T) {
 	pingDBFn = func(context.Context, *sql.DB) error { return errors.New("ping boom") }
 
 	runLoopCalled := false
-	runLoopFn = func(context.Context, tickRunner, func(context.Context) (time.Duration, error), func(context.Context) (int64, error), runtimeConfig, func(time.Duration) schedulerTicker, func() time.Time) {
+	runLoopFn = func(context.Context, tickRunner, func(context.Context) (time.Duration, error), func(context.Context) (int64, error), *runtimeConfig, func(time.Duration) schedulerTicker, func() time.Time) {
 		runLoopCalled = true
 	}
 

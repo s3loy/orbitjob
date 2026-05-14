@@ -110,7 +110,7 @@ type adaptiveTickRunner struct {
 	db           *sql.DB
 	adaptiveCap  *execute.AdaptiveCapacity
 	dynamicLease *execute.DynamicLease
-	cfg          runtimeConfig
+	cfg          *runtimeConfig
 }
 
 func (r *adaptiveTickRunner) SubmitNext(
@@ -284,7 +284,7 @@ func runLoop(
 	ctx context.Context,
 	runner tickRunner,
 	hb heartbeater,
-	cfg runtimeConfig,
+	cfg *runtimeConfig,
 	newTicker func(time.Duration) workerTicker,
 	nowFn func() time.Time,
 ) {
@@ -311,7 +311,18 @@ func runLoop(
 		}
 	}
 
+	currentPollInterval := cfg.PollInterval
+
 	for {
+		// Hot reload: recreate ticker if poll interval changed.
+		if cfg.PollInterval != currentPollInterval {
+			ticker.Stop()
+			ticker = newTicker(cfg.PollInterval)
+			currentPollInterval = cfg.PollInterval
+			isLongInterval = false
+			slog.Info("worker poll interval reloaded", "interval_sec", cfg.PollInterval.Seconds())
+		}
+
 		n, err := runner.SubmitNext(ctx, pool, cfg.TenantID, cfg.WorkerID, cfg.Capacity, cfg.LeaseDuration, cfg.Labels)
 		if err != nil {
 			slog.Error("worker tick failed", "error", err.Error())
@@ -359,7 +370,7 @@ func heartbeatLoop(
 	ctx context.Context,
 	loopDone <-chan struct{},
 	hb heartbeater,
-	cfg runtimeConfig,
+	cfg *runtimeConfig,
 	newTicker func(time.Duration) workerTicker,
 	nowFn func() time.Time,
 ) {
@@ -394,7 +405,7 @@ func heartbeatLoop(
 func sendHeartbeat(
 	ctx context.Context,
 	hb heartbeater,
-	cfg runtimeConfig,
+	cfg *runtimeConfig,
 	nowFn func() time.Time,
 	status string,
 ) {
@@ -465,7 +476,7 @@ func run(ctx context.Context) error {
 		db:           db,
 		adaptiveCap:  adaptiveCap,
 		dynamicLease: dynamicLease,
-		cfg:          cfg,
+		cfg:          &cfg,
 	}
 
 	healthCtx, healthCancel := context.WithCancel(context.Background())
@@ -522,12 +533,56 @@ func run(ctx context.Context) error {
 			}
 		}()
 
+		// Start config watcher for hot reload.
+		watcher, err := config.NewEtcdWatcher(strings.Split(ep, ","))
+		if err != nil {
+			slog.Warn("worker config watcher failed to start", "error", err.Error())
+		} else {
+			defer func() { _ = watcher.Close() }()
+			go watchWorkerConfig(ctx, watcher, &cfg)
+		}
+
 		slog.Info("worker etcd registration enabled", "worker_id", cfg.WorkerID)
 	}
 
-	runLoopFn(ctx, runner, hb, cfg, newWallClockTicker, time.Now)
+	runLoopFn(ctx, runner, hb, &cfg, newWallClockTicker, time.Now)
 
 	return nil
+}
+
+func watchWorkerConfig(ctx context.Context, watcher config.Watcher, cfg *runtimeConfig) {
+	go func() {
+		_ = watcher.Watch(ctx, "/orbitjob/config/worker/poll_interval_sec", func(v string) {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				cfg.PollInterval = time.Duration(n) * time.Second
+				slog.Info("worker config updated", "key", "poll_interval_sec", "value", n)
+			}
+		})
+	}()
+	go func() {
+		_ = watcher.Watch(ctx, "/orbitjob/config/worker/heartbeat_interval_sec", func(v string) {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				cfg.HeartbeatInterval = time.Duration(n) * time.Second
+				slog.Info("worker config updated", "key", "heartbeat_interval_sec", "value", n)
+			}
+		})
+	}()
+	go func() {
+		_ = watcher.Watch(ctx, "/orbitjob/config/worker/lease_duration_sec", func(v string) {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				cfg.LeaseDuration = time.Duration(n) * time.Second
+				slog.Info("worker config updated", "key", "lease_duration_sec", "value", n)
+			}
+		})
+	}()
+	go func() {
+		_ = watcher.Watch(ctx, "/orbitjob/config/worker/capacity", func(v string) {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				cfg.Capacity = n
+				slog.Info("worker config updated", "key", "capacity", "value", n)
+			}
+		})
+	}()
 }
 
 // startComponentHealthServer runs a minimal HTTP server with /healthz and /readyz.

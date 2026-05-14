@@ -8,6 +8,7 @@ import (
 	"time"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"orbitjob/internal/platform/metrics"
 )
 
 // NewEtcdWatcher creates a Watcher backed by etcd.
@@ -36,21 +37,32 @@ func (e *etcdWatcher) Watch(ctx context.Context, key string, callback func(value
 		callback(string(resp.Kvs[0].Value))
 	}
 
-	// Watch for changes.
-	watchCh := e.client.Watch(ctx, key)
-	for wresp := range watchCh {
-		if wresp.Err() != nil {
-			return wresp.Err()
-		}
-		for _, ev := range wresp.Events {
-			if ev.Type == clientv3.EventTypeDelete {
-				callback("")
-			} else {
-				callback(string(ev.Kv.Value))
+	// Watch for changes with auto-restart on channel closure.
+	for {
+		watchCh := e.client.Watch(ctx, key)
+		for wresp := range watchCh {
+			if wresp.Err() != nil {
+				metrics.EtcdOperationErrorsTotal.WithLabelValues("config_watch").Inc()
+				continue
+			}
+			for _, ev := range wresp.Events {
+				if ev.Type == clientv3.EventTypeDelete {
+					callback("")
+				} else {
+					callback(string(ev.Kv.Value))
+				}
 			}
 		}
+
+		// Watch channel closed — restart unless ctx is done.
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			// Brief back-off before restarting watch.
+			time.Sleep(100 * time.Millisecond)
+		}
 	}
-	return ctx.Err()
 }
 
 func (e *etcdWatcher) Close() error {

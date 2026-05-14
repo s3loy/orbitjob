@@ -213,7 +213,7 @@ func TestRunLoop_StopsOnContextCancel(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		runLoop(ctx, runner, runtimeConfig{
+		runLoop(ctx, runner, &runtimeConfig{
 			TenantID:      "t1",
 			BatchSize:     7,
 			TickInterval:  time.Second,
@@ -272,7 +272,7 @@ func TestRunLoop_ContinuesAfterTickSignal(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		runLoop(ctx, runner, runtimeConfig{
+		runLoop(ctx, runner, &runtimeConfig{
 			TenantID:      "t1",
 			BatchSize:     3,
 			TickInterval:  time.Second,
@@ -322,7 +322,7 @@ func TestRunLoop_ErrorPathStillWaitsForShutdown(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		runLoop(ctx, runner, runtimeConfig{
+		runLoop(ctx, runner, &runtimeConfig{
 			TenantID:      "t1",
 			BatchSize:     1,
 			TickInterval:  time.Second,
@@ -364,7 +364,7 @@ func TestRunLoop_EventChQuickTick(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		runLoop(ctx, runner, runtimeConfig{
+		runLoop(ctx, runner, &runtimeConfig{
 			TenantID:      "t1",
 			BatchSize:     5,
 			TickInterval:  time.Second,
@@ -493,7 +493,7 @@ func TestRun_SuccessInvokesRunLoop(t *testing.T) {
 	runLoopFn = func(
 		ctx context.Context,
 		runner tickRunner,
-		cfg runtimeConfig,
+		cfg *runtimeConfig,
 		_ <-chan struct{},
 		newTicker func(time.Duration) schedulerTicker,
 		nowFn func() time.Time,
@@ -553,7 +553,7 @@ func TestRun_PingDBError(t *testing.T) {
 	pingDBFn = func(context.Context, *sql.DB) error { return errors.New("ping boom") }
 
 	runLoopCalled := false
-	runLoopFn = func(context.Context, tickRunner, runtimeConfig, <-chan struct{}, func(time.Duration) schedulerTicker, func() time.Time, election.Coordinator) {
+	runLoopFn = func(context.Context, tickRunner, *runtimeConfig, <-chan struct{}, func(time.Duration) schedulerTicker, func() time.Time, election.Coordinator) {
 		runLoopCalled = true
 	}
 
@@ -570,7 +570,7 @@ func TestQuickTick_ErrorPath(t *testing.T) {
 	runner := &stubTickRunner{err: errors.New("tick boom")}
 	cfg := runtimeConfig{BatchSize: 5, LeaseDuration: 30 * time.Second}
 	now := time.Now()
-	result := quickTick(context.Background(), runner, cfg, now, []string{"t1", "t2"}, nil)
+	result := quickTick(context.Background(), runner, &cfg, now, []string{"t1", "t2"}, nil)
 	if result != 0 {
 		t.Fatalf("expected 0 handled on error, got %d", result)
 	}
@@ -583,7 +583,7 @@ func TestFullTick_HousekeepingError(t *testing.T) {
 	runner := &stubTickRunner{handled: 1, housekeepingErr: errors.New("hk boom")}
 	cfg := runtimeConfig{BatchSize: 5, LeaseDuration: 30 * time.Second}
 	now := time.Now()
-	result := fullTick(context.Background(), runner, cfg, now, []string{"t1"}, nil)
+	result := fullTick(context.Background(), runner, &cfg, now, []string{"t1"}, nil)
 	if result != 1 {
 		t.Fatalf("expected 1 handled despite housekeeping error, got %d", result)
 	}
@@ -593,7 +593,7 @@ func TestFullTick_TickError(t *testing.T) {
 	runner := &stubTickRunner{err: errors.New("tick boom")}
 	cfg := runtimeConfig{BatchSize: 5, LeaseDuration: 30 * time.Second}
 	now := time.Now()
-	result := fullTick(context.Background(), runner, cfg, now, []string{"t1", "t2"}, nil)
+	result := fullTick(context.Background(), runner, &cfg, now, []string{"t1", "t2"}, nil)
 	if result != 0 {
 		t.Fatalf("expected 0 handled on tick error, got %d", result)
 	}
@@ -614,7 +614,7 @@ func TestRunLoop_SwitchesToLongInterval(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		runLoop(ctx, runner, runtimeConfig{
+		runLoop(ctx, runner, &runtimeConfig{
 			TenantID:      "t1",
 			BatchSize:     3,
 			TickInterval:  time.Second,
@@ -661,7 +661,7 @@ func TestRunLoop_SwitchesBackToShortInterval(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		runLoop(ctx, runner, runtimeConfig{
+		runLoop(ctx, runner, &runtimeConfig{
 			TenantID:      "t1",
 			BatchSize:     3,
 			TickInterval:  time.Second,

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -97,7 +98,7 @@ func loadDispatcherRuntimeConfig() (runtimeConfig, error) {
 	}, nil
 }
 
-func quickTick(ctx context.Context, runner tickRunner, cfg runtimeConfig, now time.Time, ids []string, coord election.Coordinator) int {
+func quickTick(ctx context.Context, runner tickRunner, cfg *runtimeConfig, now time.Time, ids []string, coord election.Coordinator) int {
 	var total int
 	for _, tid := range ids {
 		lockName := tenantLockName(tid)
@@ -118,7 +119,7 @@ func quickTick(ctx context.Context, runner tickRunner, cfg runtimeConfig, now ti
 	return total
 }
 
-func fullTick(ctx context.Context, runner tickRunner, cfg runtimeConfig, now time.Time, ids []string, coord election.Coordinator) int {
+func fullTick(ctx context.Context, runner tickRunner, cfg *runtimeConfig, now time.Time, ids []string, coord election.Coordinator) int {
 	if err := runner.RunHousekeeping(ctx, now); err != nil {
 		slog.Error("dispatcher housekeeping failed", "error", err.Error())
 	}
@@ -178,7 +179,7 @@ func withTenantLock(ctx context.Context, coord election.Coordinator, lockName st
 func runLoop(
 	ctx context.Context,
 	runner tickRunner,
-	cfg runtimeConfig,
+	cfg *runtimeConfig,
 	eventCh <-chan struct{},
 	newTicker func(time.Duration) schedulerTicker,
 	nowFn func() time.Time,
@@ -225,7 +226,18 @@ func runLoop(
 		}
 	}
 
+	currentTickInterval := cfg.TickInterval
+
 	for {
+		// Hot reload: recreate ticker if interval changed.
+		if cfg.TickInterval != currentTickInterval {
+			ticker.Stop()
+			ticker = newTicker(cfg.TickInterval)
+			currentTickInterval = cfg.TickInterval
+			isLongInterval = false
+			slog.Info("dispatcher tick interval reloaded", "interval_sec", cfg.TickInterval.Seconds())
+		}
+
 		now := nowFn().UTC()
 		ids := getTenantIDs()
 
@@ -372,11 +384,45 @@ func run(ctx context.Context) error {
 		defer func() { _ = c.Close() }()
 		coord = c
 		slog.Info("dispatcher etcd coordination enabled")
+
+		// Start config watcher for hot reload.
+		watcher, err := config.NewEtcdWatcher(strings.Split(ep, ","))
+		if err != nil {
+			slog.Warn("dispatcher config watcher failed to start", "error", err.Error())
+		} else {
+			defer func() { _ = watcher.Close() }()
+			go watchDispatcherConfig(ctx, watcher, &cfg)
+		}
 	}
 
-	runLoopFn(ctx, runner, cfg, eventCh, newWallClockTicker, time.Now, coord)
+	runLoopFn(ctx, runner, &cfg, eventCh, newWallClockTicker, time.Now, coord)
 
 	return nil
+}
+
+func watchDispatcherConfig(ctx context.Context, watcher config.Watcher, cfg *runtimeConfig) {
+	go func() {
+		_ = watcher.Watch(ctx, "/orbitjob/config/dispatcher/batch_size", func(v string) {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				cfg.BatchSize = n
+				slog.Info("dispatcher config updated", "key", "batch_size", "value", n)
+			}
+		})
+	}()
+	go func() {
+		_ = watcher.Watch(ctx, "/orbitjob/config/dispatcher/tick_interval_sec", func(v string) {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				cfg.TickInterval = time.Duration(n) * time.Second
+				slog.Info("dispatcher config updated", "key", "tick_interval_sec", "value", n)
+			}
+		})
+	}()
+	_ = watcher.Watch(ctx, "/orbitjob/config/dispatcher/lease_duration_sec", func(v string) {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.LeaseDuration = time.Duration(n) * time.Second
+			slog.Info("dispatcher config updated", "key", "lease_duration_sec", "value", n)
+		}
+	})
 }
 
 func main() {

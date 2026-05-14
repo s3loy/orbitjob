@@ -61,7 +61,7 @@ func TestSendHeartbeat_UpsertError(t *testing.T) {
 	}
 
 	// This should not panic — error is logged, not returned
-	sendHeartbeat(context.Background(), hb, cfg, func() time.Time { return now }, domainworker.StatusOnline)
+	sendHeartbeat(context.Background(), hb, &cfg, func() time.Time { return now }, domainworker.StatusOnline)
 }
 
 func TestSendHeartbeat_NormalizeError(t *testing.T) {
@@ -76,7 +76,7 @@ func TestSendHeartbeat_NormalizeError(t *testing.T) {
 	}
 
 	// This should not panic — normalize error is logged, not returned
-	sendHeartbeat(context.Background(), hb, cfg, func() time.Time { return now }, domainworker.StatusOnline)
+	sendHeartbeat(context.Background(), hb, &cfg, func() time.Time { return now }, domainworker.StatusOnline)
 }
 
 // ---------------------------------------------------------------------------
@@ -168,7 +168,7 @@ func TestHeartbeatLoop_ShutdownGraceful(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		heartbeatLoop(ctx, loopDone, hb, cfg,
+		heartbeatLoop(ctx, loopDone, hb, &cfg,
 			func(time.Duration) workerTicker { return ticker },
 			func() time.Time { return now })
 		close(done)
@@ -220,7 +220,7 @@ func TestRunLoop_SubmitNextError(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		runLoop(ctx, runner, hb, runtimeConfig{
+		runLoop(ctx, runner, hb, &runtimeConfig{
 			TenantID:          "t1",
 			WorkerID:          "w1",
 			PollInterval:      time.Second,

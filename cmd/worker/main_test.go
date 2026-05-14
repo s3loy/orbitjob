@@ -221,7 +221,7 @@ func TestRunLoop_DrainMode(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		runLoop(ctx, runner, hb, runtimeConfig{
+		runLoop(ctx, runner, hb, &runtimeConfig{
 			TenantID:          "t1",
 			WorkerID:          "w1",
 			PollInterval:      time.Second,
@@ -264,7 +264,7 @@ func TestRunLoop_WaitsTickerWhenIdle(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		runLoop(ctx, runner, hb, runtimeConfig{
+		runLoop(ctx, runner, hb, &runtimeConfig{
 			TenantID:          "t1",
 			WorkerID:          "w1",
 			PollInterval:      time.Second,
@@ -303,7 +303,7 @@ func TestRunLoop_HeartbeatSendsOfflineOnShutdown(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		runLoop(ctx, runner, hb, runtimeConfig{
+		runLoop(ctx, runner, hb, &runtimeConfig{
 			TenantID:          "t1",
 			WorkerID:          "w1",
 			PollInterval:      time.Second,
@@ -436,7 +436,7 @@ func TestRun_SuccessInvokesRunLoop(t *testing.T) {
 		_ context.Context,
 		_ tickRunner,
 		_ heartbeater,
-		cfg runtimeConfig,
+		cfg *runtimeConfig,
 		_ func(time.Duration) workerTicker,
 		_ func() time.Time,
 	) {
