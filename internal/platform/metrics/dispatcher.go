@@ -60,4 +60,10 @@ var (
 		Name: "orbitjob_dispatcher_long_interval_total",
 		Help: "Total switches to long interval mode.",
 	}, []string{"tenant_id"})
+
+	// DispatcherLockContentionTotal counts etcd lock contention events.
+	DispatcherLockContentionTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "orbitjob_dispatcher_lock_contention_total",
+		Help: "Total etcd lock contention events (lock held by another dispatcher).",
+	}, []string{"lock_name"})
 )

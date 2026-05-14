@@ -25,6 +25,7 @@ import (
 	domainworker "orbitjob/internal/core/domain/worker"
 	corepostgres "orbitjob/internal/core/store/postgres"
 	"orbitjob/internal/platform/config"
+	"orbitjob/internal/platform/discovery"
 	"orbitjob/internal/platform/health"
 	platformlogger "orbitjob/internal/platform/logger"
 	"orbitjob/internal/platform/metrics"
@@ -94,6 +95,9 @@ var (
 	}
 	buildHeartbeaterFn = func(db *sql.DB) heartbeater {
 		return corepostgres.NewWorkerRepository(db)
+	}
+	buildRegistryFn = func(endpoints []string) (discovery.Registry, error) {
+		return discovery.NewEtcd(endpoints)
 	}
 	runLoopFn = runLoop
 )
@@ -477,6 +481,49 @@ func run(ctx context.Context) error {
 		"capacity", cfg.Capacity,
 		"capacity_max", cfg.CapacityMax,
 	)
+
+	// Optional: etcd service registration for worker discovery.
+	var reg discovery.Registry
+	if os.Getenv("ETCD_ENABLED") == "true" {
+		ep := os.Getenv("ETCD_ENDPOINTS")
+		if ep == "" {
+			return fmt.Errorf("ETCD_ENABLED=true but ETCD_ENDPOINTS is empty")
+		}
+		r, err := buildRegistryFn(strings.Split(ep, ","))
+		if err != nil {
+			return fmt.Errorf("init registry: %w", err)
+		}
+		reg = r
+		defer func() { _ = reg.Close() }()
+
+		keepAlive, err := reg.Register(ctx, "worker", cfg.WorkerID, cfg.LeaseDuration)
+		if err != nil {
+			return fmt.Errorf("register worker: %w", err)
+		}
+		defer func() {
+			if err := reg.Deregister(context.Background(), "worker", cfg.WorkerID); err != nil {
+				slog.Error("worker deregister failed", "error", err.Error())
+			}
+		}()
+
+		// Start background keepalive goroutine.
+		go func() {
+			ticker := time.NewTicker(cfg.HeartbeatInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if err := keepAlive(ctx); err != nil {
+						slog.Error("worker keepalive failed", "error", err.Error())
+					}
+				}
+			}
+		}()
+
+		slog.Info("worker etcd registration enabled", "worker_id", cfg.WorkerID)
+	}
 
 	runLoopFn(ctx, runner, hb, cfg, newWallClockTicker, time.Now)
 

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -17,6 +18,7 @@ import (
 	domaininstance "orbitjob/internal/core/domain/instance"
 	corepostgres "orbitjob/internal/core/store/postgres"
 	"orbitjob/internal/platform/config"
+	"orbitjob/internal/platform/election"
 	"orbitjob/internal/platform/health"
 	platformlogger "orbitjob/internal/platform/logger"
 	"orbitjob/internal/platform/metrics"
@@ -53,6 +55,9 @@ var (
 	buildRunnerFn = func(db *sql.DB) tickRunner {
 		repo := corepostgres.NewDispatchRepository(db)
 		return dispatch.NewTickUseCase(repo)
+	}
+	buildElectionFn = func(cfg election.EtcdConfig) (election.Coordinator, error) {
+		return election.NewEtcd(cfg)
 	}
 	runLoopFn          = runLoop
 	newEventListenerFn = corepostgres.NewEventListener
@@ -92,15 +97,18 @@ func loadDispatcherRuntimeConfig() (runtimeConfig, error) {
 	}, nil
 }
 
-func quickTick(ctx context.Context, runner tickRunner, cfg runtimeConfig, now time.Time, ids []string) int {
+func quickTick(ctx context.Context, runner tickRunner, cfg runtimeConfig, now time.Time, ids []string, coord election.Coordinator) int {
 	var total int
 	for _, tid := range ids {
-		spec := domaininstance.ClaimSpec{
-			TenantID:       tid,
-			LeaseExpiresAt: now.Add(cfg.LeaseDuration),
-			Now:            now,
-		}
-		handled, err := runner.QuickTick(ctx, spec, cfg.BatchSize)
+		lockName := tenantLockName(tid)
+		handled, err := withTenantLock(ctx, coord, lockName, func() (int, error) {
+			spec := domaininstance.ClaimSpec{
+				TenantID:       tid,
+				LeaseExpiresAt: now.Add(cfg.LeaseDuration),
+				Now:            now,
+			}
+			return runner.QuickTick(ctx, spec, cfg.BatchSize)
+		})
 		if err != nil {
 			slog.Error("dispatcher quick tick failed", "tenant_id", tid, "error", err.Error())
 			continue
@@ -110,7 +118,7 @@ func quickTick(ctx context.Context, runner tickRunner, cfg runtimeConfig, now ti
 	return total
 }
 
-func fullTick(ctx context.Context, runner tickRunner, cfg runtimeConfig, now time.Time, ids []string) int {
+func fullTick(ctx context.Context, runner tickRunner, cfg runtimeConfig, now time.Time, ids []string, coord election.Coordinator) int {
 	if err := runner.RunHousekeeping(ctx, now); err != nil {
 		slog.Error("dispatcher housekeeping failed", "error", err.Error())
 	}
@@ -118,12 +126,15 @@ func fullTick(ctx context.Context, runner tickRunner, cfg runtimeConfig, now tim
 	var total int
 	tickStart := time.Now()
 	for _, tid := range ids {
-		spec := domaininstance.ClaimSpec{
-			TenantID:       tid,
-			LeaseExpiresAt: now.Add(cfg.LeaseDuration),
-			Now:            now,
-		}
-		handled, err := runner.QuickTick(ctx, spec, cfg.BatchSize)
+		lockName := tenantLockName(tid)
+		handled, err := withTenantLock(ctx, coord, lockName, func() (int, error) {
+			spec := domaininstance.ClaimSpec{
+				TenantID:       tid,
+				LeaseExpiresAt: now.Add(cfg.LeaseDuration),
+				Now:            now,
+			}
+			return runner.QuickTick(ctx, spec, cfg.BatchSize)
+		})
 		if err != nil {
 			slog.Error("dispatcher full tick failed", "tenant_id", tid, "error", err.Error())
 			continue
@@ -134,6 +145,36 @@ func fullTick(ctx context.Context, runner tickRunner, cfg runtimeConfig, now tim
 	return total
 }
 
+// tenantLockName returns the etcd lock key for a tenant.
+func tenantLockName(tenantID string) string {
+	return "/orbitjob/tenants/" + tenantID + "/dispatcher/lock/housekeeping"
+}
+
+// withTenantLock executes fn under an optional etcd distributed lock.
+// When coord is nil (PG-only mode), fn runs directly.
+// When the lock is held by another dispatcher, ErrLocked is swallowed
+// and (0, nil) is returned so the tenant is skipped gracefully.
+func withTenantLock(ctx context.Context, coord election.Coordinator, lockName string, fn func() (int, error)) (int, error) {
+	if coord == nil {
+		return fn()
+	}
+	unlock, err := coord.TryLock(ctx, lockName)
+	if err != nil {
+		if err == election.ErrLocked {
+			metrics.DispatcherLockContentionTotal.WithLabelValues(lockName).Inc()
+			slog.Debug("dispatcher lock held by another instance", "lock", lockName)
+			return 0, nil
+		}
+		return 0, err
+	}
+	defer func() {
+		if uerr := unlock(); uerr != nil {
+			slog.Error("dispatcher unlock failed", "lock", lockName, "error", uerr.Error())
+		}
+	}()
+	return fn()
+}
+
 func runLoop(
 	ctx context.Context,
 	runner tickRunner,
@@ -141,6 +182,7 @@ func runLoop(
 	eventCh <-chan struct{},
 	newTicker func(time.Duration) schedulerTicker,
 	nowFn func() time.Time,
+	coord election.Coordinator,
 ) {
 	ticker := newTicker(cfg.TickInterval)
 	defer ticker.Stop()
@@ -189,7 +231,7 @@ func runLoop(
 
 		select {
 		case <-eventCh:
-			handled := quickTick(ctx, runner, cfg, now, ids)
+			handled := quickTick(ctx, runner, cfg, now, ids, coord)
 			if handled > 0 {
 				slog.Info("dispatcher quick tick completed", "dispatched", handled)
 				idleCount = 0
@@ -199,7 +241,7 @@ func runLoop(
 			continue
 
 		case <-ticker.Chan():
-			handled := fullTick(ctx, runner, cfg, now, ids)
+			handled := fullTick(ctx, runner, cfg, now, ids, coord)
 			if handled > 0 {
 				slog.Info("dispatcher full tick completed", "dispatched", handled)
 				idleCount = 0
@@ -220,7 +262,7 @@ func runLoop(
 			slog.Info("dispatcher draining, running final tick")
 			drainCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			now := nowFn().UTC()
-			if handled := fullTick(drainCtx, runner, cfg, now, ids); handled > 0 {
+			if handled := fullTick(drainCtx, runner, cfg, now, ids, coord); handled > 0 {
 				slog.Info("dispatcher drain tick completed", "dispatched", handled)
 			}
 			cancel()
@@ -314,7 +356,25 @@ func run(ctx context.Context) error {
 		listenerMu.Unlock()
 	}()
 
-	runLoopFn(ctx, runner, cfg, eventCh, newWallClockTicker, time.Now)
+	// Optional: etcd distributed lock for per-tenant dispatch isolation.
+	var coord election.Coordinator
+	if os.Getenv("ETCD_ENABLED") == "true" {
+		ep := os.Getenv("ETCD_ENDPOINTS")
+		if ep == "" {
+			return fmt.Errorf("ETCD_ENABLED=true but ETCD_ENDPOINTS is empty")
+		}
+		c, err := buildElectionFn(election.EtcdConfig{
+			Endpoints: strings.Split(ep, ","),
+		})
+		if err != nil {
+			return fmt.Errorf("init election: %w", err)
+		}
+		defer func() { _ = c.Close() }()
+		coord = c
+		slog.Info("dispatcher etcd coordination enabled")
+	}
+
+	runLoopFn(ctx, runner, cfg, eventCh, newWallClockTicker, time.Now, coord)
 
 	return nil
 }

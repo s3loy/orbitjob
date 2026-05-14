@@ -21,13 +21,13 @@
 
 ## 什么是 OrbitJob
 
-OrbitJob = Go 原生任务调度库 + PostgreSQL 唯一依赖。
+OrbitJob = Go 原生任务调度库 + PostgreSQL 状态存储 + 可选 etcd 分布式协调层。
 
 设计哲学：**像 `database/sql` 定义 Go 如何访问数据库一样，OrbitJob 定义 Go 如何调度任务**。
 
 核心特性：
 
-- **零外部依赖**：除 PostgreSQL 外无任何中间件（无 Redis、无 Kafka、无 ZooKeeper）
+- **最小外部依赖**：PostgreSQL 是必需的状态存储；etcd 是可选的分布式协调层（用于多实例 HA）
 - **多租户**：RLS（Row Level Security）隔离租户数据
 - **自适应调度**：Scheduler 根据 DB 压力自动调整 batch 大小；Worker 根据队列深度自动调整并发
 - **Exactly-Once 语义**：基于 PostgreSQL `FOR UPDATE SKIP LOCKED` 的分布式 claim
@@ -47,7 +47,7 @@ OrbitJob = Go 原生任务调度库 + PostgreSQL 唯一依赖。
                                                │
                                         ┌──────┴──────┐
                                         │ PostgreSQL  │
-                                        │  (唯一依赖)  │
+                                        │ (状态存储)   │
                                         └─────────────┘
 ```
 
