@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -425,7 +426,7 @@ func TestRun_SuccessInvokesRunLoop(t *testing.T) {
 	newLoggerFn = func(string) *slog.Logger { return slog.Default() }
 	openDBFn = func(string) (*sql.DB, error) { return db, nil }
 	pingDBFn = func(context.Context, *sql.DB) error { return nil }
-	buildRunnerFn = func(*sql.DB) tickRunner { return &stubTickRunner{} }
+	buildRunnerFn = func(*sql.DB, *http.Client) tickRunner { return &stubTickRunner{} }
 	buildHeartbeaterFn = func(*sql.DB) heartbeater { return &stubHeartbeater{} }
 
 	runLoopCalled := false

@@ -380,3 +380,31 @@ func labelValueList(labels map[string]any) []string {
 	}
 	return values
 }
+
+// CountQueueDepth returns the number of instances in 'dispatched' status
+// for the given tenant. This is used by the worker adaptive capacity controller.
+func (r *ExecutorRepository) CountQueueDepth(ctx context.Context, tenantID string) (int64, error) {
+	var count int64
+	err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM job_instances
+		WHERE tenant_id = $1 AND status = 'dispatched'
+	`, tenantID).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count queue depth: %w", err)
+	}
+	return count, nil
+}
+
+// CountActiveWorkers returns the number of workers currently online for the
+// given tenant. This is used by the worker adaptive capacity controller.
+func (r *ExecutorRepository) CountActiveWorkers(ctx context.Context, tenantID string) (int64, error) {
+	var count int64
+	err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM workers
+		WHERE tenant_id = $1 AND status = 'online'
+	`, tenantID).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count active workers: %w", err)
+	}
+	return count, nil
+}
