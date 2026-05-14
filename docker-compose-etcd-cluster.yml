@@ -1,0 +1,111 @@
+# 3-node etcd cluster for benchmark testing
+# Usage: docker compose -f docker-compose-etcd-cluster.yml up -d
+
+services:
+  etcd-1:
+    image: quay.io/coreos/etcd:v3.5.21
+    ports:
+      - "2379:2379"
+      - "2380:2380"
+    environment:
+      - ETCD_NAME=etcd-1
+      - ETCD_DATA_DIR=/etcd-data
+      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
+      - ETCD_ADVERTISE_CLIENT_URLS=http://localhost:2379
+      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
+      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd-1:2380
+      - ETCD_INITIAL_CLUSTER=etcd-1=http://etcd-1:2380,etcd-2=http://etcd-2:2380,etcd-3=http://etcd-3:2380
+      - ETCD_INITIAL_CLUSTER_TOKEN=orbitjob-cluster
+      - ETCD_INITIAL_CLUSTER_STATE=new
+      - ETCD_QUOTA_BACKEND_BYTES=536870912
+    volumes:
+      - etcd1_data:/etcd-data
+    networks:
+      - etcd-cluster
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512MB
+    restart: unless-stopped
+
+  etcd-2:
+    image: quay.io/coreos/etcd:v3.5.21
+    ports:
+      - "22379:2379"
+      - "22380:2380"
+    environment:
+      - ETCD_NAME=etcd-2
+      - ETCD_DATA_DIR=/etcd-data
+      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
+      - ETCD_ADVERTISE_CLIENT_URLS=http://localhost:22379
+      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
+      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd-2:2380
+      - ETCD_INITIAL_CLUSTER=etcd-1=http://etcd-1:2380,etcd-2=http://etcd-2:2380,etcd-3=http://etcd-3:2380
+      - ETCD_INITIAL_CLUSTER_TOKEN=orbitjob-cluster
+      - ETCD_INITIAL_CLUSTER_STATE=new
+      - ETCD_QUOTA_BACKEND_BYTES=536870912
+    volumes:
+      - etcd2_data:/etcd-data
+    networks:
+      - etcd-cluster
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512MB
+    restart: unless-stopped
+
+  etcd-3:
+    image: quay.io/coreos/etcd:v3.5.21
+    ports:
+      - "32379:2379"
+      - "32380:2380"
+    environment:
+      - ETCD_NAME=etcd-3
+      - ETCD_DATA_DIR=/etcd-data
+      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
+      - ETCD_ADVERTISE_CLIENT_URLS=http://localhost:32379
+      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
+      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd-3:2380
+      - ETCD_INITIAL_CLUSTER=etcd-1=http://etcd-1:2380,etcd-2=http://etcd-2:2380,etcd-3=http://etcd-3:2380
+      - ETCD_INITIAL_CLUSTER_TOKEN=orbitjob-cluster
+      - ETCD_INITIAL_CLUSTER_STATE=new
+      - ETCD_QUOTA_BACKEND_BYTES=536870912
+    volumes:
+      - etcd3_data:/etcd-data
+    networks:
+      - etcd-cluster
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512MB
+    restart: unless-stopped
+
+networks:
+  etcd-cluster:
+    driver: bridge
+
+volumes:
+  etcd1_data:
+  etcd2_data:
+  etcd3_data:

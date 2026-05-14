@@ -4,3 +4,4 @@
 
 推荐阅读：
 - `baseline-2026-05-05.md`
+- `etcd-comparison-2026-05-15.md` — etcd 分布式协调层引入前后性能对比（memory vs 单节点 etcd vs 三节点 etcd）

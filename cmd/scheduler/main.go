@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 	domain "orbitjob/internal/core/domain"
 	corepostgres "orbitjob/internal/core/store/postgres"
 	"orbitjob/internal/platform/config"
+	"orbitjob/internal/platform/election"
 	"orbitjob/internal/platform/health"
 	platformlogger "orbitjob/internal/platform/logger"
 	"orbitjob/internal/platform/metrics"
@@ -47,6 +50,9 @@ var (
 	buildRunnerFn = func(db *sql.DB) tickRunner {
 		repo := corepostgres.NewSchedulerRepository(db)
 		return schedule.NewTickUseCase(repo, corepostgres.ClassifyError)
+	}
+	buildElectionFn = func(cfg election.EtcdConfig) (election.Coordinator, error) {
+		return election.NewEtcd(cfg)
 	}
 	runLoopFn = runLoop
 )
@@ -94,7 +100,7 @@ func runLoop(
 	runner tickRunner,
 	probe func(context.Context) (time.Duration, error),
 	queueDepth func(context.Context) (int64, error),
-	cfg runtimeConfig,
+	cfg *runtimeConfig,
 	newTicker func(time.Duration) schedulerTicker,
 	nowFn func() time.Time,
 ) {
@@ -138,6 +144,7 @@ func runLoop(
 	lastCounts := schedule.BatchCounts{}
 	mainTicker := newTicker(cfg.TickInterval)
 	defer mainTicker.Stop()
+	currentTickInterval := cfg.TickInterval
 
 	// Idle backoff state.
 	idleCount := 0
@@ -149,6 +156,7 @@ func runLoop(
 		if isLongInterval {
 			mainTicker.Stop()
 			mainTicker = newTicker(cfg.TickInterval)
+			currentTickInterval = cfg.TickInterval
 			isLongInterval = false
 			metrics.SchedulerIntervalMode.Set(0)
 			slog.Info("scheduler switching back to short interval", "interval_sec", cfg.TickInterval.Seconds())
@@ -156,6 +164,16 @@ func runLoop(
 	}
 
 	for {
+		// Hot reload: recreate ticker if interval changed.
+		if cfg.TickInterval != currentTickInterval {
+			mainTicker.Stop()
+			mainTicker = newTicker(cfg.TickInterval)
+			currentTickInterval = cfg.TickInterval
+			isLongInterval = false
+			metrics.SchedulerIntervalMode.Set(0)
+			slog.Info("scheduler tick interval reloaded", "interval_sec", cfg.TickInterval.Seconds())
+		}
+
 		start := time.Now()
 		now := nowFn().UTC()
 
@@ -305,6 +323,23 @@ func runLoop(
 	}
 }
 
+func watchSchedulerConfig(ctx context.Context, watcher config.Watcher, cfg *runtimeConfig) {
+	go func() {
+		_ = watcher.Watch(ctx, "/orbitjob/config/scheduler/batch_size_max", func(v string) {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				cfg.BatchSizeMax = n
+				slog.Info("scheduler config updated", "key", "batch_size_max", "value", n)
+			}
+		})
+	}()
+	_ = watcher.Watch(ctx, "/orbitjob/config/scheduler/tick_interval_sec", func(v string) {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.TickInterval = time.Duration(n) * time.Second
+			slog.Info("scheduler config updated", "key", "tick_interval_sec", "value", n)
+		}
+	})
+}
+
 func run(ctx context.Context) error {
 	if err := loadDotenvFn(); err != nil {
 		return err
@@ -353,7 +388,43 @@ func run(ctx context.Context) error {
 	queueDepth := func(ctx context.Context) (int64, error) {
 		return repo.CountActiveInstances(ctx)
 	}
-	runLoopFn(ctx, runner, probe, queueDepth, cfg, newWallClockTicker, time.Now)
+
+	// Optional: etcd leader election for distributed HA.
+	if os.Getenv("ETCD_ENABLED") == "true" {
+		ep := os.Getenv("ETCD_ENDPOINTS")
+		if ep == "" {
+			return fmt.Errorf("ETCD_ENABLED=true but ETCD_ENDPOINTS is empty")
+		}
+		coord, err := buildElectionFn(election.EtcdConfig{
+			Endpoints: strings.Split(ep, ","),
+		})
+		if err != nil {
+			return fmt.Errorf("init election: %w", err)
+		}
+		defer func() { _ = coord.Close() }()
+
+		leaderCtx, err := coord.Campaign(ctx, "scheduler-leader")
+		if err != nil {
+			return fmt.Errorf("campaign: %w", err)
+		}
+		slog.Info("scheduler became leader")
+
+		// Start config watcher for hot reload.
+		watcher, err := config.NewEtcdWatcher(strings.Split(ep, ","))
+		if err != nil {
+			slog.Warn("scheduler config watcher failed to start", "error", err.Error())
+		} else {
+			defer func() { _ = watcher.Close() }()
+			go watchSchedulerConfig(leaderCtx, watcher, &cfg)
+		}
+
+		runLoopFn(leaderCtx, runner, probe, queueDepth, &cfg, newWallClockTicker, time.Now)
+		slog.Warn("scheduler lost leadership, exiting")
+		return nil
+	}
+
+	// PG-only mode: run directly (single-instance behaviour).
+	runLoopFn(ctx, runner, probe, queueDepth, &cfg, newWallClockTicker, time.Now)
 
 	return nil
 }

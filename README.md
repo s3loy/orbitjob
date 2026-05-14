@@ -9,7 +9,7 @@
 
 ![Stone Badge](https://stone.professorlee.work/api/stone/s3loy/orbitjob)
 
-Go 任务调度库。PostgreSQL 唯一外部依赖
+Go 任务调度库。PostgreSQL 为唯一必需外部依赖，etcd 为可选分布式协调层
 
 可作为 library 嵌入 Go 应用，也可独立部署
 

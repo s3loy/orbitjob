@@ -4,7 +4,7 @@
 
 本文档定义 OrbitJob execution plane 的数据模型、状态语义与组件行为契约，为 scheduler、dispatcher、worker 之间的协作提供确定性规范。
 
-> 权威来源：项目架构文档 · 更新时间 2026-05-09
+> 权威来源：项目架构文档 (`OrbitJob/docs/architecture.md`) · 更新时间 2026-05-14
 
 ## 当前实现状态（2026-05-14）
 
