@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	domain "orbitjob/internal/core/domain"
 	corepostgres "orbitjob/internal/core/store/postgres"
 	"orbitjob/internal/platform/config"
+	"orbitjob/internal/platform/election"
 	"orbitjob/internal/platform/health"
 	platformlogger "orbitjob/internal/platform/logger"
 	"orbitjob/internal/platform/metrics"
@@ -47,6 +49,9 @@ var (
 	buildRunnerFn = func(db *sql.DB) tickRunner {
 		repo := corepostgres.NewSchedulerRepository(db)
 		return schedule.NewTickUseCase(repo, corepostgres.ClassifyError)
+	}
+	buildElectionFn = func(cfg election.EtcdConfig) (election.Coordinator, error) {
+		return election.NewEtcd(cfg)
 	}
 	runLoopFn = runLoop
 )
@@ -353,6 +358,32 @@ func run(ctx context.Context) error {
 	queueDepth := func(ctx context.Context) (int64, error) {
 		return repo.CountActiveInstances(ctx)
 	}
+
+	// Optional: etcd leader election for distributed HA.
+	if os.Getenv("ETCD_ENABLED") == "true" {
+		ep := os.Getenv("ETCD_ENDPOINTS")
+		if ep == "" {
+			return fmt.Errorf("ETCD_ENABLED=true but ETCD_ENDPOINTS is empty")
+		}
+		coord, err := buildElectionFn(election.EtcdConfig{
+			Endpoints: strings.Split(ep, ","),
+		})
+		if err != nil {
+			return fmt.Errorf("init election: %w", err)
+		}
+		defer func() { _ = coord.Close() }()
+
+		leaderCtx, err := coord.Campaign(ctx, "scheduler-leader")
+		if err != nil {
+			return fmt.Errorf("campaign: %w", err)
+		}
+		slog.Info("scheduler became leader")
+		runLoopFn(leaderCtx, runner, probe, queueDepth, cfg, newWallClockTicker, time.Now)
+		slog.Warn("scheduler lost leadership, exiting")
+		return nil
+	}
+
+	// PG-only mode: run directly (single-instance behaviour).
 	runLoopFn(ctx, runner, probe, queueDepth, cfg, newWallClockTicker, time.Now)
 
 	return nil

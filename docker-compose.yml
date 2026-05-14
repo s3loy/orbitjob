@@ -209,6 +209,38 @@ services:
           memory: 512MB
     stop_grace_period: 45s
 
+  # ── etcd (optional distributed coordination) ────────────────────
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.21
+    command:
+      - etcd
+      - --name=etcd-1
+      - --data-dir=/etcd-data
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://etcd:2379
+      - --initial-advertise-peer-urls=http://0.0.0.0:2380
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --initial-cluster=etcd-1=http://0.0.0.0:2380
+      - --initial-cluster-token=orbitjob-cluster
+      - --initial-cluster-state=new
+      - --quota-backend-bytes=536870912
+    volumes:
+      - etcd_data:/etcd-data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512MB
+    restart: unless-stopped
+
   # ── Prometheus ─────────────────────────────────────────────────
   prometheus:
     image: prom/prometheus:v3.3.1
@@ -283,3 +315,4 @@ volumes:
   prometheus_data:
   loki_data:
   grafana_data:
+  etcd_data:
