@@ -5,12 +5,15 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
+
+	"orbitjob/internal/core/app/execute"
 	domainworker "orbitjob/internal/core/domain/worker"
 )
 
@@ -425,7 +428,7 @@ func TestRun_SuccessInvokesRunLoop(t *testing.T) {
 	newLoggerFn = func(string) *slog.Logger { return slog.Default() }
 	openDBFn = func(string) (*sql.DB, error) { return db, nil }
 	pingDBFn = func(context.Context, *sql.DB) error { return nil }
-	buildRunnerFn = func(*sql.DB) tickRunner { return &stubTickRunner{} }
+	buildRunnerFn = func(*sql.DB, *http.Client) tickRunner { return &stubTickRunner{} }
 	buildHeartbeaterFn = func(*sql.DB) heartbeater { return &stubHeartbeater{} }
 
 	runLoopCalled := false
@@ -469,4 +472,145 @@ func TestNewWallClockTicker_ChanAndStop(t *testing.T) {
 		t.Fatal("expected ticker channel to be non-nil")
 	}
 	ticker.Stop()
+}
+
+// ---------------------------------------------------------------------------
+// adaptiveTickRunner tests
+// ---------------------------------------------------------------------------
+
+func TestAdaptiveTickRunner_ProbeAndQuery(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	inner := &stubTickRunner{handled: 3}
+	ac := execute.NewAdaptiveCapacity(10, 3)
+	dl := execute.NewDynamicLease(10*time.Second, 5*time.Minute, 0.1)
+
+	runner := &adaptiveTickRunner{
+		inner:        inner,
+		db:           db,
+		adaptiveCap:  ac,
+		dynamicLease: dl,
+	}
+
+	mock.ExpectPing()
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM job_instances").WithArgs("t1").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(10))
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM workers").WithArgs("t1").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
+
+	n, err := runner.RunOnce(context.Background(), "t1", "w1", 1, 60*time.Second, map[string]any{})
+	if err != nil {
+		t.Fatalf("RunOnce() error = %v", err)
+	}
+	if n != 3 {
+		t.Fatalf("expected n=3, got %d", n)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sqlmock expectations: %v", err)
+	}
+}
+
+type capturingTickRunner struct {
+	stubTickRunner
+	lastLimit        int
+	lastLease        time.Duration
+}
+
+func (c *capturingTickRunner) RunOnce(ctx context.Context, tenantID, workerID string, limit int, leaseDuration time.Duration, labels map[string]any) (int, error) {
+	c.lastLimit = limit
+	c.lastLease = leaseDuration
+	return c.stubTickRunner.RunOnce(ctx, tenantID, workerID, limit, leaseDuration, labels)
+}
+
+func TestAdaptiveTickRunner_AdaptiveCapNil(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	inner := &capturingTickRunner{}
+
+	runner := &adaptiveTickRunner{
+		inner:       inner,
+		db:          db,
+		adaptiveCap: nil,
+	}
+
+	mock.ExpectPing()
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM job_instances").WithArgs("t1").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM workers").WithArgs("t1").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+
+	_, err = runner.RunOnce(context.Background(), "t1", "w1", 5, 60*time.Second, map[string]any{})
+	if err != nil {
+		t.Fatalf("RunOnce() error = %v", err)
+	}
+	if inner.lastLimit != 5 {
+		t.Fatalf("expected limit=5 when adaptiveCap is nil, got %d", inner.lastLimit)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sqlmock expectations: %v", err)
+	}
+}
+
+func TestAdaptiveTickRunner_DynamicLeaseNil(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	inner := &capturingTickRunner{}
+
+	runner := &adaptiveTickRunner{
+		inner:        inner,
+		db:           db,
+		dynamicLease: nil,
+	}
+
+	mock.ExpectPing()
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM job_instances").WithArgs("t1").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM workers").WithArgs("t1").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+
+	_, err = runner.RunOnce(context.Background(), "t1", "w1", 1, 120*time.Second, map[string]any{})
+	if err != nil {
+		t.Fatalf("RunOnce() error = %v", err)
+	}
+	if inner.lastLease != 120*time.Second {
+		t.Fatalf("expected lease=120s when dynamicLease is nil, got %s", inner.lastLease)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sqlmock expectations: %v", err)
+	}
+}
+
+func TestAdaptiveTickRunner_DBProbeError(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	inner := &stubTickRunner{handled: 1}
+	runner := &adaptiveTickRunner{
+		inner: inner,
+		db:    db,
+	}
+
+	mock.ExpectPing().WillReturnError(errors.New("ping boom"))
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM job_instances").WithArgs("t1").WillReturnError(errors.New("query boom"))
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM workers").WithArgs("t1").WillReturnError(errors.New("query boom"))
+
+	n, err := runner.RunOnce(context.Background(), "t1", "w1", 1, 60*time.Second, map[string]any{})
+	if err != nil {
+		t.Fatalf("RunOnce() error = %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expected n=1, got %d", n)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sqlmock expectations: %v", err)
+	}
 }

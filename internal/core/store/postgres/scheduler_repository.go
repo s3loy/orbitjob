@@ -5,11 +5,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
 
 	"orbitjob/internal/core/app/schedule"
+	domain "orbitjob/internal/core/domain"
 	tenant "orbitjob/internal/core/domain/tenant"
 	"orbitjob/internal/platform/metrics"
 	"orbitjob/internal/platform/scan"
@@ -34,6 +36,92 @@ type dueCronJobRecord struct {
 
 func NewSchedulerRepository(db *sql.DB) *SchedulerRepository {
 	return &SchedulerRepository{db: db}
+}
+
+// scheduleOneJobInTx processes a single due job within an existing transaction.
+// It returns the result, a flag indicating whether the job was processed (not quota-skipped),
+// and any error.
+func scheduleOneJobInTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	now time.Time,
+	job dueCronJobRecord,
+	decide func(time.Time, schedule.DueCronJob) (schedule.ScheduleDecision, error),
+) (schedule.ScheduledOneResult, bool, error) {
+	// Set tenant context for RLS
+	if _, err := tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", job.TenantID); err != nil {
+		return schedule.ScheduledOneResult{}, false, fmt.Errorf("set tenant context: %w", err)
+	}
+
+	decision, err := decide(now, schedule.DueCronJob{
+		CronExpr:      job.CronExpr,
+		Timezone:      job.Timezone,
+		MisfirePolicy: job.MisfirePolicy,
+		NextRunAt:     job.NextRunAt,
+	})
+	if err != nil {
+		return schedule.ScheduledOneResult{}, false, fmt.Errorf("decide schedule policy: %w", err)
+	}
+
+	var runID, traceID string
+	if decision.CreateInstance {
+		if decision.ScheduledAt == nil {
+			return schedule.ScheduledOneResult{}, false, fmt.Errorf("scheduled_at is required when CreateInstance=true")
+		}
+
+		if exceeded, err := checkConcurrentInstanceQuota(ctx, tx, job.TenantID); err != nil {
+			return schedule.ScheduledOneResult{}, false, err
+		} else if exceeded {
+			// Quota exceeded: cursor still advances, but no instance created.
+			err = updateJobScheduleCursor(ctx, tx, job, decision.NextRunAt, decision.ScheduledAt)
+			if err != nil {
+				return schedule.ScheduledOneResult{}, false, err
+			}
+			return schedule.ScheduledOneResult{JobID: job.ID, TenantID: job.TenantID, Created: false, NextRunAt: decision.NextRunAt}, false, nil
+		}
+
+		runID, traceID, err = insertScheduledInstance(ctx, tx, job, *decision.ScheduledAt)
+		if err != nil {
+			return schedule.ScheduledOneResult{}, false, err
+		}
+		metrics.ScheduleLag.Observe(now.Sub(*decision.ScheduledAt).Seconds())
+
+		diffBytes, err := json.Marshal(map[string]any{
+			"job_id":         job.ID,
+			"trigger_source": "schedule",
+			"scheduled_at":   decision.ScheduledAt,
+		})
+		if err != nil {
+			return schedule.ScheduledOneResult{}, false, fmt.Errorf("marshal audit diff: %w", err)
+		}
+		if _, err = tx.ExecContext(ctx, `
+			INSERT INTO audit_events (tenant_id, actor_type, actor_id, event_type, resource_type, resource_id, diff)
+			VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+		`,
+			job.TenantID,
+			tenant.ActorTypeSystem,
+			"scheduler",
+			tenant.EventTypeInstanceCreated,
+			tenant.ResourceTypeInstance,
+			runID,
+			string(diffBytes),
+		); err != nil {
+			return schedule.ScheduledOneResult{}, false, fmt.Errorf("insert audit event: %w", err)
+		}
+	}
+
+	if err := updateJobScheduleCursor(ctx, tx, job, decision.NextRunAt, decision.ScheduledAt); err != nil {
+		return schedule.ScheduledOneResult{}, false, err
+	}
+
+	return schedule.ScheduledOneResult{
+		JobID:     job.ID,
+		TenantID:  job.TenantID,
+		RunID:     runID,
+		TraceID:   traceID,
+		Created:   decision.CreateInstance,
+		NextRunAt: decision.NextRunAt,
+	}, true, nil
 }
 
 // ScheduleOneDueCron claims one due cron job, applies scheduling policy, and persists cursor/instance atomically.
@@ -67,84 +155,211 @@ func (r *SchedulerRepository) ScheduleOneDueCron(
 		return schedule.ScheduledOneResult{}, false, nil
 	}
 
-	// Set tenant context for RLS
-	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", job.TenantID); err != nil {
-		return schedule.ScheduledOneResult{}, false, fmt.Errorf("set tenant context: %w", err)
-	}
-
-	decision, err := decide(now, schedule.DueCronJob{
-		CronExpr:      job.CronExpr,
-		Timezone:      job.Timezone,
-		MisfirePolicy: job.MisfirePolicy,
-		NextRunAt:     job.NextRunAt,
-	})
-	if err != nil {
-		return schedule.ScheduledOneResult{}, false, fmt.Errorf("decide schedule policy: %w", err)
-	}
-
-	var runID, traceID string
-	if decision.CreateInstance {
-		if decision.ScheduledAt == nil {
-			return schedule.ScheduledOneResult{}, false, fmt.Errorf("scheduled_at is required when CreateInstance=true")
-		}
-
-			if exceeded, err := checkConcurrentInstanceQuota(ctx, tx, job.TenantID); err != nil {
-				return schedule.ScheduledOneResult{}, false, err
-			} else if exceeded {
-				if rbErr := tx.Rollback(); rbErr != nil {
-					return schedule.ScheduledOneResult{}, false, fmt.Errorf("rollback on quota exceeded: %w", rbErr)
-				}
-				return schedule.ScheduledOneResult{Created: false}, false, nil
-			}
-
-
-		runID, traceID, err = insertScheduledInstance(ctx, tx, job, *decision.ScheduledAt)
-		if err != nil {
-			return schedule.ScheduledOneResult{}, false, err
-		}
-		metrics.ScheduleLag.Observe(now.Sub(*decision.ScheduledAt).Seconds())
-
-		diffBytes, err := json.Marshal(map[string]any{
-			"job_id":         job.ID,
-			"trigger_source": "schedule",
-			"scheduled_at":   decision.ScheduledAt,
-		})
-		if err != nil {
-			return schedule.ScheduledOneResult{}, false, fmt.Errorf("marshal audit diff: %w", err)
-		}
-		if _, err = tx.ExecContext(ctx, `
-			INSERT INTO audit_events (tenant_id, actor_type, actor_id, event_type, resource_type, resource_id, diff)
-			VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-		`,
-			job.TenantID,
-			tenant.ActorTypeSystem,
-			"scheduler",
-			tenant.EventTypeInstanceCreated,
-			tenant.ResourceTypeInstance,
-			runID,
-			string(diffBytes),
-		); err != nil {
-			return schedule.ScheduledOneResult{}, false, fmt.Errorf("insert audit event: %w", err)
-		}
-	}
-
-	err = updateJobScheduleCursor(ctx, tx, job, decision.NextRunAt, decision.ScheduledAt)
+	result, processed, err := scheduleOneJobInTx(ctx, tx, now, job, decide)
 	if err != nil {
 		return schedule.ScheduledOneResult{}, false, err
+	}
+	if !processed {
+		// Quota exceeded — rollback since no instance was created and cursor was updated.
+		if rbErr := tx.Rollback(); rbErr != nil {
+			return schedule.ScheduledOneResult{}, false, fmt.Errorf("rollback on quota exceeded: %w", rbErr)
+		}
+		return result, false, nil
 	}
 
 	if err = tx.Commit(); err != nil {
 		return schedule.ScheduledOneResult{}, false, fmt.Errorf("commit scheduler tx: %w", err)
 	}
 
-	return schedule.ScheduledOneResult{
-		JobID:     job.ID,
-		TenantID:  job.TenantID,
-		RunID:     runID,
-		TraceID:   traceID,
-		Created:   decision.CreateInstance,
-		NextRunAt: decision.NextRunAt,
-	}, true, nil
+	return result, true, nil
+}
+
+// ScheduleBatch claims and processes up to limit due cron jobs in sub-batches.
+// Each sub-batch uses a single transaction with SAVEPOINT per job for isolation.
+func (r *SchedulerRepository) ScheduleBatch(
+	ctx context.Context,
+	now time.Time,
+	limit int,
+	decide func(time.Time, schedule.DueCronJob) (schedule.ScheduleDecision, error),
+	classifyError func(error) domain.ErrorClass,
+) (schedule.BatchCounts, error) {
+	if decide == nil {
+		return schedule.BatchCounts{}, fmt.Errorf("decide policy is required")
+	}
+	if limit < 1 {
+		limit = 1
+	}
+
+	const subBatchSize = 50
+	counts := schedule.BatchCounts{}
+
+	for remaining := limit; remaining > 0; {
+		batchLimit := min(remaining, subBatchSize)
+
+		tx, err := r.db.BeginTx(ctx, nil)
+		if err != nil {
+			class := classifyError(err)
+			if class == domain.FatalWorthy {
+				counts.Fatal++
+				counts.Handled++
+				return counts, nil
+			}
+			counts.Backoff++
+			counts.Handled++
+			return counts, nil
+		}
+
+		jobs, err := claimMultipleDueCronJobs(ctx, tx, now, batchLimit)
+		if err != nil {
+			_ = tx.Rollback()
+			class := classifyError(err)
+			if class == domain.FatalWorthy {
+				counts.Fatal++
+				counts.Handled++
+				return counts, nil
+			}
+			counts.Backoff++
+			counts.Handled++
+			return counts, nil
+		}
+		if len(jobs) == 0 {
+			_ = tx.Rollback()
+			return counts, nil
+		}
+
+		for i, job := range jobs {
+			spName := fmt.Sprintf("sp_job_%d", i)
+			if _, err := tx.ExecContext(ctx, "SAVEPOINT "+spName); err != nil {
+				_ = tx.Rollback()
+				counts.Backoff++
+				counts.Handled++
+				return counts, nil
+			}
+
+			result, processed, jobErr := scheduleOneJobInTx(ctx, tx, now, job, decide)
+			if jobErr != nil {
+				if _, rbErr := tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT "+spName); rbErr != nil {
+					_ = tx.Rollback()
+					counts.Backoff++
+					counts.Handled++
+					return counts, nil
+				}
+				class := classifyError(jobErr)
+				switch class {
+				case domain.FatalWorthy:
+					counts.Fatal++
+					counts.Handled++
+					_ = tx.Rollback()
+					return counts, nil
+				case domain.BackoffWorthy:
+					counts.Backoff++
+					counts.Handled++
+					continue
+				case domain.SkipWorthy:
+					counts.Skipped++
+					counts.Handled++
+					continue
+				default:
+					_ = tx.Rollback()
+					return counts, jobErr
+				}
+			}
+
+			if !processed {
+				// Quota exceeded — cursor was updated, keep it.
+				if _, err := tx.ExecContext(ctx, "RELEASE SAVEPOINT "+spName); err != nil {
+					_ = tx.Rollback()
+					counts.Backoff++
+					counts.Handled++
+					return counts, nil
+				}
+				counts.Handled++
+				continue
+			}
+
+			if _, err := tx.ExecContext(ctx, "RELEASE SAVEPOINT "+spName); err != nil {
+				_ = tx.Rollback()
+				counts.Backoff++
+				counts.Handled++
+				return counts, nil
+			}
+
+			counts.Handled++
+			if result.Created {
+				counts.Scheduled++
+				if result.TraceID != "" {
+					slog.InfoContext(ctx, "instance scheduled",
+						"trace_id", result.TraceID,
+						"run_id", result.RunID,
+						"job_id", result.JobID,
+					)
+				}
+			}
+		}
+
+		if err := tx.Commit(); err != nil {
+			class := classifyError(err)
+			if class == domain.FatalWorthy {
+				counts.Fatal++
+				counts.Handled++
+				return counts, nil
+			}
+			counts.Backoff++
+			counts.Handled++
+			return counts, nil
+		}
+
+		remaining -= len(jobs)
+		if len(jobs) < batchLimit {
+			break
+		}
+	}
+
+	return counts, nil
+}
+
+func claimMultipleDueCronJobs(ctx context.Context, tx *sql.Tx, now time.Time, limit int) ([]dueCronJobRecord, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id, tenant_id, priority, partition_key, retry_limit, cron_expr, timezone, misfire_policy, next_run_at
+		FROM jobs
+		WHERE status = 'active'
+		  AND trigger_type = 'cron'
+		  AND next_run_at IS NOT NULL
+		  AND next_run_at <= $1
+		  AND deleted_at IS NULL
+		ORDER BY next_run_at ASC, priority DESC, id ASC
+		FOR UPDATE SKIP LOCKED
+		LIMIT $2
+	`, now, limit)
+	if err != nil {
+		return nil, fmt.Errorf("claim multiple due cron jobs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var jobs []dueCronJobRecord
+	for rows.Next() {
+		var out dueCronJobRecord
+		var partitionKey sql.NullString
+		if err := rows.Scan(
+			&out.ID,
+			&out.TenantID,
+			&out.Priority,
+			&partitionKey,
+			&out.RetryLimit,
+			&out.CronExpr,
+			&out.Timezone,
+			&out.MisfirePolicy,
+			&out.NextRunAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan due cron job: %w", err)
+		}
+		out.PartitionKey = scan.NullStringPtr(partitionKey)
+		jobs = append(jobs, out)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate due cron jobs: %w", err)
+	}
+	return jobs, nil
 }
 
 func claimOneDueCronJob(ctx context.Context, tx *sql.Tx, now time.Time) (dueCronJobRecord, bool, error) {
@@ -256,7 +471,7 @@ func updateJobScheduleCursor(
 
 func checkConcurrentInstanceQuota(ctx context.Context, tx *sql.Tx, tenantID string) (bool, error) {
 	var raw []byte
-	err := tx.QueryRowContext(ctx, `SELECT quotas FROM tenants WHERE id = $1 FOR UPDATE`, tenantID).Scan(&raw)
+	err := tx.QueryRowContext(ctx, `SELECT quotas FROM tenants WHERE id = $1`, tenantID).Scan(&raw)
 	if err == sql.ErrNoRows {
 		return false, nil
 	}
@@ -287,6 +502,20 @@ func checkConcurrentInstanceQuota(ctx context.Context, tx *sql.Tx, tenantID stri
 		return false, fmt.Errorf("count concurrent instances: %w", err)
 	}
 	return count >= maxConc, nil
+}
+
+// CountActiveInstances returns the total number of instances in active states
+// (pending, retry_wait, dispatched, running) across all tenants.
+func (r *SchedulerRepository) CountActiveInstances(ctx context.Context) (int64, error) {
+	var count int64
+	err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM job_instances
+		WHERE status IN ('pending', 'retry_wait', 'dispatched', 'running')
+	`).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count active instances: %w", err)
+	}
+	return count, nil
 }
 
 func toFloatInt(v any) (int, bool) {

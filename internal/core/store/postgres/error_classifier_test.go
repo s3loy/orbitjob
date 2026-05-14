@@ -31,8 +31,8 @@ func TestClassifyError(t *testing.T) {
 		{"out of memory", &pq.Error{Code: "53P00"}, domain.FatalWorthy},
 		{"connection failure", &pq.Error{Code: "08006"}, domain.FatalWorthy},
 		{"unable to connect", &pq.Error{Code: "08001"}, domain.FatalWorthy},
-		{"connection refused op", &net.OpError{Op: "dial", Err: &net.DNSError{Err: "no such host", Name: "db"}}, domain.FatalWorthy},
-		{"connection reset syscall", syscall.ECONNREFUSED, domain.FatalWorthy},
+		{"connection refused op", &net.OpError{Op: "dial", Err: &net.DNSError{Err: "no such host", Name: "db"}}, domain.BackoffWorthy},
+		{"connection reset syscall", syscall.ECONNREFUSED, domain.BackoffWorthy},
 		{"unknown pq code", &pq.Error{Code: "99999"}, domain.BackoffWorthy},
 		{"plain error", errors.New("something went wrong"), domain.BackoffWorthy},
 	}

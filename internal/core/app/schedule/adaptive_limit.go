@@ -46,10 +46,11 @@ const (
 	defaultBetaRatio  = 0.2
 )
 
-// UpdateSteady computes the next batch limit using Vegas x Gradient2.
+// UpdateSteady computes the next batch limit using Vegas x Gradient2,
+// then applies backpressure based on downstream queue depth.
 // Returns the new limit and the Vegas dbPressure estimate.
 // The caller must check errClass for FatalWorthy before calling.
-func UpdateSteady(state *ControllerState, probeRTT time.Duration, errClass domain.ErrorClass, maxBatchSize int) (int, float64) {
+func UpdateSteady(state *ControllerState, probeRTT time.Duration, errClass domain.ErrorClass, maxBatchSize int, queueDepth int64) (int, float64) {
 	if state.LongtermRtt == 0 {
 		state.LongtermRtt = probeRTT
 	}
@@ -57,7 +58,8 @@ func UpdateSteady(state *ControllerState, probeRTT time.Duration, errClass domai
 	decay := 1.0 / defaultLongWindow
 	state.LongtermRtt = time.Duration(float64(state.LongtermRtt)*(1-decay) + float64(probeRTT)*decay)
 
-	if state.LongtermRtt == 0 || probeRTT == 0 {
+	const minProbeRTT = time.Millisecond
+	if state.LongtermRtt == 0 || probeRTT < minProbeRTT {
 		return state.Limit, 0
 	}
 
@@ -77,12 +79,16 @@ func UpdateSteady(state *ControllerState, probeRTT time.Duration, errClass domai
 		newLimit = state.Limit
 	}
 
-	if newLimit < 1 {
-		newLimit = 1
+	// Backpressure: throttle when downstream queue is deep.
+	// When queueDepth == maxBatchSize, limit is halved.
+	// When queueDepth >= maxBatchSize*2, limit approaches 1.
+	if queueDepth > 0 {
+		bpFactor := float64(maxBatchSize) / float64(maxBatchSize+int(queueDepth))
+		newLimit = int(float64(newLimit) * bpFactor)
 	}
-	if newLimit > maxBatchSize {
-		newLimit = maxBatchSize
-	}
+
+	newLimit = max(newLimit, 1)
+	newLimit = min(newLimit, maxBatchSize)
 	state.Limit = newLimit
 	return newLimit, dbPressure
 }

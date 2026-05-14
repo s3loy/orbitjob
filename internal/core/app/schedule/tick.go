@@ -2,27 +2,28 @@ package schedule
 
 import (
 	"context"
-	"log/slog"
 	"time"
 
 	domain "orbitjob/internal/core/domain"
 )
 
-type oneJobScheduler interface {
-	ScheduleOneDueCron(
+type batchScheduler interface {
+	ScheduleBatch(
 		ctx context.Context,
 		now time.Time,
+		limit int,
 		decide func(time.Time, DueCronJob) (ScheduleDecision, error),
-	) (ScheduledOneResult, bool, error)
+		classifyError func(error) domain.ErrorClass,
+	) (BatchCounts, error)
 }
 
 // TickUseCase executes one bounded scheduler batch.
 type TickUseCase struct {
-	repo          oneJobScheduler
+	repo          batchScheduler
 	classifyError func(error) domain.ErrorClass
 }
 
-func NewTickUseCase(repo oneJobScheduler, classifyFn func(error) domain.ErrorClass) *TickUseCase {
+func NewTickUseCase(repo batchScheduler, classifyFn func(error) domain.ErrorClass) *TickUseCase {
 	return &TickUseCase{repo: repo, classifyError: classifyFn}
 }
 
@@ -42,44 +43,5 @@ func (uc *TickUseCase) RunBatch(ctx context.Context, now time.Time, limit int) (
 	if limit < 1 {
 		limit = 1
 	}
-
-	counts := BatchCounts{}
-	for i := 0; i < limit; i++ {
-		result, found, err := uc.repo.ScheduleOneDueCron(ctx, now, DecideSchedule)
-		if err != nil {
-			class := uc.classifyError(err)
-			switch class {
-			case domain.FatalWorthy:
-				counts.Fatal++
-				counts.Handled++
-				return counts, nil
-			case domain.BackoffWorthy:
-				counts.Backoff++
-				counts.Handled++
-				continue
-			case domain.SkipWorthy:
-				counts.Skipped++
-				counts.Handled++
-				continue
-			default:
-				return counts, err
-			}
-		}
-		if !found {
-			break
-		}
-		counts.Handled++
-		if result.Created {
-			counts.Scheduled++
-		}
-		if result.TraceID != "" {
-			slog.InfoContext(ctx, "instance scheduled",
-				"trace_id", result.TraceID,
-				"run_id", result.RunID,
-				"job_id", result.JobID,
-			)
-		}
-	}
-
-	return counts, nil
+	return uc.repo.ScheduleBatch(ctx, now, limit, DecideSchedule, uc.classifyError)
 }

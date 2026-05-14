@@ -19,12 +19,19 @@ type executor interface {
 }
 
 type TickUseCase struct {
-	repo     executor
-	handlers map[string]Handler
+	repo         executor
+	handlers     map[string]Handler
+	dynamicLease *DynamicLease
 }
 
 func NewTickUseCase(repo executor, handlers map[string]Handler) *TickUseCase {
 	return &TickUseCase{repo: repo, handlers: handlers}
+}
+
+// SetDynamicLease attaches a dynamic lease controller. When set, RunOnce
+// records task execution durations to feed the lease EMA.
+func (uc *TickUseCase) SetDynamicLease(dl *DynamicLease) {
+	uc.dynamicLease = dl
 }
 
 func (uc *TickUseCase) RunOnce(
@@ -49,21 +56,36 @@ func (uc *TickUseCase) RunOnce(
 	}
 
 	var wg sync.WaitGroup
+	durations := make([]time.Duration, len(tasks))
+	var mu sync.Mutex
 
-	for _, task := range tasks {
+	for i, task := range tasks {
 		wg.Add(1)
-		go func(t AssignedTask) {
+		go func(idx int, t AssignedTask) {
 			defer func() {
 				if r := recover(); r != nil {
 					slog.Error("executeTask panic recovered", "panic", r, "stack", string(debug.Stack()))
 				}
 				wg.Done()
 			}()
-			uc.executeTask(ctx, tenantID, workerID, t, leaseDuration)
-		}(task)
+			d := uc.executeTask(ctx, tenantID, workerID, t, leaseDuration)
+			mu.Lock()
+			durations[idx] = d
+			mu.Unlock()
+		}(i, task)
 	}
 
 	wg.Wait()
+
+	if uc.dynamicLease != nil {
+		for _, d := range durations {
+			if d > 0 {
+				uc.dynamicLease.RecordExecution(d)
+			}
+		}
+		metrics.WorkerLeaseDuration.WithLabelValues(workerID, tenantID).Set(uc.dynamicLease.Current().Seconds())
+	}
+
 	return len(tasks), nil
 }
 
@@ -72,7 +94,9 @@ func (uc *TickUseCase) executeTask(
 	tenantID, workerID string,
 	task AssignedTask,
 	leaseDuration time.Duration,
-) {
+) time.Duration {
+	start := time.Now()
+
 	taskLog := slog.With("instance_id", task.InstanceID)
 	if task.TraceID != nil {
 		taskLog = taskLog.With("trace_id", *task.TraceID)
@@ -84,13 +108,14 @@ func (uc *TickUseCase) executeTask(
 		metrics.ExecutionsTotal.WithLabelValues(task.HandlerType, "unknown_handler").Inc()
 		uc.completeAsFailure(ctx, tenantID, task.InstanceID, workerID, task,
 			"unknown_handler", fmt.Sprintf("no handler registered for type %q", task.HandlerType))
-		return
+		return time.Since(start)
 	}
 
 	metrics.ExecutionsActive.Inc()
 	defer metrics.ExecutionsActive.Dec()
 
 	stopRenew := uc.startLeaseRenewal(ctx, tenantID, task.InstanceID, workerID, leaseDuration)
+	defer stopRenew()
 
 	timeoutDur := time.Duration(task.TimeoutSec) * time.Second
 	timeoutCtx, cancelTimeout := context.WithTimeout(ctx, timeoutDur)
@@ -110,8 +135,6 @@ func (uc *TickUseCase) executeTask(
 	}()
 	cancelTimeout()
 
-	stopRenew()
-
 	metrics.ExecutionsTotal.WithLabelValues(task.HandlerType, result.ResultCode).Inc()
 
 	completeSpec, err := domaininstance.NormalizeComplete(domaininstance.CompleteInput{
@@ -129,7 +152,7 @@ func (uc *TickUseCase) executeTask(
 	})
 	if err != nil {
 		taskLog.Error("normalize complete failed", "error", err.Error())
-		return
+		return time.Since(start)
 	}
 
 	// Use independent context for the DB write. The handler's ctx may already
@@ -140,6 +163,8 @@ func (uc *TickUseCase) executeTask(
 	if err := uc.repo.CompleteInstance(writeCtx, completeSpec); err != nil {
 		taskLog.Error("complete instance failed", "error", err.Error())
 	}
+
+	return time.Since(start)
 }
 
 func (uc *TickUseCase) completeAsFailure(
@@ -197,7 +222,9 @@ func (uc *TickUseCase) startLeaseRenewal(
 				// has time to finish before its lease expires and gets stolen.
 				writeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				newExpiry := time.Now().Add(leaseDuration)
-				_ = uc.repo.ExtendLease(writeCtx, tenantID, instanceID, workerID, newExpiry)
+				if err := uc.repo.ExtendLease(writeCtx, tenantID, instanceID, workerID, newExpiry); err != nil {
+						slog.Warn("final lease extension failed", "instance_id", instanceID, "error", err.Error())
+					}
 				cancel()
 				return
 			case <-ticker.C:

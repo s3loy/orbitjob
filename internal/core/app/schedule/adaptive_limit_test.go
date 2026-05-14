@@ -58,7 +58,7 @@ func (s *discStub) runBatch(ctx context.Context, limit int) (int, domain.ErrorCl
 
 func TestDiscovery_FindsCapacityNoCongestion(t *testing.T) {
 	stub := &discStub{
-		probes: make([]time.Duration, 20),
+		probes: make([]time.Duration, 10),
 	}
 	state := &ControllerState{MaxBatchSize: 500}
 	d := NewDiscovery(stub.probe, stub.runBatch, state)
@@ -78,9 +78,6 @@ func TestDiscovery_FindsCapacityNoCongestion(t *testing.T) {
 func TestDiscovery_StopsOnCongestion(t *testing.T) {
 	stub := &discStub{
 		probes: []time.Duration{
-			1 * time.Millisecond,
-			1 * time.Millisecond,
-			1 * time.Millisecond,
 			1 * time.Millisecond,
 			1 * time.Millisecond,
 			5 * time.Millisecond,
@@ -108,7 +105,7 @@ func TestDiscovery_StopsOnCongestion(t *testing.T) {
 
 func TestDiscovery_BackoffWorthyExit(t *testing.T) {
 	stub := &discStub{
-		probes: []time.Duration{1 * time.Millisecond, 1 * time.Millisecond},
+		probes: []time.Duration{1 * time.Millisecond},
 		batches: []struct {
 			handled int
 			class   domain.ErrorClass
@@ -128,7 +125,7 @@ func TestDiscovery_BackoffWorthyExit(t *testing.T) {
 
 func TestDiscovery_FatalImmediateProtect(t *testing.T) {
 	stub := &discStub{
-		probes: []time.Duration{1 * time.Millisecond, 1 * time.Millisecond},
+		probes: []time.Duration{1 * time.Millisecond},
 		batches: []struct {
 			handled int
 			class   domain.ErrorClass
@@ -151,7 +148,7 @@ func TestSteady_Accelerate(t *testing.T) {
 		LongtermRtt:  2 * time.Millisecond,
 		MaxBatchSize: 500,
 	}
-	newLimit, _ := UpdateSteady(state, 2*time.Millisecond, domain.ClassNone, 500)
+	newLimit, _ := UpdateSteady(state, 2*time.Millisecond, domain.ClassNone, 500, 0)
 	if newLimit != 23 {
 		t.Fatalf("expected Limit=23 on accelerate, got %d", newLimit)
 	}
@@ -163,7 +160,7 @@ func TestSteady_Decelerate(t *testing.T) {
 		LongtermRtt:  2 * time.Millisecond,
 		MaxBatchSize: 500,
 	}
-	newLimit, _ := UpdateSteady(state, 5*time.Millisecond, domain.ClassNone, 500)
+	newLimit, _ := UpdateSteady(state, 5*time.Millisecond, domain.ClassNone, 500, 0)
 	if newLimit != 90 {
 		t.Fatalf("expected Limit=90 on decelerate, got %d", newLimit)
 	}
@@ -175,7 +172,7 @@ func TestSteady_Stable(t *testing.T) {
 		LongtermRtt:  3 * time.Millisecond,
 		MaxBatchSize: 500,
 	}
-	newLimit, _ := UpdateSteady(state, 4*time.Millisecond, domain.ClassNone, 500)
+	newLimit, _ := UpdateSteady(state, 4*time.Millisecond, domain.ClassNone, 500, 0)
 	if newLimit != 47 {
 		t.Fatalf("expected Limit=47 on moderate deceleration, got %d", newLimit)
 	}
@@ -187,7 +184,7 @@ func TestSteady_AlphaCap(t *testing.T) {
 		LongtermRtt:  2 * time.Millisecond,
 		MaxBatchSize: 500,
 	}
-	newLimit, _ := UpdateSteady(state, 2*time.Millisecond, domain.ClassNone, 500)
+	newLimit, _ := UpdateSteady(state, 2*time.Millisecond, domain.ClassNone, 500, 0)
 	if newLimit != 500 {
 		t.Fatalf("expected Limit=500 (capped), got %d", newLimit)
 	}
@@ -199,8 +196,36 @@ func TestSteady_BackoffWorthyTriggersDecelerate(t *testing.T) {
 		LongtermRtt:  2 * time.Millisecond,
 		MaxBatchSize: 500,
 	}
-	newLimit, _ := UpdateSteady(state, 2*time.Millisecond, domain.BackoffWorthy, 500)
+	newLimit, _ := UpdateSteady(state, 2*time.Millisecond, domain.BackoffWorthy, 500, 0)
 	if newLimit < 49 || newLimit > 50 {
 		t.Fatalf("expected Limit=49-50 with BackoffWorthy (gradient~1.0), got %d", newLimit)
+	}
+}
+
+func TestSteady_BackpressureReducesLimit(t *testing.T) {
+	state := &ControllerState{
+		Limit:        100,
+		LongtermRtt:  2 * time.Millisecond,
+		MaxBatchSize: 500,
+	}
+	// queueDepth = 500 → bpFactor = 500/1000 = 0.5
+	// Base: limit 100 + alpha 5 = 105, then * 0.5 = 52
+	newLimit, _ := UpdateSteady(state, 2*time.Millisecond, domain.ClassNone, 500, 500)
+	if newLimit != 52 {
+		t.Fatalf("expected Limit=52 with backpressure (depth=500), got %d", newLimit)
+	}
+}
+
+func TestSteady_BackpressureDeepQueue(t *testing.T) {
+	state := &ControllerState{
+		Limit:        100,
+		LongtermRtt:  2 * time.Millisecond,
+		MaxBatchSize: 500,
+	}
+	// queueDepth = 1500 → bpFactor = 500/2000 = 0.25
+	// Base: limit 100 + alpha 5 = 105, then * 0.25 = 26
+	newLimit, _ := UpdateSteady(state, 2*time.Millisecond, domain.ClassNone, 500, 1500)
+	if newLimit != 26 {
+		t.Fatalf("expected Limit=26 with deep backpressure (depth=1500), got %d", newLimit)
 	}
 }

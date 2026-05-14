@@ -20,7 +20,6 @@ type benchDispatchRepo struct {
 	priorityAffected int64
 	priorityErr      error
 	dispatchResults  []bool // true = found and dispatched
-	dispatchErrIdx   map[int]error
 	idx              int
 }
 
@@ -40,20 +39,24 @@ func (m *benchDispatchRepo) RefreshEffectivePriority(_ context.Context, _ time.T
 	return m.priorityAffected, m.priorityErr
 }
 
-func (m *benchDispatchRepo) DispatchOne(
-	_ context.Context, _ domaininstance.ClaimSpec,
+func (m *benchDispatchRepo) DispatchBatch(
+	_ context.Context, _ domaininstance.ClaimSpec, limit int,
 	_ func(domaininstance.DispatchInput) domaininstance.DispatchDecision,
-) (domaininstance.Snapshot, bool, error) {
-	if m.idx >= len(m.dispatchResults) {
-		return domaininstance.Snapshot{}, false, nil
+) (int, error) {
+	handled := 0
+	for i := 0; i < limit && m.idx < len(m.dispatchResults); i++ {
+		if m.dispatchResults[m.idx] {
+			handled++
+		}
+		m.idx++
 	}
-	found := m.dispatchResults[m.idx]
-	var err error
-	if m.dispatchErrIdx != nil {
-		err = m.dispatchErrIdx[m.idx]
-	}
-	m.idx++
-	return domaininstance.Snapshot{ID: int64(m.idx), Status: "dispatched"}, found, err
+	return handled, nil
+}
+
+func (m *benchDispatchRepo) TryAdvisoryLock(_ context.Context) (bool, error)   { return true, nil }
+func (m *benchDispatchRepo) ReleaseAdvisoryLock(_ context.Context) error       { return nil }
+func (m *benchDispatchRepo) CountQueueDepth(_ context.Context, _ string, _ time.Time) (int64, error) {
+	return 0, nil
 }
 
 // ---------------------------------------------------------------------------

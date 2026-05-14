@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -25,6 +26,7 @@ import (
 	"orbitjob/internal/platform/config"
 	"orbitjob/internal/platform/health"
 	platformlogger "orbitjob/internal/platform/logger"
+	"orbitjob/internal/platform/metrics"
 	platformticker "orbitjob/internal/platform/ticker"
 )
 
@@ -36,6 +38,10 @@ type runtimeConfig struct {
 	HeartbeatInterval time.Duration
 	LeaseDuration     time.Duration
 	Capacity          int
+	CapacityMax       int
+	LeaseMin          time.Duration
+	LeaseMax          time.Duration
+	LeaseDecay        float64
 	Labels            map[string]any
 }
 
@@ -60,11 +66,25 @@ var (
 	newLoggerFn   = platformlogger.New
 	openDBFn      = adminpostgres.Open
 	pingDBFn      = func(ctx context.Context, db *sql.DB) error { return db.PingContext(ctx) }
-	buildRunnerFn = func(db *sql.DB) tickRunner {
+	buildHTTPClientFn = func() *http.Client {
+		return &http.Client{
+			Transport: &http.Transport{
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 10,
+				IdleConnTimeout:     90 * time.Second,
+				DialContext: (&net.Dialer{
+					Timeout:   5 * time.Second,
+					KeepAlive: 30 * time.Second,
+				}).DialContext,
+			},
+			Timeout: 30 * time.Second,
+		}
+	}
+	buildRunnerFn = func(db *sql.DB, httpClient *http.Client) tickRunner {
 		repo := corepostgres.NewExecutorRepository(db)
 		handlers := map[string]execute.Handler{
 			"exec": &handler.Exec{},
-			"http": handler.NewHTTP(http.DefaultClient),
+			"http": handler.NewHTTP(httpClient),
 		}
 		return execute.NewTickUseCase(repo, handlers)
 	}
@@ -75,6 +95,53 @@ var (
 )
 
 var newWallClockTicker = func(d time.Duration) workerTicker { return platformticker.New(d) }
+
+// adaptiveTickRunner wraps a tickRunner with adaptive capacity and dynamic lease.
+type adaptiveTickRunner struct {
+	inner        tickRunner
+	db           *sql.DB
+	adaptiveCap  *execute.AdaptiveCapacity
+	dynamicLease *execute.DynamicLease
+	cfg          runtimeConfig
+}
+
+func (r *adaptiveTickRunner) RunOnce(
+	ctx context.Context,
+	tenantID, workerID string,
+	limit int, leaseDuration time.Duration,
+	labels map[string]any,
+) (int, error) {
+	// Probe RTT.
+	probeStart := time.Now()
+	if err := r.db.PingContext(ctx); err != nil {
+		slog.Warn("worker db probe failed", "error", err.Error())
+	}
+	probeRtt := time.Since(probeStart)
+	metrics.WorkerProbeRTTSeconds.WithLabelValues(workerID, tenantID).Observe(probeRtt.Seconds())
+
+	// Gather signals for adaptive capacity.
+	var queueDepth, activeWorkers int64
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM job_instances WHERE tenant_id = $1 AND status = 'dispatched'`, tenantID).Scan(&queueDepth); err != nil {
+		slog.Warn("worker queue depth query failed", "error", err.Error())
+	}
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM workers WHERE tenant_id = $1 AND status = 'online'`, tenantID).Scan(&activeWorkers); err != nil {
+		slog.Warn("worker active workers query failed", "error", err.Error())
+	}
+
+	// Adaptive capacity.
+	currentLimit := limit
+	if r.adaptiveCap != nil {
+		currentLimit = r.adaptiveCap.Update(probeRtt, queueDepth, activeWorkers, workerID, tenantID)
+	}
+
+	// Dynamic lease.
+	currentLease := leaseDuration
+	if r.dynamicLease != nil {
+		currentLease = r.dynamicLease.Current()
+	}
+
+	return r.inner.RunOnce(ctx, tenantID, workerID, currentLimit, currentLease, labels)
+}
 
 func loadWorkerRuntimeConfig() (runtimeConfig, error) {
 	workerID := strings.TrimSpace(os.Getenv("WORKER_ID"))
@@ -108,6 +175,29 @@ func loadWorkerRuntimeConfig() (runtimeConfig, error) {
 		return runtimeConfig{}, err
 	}
 
+	capacityMax, err := loadPositiveIntEnv("WORKER_CAPACITY_MAX", 10)
+	if err != nil {
+		return runtimeConfig{}, err
+	}
+	if capacityMax < capacity {
+		capacityMax = capacity
+	}
+
+	leaseMinSec, err := loadPositiveIntEnv("WORKER_LEASE_MIN_SEC", 10)
+	if err != nil {
+		return runtimeConfig{}, err
+	}
+
+	leaseMaxSec, err := loadPositiveIntEnv("WORKER_LEASE_DURATION_MAX", 300)
+	if err != nil {
+		return runtimeConfig{}, err
+	}
+
+	leaseDecay, err := loadFloatEnv("WORKER_LEASE_EMA_DECAY", 0.1)
+	if err != nil {
+		return runtimeConfig{}, err
+	}
+
 	labels, err := loadJSONMapEnv("WORKER_LABELS")
 	if err != nil {
 		return runtimeConfig{}, err
@@ -126,6 +216,10 @@ func loadWorkerRuntimeConfig() (runtimeConfig, error) {
 		HeartbeatInterval: time.Duration(heartbeatIntervalSec) * time.Second,
 		LeaseDuration:     time.Duration(leaseDurationSec) * time.Second,
 		Capacity:          capacity,
+		CapacityMax:       capacityMax,
+		LeaseMin:          time.Duration(leaseMinSec) * time.Second,
+		LeaseMax:          time.Duration(leaseMaxSec) * time.Second,
+		LeaseDecay:        leaseDecay,
 		Labels:            labels,
 	}, nil
 }
@@ -142,6 +236,23 @@ func loadPositiveIntEnv(key string, defaultValue int) (int, error) {
 	}
 	if value < 1 {
 		return 0, fmt.Errorf("%s must be >= 1", key)
+	}
+
+	return value, nil
+}
+
+func loadFloatEnv(key string, defaultValue float64) (float64, error) {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return defaultValue, nil
+	}
+
+	value, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a float: %w", key, err)
+	}
+	if value <= 0 || value > 1 {
+		return 0, fmt.Errorf("%s must be in (0, 1]", key)
 	}
 
 	return value, nil
@@ -174,12 +285,29 @@ func runLoop(
 	ticker := newTicker(cfg.PollInterval)
 	defer ticker.Stop()
 
+	idleCount := 0
+	const idleThreshold = 3
+	const longInterval = 30 * time.Second
+	isLongInterval := false
+
+	resetToShortInterval := func() {
+		if isLongInterval {
+			ticker.Stop()
+			ticker = newTicker(cfg.PollInterval)
+			isLongInterval = false
+			metrics.WorkerIntervalMode.WithLabelValues(cfg.WorkerID, cfg.TenantID).Set(0)
+			slog.Info("worker switching back to short interval", "interval_sec", cfg.PollInterval.Seconds())
+		}
+	}
+
 	for {
 		n, err := runner.RunOnce(ctx, cfg.TenantID, cfg.WorkerID, cfg.Capacity, cfg.LeaseDuration, cfg.Labels)
 		if err != nil {
 			slog.Error("worker tick failed", "error", err.Error())
 		} else if n > 0 {
 			slog.Info("worker executed task", "handled", n)
+			idleCount = 0
+			resetToShortInterval()
 			select {
 			case <-ctx.Done():
 				close(loopDone)
@@ -196,6 +324,15 @@ func runLoop(
 			slog.Info("worker drain complete, shutting down")
 			return
 		case <-ticker.Chan():
+			idleCount++
+			metrics.WorkerIdleTicksTotal.WithLabelValues(cfg.WorkerID, cfg.TenantID).Inc()
+			if idleCount >= idleThreshold {
+				ticker.Stop()
+				ticker = newTicker(longInterval)
+				isLongInterval = true
+				metrics.WorkerIntervalMode.WithLabelValues(cfg.WorkerID, cfg.TenantID).Set(1)
+				slog.Info("worker switching to long interval", "interval_sec", longInterval.Seconds())
+			}
 		}
 	}
 }
@@ -295,8 +432,25 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("ping database: %w", err)
 	}
 
-	runner := buildRunnerFn(db)
+	httpClient := buildHTTPClientFn()
+	inner := buildRunnerFn(db, httpClient)
 	hb := buildHeartbeaterFn(db)
+
+	// Attach dynamic lease to the inner runner so execution durations are recorded.
+	dynamicLease := execute.NewDynamicLease(cfg.LeaseMin, cfg.LeaseMax, cfg.LeaseDecay)
+	if uc, ok := inner.(*execute.TickUseCase); ok {
+		uc.SetDynamicLease(dynamicLease)
+	}
+
+	// Wrap with adaptive capacity.
+	adaptiveCap := execute.NewAdaptiveCapacity(cfg.CapacityMax, 3)
+	runner := &adaptiveTickRunner{
+		inner:        inner,
+		db:           db,
+		adaptiveCap:  adaptiveCap,
+		dynamicLease: dynamicLease,
+		cfg:          cfg,
+	}
 
 	healthCtx, healthCancel := context.WithCancel(context.Background())
 	defer healthCancel()
@@ -309,6 +463,7 @@ func run(ctx context.Context) error {
 		"poll_interval", cfg.PollInterval,
 		"lease_duration", cfg.LeaseDuration,
 		"capacity", cfg.Capacity,
+		"capacity_max", cfg.CapacityMax,
 	)
 
 	runLoopFn(ctx, runner, hb, cfg, newWallClockTicker, time.Now)

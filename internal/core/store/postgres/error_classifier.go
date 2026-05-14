@@ -20,10 +20,10 @@ func ClassifyError(err error) domain.ErrorClass {
 
 	var opErr *net.OpError
 	if errors.As(err, &opErr) {
-		return domain.FatalWorthy
+		return domain.BackoffWorthy
 	}
 	if errors.Is(err, syscall.ECONNREFUSED) {
-		return domain.FatalWorthy
+		return domain.BackoffWorthy
 	}
 
 	var pqErr *pq.Error

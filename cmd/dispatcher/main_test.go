@@ -12,6 +12,7 @@ import (
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
 	domaininstance "orbitjob/internal/core/domain/instance"
+	corepostgres "orbitjob/internal/core/store/postgres"
 )
 
 type stubTickRunner struct {
@@ -23,7 +24,8 @@ type stubTickRunner struct {
 	callCh chan struct{}
 	onCall func(int)
 
-	handled int
+	handled        int
+	housekeepingErr error
 }
 
 func (s *stubTickRunner) RunBatch(ctx context.Context, spec domaininstance.ClaimSpec, limit int) (int, error) {
@@ -51,8 +53,16 @@ func (s *stubTickRunner) RunBatch(ctx context.Context, spec domaininstance.Claim
 	return handled, err
 }
 
+func (s *stubTickRunner) QuickTick(ctx context.Context, spec domaininstance.ClaimSpec, limit int) (int, error) {
+	return s.RunBatch(ctx, spec, limit)
+}
+
 func (s *stubTickRunner) ListActiveTenantIDs(_ context.Context) ([]string, error) {
 	return []string{"default"}, nil
+}
+
+func (s *stubTickRunner) RunHousekeeping(_ context.Context, _ time.Time) error {
+	return s.housekeepingErr
 }
 
 func (s *stubTickRunner) callCount() int {
@@ -80,8 +90,9 @@ func (s *stubTickRunner) lastSpec() domaininstance.ClaimSpec {
 }
 
 type fakeTicker struct {
-	ch      chan time.Time
-	stopped chan struct{}
+	ch        chan time.Time
+	stopped   chan struct{}
+	stopCount int
 }
 
 func newFakeTicker() *fakeTicker {
@@ -96,6 +107,7 @@ func (f *fakeTicker) Chan() <-chan time.Time {
 }
 
 func (f *fakeTicker) Stop() {
+	f.stopCount++
 	select {
 	case f.stopped <- struct{}{}:
 	default:
@@ -111,6 +123,7 @@ func resetDispatcherMainDeps(t *testing.T) {
 	oldPingDBFn := pingDBFn
 	oldBuildRunnerFn := buildRunnerFn
 	oldRunLoopFn := runLoopFn
+	oldNewEventListenerFn := newEventListenerFn
 
 	t.Cleanup(func() {
 		loadDotenvFn = oldLoadDotenvFn
@@ -119,6 +132,7 @@ func resetDispatcherMainDeps(t *testing.T) {
 		pingDBFn = oldPingDBFn
 		buildRunnerFn = oldBuildRunnerFn
 		runLoopFn = oldRunLoopFn
+		newEventListenerFn = oldNewEventListenerFn
 	})
 }
 
@@ -203,11 +217,14 @@ func TestRunLoop_StopsOnContextCancel(t *testing.T) {
 			BatchSize:     7,
 			TickInterval:  time.Second,
 			LeaseDuration: 30 * time.Second,
-		}, func(time.Duration) schedulerTicker {
+		}, nil, func(time.Duration) schedulerTicker {
 			return ticker
 		}, func() time.Time { return now })
 		close(done)
 	}()
+
+	// Trigger first tick to start the loop
+	ticker.ch <- now
 
 	select {
 	case <-done:
@@ -259,11 +276,14 @@ func TestRunLoop_ContinuesAfterTickSignal(t *testing.T) {
 			BatchSize:     3,
 			TickInterval:  time.Second,
 			LeaseDuration: 30 * time.Second,
-		}, func(time.Duration) schedulerTicker {
+		}, nil, func(time.Duration) schedulerTicker {
 			return ticker
 		}, func() time.Time { return time.Now().UTC() })
 		close(done)
 	}()
+
+	// Trigger first tick
+	ticker.ch <- time.Now()
 
 	select {
 	case <-runner.callCh:
@@ -271,6 +291,7 @@ func TestRunLoop_ContinuesAfterTickSignal(t *testing.T) {
 		t.Fatalf("expected first RunBatch call")
 	}
 
+	// Trigger second tick; onCall will cancel context on callNo==2
 	ticker.ch <- time.Now()
 
 	select {
@@ -305,11 +326,14 @@ func TestRunLoop_ErrorPathStillWaitsForShutdown(t *testing.T) {
 			BatchSize:     1,
 			TickInterval:  time.Second,
 			LeaseDuration: 30 * time.Second,
-		}, func(time.Duration) schedulerTicker {
+		}, nil, func(time.Duration) schedulerTicker {
 			return ticker
 		}, func() time.Time { return time.Now() })
 		close(done)
 	}()
+
+	// Trigger first tick
+	ticker.ch <- time.Now()
 
 	select {
 	case <-done:
@@ -319,6 +343,51 @@ func TestRunLoop_ErrorPathStillWaitsForShutdown(t *testing.T) {
 
 	if runner.callCount() != 2 {
 		t.Fatalf("expected two RunBatch calls on error path (1 tick + 1 drain), got %d", runner.callCount())
+	}
+}
+
+func TestRunLoop_EventChQuickTick(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ticker := newFakeTicker()
+	eventCh := make(chan struct{}, 1)
+	runner := &stubTickRunner{
+		handled: 1,
+		onCall: func(callNo int) {
+			if callNo == 1 {
+				cancel()
+			}
+		},
+	}
+
+	done := make(chan struct{})
+	go func() {
+		runLoop(ctx, runner, runtimeConfig{
+			TenantID:      "t1",
+			BatchSize:     5,
+			TickInterval:  time.Second,
+			LeaseDuration: 30 * time.Second,
+		}, eventCh, func(time.Duration) schedulerTicker {
+			return ticker
+		}, func() time.Time { return time.Now().UTC() })
+		close(done)
+	}()
+
+	// Trigger event-driven quick tick
+	eventCh <- struct{}{}
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatalf("runLoop did not stop after event quick tick")
+	}
+
+	if runner.callCount() != 2 {
+		t.Fatalf("expected two QuickTick calls (1 event + 1 drain), got %d", runner.callCount())
+	}
+	if runner.lastLimit() != 5 {
+		t.Fatalf("expected limit=5, got %d", runner.lastLimit())
 	}
 }
 
@@ -415,11 +484,16 @@ func TestRun_SuccessInvokesRunLoop(t *testing.T) {
 		return stub
 	}
 
+	newEventListenerFn = func(string) (*corepostgres.EventListener, error) {
+		return nil, errors.New("no listener in test")
+	}
+
 	runLoopCalled := false
 	runLoopFn = func(
 		ctx context.Context,
 		runner tickRunner,
 		cfg runtimeConfig,
+		_ <-chan struct{},
 		newTicker func(time.Duration) schedulerTicker,
 		nowFn func() time.Time,
 	) {
@@ -477,7 +551,7 @@ func TestRun_PingDBError(t *testing.T) {
 	pingDBFn = func(context.Context, *sql.DB) error { return errors.New("ping boom") }
 
 	runLoopCalled := false
-	runLoopFn = func(context.Context, tickRunner, runtimeConfig, func(time.Duration) schedulerTicker, func() time.Time) {
+	runLoopFn = func(context.Context, tickRunner, runtimeConfig, <-chan struct{}, func(time.Duration) schedulerTicker, func() time.Time) {
 		runLoopCalled = true
 	}
 
@@ -487,5 +561,138 @@ func TestRun_PingDBError(t *testing.T) {
 	}
 	if runLoopCalled {
 		t.Fatalf("expected runLoop not to run when ping fails")
+	}
+}
+
+func TestQuickTick_ErrorPath(t *testing.T) {
+	runner := &stubTickRunner{err: errors.New("tick boom")}
+	cfg := runtimeConfig{BatchSize: 5, LeaseDuration: 30 * time.Second}
+	now := time.Now()
+	result := quickTick(context.Background(), runner, cfg, now, []string{"t1", "t2"})
+	if result != 0 {
+		t.Fatalf("expected 0 handled on error, got %d", result)
+	}
+	if runner.callCount() != 2 {
+		t.Fatalf("expected 2 calls for 2 tenants, got %d", runner.callCount())
+	}
+}
+
+func TestFullTick_HousekeepingError(t *testing.T) {
+	runner := &stubTickRunner{handled: 1, housekeepingErr: errors.New("hk boom")}
+	cfg := runtimeConfig{BatchSize: 5, LeaseDuration: 30 * time.Second}
+	now := time.Now()
+	result := fullTick(context.Background(), runner, cfg, now, []string{"t1"})
+	if result != 1 {
+		t.Fatalf("expected 1 handled despite housekeeping error, got %d", result)
+	}
+}
+
+func TestFullTick_TickError(t *testing.T) {
+	runner := &stubTickRunner{err: errors.New("tick boom")}
+	cfg := runtimeConfig{BatchSize: 5, LeaseDuration: 30 * time.Second}
+	now := time.Now()
+	result := fullTick(context.Background(), runner, cfg, now, []string{"t1", "t2"})
+	if result != 0 {
+		t.Fatalf("expected 0 handled on tick error, got %d", result)
+	}
+}
+
+func TestRunLoop_SwitchesToLongInterval(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ticker := newFakeTicker()
+	runner := &stubTickRunner{}
+	runner.onCall = func(callNo int) {
+		if callNo == 3 {
+			// After 3 idle ticks, next tick should use long interval
+			cancel()
+		}
+	}
+
+	done := make(chan struct{})
+	go func() {
+		runLoop(ctx, runner, runtimeConfig{
+			TenantID:      "t1",
+			BatchSize:     3,
+			TickInterval:  time.Second,
+			LeaseDuration: 30 * time.Second,
+		}, nil, func(time.Duration) schedulerTicker {
+			return ticker
+		}, func() time.Time { return time.Now().UTC() })
+		close(done)
+	}()
+
+	// Trigger 3 idle ticks
+	for i := 0; i < 3; i++ {
+		ticker.ch <- time.Now()
+		select {
+		case <-ticker.stopped:
+			// ticker.Stop() called on long-interval switch
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatalf("runLoop did not stop")
+	}
+
+	if ticker.stopCount < 1 {
+		t.Fatalf("expected ticker.Stop() at least once for long interval switch, got %d", ticker.stopCount)
+	}
+}
+
+func TestRunLoop_SwitchesBackToShortInterval(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ticker := newFakeTicker()
+	runner := &stubTickRunner{}
+	runner.onCall = func(n int) {
+		if n == 4 {
+			// 3 idle ticks (switched to long) + 1 handled tick (switch back) + drain
+			cancel()
+		}
+	}
+
+	done := make(chan struct{})
+	go func() {
+		runLoop(ctx, runner, runtimeConfig{
+			TenantID:      "t1",
+			BatchSize:     3,
+			TickInterval:  time.Second,
+			LeaseDuration: 30 * time.Second,
+		}, nil, func(time.Duration) schedulerTicker {
+			return ticker
+		}, func() time.Time { return time.Now().UTC() })
+		close(done)
+	}()
+
+	// 3 idle ticks to trigger long interval
+	for i := 0; i < 3; i++ {
+		ticker.ch <- time.Now()
+		select {
+		case <-ticker.stopped:
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+
+	// 4th tick with work to switch back
+	runner.mu.Lock()
+	runner.handled = 1
+	runner.mu.Unlock()
+	ticker.ch <- time.Now()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatalf("runLoop did not stop")
+	}
+
+	// Should have stopped ticker twice: once for long interval, once for switching back
+	if ticker.stopCount < 2 {
+		t.Fatalf("expected ticker.Stop() at least twice (long + switch back), got %d", ticker.stopCount)
 	}
 }
