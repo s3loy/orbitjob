@@ -113,14 +113,20 @@ func (r *adaptiveTickRunner) RunOnce(
 ) (int, error) {
 	// Probe RTT.
 	probeStart := time.Now()
-	_ = r.db.PingContext(ctx)
+	if err := r.db.PingContext(ctx); err != nil {
+		slog.Warn("worker db probe failed", "error", err.Error())
+	}
 	probeRtt := time.Since(probeStart)
 	metrics.WorkerProbeRTTSeconds.WithLabelValues(workerID, tenantID).Observe(probeRtt.Seconds())
 
 	// Gather signals for adaptive capacity.
 	var queueDepth, activeWorkers int64
-	_ = r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM job_instances WHERE tenant_id = $1 AND status = 'dispatched'`, tenantID).Scan(&queueDepth)
-	_ = r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM workers WHERE tenant_id = $1 AND status = 'online'`, tenantID).Scan(&activeWorkers)
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM job_instances WHERE tenant_id = $1 AND status = 'dispatched'`, tenantID).Scan(&queueDepth); err != nil {
+		slog.Warn("worker queue depth query failed", "error", err.Error())
+	}
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM workers WHERE tenant_id = $1 AND status = 'online'`, tenantID).Scan(&activeWorkers); err != nil {
+		slog.Warn("worker active workers query failed", "error", err.Error())
+	}
 
 	// Adaptive capacity.
 	currentLimit := limit
@@ -289,6 +295,7 @@ func runLoop(
 			ticker.Stop()
 			ticker = newTicker(cfg.PollInterval)
 			isLongInterval = false
+			metrics.WorkerIntervalMode.WithLabelValues(cfg.WorkerID, cfg.TenantID).Set(0)
 			slog.Info("worker switching back to short interval", "interval_sec", cfg.PollInterval.Seconds())
 		}
 	}
@@ -323,6 +330,7 @@ func runLoop(
 				ticker.Stop()
 				ticker = newTicker(longInterval)
 				isLongInterval = true
+				metrics.WorkerIntervalMode.WithLabelValues(cfg.WorkerID, cfg.TenantID).Set(1)
 				slog.Info("worker switching to long interval", "interval_sec", longInterval.Seconds())
 			}
 		}

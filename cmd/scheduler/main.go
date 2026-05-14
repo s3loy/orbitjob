@@ -117,8 +117,13 @@ func runLoop(
 		return probe(probeCtx)
 	}
 
+	discoveryIterations := 0
 	runDiscoveryBatch := func(ctx context.Context, limit int) (int, domain.ErrorClass) {
-		counts, _ := runner.RunBatch(ctx, nowFn().UTC(), limit)
+		discoveryIterations++
+		counts, err := runner.RunBatch(ctx, nowFn().UTC(), limit)
+		if err != nil {
+			return 0, domain.BackoffWorthy
+		}
 		metrics.SchedulerInstancesCreated.Add(float64(counts.Scheduled))
 		class := domain.ClassNone
 		if counts.Fatal > 0 {
@@ -145,6 +150,7 @@ func runLoop(
 			mainTicker.Stop()
 			mainTicker = newTicker(cfg.TickInterval)
 			isLongInterval = false
+			metrics.SchedulerIntervalMode.Set(0)
 			slog.Info("scheduler switching back to short interval", "interval_sec", cfg.TickInterval.Seconds())
 		}
 	}
@@ -163,8 +169,12 @@ func runLoop(
 		switch curPhase {
 		case schedule.PhaseDiscovery:
 			metrics.SchedulerPhase.Set(0)
+			discoveryIterations = 0
+			discoveryStart := time.Now()
 			d := schedule.NewDiscovery(probeWithTimeout, runDiscoveryBatch, state)
 			curPhase = d.Run(ctx)
+			metrics.SchedulerDiscoveryDuration.Observe(time.Since(discoveryStart).Seconds())
+			metrics.SchedulerDiscoveryIterations.Add(float64(discoveryIterations))
 			metrics.SchedulerLimit.Set(float64(state.Limit))
 
 		case schedule.PhaseSteady:
@@ -221,11 +231,13 @@ func runLoop(
 			metrics.SchedulerPhase.Set(2)
 			if breaker.State() == schedule.PhaseHalfOpen {
 				curPhase = schedule.PhaseHalfOpen
+				lastCounts = schedule.BatchCounts{}
 				break
 			}
 			breaker.Update(schedule.BreakerSignals{})
 			if breaker.State() == schedule.PhaseHalfOpen {
 				curPhase = schedule.PhaseHalfOpen
+				lastCounts = schedule.BatchCounts{}
 				break
 			}
 			// Degraded mode: schedule at most 1 job per tick instead of full halt.
@@ -282,6 +294,7 @@ func runLoop(
 					mainTicker.Stop()
 					mainTicker = newTicker(longInterval)
 					isLongInterval = true
+					metrics.SchedulerIntervalMode.Set(1)
 					slog.Info("scheduler switching to long interval", "interval_sec", longInterval.Seconds())
 				}
 			} else if handled > 0 {

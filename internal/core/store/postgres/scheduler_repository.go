@@ -227,8 +227,9 @@ func (r *SchedulerRepository) ScheduleBatch(
 			return counts, nil
 		}
 
-		for _, job := range jobs {
-			if _, err := tx.ExecContext(ctx, "SAVEPOINT sp_job"); err != nil {
+		for i, job := range jobs {
+			spName := fmt.Sprintf("sp_job_%d", i)
+			if _, err := tx.ExecContext(ctx, "SAVEPOINT "+spName); err != nil {
 				_ = tx.Rollback()
 				counts.Backoff++
 				counts.Handled++
@@ -237,7 +238,12 @@ func (r *SchedulerRepository) ScheduleBatch(
 
 			result, processed, jobErr := scheduleOneJobInTx(ctx, tx, now, job, decide)
 			if jobErr != nil {
-				_, _ = tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT sp_job")
+				if _, rbErr := tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT "+spName); rbErr != nil {
+					_ = tx.Rollback()
+					counts.Backoff++
+					counts.Handled++
+					return counts, nil
+				}
 				class := classifyError(jobErr)
 				switch class {
 				case domain.FatalWorthy:
@@ -261,12 +267,17 @@ func (r *SchedulerRepository) ScheduleBatch(
 
 			if !processed {
 				// Quota exceeded — cursor was updated, keep it.
-				_, _ = tx.ExecContext(ctx, "RELEASE SAVEPOINT sp_job")
+				if _, err := tx.ExecContext(ctx, "RELEASE SAVEPOINT "+spName); err != nil {
+					_ = tx.Rollback()
+					counts.Backoff++
+					counts.Handled++
+					return counts, nil
+				}
 				counts.Handled++
 				continue
 			}
 
-			if _, err := tx.ExecContext(ctx, "RELEASE SAVEPOINT sp_job"); err != nil {
+			if _, err := tx.ExecContext(ctx, "RELEASE SAVEPOINT "+spName); err != nil {
 				_ = tx.Rollback()
 				counts.Backoff++
 				counts.Handled++

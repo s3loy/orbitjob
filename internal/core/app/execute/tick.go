@@ -115,6 +115,7 @@ func (uc *TickUseCase) executeTask(
 	defer metrics.ExecutionsActive.Dec()
 
 	stopRenew := uc.startLeaseRenewal(ctx, tenantID, task.InstanceID, workerID, leaseDuration)
+	defer stopRenew()
 
 	timeoutDur := time.Duration(task.TimeoutSec) * time.Second
 	timeoutCtx, cancelTimeout := context.WithTimeout(ctx, timeoutDur)
@@ -133,8 +134,6 @@ func (uc *TickUseCase) executeTask(
 		result = handler.Execute(timeoutCtx, task)
 	}()
 	cancelTimeout()
-
-	stopRenew()
 
 	metrics.ExecutionsTotal.WithLabelValues(task.HandlerType, result.ResultCode).Inc()
 
@@ -223,7 +222,9 @@ func (uc *TickUseCase) startLeaseRenewal(
 				// has time to finish before its lease expires and gets stolen.
 				writeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				newExpiry := time.Now().Add(leaseDuration)
-				_ = uc.repo.ExtendLease(writeCtx, tenantID, instanceID, workerID, newExpiry)
+				if err := uc.repo.ExtendLease(writeCtx, tenantID, instanceID, workerID, newExpiry); err != nil {
+						slog.Warn("final lease extension failed", "instance_id", instanceID, "error", err.Error())
+					}
 				cancel()
 				return
 			case <-ticker.C:
