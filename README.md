@@ -1,144 +1,34 @@
 # OrbitJob
 
+[![Go](https://img.shields.io/badge/Go-1.26.3-00ADD8?logo=go)](https://go.dev)
 [![License](https://img.shields.io/github/license/s3loy/orbitjob)](./LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/s3loy/orbitjob)](https://goreportcard.com/report/github.com/s3loy/orbitjob)
 [![Build Status](https://github.com/s3loy/orbitjob/actions/workflows/ci.yml/badge.svg)](https://github.com/s3loy/orbitjob/actions/workflows/ci.yml)
+[![govulncheck](https://github.com/s3loy/orbitjob/actions/workflows/govulncheck.yml/badge.svg)](https://github.com/s3loy/orbitjob/actions/workflows/govulncheck.yml)
 [![Coverage Status](https://codecov.io/gh/s3loy/orbitjob/graph/badge.svg)](https://codecov.io/gh/s3loy/orbitjob)
+[![Stars](https://img.shields.io/github/stars/s3loy/orbitjob)](https://github.com/s3loy/orbitjob/stargazers)
 
 [English](./README.en.md)
 
 ![Stone Badge](https://stone.professorlee.work/api/stone/s3loy/orbitjob)
 
-Go 任务调度库。PostgreSQL 为唯一必需外部依赖，etcd 为可选分布式协调层
+像 `database/sql` 定义 Go 如何访问数据库一样，OrbitJob 定义 Go 如何调度任务。
 
-可作为 library 嵌入 Go 应用，也可独立部署
+纯 Go 实现，PostgreSQL 为唯一必需外部依赖。内置可观测性，支持 cron 与手动触发，可嵌入为 library 也可独立部署。
+
+- **单一依赖** — PostgreSQL 是唯一必需外部依赖，无需 Redis、Kafka 等额外基础设施
+- **两种模式** — 嵌入为 library 接入现有应用，或独立部署为多进程服务
+- **内置可观测性** — Prometheus 指标、健康检查、分布式追踪开箱即用
+- **灵活触发** — 支持 cron 表达式调度与手动触发
+- **可扩展 handler** — 内置 exec、HTTP、webhook、PGNotify，支持自定义 handler
 
 ## 快速开始
 
-### Docker Compose
-
 ```bash
 docker compose up -d
-curl http://localhost:8080/healthz
 ```
 
-### API surface
-
-- `POST /api/v1/jobs` create a job
-- `POST /api/v1/jobs/:id/trigger` manual trigger, requires `X-OrbitJob-Idempotency-Key`
-- `POST /api/v1/jobs/:id/pause` pause a job
-- `POST /api/v1/jobs/:id/resume` resume a job
-- `DELETE /api/v1/jobs/:id` delete a job
-- `GET /api/v1/instances` list instances
-- `GET /api/v1/instances/:run_id` inspect one instance
-- `POST /api/v1/instances/:run_id/cancel` cancel an instance
-- `/openapi.json` machine-readable API contract
-- `/healthz` 存活检查（所有组件）
-- `/readyz` 就绪检查（含 DB ping；scheduler :6060, dispatcher :6061, worker :6062）
-- `/metrics` Prometheus 指标端点
-
-### 源码启动
-
-```bash
-# 1. 启动 PostgreSQL，启动 API 服务
-DATABASE_DSN="postgres://user:<YOUR_PASSWORD>@localhost:5432/orbitjob?sslmode=disable" \
-  go run ./cmd/admin-api
-
-# 2. 创建 job
-curl -X POST http://localhost:8080/api/v1/jobs \
-  -H "Content-Type: application/json" \
-  -H "X-Actor-ID: admin" \
-  -d '{"name":"hello-world","trigger_type":"manual"}'
-
-# 3. 启动后台组件（WORKER_ID 可选，留空自动生成）
-go run ./cmd/scheduler &
-go run ./cmd/dispatcher &
-go run ./cmd/worker &
-```
-
-开发模式（单进程运行全部组件）：
-
-```bash
-go run ./cmd/devserver
-```
-
-### 生产部署
-
-参见 `deploy/` 目录，含 systemd unit、环境变量模板和部署脚本。
-
-```bash
-make build-all
-DATABASE_URL="postgres://..." make migrate-up
-sudo cp deploy/systemd/*.service /etc/systemd/system/
-sudo systemctl enable --now orbitjob-*
-```
-
-## 开发
-
-### 环境要求
-
-Go 1.26+、PostgreSQL 17
-
-### 启动
-
-```bash
-go run ./cmd/admin-api       # API 服务
-go run ./cmd/scheduler       # 调度器
-go run ./cmd/dispatcher      # 分发器
-go run ./cmd/worker          # 执行器（WORKER_ID 可选，留空自动生成）
-go run ./cmd/devserver       # 开发模式（单进程全部组件）
-go run ./cmd/openapi-gen     # OpenAPI 生成
-```
-
-### 环境变量
-
-| 变量 | 用途 | 默认值 |
-| --- | --- | --- |
-| `DATABASE_DSN` | 数据库连接串 | — |
-| `ADMIN_DSN` | Admin API 专用连接串（优先于 DATABASE_DSN） | — |
-| `SCHEDULER_DSN` | Scheduler 专用连接串 | — |
-| `DISPATCHER_DSN` | Dispatcher 专用连接串 | — |
-| `WORKER_DSN` | Worker 专用连接串 | — |
-| `DEV_DSN` | Devserver 专用连接串 | — |
-| `TEST_DATABASE_DSN` | 集成测试连接串 | — |
-| `APP_ENV` | 日志模式（development / production） | — |
-| `ADMIN_PORT` | `cmd/devserver` 的 API 监听端口 | `8080` |
-| `PORT` | `cmd/admin-api` 的 HTTP 监听端口 | `8080` |
-| `SCHEDULER_HEALTH_PORT` | 健康检查端口 | `6060` |
-| `SCHEDULER_BATCH_SIZE_MAX` | 自适应 batch 上限 | `500` |
-| `SCHEDULER_TICK_INTERVAL_SEC` | Tick 间隔（秒） | `5` |
-| `DISPATCHER_TENANT_ID` | Dispatcher 租户范围 | `default` |
-| `DISPATCHER_HEALTH_PORT` | 健康检查端口 | `6061` |
-| `DISPATCHER_BATCH_SIZE` | 每 tick 最大 claim 数 | `50` |
-| `DISPATCHER_TICK_INTERVAL_SEC` | Tick 间隔（秒） | `2` |
-| `DISPATCHER_LEASE_DURATION_SEC` | Lease 有效期（秒） | `30` |
-| `WORKER_ID` | Worker 标识 | {hostname}-{uuid8} |
-| `WORKER_TENANT_ID` | Worker 租户范围 | `default` |
-| `WORKER_HEALTH_PORT` | 健康检查端口 | `6062` |
-| `WORKER_POLL_INTERVAL_SEC` | Poll 间隔（秒） | `2` |
-| `WORKER_HEARTBEAT_INTERVAL_SEC` | 心跳间隔（秒） | `10` |
-| `WORKER_LEASE_DURATION_SEC` | Lease 有效期（秒） | `60` |
-| `WORKER_CAPACITY` | 最大并发执行数 | `1` |
-| `WORKER_CAPACITY_MAX` | 自适应容量上限 | `10` |
-| `WORKER_LEASE_MIN_SEC` | 动态 lease 下限（秒） | `10` |
-| `WORKER_LEASE_DURATION_MAX` | 动态 lease 上限（秒） | `300` |
-| `WORKER_LEASE_EMA_DECAY` | 动态 lease EMA 衰减系数 | `0.1` |
-| `WORKER_LABELS` | Worker 标签（JSON） | `{}` |
-| `RATELIMIT_READ_RPS` | 读取端点速率限制（RPS） | `100` |
-| `RATELIMIT_WRITE_RPS` | 写入端点速率限制（RPS） | `10` |
-| `RATELIMIT_TRIGGER_RPS` | Trigger 端点速率限制（RPS） | `5` |
-| `RATELIMIT_ADMIN_RPS` | Admin 端点速率限制（RPS） | `5` |
-
-### 测试
-
-```bash
-make test                  # 单元测试
-make test-cover            # 覆盖率报告
-make test-race             # 竞态检测
-make integration           # 集成测试（需要 PostgreSQL）
-make lint                  # golangci-lint
-make check                 # 全量质量门禁（lint + vet + race + openapi + tidy）
-```
+使用文档见 [docs](./docs)。
 
 ## License
 
