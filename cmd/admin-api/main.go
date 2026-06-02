@@ -13,6 +13,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	checkcommand "orbitjob/internal/admin/app/check/command"
+	checkquery "orbitjob/internal/admin/app/check/query"
+	checkrunquery "orbitjob/internal/admin/app/checkrun/query"
 	command "orbitjob/internal/admin/app/job/command"
 	instancecommand "orbitjob/internal/admin/app/instance/command"
 	instancequery "orbitjob/internal/admin/app/instance/query"
@@ -102,12 +105,35 @@ func main() {
 	getInstanceUC := instancequery.NewGetInstanceUseCase(instanceReadRepo)
 	cancelInstanceUC := instancecommand.NewCancelInstanceUseCase(instanceReadRepo, instanceWriteRepo)
 
+	// Check use cases.
+	checkWriteRepo := corepostgres.NewCheckRepository(db)
+	checkReadRepo := adminpostgres.NewCheckRepository(db)
+	createCheckUC := checkcommand.NewCreateCheckUseCase(checkWriteRepo)
+	listChecksUC := checkquery.NewListChecksUseCase(checkReadRepo)
+	getCheckUC := checkquery.NewGetCheckUseCase(checkReadRepo)
+	pauseCheckUC := checkcommand.NewPauseCheckUseCase(checkWriteRepo)
+	resumeCheckUC := checkcommand.NewResumeCheckUseCase(checkWriteRepo)
+	deleteCheckUC := checkcommand.NewDeleteCheckUseCase(checkWriteRepo)
+
+	// Check run use cases.
+	checkRunReadRepo := adminpostgres.NewCheckRunRepository(db)
+	listCheckRunsUC := checkrunquery.NewListCheckRunsUseCase(checkRunReadRepo)
+	getCheckRunUC := checkrunquery.NewGetCheckRunUseCase(checkRunReadRepo)
+
 	handler := adminhttp.NewHandler(createJobUC, listJobsUC, getJobUC, updateJobUC, changeStatusUC)
 	handler.SetDeleteJobUseCase(deleteJobUC)
 	handler.SetTriggerJobUseCase(triggerJobUC)
 	handler.SetListInstancesUseCase(listInstancesUC)
 	handler.SetGetInstanceUseCase(getInstanceUC)
 	handler.SetCancelInstanceUseCase(cancelInstanceUC)
+	handler.SetCreateCheckUseCase(createCheckUC)
+	handler.SetListChecksUseCase(listChecksUC)
+	handler.SetGetCheckUseCase(getCheckUC)
+	handler.SetPauseCheckUseCase(pauseCheckUC)
+	handler.SetResumeCheckUseCase(resumeCheckUC)
+	handler.SetDeleteCheckUseCase(deleteCheckUC)
+	handler.SetListCheckRunsUseCase(listCheckRunsUC)
+	handler.SetGetCheckRunUseCase(getCheckRunUC)
 	auth := middleware.NewAuth(db)
 	rl := middleware.NewRateLimiter(ctx)
 

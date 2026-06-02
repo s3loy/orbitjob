@@ -8,6 +8,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	checkcommand "orbitjob/internal/admin/app/check/command"
+	checkquery "orbitjob/internal/admin/app/check/query"
+	checkrunquery "orbitjob/internal/admin/app/checkrun/query"
 	command "orbitjob/internal/admin/app/job/command"
 	instancequery "orbitjob/internal/admin/app/instance/query"
 	query "orbitjob/internal/admin/app/job/query"
@@ -431,6 +434,165 @@ func adminAPIRoutes() []routeDefinition {
 				responses: []responseDefinition{
 					{statusCode: stdhttp.StatusOK, description: "Canceled instance", model: domaininstance.Snapshot{}},
 					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		// ==================== Checks ====================
+		{
+			method: stdhttp.MethodPost,
+			path:   "/checks",
+			enabled: func(h *Handler) bool { return h != nil && h.createCheckUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.POST("/checks", h.CreateCheck) },
+			spec: operationDefinition{
+				id:                  "createCheck",
+				summary:             "Create one check",
+				description:         "Create an inspection check definition.",
+				tags:                []string{"Checks"},
+				requestBodyModel:    CreateCheckRequest{},
+				requestBodyRequired: true,
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusCreated, description: "Created check", model: checkcommand.CreateResult{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		{
+			method: stdhttp.MethodGet,
+			path:   "/checks",
+			enabled: func(h *Handler) bool { return h != nil && h.listChecksUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.GET("/checks", h.ListChecks) },
+			spec: operationDefinition{
+				id:              "listChecks",
+				summary:         "List checks",
+				description:     "List inspection checks for one tenant.",
+				tags:            []string{"Checks"},
+				parameterModels: []any{ListChecksRequest{}},
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "Check list", model: checkListResponse{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		{
+			method: stdhttp.MethodGet,
+			path:   "/checks/:id",
+			enabled: func(h *Handler) bool { return h != nil && h.getCheckUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.GET("/checks/:id", h.GetCheck) },
+			spec: operationDefinition{
+				id:              "getCheck",
+				summary:         "Get one check",
+				description:     "Get one check by id.",
+				tags:            []string{"Checks"},
+				parameterModels: []any{GetCheckRequest{}},
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "Check detail", model: checkquery.GetResult{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusNotFound, description: "Check not found", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		{
+			method: stdhttp.MethodPost,
+			path:   "/checks/:id/pause",
+			enabled: func(h *Handler) bool { return h != nil && h.pauseCheckUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.POST("/checks/:id/pause", h.PauseCheck) },
+			spec: operationDefinition{
+				id:                  "pauseCheck",
+				summary:             "Pause one check",
+				description:         "Pause an active check definition using optimistic locking by version.",
+				tags:                []string{"Checks"},
+				parameterModels:     []any{checkIDURI{}, tenantQueryRequest{}},
+				requestBodyModel:    ChangeCheckStatusRequest{},
+				requestBodyRequired: true,
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "Paused check", model: checkcommand.ChangeStatusResult{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusNotFound, description: "Check not found", model: errorModel},
+					{statusCode: stdhttp.StatusConflict, description: "Version conflict", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		{
+			method: stdhttp.MethodPost,
+			path:   "/checks/:id/resume",
+			enabled: func(h *Handler) bool { return h != nil && h.resumeCheckUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.POST("/checks/:id/resume", h.ResumeCheck) },
+			spec: operationDefinition{
+				id:                  "resumeCheck",
+				summary:             "Resume one check",
+				description:         "Resume a paused check definition using optimistic locking by version.",
+				tags:                []string{"Checks"},
+				parameterModels:     []any{checkIDURI{}, tenantQueryRequest{}},
+				requestBodyModel:    ChangeCheckStatusRequest{},
+				requestBodyRequired: true,
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "Resumed check", model: checkcommand.ChangeStatusResult{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusNotFound, description: "Check not found", model: errorModel},
+					{statusCode: stdhttp.StatusConflict, description: "Version conflict", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		{
+			method: stdhttp.MethodDelete,
+			path:   "/checks/:id",
+			enabled: func(h *Handler) bool { return h != nil && h.deleteCheckUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.DELETE("/checks/:id", h.DeleteCheck) },
+			spec: operationDefinition{
+				id:              "deleteCheck",
+				summary:         "Delete one check",
+				description:     "Soft-delete a check definition by setting deleted_at.",
+				tags:            []string{"Checks"},
+				parameterModels: []any{checkIDURI{}, tenantQueryRequest{}},
+				requestBodyRequired: true,
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "Deleted check"},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusNotFound, description: "Check not found", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		// ==================== Check Runs ====================
+		{
+			method: stdhttp.MethodGet,
+			path:   "/check-runs",
+			enabled: func(h *Handler) bool { return h != nil && h.listCheckRunsUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.GET("/check-runs", h.ListCheckRuns) },
+			spec: operationDefinition{
+				id:              "listCheckRuns",
+				summary:         "List check runs",
+				description:     "List check execution runs for one tenant.",
+				tags:            []string{"Check Runs"},
+				parameterModels: []any{ListCheckRunsRequest{}},
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "Check run list", model: checkRunListResponse{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		{
+			method: stdhttp.MethodGet,
+			path:   "/check-runs/:id",
+			enabled: func(h *Handler) bool { return h != nil && h.getCheckRunUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.GET("/check-runs/:id", h.GetCheckRun) },
+			spec: operationDefinition{
+				id:              "getCheckRun",
+				summary:         "Get one check run",
+				description:     "Get one check run by id.",
+				tags:            []string{"Check Runs"},
+				parameterModels: []any{GetCheckRunRequest{}},
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "Check run detail", model: checkrunquery.GetResult{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusNotFound, description: "Check run not found", model: errorModel},
 					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
 				},
 			},

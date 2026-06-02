@@ -14,6 +14,7 @@ import (
 	"time"
 
 	adminpostgres "orbitjob/internal/admin/store/postgres"
+	"orbitjob/internal/core/app/checkschedule"
 	"orbitjob/internal/core/app/schedule"
 	domain "orbitjob/internal/core/domain"
 	corepostgres "orbitjob/internal/core/store/postgres"
@@ -388,6 +389,26 @@ func run(ctx context.Context) error {
 	queueDepth := func(ctx context.Context) (int64, error) {
 		return repo.CountActiveInstances(ctx)
 	}
+
+	// Initialize check scheduler.
+	checkRepo := corepostgres.NewCheckRepository(db)
+	checkRunRepo := corepostgres.NewCheckRunRepository(db)
+	checkScheduler := checkschedule.NewTickUseCase(checkRepo, checkRunRepo)
+	checkTickInterval := cfg.TickInterval
+	go func() {
+		ticker := time.NewTicker(checkTickInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if _, err := checkScheduler.RunBatch(ctx, "default", 50); err != nil {
+					slog.Error("check scheduler tick failed", "error", err.Error())
+				}
+			}
+		}
+	}()
 
 	// Optional: etcd leader election for distributed HA.
 	if os.Getenv("ETCD_ENABLED") == "true" {

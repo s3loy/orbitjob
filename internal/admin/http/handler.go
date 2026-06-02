@@ -7,11 +7,15 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	checkcommand "orbitjob/internal/admin/app/check/command"
+	checkquery "orbitjob/internal/admin/app/check/query"
+	checkrunquery "orbitjob/internal/admin/app/checkrun/query"
 	instancecommand "orbitjob/internal/admin/app/instance/command"
 	instancequery "orbitjob/internal/admin/app/instance/query"
 	command "orbitjob/internal/admin/app/job/command"
 	query "orbitjob/internal/admin/app/job/query"
 	"orbitjob/internal/admin/http/middleware"
+	domaincheck "orbitjob/internal/core/domain/check"
 	domaininstance "orbitjob/internal/core/domain/instance"
 	"orbitjob/internal/domain/resource"
 	"orbitjob/internal/domain/validation"
@@ -59,6 +63,46 @@ type cancelInstanceUseCase interface {
 	Cancel(ctx context.Context, in instancecommand.CancelInstanceInput) (domaininstance.Snapshot, error)
 }
 
+type createCheckUseCase interface {
+	Create(ctx context.Context, in checkcommand.CreateInput) (checkcommand.CreateResult, error)
+}
+
+type listChecksUseCase interface {
+	List(ctx context.Context, in checkquery.ListChecksInput) (checkquery.ListChecksResult, error)
+}
+
+type getCheckUseCase interface {
+	Get(ctx context.Context, tenantID string, id int64) (checkquery.GetResult, error)
+}
+
+type pauseCheckUseCase interface {
+	Pause(ctx context.Context, in checkcommand.ChangeStatusInput) (checkcommand.ChangeStatusResult, error)
+}
+
+type resumeCheckUseCase interface {
+	Resume(ctx context.Context, in checkcommand.ChangeStatusInput) (checkcommand.ChangeStatusResult, error)
+}
+
+type deleteCheckUseCase interface {
+	Delete(ctx context.Context, in checkcommand.DeleteInput) error
+}
+
+type listCheckRunsUseCase interface {
+	List(ctx context.Context, in checkrunquery.ListCheckRunsInput) (checkrunquery.ListCheckRunsResult, error)
+}
+
+type getCheckRunUseCase interface {
+	Get(ctx context.Context, tenantID string, id int64) (checkrunquery.GetResult, error)
+}
+
+type checkListResponse struct {
+	Items []checkquery.ListItem `json:"items"`
+}
+
+type checkRunListResponse struct {
+	Items []checkrunquery.ListItem `json:"items"`
+}
+
 type jobListResponse struct {
 	Items []query.ListItem `json:"items"`
 }
@@ -82,7 +126,15 @@ type Handler struct {
 	triggerJobUC     triggerJobUseCase
 	listInstancesUC  listInstancesUseCase
 	getInstanceUC    getInstanceUseCase
-	cancelInstanceUC cancelInstanceUseCase
+	cancelInstanceUC    cancelInstanceUseCase
+	createCheckUC       createCheckUseCase
+	listChecksUC        listChecksUseCase
+	getCheckUC          getCheckUseCase
+	pauseCheckUC        pauseCheckUseCase
+	resumeCheckUC       resumeCheckUseCase
+	deleteCheckUC       deleteCheckUseCase
+	listCheckRunsUC     listCheckRunsUseCase
+	getCheckRunUC       getCheckRunUseCase
 }
 
 func NewHandler(
@@ -106,6 +158,14 @@ func (h *Handler) SetTriggerJobUseCase(uc triggerJobUseCase)         { h.trigger
 func (h *Handler) SetListInstancesUseCase(uc listInstancesUseCase)   { h.listInstancesUC = uc }
 func (h *Handler) SetGetInstanceUseCase(uc getInstanceUseCase)       { h.getInstanceUC = uc }
 func (h *Handler) SetCancelInstanceUseCase(uc cancelInstanceUseCase) { h.cancelInstanceUC = uc }
+func (h *Handler) SetCreateCheckUseCase(uc createCheckUseCase)       { h.createCheckUC = uc }
+func (h *Handler) SetListChecksUseCase(uc listChecksUseCase)         { h.listChecksUC = uc }
+func (h *Handler) SetGetCheckUseCase(uc getCheckUseCase)             { h.getCheckUC = uc }
+func (h *Handler) SetPauseCheckUseCase(uc pauseCheckUseCase)         { h.pauseCheckUC = uc }
+func (h *Handler) SetResumeCheckUseCase(uc resumeCheckUseCase)       { h.resumeCheckUC = uc }
+func (h *Handler) SetDeleteCheckUseCase(uc deleteCheckUseCase)       { h.deleteCheckUC = uc }
+func (h *Handler) SetListCheckRunsUseCase(uc listCheckRunsUseCase)   { h.listCheckRunsUC = uc }
+func (h *Handler) SetGetCheckRunUseCase(uc getCheckRunUseCase)       { h.getCheckRunUC = uc }
 
 // Register mounts HTTP routes for the admin API.
 func (h *Handler) Register(r gin.IRouter) {
@@ -517,4 +577,229 @@ func writeAPIError(c *gin.Context, statusCode int, apiErr APIError) {
 	c.JSON(statusCode, errorResponse{
 		Error: apiErr,
 	})
+}
+
+// CreateCheck handles check creation requests.
+func (h *Handler) CreateCheck(c *gin.Context) {
+	var req CreateCheckRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	in := req.ToCreateInput()
+	in.TenantID = middleware.GetTenantID(c)
+	out, err := h.createCheckUC.Create(c.Request.Context(), in)
+	if err != nil {
+		if validation.Is(err) {
+			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
+			return
+		}
+		_ = c.Error(err)
+		writeAPIError(c, stdhttp.StatusInternalServerError, toAPIError(err))
+		return
+	}
+
+	c.JSON(stdhttp.StatusCreated, out)
+}
+
+// ListChecks handles check list queries.
+func (h *Handler) ListChecks(c *gin.Context) {
+	var req ListChecksRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	in := req.ToListInput()
+	in.TenantID = middleware.GetTenantID(c)
+	out, err := h.listChecksUC.List(c.Request.Context(), in)
+	if err != nil {
+		if validation.Is(err) {
+			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
+			return
+		}
+		_ = c.Error(err)
+		writeAPIError(c, stdhttp.StatusInternalServerError, toAPIError(err))
+		return
+	}
+
+	c.JSON(stdhttp.StatusOK, checkListResponse{Items: out.Items})
+}
+
+// GetCheck handles one check detail query.
+func (h *Handler) GetCheck(c *gin.Context) {
+	var req GetCheckRequest
+	if err := c.ShouldBindUri(&req); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+	if err := c.ShouldBindQuery(&req); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	out, err := h.getCheckUC.Get(c.Request.Context(), middleware.GetTenantID(c), req.ID)
+	if err != nil {
+		if validation.Is(err) {
+			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
+			return
+		}
+		apiErr := toAPIError(err)
+		if apiErr.Code == ErrCodeNotFound {
+			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
+			return
+		}
+		_ = c.Error(err)
+		writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
+		return
+	}
+
+	c.JSON(stdhttp.StatusOK, out)
+}
+
+// PauseCheck handles check pause requests.
+func (h *Handler) PauseCheck(c *gin.Context) {
+	h.changeCheckStatus(c, domaincheck.ActionPause)
+}
+
+// ResumeCheck handles check resume requests.
+func (h *Handler) ResumeCheck(c *gin.Context) {
+	h.changeCheckStatus(c, domaincheck.ActionResume)
+}
+
+func (h *Handler) changeCheckStatus(c *gin.Context, action string) {
+	var pathReq checkIDURI
+	if err := c.ShouldBindUri(&pathReq); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	req := ChangeCheckStatusRequest{
+		ID:       pathReq.ID,
+		TenantID: middleware.GetTenantID(c),
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	var out checkcommand.ChangeStatusResult
+	var err error
+	switch action {
+	case domaincheck.ActionPause:
+		out, err = h.pauseCheckUC.Pause(c.Request.Context(), req.ToChangeStatusInput())
+	case domaincheck.ActionResume:
+		out, err = h.resumeCheckUC.Resume(c.Request.Context(), req.ToChangeStatusInput())
+	default:
+		writeAPIError(c, stdhttp.StatusInternalServerError, toAPIError(validation.New("action", "unsupported status action")))
+		return
+	}
+	if err != nil {
+		if validation.Is(err) {
+			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
+			return
+		}
+		apiErr := toAPIError(err)
+		switch apiErr.Code {
+		case ErrCodeNotFound:
+			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
+			return
+		case ErrCodeConflict:
+			writeAPIError(c, stdhttp.StatusConflict, apiErr)
+			return
+		default:
+			_ = c.Error(err)
+			writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
+			return
+		}
+	}
+
+	c.JSON(stdhttp.StatusOK, out)
+}
+
+// DeleteCheck handles soft-delete requests for checks.
+func (h *Handler) DeleteCheck(c *gin.Context) {
+	var pathReq checkIDURI
+	if err := c.ShouldBindUri(&pathReq); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	var body struct {
+		Version int `json:"version" binding:"required,min=1"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	err := h.deleteCheckUC.Delete(c.Request.Context(), checkcommand.DeleteInput{
+		ID:       pathReq.ID,
+		TenantID: middleware.GetTenantID(c),
+		Version:  body.Version,
+	})
+	if err != nil {
+		apiErr := toAPIError(err)
+		if apiErr.Code == ErrCodeNotFound {
+			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
+			return
+		}
+		_ = c.Error(err)
+		writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
+		return
+	}
+
+	c.JSON(stdhttp.StatusOK, gin.H{"deleted": true})
+}
+
+// ListCheckRuns handles check run list queries.
+func (h *Handler) ListCheckRuns(c *gin.Context) {
+	var req ListCheckRunsRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	in := req.ToListInput()
+	in.TenantID = middleware.GetTenantID(c)
+	out, err := h.listCheckRunsUC.List(c.Request.Context(), in)
+	if err != nil {
+		if validation.Is(err) {
+			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
+			return
+		}
+		_ = c.Error(err)
+		writeAPIError(c, stdhttp.StatusInternalServerError, toAPIError(err))
+		return
+	}
+
+	c.JSON(stdhttp.StatusOK, checkRunListResponse{Items: out.Items})
+}
+
+// GetCheckRun handles one check run detail query.
+func (h *Handler) GetCheckRun(c *gin.Context) {
+	var req GetCheckRunRequest
+	if err := c.ShouldBindUri(&req); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	out, err := h.getCheckRunUC.Get(c.Request.Context(), middleware.GetTenantID(c), req.ID)
+	if err != nil {
+		if validation.Is(err) {
+			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
+			return
+		}
+		apiErr := toAPIError(err)
+		if apiErr.Code == ErrCodeNotFound {
+			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
+			return
+		}
+		_ = c.Error(err)
+		writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
+		return
+	}
+
+	c.JSON(stdhttp.StatusOK, out)
 }
