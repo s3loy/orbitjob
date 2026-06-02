@@ -298,6 +298,12 @@ func TestFindDotenv_FromChildDir(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
+	// macOS: /tmp is a symlink to /private/tmp; resolve for comparison.
+	want, err := filepath.EvalSymlinks(envPath)
+	if err != nil {
+		t.Fatalf("EvalSymlinks() error = %v", err)
+	}
+
 	origWD, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("Getwd() error = %v", err)
@@ -313,8 +319,8 @@ func TestFindDotenv_FromChildDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("findDotenv() error = %v", err)
 	}
-	if got != envPath {
-		t.Fatalf("expected path=%q, got %q", envPath, got)
+	if got != want {
+		t.Fatalf("expected path=%q, got %q", want, got)
 	}
 }
 
