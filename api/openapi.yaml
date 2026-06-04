@@ -4,6 +4,590 @@ info:
   version: 0.1.0
   description: Code-first OpenAPI document generated from OrbitJob HTTP route metadata and DTOs.
 paths:
+  /api/v1/check-runs:
+    get:
+      operationId: listCheckRuns
+      summary: List check runs
+      description: List check execution runs for one tenant.
+      tags:
+      - Check Runs
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: tenant_id
+        in: query
+        schema:
+          type: string
+          default: default
+          maxLength: 64
+      - name: check_id
+        in: query
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      - name: status
+        in: query
+        schema:
+          type: string
+          enum:
+          - pending
+          - running
+          - success
+          - failed
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          default: 50
+          minimum: 1
+          maximum: 100
+      - name: offset
+        in: query
+        schema:
+          type: integer
+          default: 0
+          minimum: 0
+      responses:
+        "200":
+          description: Check run list
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CheckRunListResponse"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/check-runs/{id}:
+    get:
+      operationId: getCheckRun
+      summary: Get one check run
+      description: Get one check run by id.
+      tags:
+      - Check Runs
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      responses:
+        "200":
+          description: Check run detail
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetResult"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Check run not found
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/checks:
+    get:
+      operationId: listChecks
+      summary: List checks
+      description: List inspection checks for one tenant.
+      tags:
+      - Checks
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: tenant_id
+        in: query
+        schema:
+          type: string
+          default: default
+          maxLength: 64
+      - name: status
+        in: query
+        schema:
+          type: string
+          enum:
+          - active
+          - paused
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          default: 50
+          minimum: 1
+          maximum: 100
+      - name: offset
+        in: query
+        schema:
+          type: integer
+          default: 0
+          minimum: 0
+      responses:
+        "200":
+          description: Check list
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CheckListResponse"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: createCheck
+      summary: Create one check
+      description: Create an inspection check definition.
+      tags:
+      - Checks
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCheckRequest"
+      responses:
+        "201":
+          description: Created check
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateResult"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/checks/{id}:
+    get:
+      operationId: getCheck
+      summary: Get one check
+      description: Get one check by id.
+      tags:
+      - Checks
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      - name: tenant_id
+        in: query
+        schema:
+          type: string
+          default: default
+          maxLength: 64
+      responses:
+        "200":
+          description: Check detail
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetResult"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Check not found
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteCheck
+      summary: Delete one check
+      description: Soft-delete a check definition by setting deleted_at.
+      tags:
+      - Checks
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      - name: tenant_id
+        in: query
+        schema:
+          type: string
+          default: default
+          maxLength: 64
+      responses:
+        "200":
+          description: Deleted check
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Check not found
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/checks/{id}/pause:
+    post:
+      operationId: pauseCheck
+      summary: Pause one check
+      description: Pause an active check definition using optimistic locking by version.
+      tags:
+      - Checks
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      - name: tenant_id
+        in: query
+        schema:
+          type: string
+          default: default
+          maxLength: 64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangeCheckStatusRequest"
+      responses:
+        "200":
+          description: Paused check
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChangeStatusResult"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Check not found
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Version conflict
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/checks/{id}/resume:
+    post:
+      operationId: resumeCheck
+      summary: Resume one check
+      description: Resume a paused check definition using optimistic locking by version.
+      tags:
+      - Checks
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      - name: tenant_id
+        in: query
+        schema:
+          type: string
+          default: default
+          maxLength: 64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangeCheckStatusRequest"
+      responses:
+        "200":
+          description: Resumed check
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChangeStatusResult"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Check not found
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Version conflict
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/instances:
     get:
       operationId: listInstances
@@ -897,7 +1481,26 @@ components:
       required:
       - code
       - message
+    AssertionRule:
+      type: object
+      properties:
+        metric:
+          type: string
+        operator:
+          type: string
+        severity:
+          type: string
+        threshold:
+          type: number
     CancelInstanceRequest:
+      type: object
+      properties:
+        version:
+          type: integer
+          minimum: 1
+      required:
+      - version
+    ChangeCheckStatusRequest:
       type: object
       properties:
         version:
@@ -916,35 +1519,90 @@ components:
     ChangeStatusResult:
       type: object
       properties:
-        created_at:
-          type: string
-          format: date-time
         id:
           type: integer
           format: int64
-        name:
-          type: string
-        next_run_at:
-          type: string
-          format: date-time
-          nullable: true
         status:
           type: string
-        tenant_id:
-          type: string
-        updated_at:
-          type: string
-          format: date-time
         version:
           type: integer
       required:
       - id
-      - name
-      - tenant_id
       - status
       - version
-      - created_at
-      - updated_at
+    CheckListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ListItem"
+      required:
+      - items
+    CheckRunListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ListItem"
+      required:
+      - items
+    CreateCheckRequest:
+      type: object
+      properties:
+        assertion_rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/AssertionRule"
+        check_config:
+          type: object
+          additionalProperties: true
+        check_type:
+          type: string
+          enum:
+          - http_health
+          maxLength: 32
+        cron_expr:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+          maxLength: 512
+        interval_sec:
+          type: integer
+          nullable: true
+          minimum: 1
+        labels:
+          type: object
+          additionalProperties: true
+        name:
+          type: string
+          maxLength: 128
+        priority:
+          type: integer
+          minimum: 0
+        retry_limit:
+          type: integer
+          minimum: 0
+        schedule_type:
+          type: string
+          enum:
+          - cron
+          - interval
+        tenant_id:
+          type: string
+          maxLength: 64
+        timeout_sec:
+          type: integer
+          minimum: 1
+        timezone:
+          type: string
+          maxLength: 64
+      required:
+      - name
+      - check_type
     CreateJobRequest:
       type: object
       properties:
@@ -1021,30 +1679,73 @@ components:
     CreateResult:
       type: object
       properties:
+        assertion_rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/AssertionRule"
+        check_config:
+          type: object
+          additionalProperties: true
+        check_type:
+          type: string
         created_at:
           type: string
           format: date-time
+        cron_expr:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
         id:
           type: integer
           format: int64
+        interval_sec:
+          type: integer
+          nullable: true
+        labels:
+          type: object
+          additionalProperties: true
         name:
           type: string
         next_run_at:
           type: string
           format: date-time
           nullable: true
+        priority:
+          type: integer
+        retry_limit:
+          type: integer
+        schedule_type:
+          type: string
         status:
           type: string
         tenant_id:
           type: string
+        timeout_sec:
+          type: integer
+        timezone:
+          type: string
         updated_at:
           type: string
           format: date-time
+        version:
+          type: integer
       required:
       - id
       - name
       - tenant_id
       - status
+      - check_type
+      - check_config
+      - assertion_rules
+      - schedule_type
+      - timezone
+      - timeout_sec
+      - retry_limit
+      - priority
+      - labels
+      - version
       - created_at
       - updated_at
     DeleteResult:
@@ -1161,6 +1862,60 @@ components:
       - status
       - created_at
       - updated_at
+    GetResult:
+      type: object
+      properties:
+        check_id:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+        duration_ms:
+          type: integer
+          nullable: true
+        evaluation_result:
+          type: object
+          additionalProperties: true
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        id:
+          type: integer
+          format: int64
+        output:
+          type: object
+          additionalProperties: true
+        run_id:
+          type: string
+        scheduled_at:
+          type: string
+          format: date-time
+        severity:
+          type: string
+          nullable: true
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+        tenant_id:
+          type: string
+        version:
+          type: integer
+      required:
+      - id
+      - run_id
+      - tenant_id
+      - check_id
+      - status
+      - output
+      - evaluation_result
+      - scheduled_at
+      - version
+      - created_at
     HealthzResponse:
       type: object
       properties:
@@ -1261,57 +2016,31 @@ components:
     ListItem:
       type: object
       properties:
-        concurrency_policy:
-          type: string
+        check_id:
+          type: integer
+          format: int64
         created_at:
           type: string
           format: date-time
-        handler_type:
-          type: string
+        duration_ms:
+          type: integer
+          nullable: true
         id:
           type: integer
           format: int64
-        last_scheduled_at:
+        run_id:
           type: string
-          format: date-time
-          nullable: true
-        misfire_policy:
-          type: string
-        name:
-          type: string
-        next_run_at:
-          type: string
-          format: date-time
-          nullable: true
-        partition_key:
+        severity:
           type: string
           nullable: true
-        priority:
-          type: integer
-        schedule_summary:
-          type: string
         status:
           type: string
-        tenant_id:
-          type: string
-        trigger_type:
-          type: string
-        updated_at:
-          type: string
-          format: date-time
       required:
       - id
-      - name
-      - tenant_id
-      - priority
-      - trigger_type
-      - schedule_summary
-      - handler_type
-      - concurrency_policy
-      - misfire_policy
+      - run_id
+      - check_id
       - status
       - created_at
-      - updated_at
     Snapshot:
       type: object
     TriggerResult:
