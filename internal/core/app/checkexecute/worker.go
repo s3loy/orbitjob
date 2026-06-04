@@ -84,16 +84,19 @@ func (uc *TickUseCase) executeRun(ctx context.Context, tenantID string, run chec
 		MaxAttempt:     1,
 	}
 
-	// Look up and execute handler.
+	// Execute handler with timeout.
+	handlerCtx, cancel := context.WithTimeout(ctx, time.Duration(chk.TimeoutSec)*time.Second)
+	defer cancel()
+
 	var result execute.Result
 	if h, ok := handler.GetRegistered()[task.HandlerType]; ok {
-		result = h.Execute(ctx, task)
+		result = h.Execute(handlerCtx, task)
 	} else {
 		// Fall back to built-in handlers.
 		switch chk.CheckType {
 		case check.CheckTypeHTTPHealth:
 			hh := handler.NewHTTPHealth(nil)
-			result = hh.Execute(ctx, task)
+			result = hh.Execute(handlerCtx, task)
 		default:
 			result = execute.Result{
 				Success:    false,
