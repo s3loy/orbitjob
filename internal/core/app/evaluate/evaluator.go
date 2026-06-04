@@ -4,13 +4,14 @@ import (
 	"fmt"
 
 	"orbitjob/internal/core/domain/check"
+	"orbitjob/internal/core/domain/checkrun"
 )
 
 const (
-	SeverityOK       = "ok"
-	SeverityWarning  = "warning"
-	SeverityCritical = "critical"
-	SeverityUnknown  = "unknown"
+	SeverityOK       = checkrun.SeverityOK
+	SeverityWarning  = checkrun.SeverityWarning
+	SeverityCritical = checkrun.SeverityCritical
+	SeverityUnknown  = checkrun.SeverityUnknown
 )
 
 // Result holds the outcome of evaluating a check run.

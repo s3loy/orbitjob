@@ -7,7 +7,10 @@ import (
 	"time"
 
 	"orbitjob/internal/core/domain/check"
+	"orbitjob/internal/core/domain/checkrun"
 	"orbitjob/internal/platform/metrics"
+
+	"github.com/robfig/cron/v3"
 )
 
 // TickUseCase schedules checks by scanning for due checks and creating check runs.
@@ -32,7 +35,7 @@ type checkRepository interface {
 }
 
 type checkRunRepository interface {
-	Create(ctx context.Context, tenantID string, checkID int64, scheduledAt time.Time) (any, error)
+	Create(ctx context.Context, tenantID string, checkID int64, scheduledAt time.Time) (checkrun.Snapshot, error)
 }
 
 // RunBatch scans for due checks and creates check runs.
@@ -54,11 +57,15 @@ func (uc *TickUseCase) RunBatch(ctx context.Context, tenantID string, limit int)
 
 		// Compute next run time.
 		var nextRunAt time.Time
-		if c.ScheduleType == "cron" && c.CronExpr != nil {
-			// For MVP, just use a simple interval-based next run for cron.
-			// In production, this should use the cron parser.
-			nextRunAt = now.Add(time.Minute)
-		} else if c.ScheduleType == "interval" && c.IntervalSec != nil {
+		if c.ScheduleType == check.ScheduleTypeCron && c.CronExpr != nil {
+			schedule, err := cron.ParseStandard(*c.CronExpr)
+			if err != nil {
+				slog.Error("failed to parse cron expression", "check_id", c.ID, "cron", *c.CronExpr, "error", err)
+				nextRunAt = now.Add(time.Minute)
+			} else {
+				nextRunAt = schedule.Next(now)
+			}
+		} else if c.ScheduleType == check.ScheduleTypeInterval && c.IntervalSec != nil {
 			nextRunAt = now.Add(time.Duration(*c.IntervalSec) * time.Second)
 		} else {
 			nextRunAt = now.Add(time.Minute)
