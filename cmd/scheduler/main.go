@@ -390,11 +390,11 @@ func run(ctx context.Context) error {
 		return repo.CountActiveInstances(ctx)
 	}
 
-	// Initialize check scheduler.
+	// Initialize check scheduler with a fixed interval to avoid data race on cfg.TickInterval.
 	checkRepo := corepostgres.NewCheckRepository(db)
 	checkRunRepo := corepostgres.NewCheckRunRepository(db)
 	checkScheduler := checkschedule.NewTickUseCase(checkRepo, checkRunRepo)
-	checkTickInterval := cfg.TickInterval
+	checkTickInterval := 5 * time.Second
 	go func() {
 		ticker := time.NewTicker(checkTickInterval)
 		defer ticker.Stop()
