@@ -49,35 +49,29 @@ func (r *CheckRepository) Create(ctx context.Context, spec check.CreateSpec) (ch
 		return check.Snapshot{}, fmt.Errorf("marshal labels: %w", err)
 	}
 
-	var nextRunAt interface{}
+	var nextRunAtParam interface{}
 	if spec.NextRunAt != nil {
-		nextRunAt = *spec.NextRunAt
-	} else {
-		nextRunAt = nil
+		nextRunAtParam = *spec.NextRunAt
 	}
 
 	var cronExpr interface{}
 	if spec.CronExpr != nil {
 		cronExpr = *spec.CronExpr
-	} else {
-		cronExpr = nil
 	}
 
 	var intervalSec interface{}
 	if spec.IntervalSec != nil {
 		intervalSec = *spec.IntervalSec
-	} else {
-		intervalSec = nil
 	}
 
 	var description interface{}
 	if spec.Description != nil {
 		description = *spec.Description
-	} else {
-		description = nil
 	}
 
 	var snap check.Snapshot
+	var checkConfigRaw, assertionRulesRaw, labelsRaw []byte
+	var nextRunAt sql.NullTime
 	err = tx.QueryRowContext(ctx, `
 		INSERT INTO checks (
 			name, description, tenant_id, status, check_type, check_config, assertion_rules,
@@ -89,15 +83,27 @@ func (r *CheckRepository) Create(ctx context.Context, spec check.CreateSpec) (ch
 		          priority, labels, next_run_at, version, created_at, updated_at
 	`, spec.Name, description, spec.TenantID, check.StatusActive, spec.CheckType,
 		checkConfigBytes, rulesBytes, spec.ScheduleType, cronExpr, intervalSec,
-		spec.Timezone, spec.TimeoutSec, spec.RetryLimit, spec.Priority, labelsBytes, nextRunAt,
+		spec.Timezone, spec.TimeoutSec, spec.RetryLimit, spec.Priority, labelsBytes, nextRunAtParam,
 	).Scan(
 		&snap.ID, &snap.Name, &snap.Description, &snap.TenantID, &snap.Status, &snap.CheckType,
-		&snap.CheckConfig, &snap.AssertionRules, &snap.ScheduleType, &snap.CronExpr, &snap.IntervalSec,
-		&snap.Timezone, &snap.TimeoutSec, &snap.RetryLimit, &snap.Priority, &snap.Labels,
-		&snap.NextRunAt, &snap.Version, &snap.CreatedAt, &snap.UpdatedAt,
+		&checkConfigRaw, &assertionRulesRaw, &snap.ScheduleType, &snap.CronExpr, &snap.IntervalSec,
+		&snap.Timezone, &snap.TimeoutSec, &snap.RetryLimit, &snap.Priority, &labelsRaw,
+		&nextRunAt, &snap.Version, &snap.CreatedAt, &snap.UpdatedAt,
 	)
 	if err != nil {
 		return check.Snapshot{}, fmt.Errorf("insert check: %w", err)
+	}
+	if len(checkConfigRaw) > 0 {
+		_ = json.Unmarshal(checkConfigRaw, &snap.CheckConfig)
+	}
+	if len(assertionRulesRaw) > 0 {
+		_ = json.Unmarshal(assertionRulesRaw, &snap.AssertionRules)
+	}
+	if len(labelsRaw) > 0 {
+		_ = json.Unmarshal(labelsRaw, &snap.Labels)
+	}
+	if nextRunAt.Valid {
+		snap.NextRunAt = &nextRunAt.Time
 	}
 
 	// Audit
@@ -136,23 +142,7 @@ func (r *CheckRepository) ChangeStatus(ctx context.Context, tenantID string, id 
 		return check.Snapshot{}, fmt.Errorf("set tenant context: %w", err)
 	}
 
-	var nextStatus string
-	switch action {
-	case check.ActionPause:
-		nextStatus, err = check.Pause("", version)
-		if err != nil {
-			return check.Snapshot{}, err
-		}
-	case check.ActionResume:
-		nextStatus, err = check.Resume("", version)
-		if err != nil {
-			return check.Snapshot{}, err
-		}
-	default:
-		return check.Snapshot{}, fmt.Errorf("unknown action: %s", action)
-	}
-
-	// Need to read current status first for validation.
+	// Read current status first for validation.
 	var currentStatus string
 	err = tx.QueryRowContext(ctx, `
 		SELECT status FROM checks WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
@@ -164,17 +154,22 @@ func (r *CheckRepository) ChangeStatus(ctx context.Context, tenantID string, id 
 		return check.Snapshot{}, fmt.Errorf("read check status: %w", err)
 	}
 
+	var nextStatus string
 	switch action {
 	case check.ActionPause:
 		nextStatus, err = check.Pause(currentStatus, version)
 	case check.ActionResume:
 		nextStatus, err = check.Resume(currentStatus, version)
+	default:
+		return check.Snapshot{}, fmt.Errorf("unknown action: %s", action)
 	}
 	if err != nil {
 		return check.Snapshot{}, err
 	}
 
 	var snap check.Snapshot
+	var checkConfigRaw, assertionRulesRaw, labelsRaw []byte
+	var nextRunAt sql.NullTime
 	err = tx.QueryRowContext(ctx, `
 		UPDATE checks
 		SET status = $1, version = version + 1, updated_at = now()
@@ -184,10 +179,22 @@ func (r *CheckRepository) ChangeStatus(ctx context.Context, tenantID string, id 
 		          priority, labels, next_run_at, version, created_at, updated_at
 	`, nextStatus, tenantID, id, version).Scan(
 		&snap.ID, &snap.Name, &snap.Description, &snap.TenantID, &snap.Status, &snap.CheckType,
-		&snap.CheckConfig, &snap.AssertionRules, &snap.ScheduleType, &snap.CronExpr, &snap.IntervalSec,
-		&snap.Timezone, &snap.TimeoutSec, &snap.RetryLimit, &snap.Priority, &snap.Labels,
-		&snap.NextRunAt, &snap.Version, &snap.CreatedAt, &snap.UpdatedAt,
+		&checkConfigRaw, &assertionRulesRaw, &snap.ScheduleType, &snap.CronExpr, &snap.IntervalSec,
+		&snap.Timezone, &snap.TimeoutSec, &snap.RetryLimit, &snap.Priority, &labelsRaw,
+		&nextRunAt, &snap.Version, &snap.CreatedAt, &snap.UpdatedAt,
 	)
+	if len(checkConfigRaw) > 0 {
+		_ = json.Unmarshal(checkConfigRaw, &snap.CheckConfig)
+	}
+	if len(assertionRulesRaw) > 0 {
+		_ = json.Unmarshal(assertionRulesRaw, &snap.AssertionRules)
+	}
+	if len(labelsRaw) > 0 {
+		_ = json.Unmarshal(labelsRaw, &snap.Labels)
+	}
+	if nextRunAt.Valid {
+		snap.NextRunAt = &nextRunAt.Time
+	}
 	if err == sql.ErrNoRows {
 		// Check if check exists (stale version vs not found).
 		var existingID int64
@@ -290,14 +297,28 @@ func (r *CheckRepository) ListDue(ctx context.Context, tenantID string, now time
 	var checks []check.Snapshot
 	for rows.Next() {
 		var snap check.Snapshot
+		var checkConfigRaw, assertionRulesRaw, labelsRaw []byte
+		var nextRunAt sql.NullTime
 		err := rows.Scan(
 			&snap.ID, &snap.Name, &snap.Description, &snap.TenantID, &snap.Status, &snap.CheckType,
-			&snap.CheckConfig, &snap.AssertionRules, &snap.ScheduleType, &snap.CronExpr, &snap.IntervalSec,
-			&snap.Timezone, &snap.TimeoutSec, &snap.RetryLimit, &snap.Priority, &snap.Labels,
-			&snap.NextRunAt, &snap.Version, &snap.CreatedAt, &snap.UpdatedAt,
+			&checkConfigRaw, &assertionRulesRaw, &snap.ScheduleType, &snap.CronExpr, &snap.IntervalSec,
+			&snap.Timezone, &snap.TimeoutSec, &snap.RetryLimit, &snap.Priority, &labelsRaw,
+			&nextRunAt, &snap.Version, &snap.CreatedAt, &snap.UpdatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan check: %w", err)
+		}
+		if len(checkConfigRaw) > 0 {
+			_ = json.Unmarshal(checkConfigRaw, &snap.CheckConfig)
+		}
+		if len(assertionRulesRaw) > 0 {
+			_ = json.Unmarshal(assertionRulesRaw, &snap.AssertionRules)
+		}
+		if len(labelsRaw) > 0 {
+			_ = json.Unmarshal(labelsRaw, &snap.Labels)
+		}
+		if nextRunAt.Valid {
+			snap.NextRunAt = &nextRunAt.Time
 		}
 		checks = append(checks, snap)
 	}
@@ -321,6 +342,8 @@ func (r *CheckRepository) UpdateNextRunAt(ctx context.Context, tenantID string, 
 
 func (r *CheckRepository) GetByID(ctx context.Context, tenantID string, id int64) (check.Snapshot, error) {
 	var snap check.Snapshot
+	var checkConfigRaw, assertionRulesRaw, labelsRaw []byte
+	var nextRunAt sql.NullTime
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, name, description, tenant_id, status, check_type, check_config, assertion_rules,
 		       schedule_type, cron_expr, interval_sec, timezone, timeout_sec, retry_limit,
@@ -329,15 +352,27 @@ func (r *CheckRepository) GetByID(ctx context.Context, tenantID string, id int64
 		WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
 	`, tenantID, id).Scan(
 		&snap.ID, &snap.Name, &snap.Description, &snap.TenantID, &snap.Status, &snap.CheckType,
-		&snap.CheckConfig, &snap.AssertionRules, &snap.ScheduleType, &snap.CronExpr, &snap.IntervalSec,
-		&snap.Timezone, &snap.TimeoutSec, &snap.RetryLimit, &snap.Priority, &snap.Labels,
-		&snap.NextRunAt, &snap.Version, &snap.CreatedAt, &snap.UpdatedAt,
+		&checkConfigRaw, &assertionRulesRaw, &snap.ScheduleType, &snap.CronExpr, &snap.IntervalSec,
+		&snap.Timezone, &snap.TimeoutSec, &snap.RetryLimit, &snap.Priority, &labelsRaw,
+		&nextRunAt, &snap.Version, &snap.CreatedAt, &snap.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return check.Snapshot{}, fmt.Errorf("check not found: %d", id)
 	}
 	if err != nil {
 		return check.Snapshot{}, fmt.Errorf("get check: %w", err)
+	}
+	if len(checkConfigRaw) > 0 {
+		_ = json.Unmarshal(checkConfigRaw, &snap.CheckConfig)
+	}
+	if len(assertionRulesRaw) > 0 {
+		_ = json.Unmarshal(assertionRulesRaw, &snap.AssertionRules)
+	}
+	if len(labelsRaw) > 0 {
+		_ = json.Unmarshal(labelsRaw, &snap.Labels)
+	}
+	if nextRunAt.Valid {
+		snap.NextRunAt = &nextRunAt.Time
 	}
 	return snap, nil
 }
