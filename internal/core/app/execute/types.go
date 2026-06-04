@@ -29,6 +29,9 @@ type Result struct {
 	Success    bool
 	ResultCode string
 	ErrorMsg   string
+	// Output contains structured handler output for evaluation engines.
+	// Only populated by check-type handlers; regular handlers leave this nil.
+	Output map[string]any
 }
 
 type Handler interface {

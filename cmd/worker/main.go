@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 
 	adminpostgres "orbitjob/internal/admin/store/postgres"
+	"orbitjob/internal/core/app/checkexecute"
 	"orbitjob/internal/core/app/execute"
 	"orbitjob/internal/core/app/execute/handler"
 	domainworker "orbitjob/internal/core/domain/worker"
@@ -492,6 +493,25 @@ func run(ctx context.Context) error {
 		"capacity", cfg.Capacity,
 		"capacity_max", cfg.CapacityMax,
 	)
+
+	// Initialize check worker.
+	checkRepo := corepostgres.NewCheckRepository(db)
+	checkRunRepo := corepostgres.NewCheckRunRepository(db)
+	checkWorker := checkexecute.NewTickUseCase(checkRepo, checkRunRepo)
+	go func() {
+		ticker := time.NewTicker(cfg.PollInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if _, err := checkWorker.RunBatch(ctx, cfg.TenantID, cfg.Capacity); err != nil {
+					slog.Error("check worker tick failed", "error", err.Error())
+				}
+			}
+		}
+	}()
 
 	// Optional: etcd service registration for worker discovery.
 	var reg discovery.Registry
