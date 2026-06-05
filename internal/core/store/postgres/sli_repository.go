@@ -1,0 +1,122 @@
+package postgres
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+
+	"orbitjob/internal/core/domain/sli"
+)
+
+// SLIRepository provides write-side access to slis table.
+type SLIRepository struct {
+	db *sql.DB
+}
+
+// NewSLIRepository creates a new SLI repository.
+func NewSLIRepository(db *sql.DB) *SLIRepository {
+	return &SLIRepository{db: db}
+}
+
+// Create inserts a new SLI and returns its snapshot.
+func (r *SLIRepository) Create(ctx context.Context, tenantID string, spec sli.CreateSpec) (sli.Snapshot, error) {
+	var snap sli.Snapshot
+
+	sourceConfigBytes, err := json.Marshal(spec.SourceConfig)
+	if err != nil {
+		return snap, fmt.Errorf("marshal source_config: %w", err)
+	}
+
+	goodEventBytes, err := json.Marshal(spec.GoodEventCriteria)
+	if err != nil {
+		return snap, fmt.Errorf("marshal good_event_criteria: %w", err)
+	}
+
+	var sourceConfigRaw, goodEventRaw []byte
+	err = r.db.QueryRowContext(ctx, `
+		INSERT INTO slis (tenant_id, name, description, sli_type, source_type, source_config, aggregation, good_event_criteria)
+		VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8::jsonb)
+		RETURNING id, tenant_id, name, description, sli_type, source_type, source_config, aggregation, good_event_criteria, version, created_at, updated_at
+	`, tenantID, spec.Name, spec.Description, spec.SLIType, spec.SourceType, sourceConfigBytes, spec.Aggregation, goodEventBytes).Scan(
+		&snap.ID, &snap.TenantID, &snap.Name, &snap.Description, &snap.SLIType, &snap.SourceType,
+		&sourceConfigRaw, &snap.Aggregation, &goodEventRaw, &snap.Version, &snap.CreatedAt, &snap.UpdatedAt,
+	)
+	if err != nil {
+		return snap, fmt.Errorf("insert sli: %w", err)
+	}
+
+	if len(sourceConfigRaw) > 0 {
+		_ = json.Unmarshal(sourceConfigRaw, &snap.SourceConfig)
+	}
+	if len(goodEventRaw) > 0 {
+		_ = json.Unmarshal(goodEventRaw, &snap.GoodEventCriteria)
+	}
+
+	return snap, nil
+}
+
+// Delete soft-deletes an SLI.
+func (r *SLIRepository) Delete(ctx context.Context, tenantID string, id int64, version int) error {
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE slis SET deleted_at = now(), version = version + 1
+		WHERE tenant_id = $1 AND id = $2 AND version = $3 AND deleted_at IS NULL
+	`, tenantID, id, version)
+	if err != nil {
+		return fmt.Errorf("delete sli: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("sli not found or version conflict: %d", id)
+	}
+
+	return nil
+}
+
+// FindByCheckID finds all SLIs that source from the given check ID.
+func (r *SLIRepository) FindByCheckID(ctx context.Context, tenantID string, checkID int64) ([]sli.Snapshot, error) {
+	// Query SLIs where source_config contains the check_id.
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, tenant_id, name, description, sli_type, source_type, source_config, aggregation, good_event_criteria, version, created_at, updated_at
+		FROM slis
+		WHERE tenant_id = $1 AND deleted_at IS NULL
+		  AND source_type = 'check_run'
+		  AND source_config @> jsonb_build_object('check_id', $2::int)
+	`, tenantID, checkID)
+	if err != nil {
+		return nil, fmt.Errorf("query slis by check_id: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	return r.scanSLIs(rows)
+}
+
+func (r *SLIRepository) scanSLIs(rows *sql.Rows) ([]sli.Snapshot, error) {
+	var slis []sli.Snapshot
+	for rows.Next() {
+		var snap sli.Snapshot
+		var sourceConfigRaw, goodEventRaw []byte
+		err := rows.Scan(
+			&snap.ID, &snap.TenantID, &snap.Name, &snap.Description, &snap.SLIType, &snap.SourceType,
+			&sourceConfigRaw, &snap.Aggregation, &goodEventRaw, &snap.Version, &snap.CreatedAt, &snap.UpdatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scan sli: %w", err)
+		}
+		if len(sourceConfigRaw) > 0 {
+			_ = json.Unmarshal(sourceConfigRaw, &snap.SourceConfig)
+		}
+		if len(goodEventRaw) > 0 {
+			_ = json.Unmarshal(goodEventRaw, &snap.GoodEventCriteria)
+		}
+		slis = append(slis, snap)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate slis: %w", err)
+	}
+	return slis, nil
+}
