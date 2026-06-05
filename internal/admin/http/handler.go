@@ -14,6 +14,12 @@ import (
 	instancequery "orbitjob/internal/admin/app/instance/query"
 	command "orbitjob/internal/admin/app/job/command"
 	query "orbitjob/internal/admin/app/job/query"
+	slicommand "orbitjob/internal/admin/app/sli/command"
+	sliquery "orbitjob/internal/admin/app/sli/query"
+	slocommand "orbitjob/internal/admin/app/slo/command"
+	sloquery "orbitjob/internal/admin/app/slo/query"
+	slobudgetquery "orbitjob/internal/admin/app/slobudget/query"
+	sloalertquery "orbitjob/internal/admin/app/sloalert/query"
 	"orbitjob/internal/admin/http/middleware"
 	domaincheck "orbitjob/internal/core/domain/check"
 	domaininstance "orbitjob/internal/core/domain/instance"
@@ -95,6 +101,59 @@ type getCheckRunUseCase interface {
 	Get(ctx context.Context, tenantID string, id int64) (checkrunquery.GetResult, error)
 }
 
+type createSLIUseCase interface {
+	Create(ctx context.Context, in slicommand.CreateInput) (slicommand.CreateResult, error)
+}
+
+type listSLIsUseCase interface {
+	List(ctx context.Context, in sliquery.ListInput) (sliquery.ListResult, error)
+}
+
+type getSLIUseCase interface {
+	Get(ctx context.Context, tenantID string, id int64) (sliquery.GetItem, error)
+}
+
+type deleteSLIUseCase interface {
+	Delete(ctx context.Context, in slicommand.DeleteInput) error
+}
+
+type createSLOUseCase interface {
+	Create(ctx context.Context, in slocommand.CreateInput) (slocommand.CreateResult, error)
+}
+
+type listSLOsUseCase interface {
+	List(ctx context.Context, in sloquery.ListInput) (sloquery.ListResult, error)
+}
+
+type getSLOUseCase interface {
+	Get(ctx context.Context, tenantID string, id int64) (sloquery.GetItem, error)
+}
+
+type changeSLOStatusUseCase interface {
+	Pause(ctx context.Context, tenantID string, in slocommand.ChangeStatusInput) (slocommand.ChangeStatusResult, error)
+	Resume(ctx context.Context, tenantID string, in slocommand.ChangeStatusInput) (slocommand.ChangeStatusResult, error)
+}
+
+type deleteSLOUseCase interface {
+	Delete(ctx context.Context, in slocommand.DeleteInput) error
+}
+
+type getBudgetUseCase interface {
+	Get(ctx context.Context, tenantID string, sloID int64) (slobudgetquery.GetItem, error)
+}
+
+type listBudgetHistoryUseCase interface {
+	List(ctx context.Context, in slobudgetquery.ListInput) (slobudgetquery.ListResult, error)
+}
+
+type getAlertUseCase interface {
+	Get(ctx context.Context, tenantID string, id int64) (sloalertquery.GetItem, error)
+}
+
+type listAlertsUseCase interface {
+	List(ctx context.Context, in sloalertquery.ListInput) (sloalertquery.ListResult, error)
+}
+
 type checkListResponse struct {
 	Items []checkquery.ListItem `json:"items"`
 }
@@ -109,6 +168,22 @@ type jobListResponse struct {
 
 type instanceListResponse struct {
 	Items []instancequery.InstanceItem `json:"items"`
+}
+
+type sliListResponse struct {
+	Items []sliquery.ListItem `json:"items"`
+}
+
+type sloListResponse struct {
+	Items []sloquery.ListItem `json:"items"`
+}
+
+type budgetListResponse struct {
+	Items []slobudgetquery.ListItem `json:"items"`
+}
+
+type alertListResponse struct {
+	Items []sloalertquery.ListItem `json:"items"`
 }
 
 type errorResponse struct {
@@ -135,6 +210,19 @@ type Handler struct {
 	deleteCheckUC       deleteCheckUseCase
 	listCheckRunsUC     listCheckRunsUseCase
 	getCheckRunUC       getCheckRunUseCase
+	createSLIUC         createSLIUseCase
+	listSLIsUC          listSLIsUseCase
+	getSLIUC            getSLIUseCase
+	deleteSLIUC         deleteSLIUseCase
+	createSLOUC         createSLOUseCase
+	listSLOsUC          listSLOsUseCase
+	getSLOUC            getSLOUseCase
+	statusSLOUC         changeSLOStatusUseCase
+	deleteSLOUC         deleteSLOUseCase
+	getBudgetUC         getBudgetUseCase
+	listBudgetHistoryUC listBudgetHistoryUseCase
+	getAlertUC          getAlertUseCase
+	listAlertsUC        listAlertsUseCase
 }
 
 func NewHandler(
@@ -166,6 +254,19 @@ func (h *Handler) SetResumeCheckUseCase(uc resumeCheckUseCase)       { h.resumeC
 func (h *Handler) SetDeleteCheckUseCase(uc deleteCheckUseCase)       { h.deleteCheckUC = uc }
 func (h *Handler) SetListCheckRunsUseCase(uc listCheckRunsUseCase)   { h.listCheckRunsUC = uc }
 func (h *Handler) SetGetCheckRunUseCase(uc getCheckRunUseCase)       { h.getCheckRunUC = uc }
+func (h *Handler) SetCreateSLIUseCase(uc createSLIUseCase)           { h.createSLIUC = uc }
+func (h *Handler) SetListSLIsUseCase(uc listSLIsUseCase)             { h.listSLIsUC = uc }
+func (h *Handler) SetGetSLIUseCase(uc getSLIUseCase)                 { h.getSLIUC = uc }
+func (h *Handler) SetDeleteSLIUseCase(uc deleteSLIUseCase)           { h.deleteSLIUC = uc }
+func (h *Handler) SetCreateSLOUseCase(uc createSLOUseCase)           { h.createSLOUC = uc }
+func (h *Handler) SetListSLOsUseCase(uc listSLOsUseCase)             { h.listSLOsUC = uc }
+func (h *Handler) SetGetSLOUseCase(uc getSLOUseCase)                 { h.getSLOUC = uc }
+func (h *Handler) SetChangeSLOStatusUseCase(uc changeSLOStatusUseCase) { h.statusSLOUC = uc }
+func (h *Handler) SetDeleteSLOUseCase(uc deleteSLOUseCase)           { h.deleteSLOUC = uc }
+func (h *Handler) SetGetBudgetUseCase(uc getBudgetUseCase)           { h.getBudgetUC = uc }
+func (h *Handler) SetListBudgetHistoryUseCase(uc listBudgetHistoryUseCase) { h.listBudgetHistoryUC = uc }
+func (h *Handler) SetGetAlertUseCase(uc getAlertUseCase)             { h.getAlertUC = uc }
+func (h *Handler) SetListAlertsUseCase(uc listAlertsUseCase)         { h.listAlertsUC = uc }
 
 // Register mounts HTTP routes for the admin API.
 func (h *Handler) Register(r gin.IRouter) {
@@ -802,4 +903,384 @@ func (h *Handler) GetCheckRun(c *gin.Context) {
 	}
 
 	c.JSON(stdhttp.StatusOK, out)
+}
+
+// CreateSLI handles SLI creation requests.
+func (h *Handler) CreateSLI(c *gin.Context) {
+	var req CreateSLIRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	in := req.ToCreateInput()
+	in.TenantID = middleware.GetTenantID(c)
+	out, err := h.createSLIUC.Create(c.Request.Context(), in)
+	if err != nil {
+		if validation.Is(err) {
+			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
+			return
+		}
+		_ = c.Error(err)
+		writeAPIError(c, stdhttp.StatusInternalServerError, toAPIError(err))
+		return
+	}
+
+	c.JSON(stdhttp.StatusCreated, out)
+}
+
+// ListSLIs handles SLI list queries.
+func (h *Handler) ListSLIs(c *gin.Context) {
+	var req ListSLIsRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	in := req.ToListInput()
+	in.TenantID = middleware.GetTenantID(c)
+	out, err := h.listSLIsUC.List(c.Request.Context(), in)
+	if err != nil {
+		if validation.Is(err) {
+			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
+			return
+		}
+		_ = c.Error(err)
+		writeAPIError(c, stdhttp.StatusInternalServerError, toAPIError(err))
+		return
+	}
+
+	c.JSON(stdhttp.StatusOK, sliListResponse{Items: out.Items})
+}
+
+// GetSLI handles one SLI detail query.
+func (h *Handler) GetSLI(c *gin.Context) {
+	var req GetSLIRequest
+	if err := c.ShouldBindUri(&req); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	out, err := h.getSLIUC.Get(c.Request.Context(), middleware.GetTenantID(c), req.ID)
+	if err != nil {
+		if validation.Is(err) {
+			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
+			return
+		}
+		apiErr := toAPIError(err)
+		if apiErr.Code == ErrCodeNotFound {
+			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
+			return
+		}
+		_ = c.Error(err)
+		writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
+		return
+	}
+
+	c.JSON(stdhttp.StatusOK, out)
+}
+
+// DeleteSLI handles soft-delete requests for SLIs.
+func (h *Handler) DeleteSLI(c *gin.Context) {
+	var pathReq sliIDURI
+	if err := c.ShouldBindUri(&pathReq); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	var body struct {
+		Version int `json:"version" binding:"required,min=1"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	err := h.deleteSLIUC.Delete(c.Request.Context(), slicommand.DeleteInput{
+		TenantID: middleware.GetTenantID(c),
+		ID:       pathReq.ID,
+		Version:  body.Version,
+	})
+	if err != nil {
+		apiErr := toAPIError(err)
+		if apiErr.Code == ErrCodeNotFound {
+			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
+			return
+		}
+		_ = c.Error(err)
+		writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
+		return
+	}
+
+	c.JSON(stdhttp.StatusOK, gin.H{"deleted": true})
+}
+
+// CreateSLO handles SLO creation requests.
+func (h *Handler) CreateSLO(c *gin.Context) {
+	var req CreateSLOResponse
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	in := req.ToCreateInput()
+	in.TenantID = middleware.GetTenantID(c)
+	out, err := h.createSLOUC.Create(c.Request.Context(), in)
+	if err != nil {
+		if validation.Is(err) {
+			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
+			return
+		}
+		_ = c.Error(err)
+		writeAPIError(c, stdhttp.StatusInternalServerError, toAPIError(err))
+		return
+	}
+
+	c.JSON(stdhttp.StatusCreated, out)
+}
+
+// ListSLOs handles SLO list queries.
+func (h *Handler) ListSLOs(c *gin.Context) {
+	var req ListSLOsRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	in := req.ToListInput()
+	in.TenantID = middleware.GetTenantID(c)
+	out, err := h.listSLOsUC.List(c.Request.Context(), in)
+	if err != nil {
+		if validation.Is(err) {
+			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
+			return
+		}
+		_ = c.Error(err)
+		writeAPIError(c, stdhttp.StatusInternalServerError, toAPIError(err))
+		return
+	}
+
+	c.JSON(stdhttp.StatusOK, sloListResponse{Items: out.Items})
+}
+
+// GetSLO handles one SLO detail query.
+func (h *Handler) GetSLO(c *gin.Context) {
+	var req GetSLORequest
+	if err := c.ShouldBindUri(&req); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	out, err := h.getSLOUC.Get(c.Request.Context(), middleware.GetTenantID(c), req.ID)
+	if err != nil {
+		if validation.Is(err) {
+			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
+			return
+		}
+		apiErr := toAPIError(err)
+		if apiErr.Code == ErrCodeNotFound {
+			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
+			return
+		}
+		_ = c.Error(err)
+		writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
+		return
+	}
+
+	c.JSON(stdhttp.StatusOK, out)
+}
+
+// PauseSLO handles SLO pause requests.
+func (h *Handler) PauseSLO(c *gin.Context) {
+	h.changeSLOStatus(c, "pause")
+}
+
+// ResumeSLO handles SLO resume requests.
+func (h *Handler) ResumeSLO(c *gin.Context) {
+	h.changeSLOStatus(c, "resume")
+}
+
+func (h *Handler) changeSLOStatus(c *gin.Context, action string) {
+	var pathReq sloIDURI
+	if err := c.ShouldBindUri(&pathReq); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	var body struct {
+		Version int `json:"version" binding:"required,min=1"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	in := slocommand.ChangeStatusInput{
+		ID:      pathReq.ID,
+		Version: body.Version,
+	}
+	var out slocommand.ChangeStatusResult
+	var err error
+	switch action {
+	case "pause":
+		out, err = h.statusSLOUC.Pause(c.Request.Context(), middleware.GetTenantID(c), in)
+	case "resume":
+		out, err = h.statusSLOUC.Resume(c.Request.Context(), middleware.GetTenantID(c), in)
+	default:
+		writeAPIError(c, stdhttp.StatusInternalServerError, APIError{Code: "internal", Message: "unsupported action"})
+		return
+	}
+	if err != nil {
+		if validation.Is(err) {
+			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
+			return
+		}
+		apiErr := toAPIError(err)
+		if apiErr.Code == ErrCodeNotFound {
+			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
+			return
+		}
+		_ = c.Error(err)
+		writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
+		return
+	}
+
+	c.JSON(stdhttp.StatusOK, out)
+}
+
+// DeleteSLO handles soft-delete requests for SLOs.
+func (h *Handler) DeleteSLO(c *gin.Context) {
+	var pathReq sloIDURI
+	if err := c.ShouldBindUri(&pathReq); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	var body struct {
+		Version int `json:"version" binding:"required,min=1"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	err := h.deleteSLOUC.Delete(c.Request.Context(), slocommand.DeleteInput{
+		TenantID: middleware.GetTenantID(c),
+		ID:       pathReq.ID,
+		Version:  body.Version,
+	})
+	if err != nil {
+		apiErr := toAPIError(err)
+		if apiErr.Code == ErrCodeNotFound {
+			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
+			return
+		}
+		_ = c.Error(err)
+		writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
+		return
+	}
+
+	c.JSON(stdhttp.StatusOK, gin.H{"deleted": true})
+}
+
+// GetSLOBudget handles SLO budget detail query.
+func (h *Handler) GetSLOBudget(c *gin.Context) {
+	var req GetSLOBudgetRequest
+	if err := c.ShouldBindUri(&req); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	out, err := h.getBudgetUC.Get(c.Request.Context(), middleware.GetTenantID(c), req.SLOID)
+	if err != nil {
+		if validation.Is(err) {
+			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
+			return
+		}
+		apiErr := toAPIError(err)
+		if apiErr.Code == ErrCodeNotFound {
+			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
+			return
+		}
+		_ = c.Error(err)
+		writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
+		return
+	}
+
+	c.JSON(stdhttp.StatusOK, out)
+}
+
+// ListSLOBudgets handles SLO budget history list queries.
+func (h *Handler) ListSLOBudgets(c *gin.Context) {
+	var req ListSLOBudgetsRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	in := req.ToListInput()
+	in.TenantID = middleware.GetTenantID(c)
+	out, err := h.listBudgetHistoryUC.List(c.Request.Context(), in)
+	if err != nil {
+		if validation.Is(err) {
+			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
+			return
+		}
+		_ = c.Error(err)
+		writeAPIError(c, stdhttp.StatusInternalServerError, toAPIError(err))
+		return
+	}
+
+	c.JSON(stdhttp.StatusOK, budgetListResponse{Items: out.Items})
+}
+
+// GetSLOAlert handles one SLO alert detail query.
+func (h *Handler) GetSLOAlert(c *gin.Context) {
+	var req GetSLOAlertRequest
+	if err := c.ShouldBindUri(&req); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	out, err := h.getAlertUC.Get(c.Request.Context(), middleware.GetTenantID(c), req.ID)
+	if err != nil {
+		if validation.Is(err) {
+			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
+			return
+		}
+		apiErr := toAPIError(err)
+		if apiErr.Code == ErrCodeNotFound {
+			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
+			return
+		}
+		_ = c.Error(err)
+		writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
+		return
+	}
+
+	c.JSON(stdhttp.StatusOK, out)
+}
+
+// ListSLOAlerts handles SLO alert list queries.
+func (h *Handler) ListSLOAlerts(c *gin.Context) {
+	var req ListSLOAlertsRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	in := req.ToListInput()
+	in.TenantID = middleware.GetTenantID(c)
+	out, err := h.listAlertsUC.List(c.Request.Context(), in)
+	if err != nil {
+		if validation.Is(err) {
+			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
+			return
+		}
+		_ = c.Error(err)
+		writeAPIError(c, stdhttp.StatusInternalServerError, toAPIError(err))
+		return
+	}
+
+	c.JSON(stdhttp.StatusOK, alertListResponse{Items: out.Items})
 }
