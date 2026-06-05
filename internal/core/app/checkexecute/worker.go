@@ -19,6 +19,7 @@ import (
 type TickUseCase struct {
 	checkRepo    checkReader
 	checkRunRepo checkRunRepository
+	sliRecorder  sliEventRecorder
 	evaluator    *evaluate.Evaluator
 	clock        func() time.Time
 }
@@ -33,6 +34,11 @@ func NewTickUseCase(checkRepo checkReader, checkRunRepo checkRunRepository) *Tic
 	}
 }
 
+// SetSLIRecorder sets the SLI event recorder.
+func (uc *TickUseCase) SetSLIRecorder(r sliEventRecorder) {
+	uc.sliRecorder = r
+}
+
 type checkReader interface {
 	GetByID(ctx context.Context, tenantID string, id int64) (check.Snapshot, error)
 }
@@ -40,6 +46,10 @@ type checkReader interface {
 type checkRunRepository interface {
 	ClaimNext(ctx context.Context, tenantID string, limit int, now time.Time) ([]checkrun.Snapshot, error)
 	Complete(ctx context.Context, tenantID string, id int64, status, severity string, output, evaluationResult map[string]any, durationMs int, now time.Time) error
+}
+
+type sliEventRecorder interface {
+	RecordCheckRun(ctx context.Context, tenantID string, checkID int64, run checkrun.Snapshot) error
 }
 
 // RunBatch claims and executes pending check runs.
@@ -142,6 +152,12 @@ func (uc *TickUseCase) executeRun(ctx context.Context, tenantID string, run chec
 
 	if err := uc.checkRunRepo.Complete(ctx, tenantID, run.ID, status, severity, result.Output, evalResultMap, durationMs, uc.clock()); err != nil {
 		return fmt.Errorf("complete check run: %w", err)
+	}
+
+	if uc.sliRecorder != nil {
+		if err := uc.sliRecorder.RecordCheckRun(ctx, tenantID, chk.ID, run); err != nil {
+			slog.Error("failed to record sli event", "run_id", run.RunID, "error", err)
+		}
 	}
 
 	metrics.CheckRunsCompletedTotal.WithLabelValues(tenantID, chk.CheckType, severity).Inc()

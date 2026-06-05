@@ -23,6 +23,7 @@ import (
 	"orbitjob/internal/core/app/checkexecute"
 	"orbitjob/internal/core/app/execute"
 	"orbitjob/internal/core/app/execute/handler"
+	"orbitjob/internal/core/app/sloevaluate"
 	domainworker "orbitjob/internal/core/domain/worker"
 	corepostgres "orbitjob/internal/core/store/postgres"
 	"orbitjob/internal/platform/config"
@@ -498,6 +499,10 @@ func run(ctx context.Context) error {
 	checkRepo := corepostgres.NewCheckRepository(db)
 	checkRunRepo := corepostgres.NewCheckRunRepository(db)
 	checkWorker := checkexecute.NewTickUseCase(checkRepo, checkRunRepo)
+	// Wire SLI recorder for automatic SLO tracking.
+	sliRepo := corepostgres.NewSLIRepository(db)
+	snapshotRepo := corepostgres.NewSLISnapshotRepository(db)
+	checkWorker.SetSLIRecorder(sloevaluate.NewCheckRunRecorder(sliRepo, snapshotRepo))
 	go func() {
 		ticker := time.NewTicker(cfg.PollInterval)
 		defer ticker.Stop()
