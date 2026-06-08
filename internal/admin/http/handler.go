@@ -1017,13 +1017,17 @@ func (h *Handler) DeleteSLI(c *gin.Context) {
 
 // CreateSLO handles SLO creation requests.
 func (h *Handler) CreateSLO(c *gin.Context) {
-	var req CreateSLOResponse
+	var req CreateSLORequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
-	in := req.ToCreateInput()
+	in, err := req.ToCreateInput()
+	if err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, APIError{Code: ErrCodeValidation, Message: err.Error()})
+		return
+	}
 	in.TenantID = middleware.GetTenantID(c)
 	out, err := h.createSLOUC.Create(c.Request.Context(), in)
 	if err != nil {
@@ -1136,13 +1140,18 @@ func (h *Handler) changeSLOStatus(c *gin.Context, action string) {
 			return
 		}
 		apiErr := toAPIError(err)
-		if apiErr.Code == ErrCodeNotFound {
+		switch apiErr.Code {
+		case ErrCodeNotFound:
 			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
 			return
+		case ErrCodeConflict:
+			writeAPIError(c, stdhttp.StatusConflict, apiErr)
+			return
+		default:
+			_ = c.Error(err)
+			writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
+			return
 		}
-		_ = c.Error(err)
-		writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
-		return
 	}
 
 	c.JSON(stdhttp.StatusOK, out)
@@ -1171,13 +1180,18 @@ func (h *Handler) DeleteSLO(c *gin.Context) {
 	})
 	if err != nil {
 		apiErr := toAPIError(err)
-		if apiErr.Code == ErrCodeNotFound {
+		switch apiErr.Code {
+		case ErrCodeNotFound:
 			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
 			return
+		case ErrCodeConflict:
+			writeAPIError(c, stdhttp.StatusConflict, apiErr)
+			return
+		default:
+			_ = c.Error(err)
+			writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
+			return
 		}
-		_ = c.Error(err)
-		writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
-		return
 	}
 
 	c.JSON(stdhttp.StatusOK, gin.H{"deleted": true})
@@ -1212,6 +1226,12 @@ func (h *Handler) GetSLOBudget(c *gin.Context) {
 
 // ListSLOBudgets handles SLO budget history list queries.
 func (h *Handler) ListSLOBudgets(c *gin.Context) {
+	var pathReq sloIDURI
+	if err := c.ShouldBindUri(&pathReq); err != nil {
+		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
 	var req ListSLOBudgetsRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
 		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
@@ -1219,6 +1239,7 @@ func (h *Handler) ListSLOBudgets(c *gin.Context) {
 	}
 
 	in := req.ToListInput()
+	in.SLOID = pathReq.ID
 	in.TenantID = middleware.GetTenantID(c)
 	out, err := h.listBudgetHistoryUC.List(c.Request.Context(), in)
 	if err != nil {

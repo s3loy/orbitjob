@@ -3,13 +3,25 @@ package query
 import (
 	"context"
 	"fmt"
-
-	"orbitjob/internal/admin/store/postgres"
+	"time"
 )
+
+// BudgetAlertItem is the read model for a budget alert.
+type BudgetAlertItem struct {
+	ID          int64      `json:"id"`
+	TenantID    string     `json:"tenant_id"`
+	SLOID       int64      `json:"slo_id"`
+	BudgetID    int64      `json:"budget_id"`
+	AlertType   string     `json:"alert_type"`
+	BurnRate    float64    `json:"burn_rate"`
+	Status      string     `json:"status"`
+	TriggeredAt time.Time  `json:"triggered_at"`
+	ResolvedAt  *time.Time `json:"resolved_at,omitempty"`
+}
 
 // alertReader retrieves budget alerts.
 type alertReader interface {
-	Get(ctx context.Context, tenantID string, id int64) (postgres.BudgetAlertItem, error)
+	Get(ctx context.Context, tenantID string, id int64) (BudgetAlertItem, error)
 }
 
 // GetAlertUseCase handles alert retrieval.

@@ -4,20 +4,21 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"time"
+
+	sloalertquery "orbitjob/internal/admin/app/sloalert/query"
 )
 
-// BudgetAlertItem represents a budget alert for the read model.
-type BudgetAlertItem struct {
-	ID          int64     `json:"id"`
-	TenantID    string    `json:"tenant_id"`
-	SLOID       int64     `json:"slo_id"`
-	BudgetID    int64     `json:"budget_id"`
-	AlertType   string    `json:"alert_type"`
-	BurnRate    float64   `json:"burn_rate"`
-	Status      string    `json:"status"`
-	TriggeredAt time.Time `json:"triggered_at"`
-	ResolvedAt  *time.Time `json:"resolved_at,omitempty"`
+// budgetAlertRow is the internal scan target for budget_alerts queries.
+type budgetAlertRow struct {
+	ID          int64
+	TenantID    string
+	SLOID       int64
+	BudgetID    int64
+	AlertType   string
+	BurnRate    float64
+	Status      string
+	TriggeredAt sql.NullTime
+	ResolvedAt  sql.NullTime
 }
 
 // BudgetAlertReadRepository provides read-side access to budget_alerts table.
@@ -31,32 +32,28 @@ func NewBudgetAlertReadRepository(db *sql.DB) *BudgetAlertReadRepository {
 }
 
 // Get retrieves a budget alert by ID.
-func (r *BudgetAlertReadRepository) Get(ctx context.Context, tenantID string, id int64) (BudgetAlertItem, error) {
-	var item BudgetAlertItem
-	var resolvedAt sql.NullTime
+func (r *BudgetAlertReadRepository) Get(ctx context.Context, tenantID string, id int64) (sloalertquery.BudgetAlertItem, error) {
+	var row budgetAlertRow
 
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, tenant_id, slo_id, budget_id, alert_type, burn_rate, status, triggered_at, resolved_at
 		FROM budget_alerts
 		WHERE tenant_id = $1 AND id = $2
 	`, tenantID, id).Scan(
-		&item.ID, &item.TenantID, &item.SLOID, &item.BudgetID, &item.AlertType,
-		&item.BurnRate, &item.Status, &item.TriggeredAt, &resolvedAt,
+		&row.ID, &row.TenantID, &row.SLOID, &row.BudgetID, &row.AlertType,
+		&row.BurnRate, &row.Status, &row.TriggeredAt, &row.ResolvedAt,
 	)
 	if err == sql.ErrNoRows {
-		return item, fmt.Errorf("budget alert not found: %d", id)
+		return sloalertquery.BudgetAlertItem{}, fmt.Errorf("budget alert not found: %d", id)
 	}
 	if err != nil {
-		return item, fmt.Errorf("get budget alert: %w", err)
+		return sloalertquery.BudgetAlertItem{}, fmt.Errorf("get budget alert: %w", err)
 	}
-	if resolvedAt.Valid {
-		item.ResolvedAt = &resolvedAt.Time
-	}
-	return item, nil
+	return mapBudgetAlertRow(row), nil
 }
 
 // List retrieves a paginated list of budget alerts.
-func (r *BudgetAlertReadRepository) List(ctx context.Context, tenantID string, sloID *int64, status *string, limit, offset int) ([]BudgetAlertItem, int64, error) {
+func (r *BudgetAlertReadRepository) List(ctx context.Context, tenantID string, sloID *int64, status *string, limit, offset int) ([]sloalertquery.BudgetAlertItem, int64, error) {
 	var total int64
 	countQuery := `SELECT COUNT(*) FROM budget_alerts WHERE tenant_id = $1`
 	countArgs := []any{tenantID}
@@ -102,25 +99,41 @@ func (r *BudgetAlertReadRepository) List(ctx context.Context, tenantID string, s
 	}
 	defer func() { _ = rows.Close() }()
 
-	var alerts []BudgetAlertItem
+	var alerts []sloalertquery.BudgetAlertItem
 	for rows.Next() {
-		var item BudgetAlertItem
-		var resolvedAt sql.NullTime
+		var row budgetAlertRow
 		err := rows.Scan(
-			&item.ID, &item.TenantID, &item.SLOID, &item.BudgetID, &item.AlertType,
-			&item.BurnRate, &item.Status, &item.TriggeredAt, &resolvedAt,
+			&row.ID, &row.TenantID, &row.SLOID, &row.BudgetID, &row.AlertType,
+			&row.BurnRate, &row.Status, &row.TriggeredAt, &row.ResolvedAt,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("scan budget alert: %w", err)
 		}
-		if resolvedAt.Valid {
-			item.ResolvedAt = &resolvedAt.Time
-		}
-		alerts = append(alerts, item)
+		alerts = append(alerts, mapBudgetAlertRow(row))
 	}
 	if err := rows.Err(); err != nil {
 		return nil, 0, fmt.Errorf("iterate budget alerts: %w", err)
 	}
 
 	return alerts, total, nil
+}
+
+func mapBudgetAlertRow(row budgetAlertRow) sloalertquery.BudgetAlertItem {
+	item := sloalertquery.BudgetAlertItem{
+		ID:       row.ID,
+		TenantID: row.TenantID,
+		SLOID:    row.SLOID,
+		BudgetID: row.BudgetID,
+		AlertType: row.AlertType,
+		BurnRate: row.BurnRate,
+		Status:   row.Status,
+	}
+	if row.TriggeredAt.Valid {
+		item.TriggeredAt = row.TriggeredAt.Time
+	}
+	if row.ResolvedAt.Valid {
+		t := row.ResolvedAt.Time
+		item.ResolvedAt = &t
+	}
+	return item
 }

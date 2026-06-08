@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"orbitjob/internal/core/domain/slo"
+	"orbitjob/internal/domain/resource"
 )
 
 // SLORepository provides write-side access to slos table.
@@ -44,34 +45,21 @@ func (r *SLORepository) Create(ctx context.Context, tenantID string, spec slo.Cr
 func (r *SLORepository) ChangeStatus(ctx context.Context, tenantID string, id int64, version int, status string) (slo.Snapshot, error) {
 	var snap slo.Snapshot
 
-	result, err := r.db.ExecContext(ctx, `
+	err := r.db.QueryRowContext(ctx, `
 		UPDATE slos SET status = $1, version = version + 1, updated_at = now()
 		WHERE tenant_id = $2 AND id = $3 AND version = $4 AND deleted_at IS NULL
-	`, status, tenantID, id, version)
-	if err != nil {
-		return snap, fmt.Errorf("update slo status: %w", err)
-	}
-
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return snap, fmt.Errorf("rows affected: %w", err)
-	}
-	if rows == 0 {
-		return snap, fmt.Errorf("slo not found or version conflict: %d", id)
-	}
-
-	// Return updated snapshot.
-	err = r.db.QueryRowContext(ctx, `
-		SELECT id, tenant_id, name, description, sli_id, target, window_type, window_duration,
-		       alert_fast_burn_rate, alert_slow_burn_rate, status, version, created_at, updated_at
-		FROM slos WHERE tenant_id = $1 AND id = $2
-	`, tenantID, id).Scan(
+		RETURNING id, tenant_id, name, description, sli_id, target, window_type, window_duration,
+		          alert_fast_burn_rate, alert_slow_burn_rate, status, version, created_at, updated_at
+	`, status, tenantID, id, version).Scan(
 		&snap.ID, &snap.TenantID, &snap.Name, &snap.Description, &snap.SLIID, &snap.Target,
 		&snap.WindowType, &snap.WindowDuration, &snap.AlertFastBurnRate, &snap.AlertSlowBurnRate,
 		&snap.Status, &snap.Version, &snap.CreatedAt, &snap.UpdatedAt,
 	)
+	if err == sql.ErrNoRows {
+		return snap, &resource.ConflictError{Resource: "slo", ID: id, Message: "slo not found or version conflict"}
+	}
 	if err != nil {
-		return snap, fmt.Errorf("fetch updated slo: %w", err)
+		return snap, fmt.Errorf("update slo status: %w", err)
 	}
 
 	return snap, nil
@@ -92,7 +80,7 @@ func (r *SLORepository) Delete(ctx context.Context, tenantID string, id int64, v
 		return fmt.Errorf("rows affected: %w", err)
 	}
 	if rows == 0 {
-		return fmt.Errorf("slo not found or version conflict: %d", id)
+		return &resource.ConflictError{Resource: "slo", ID: id, Message: "slo not found or version conflict"}
 	}
 
 	return nil

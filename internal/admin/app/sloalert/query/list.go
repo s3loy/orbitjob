@@ -2,13 +2,11 @@ package query
 
 import (
 	"context"
-
-	"orbitjob/internal/admin/store/postgres"
 )
 
 // alertLister lists budget alerts.
 type alertLister interface {
-	List(ctx context.Context, tenantID string, sloID *int64, status *string, limit, offset int) ([]postgres.BudgetAlertItem, int64, error)
+	List(ctx context.Context, tenantID string, sloID *int64, status *string, limit, offset int) ([]BudgetAlertItem, int64, error)
 }
 
 // ListAlertsUseCase handles alert listing.

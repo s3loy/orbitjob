@@ -23,7 +23,7 @@ CREATE INDEX idx_slis_tenant_deleted ON slis(tenant_id, deleted_at) WHERE delete
 
 CREATE TRIGGER trg_slis_updated_at
 BEFORE UPDATE ON slis
-FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 
 CREATE TABLE slos (
@@ -50,7 +50,7 @@ CREATE INDEX idx_slos_sli ON slos(sli_id);
 
 CREATE TRIGGER trg_slos_updated_at
 BEFORE UPDATE ON slos
-FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 
 CREATE TABLE sli_snapshots (
@@ -110,22 +110,22 @@ CREATE INDEX idx_budget_alerts_active ON budget_alerts(tenant_id, status) WHERE 
 
 
 -- RLS policies (same pattern as checks)
-ALTER TABLE slis ENABLE ROW LEVEL FORCE;
+ALTER TABLE slis ENABLE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation_slis ON slis
     USING (tenant_id = current_setting('app.tenant_id', true)::VARCHAR);
 
-ALTER TABLE slos ENABLE ROW LEVEL FORCE;
+ALTER TABLE slos ENABLE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation_slos ON slos
     USING (tenant_id = current_setting('app.tenant_id', true)::VARCHAR);
 
-ALTER TABLE sli_snapshots ENABLE ROW LEVEL FORCE;
+ALTER TABLE sli_snapshots ENABLE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation_sli_snapshots ON sli_snapshots
     USING (tenant_id = current_setting('app.tenant_id', true)::VARCHAR);
 
-ALTER TABLE budgets ENABLE ROW LEVEL FORCE;
+ALTER TABLE budgets ENABLE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation_budgets ON budgets
     USING (tenant_id = current_setting('app.tenant_id', true)::VARCHAR);
 
-ALTER TABLE budget_alerts ENABLE ROW LEVEL FORCE;
+ALTER TABLE budget_alerts ENABLE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation_budget_alerts ON budget_alerts
     USING (tenant_id = current_setting('app.tenant_id', true)::VARCHAR);

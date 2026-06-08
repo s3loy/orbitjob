@@ -20,23 +20,23 @@ type TickUseCase struct {
 	checkRepo    checkReader
 	checkRunRepo checkRunRepository
 	sliRecorder  sliEventRecorder
-	evaluator    *evaluate.Evaluator
+	evaluator    evaluator
 	clock        func() time.Time
 }
 
+type evaluator interface {
+	Evaluate(output map[string]any, rules []check.AssertionRule) evaluate.Result
+}
+
 // NewTickUseCase creates a new check execution use case.
-func NewTickUseCase(checkRepo checkReader, checkRunRepo checkRunRepository) *TickUseCase {
+func NewTickUseCase(checkRepo checkReader, checkRunRepo checkRunRepository, eval evaluator, recorder sliEventRecorder) *TickUseCase {
 	return &TickUseCase{
 		checkRepo:    checkRepo,
 		checkRunRepo: checkRunRepo,
-		evaluator:    evaluate.NewEvaluator(),
+		evaluator:    eval,
+		sliRecorder:  recorder,
 		clock:        func() time.Time { return time.Now().UTC() },
 	}
-}
-
-// SetSLIRecorder sets the SLI event recorder.
-func (uc *TickUseCase) SetSLIRecorder(r sliEventRecorder) {
-	uc.sliRecorder = r
 }
 
 type checkReader interface {

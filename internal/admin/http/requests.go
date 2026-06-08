@@ -1,6 +1,7 @@
 package http
 
 import (
+	"fmt"
 	"time"
 
 	checkcommand "orbitjob/internal/admin/app/check/command"
@@ -412,19 +413,24 @@ func (r ListSLIsRequest) ToListInput() sliquery.ListInput {
 
 // --- SLO Requests ---
 
-type CreateSLOResponse struct {
-	Name              string        `json:"name" binding:"required,max=128"`
-	Description       *string       `json:"description,omitempty"`
-	SLIID             int64         `json:"sli_id" binding:"required,min=1"`
-	Target            float64       `json:"target" binding:"required,min=0.0001,max=1"`
-	WindowType        string        `json:"window_type" binding:"omitempty,oneof=rolling calendar"`
-	WindowDuration    string        `json:"window_duration" binding:"required"`
-	AlertFastBurnRate float64       `json:"alert_fast_burn_rate" binding:"omitempty,min=0.1"`
-	AlertSlowBurnRate float64       `json:"alert_slow_burn_rate" binding:"omitempty,min=0.1"`
+// CreateSLORequest defines the HTTP payload for creating an SLO.
+type CreateSLORequest struct {
+	Name              string  `json:"name" binding:"required,max=128"`
+	Description       *string `json:"description,omitempty"`
+	SLIID             int64   `json:"sli_id" binding:"required,min=1"`
+	Target            float64 `json:"target" binding:"required,min=0.0001,max=1"`
+	WindowType        string  `json:"window_type" binding:"omitempty,oneof=rolling calendar"`
+	WindowDuration    string  `json:"window_duration" binding:"required"`
+	AlertFastBurnRate float64 `json:"alert_fast_burn_rate" binding:"omitempty,min=0.1"`
+	AlertSlowBurnRate float64 `json:"alert_slow_burn_rate" binding:"omitempty,min=0.1"`
 }
 
-func (r CreateSLOResponse) ToCreateInput() slocommand.CreateInput {
-	dur, _ := time.ParseDuration(r.WindowDuration)
+// ToCreateInput converts the HTTP request into a domain command input.
+func (r CreateSLORequest) ToCreateInput() (slocommand.CreateInput, error) {
+	dur, err := time.ParseDuration(r.WindowDuration)
+	if err != nil {
+		return slocommand.CreateInput{}, fmt.Errorf("invalid window_duration: %w", err)
+	}
 	return slocommand.CreateInput{
 		Name:              r.Name,
 		Description:       r.Description,
@@ -434,7 +440,7 @@ func (r CreateSLOResponse) ToCreateInput() slocommand.CreateInput {
 		WindowDuration:    dur,
 		AlertFastBurnRate: r.AlertFastBurnRate,
 		AlertSlowBurnRate: r.AlertSlowBurnRate,
-	}
+	}, nil
 }
 
 type sloIDURI struct {
@@ -459,14 +465,12 @@ func (r ListSLOsRequest) ToListInput() sloquery.ListInput {
 }
 
 type ChangeSLOStatusRequest struct {
-	ID       int64  `json:"id"`
-	TenantID string `json:"tenant_id"`
-	Version  int    `json:"version" binding:"required,min=1"`
+	Version int `json:"version" binding:"required,min=1"`
 }
 
-func (r ChangeSLOStatusRequest) ToChangeStatusInput() slocommand.ChangeStatusInput {
+func (r ChangeSLOStatusRequest) ToChangeStatusInput(id int64) slocommand.ChangeStatusInput {
 	return slocommand.ChangeStatusInput{
-		ID:      r.ID,
+		ID:      id,
 		Version: r.Version,
 	}
 }

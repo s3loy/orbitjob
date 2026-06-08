@@ -690,7 +690,7 @@ func adminAPIRoutes() []routeDefinition {
 				summary:             "Create one SLO",
 				description:         "Create a service level objective definition.",
 				tags:                []string{"SLOs"},
-				requestBodyModel:    CreateSLOResponse{},
+				requestBodyModel:    CreateSLORequest{},
 				requestBodyRequired: true,
 				responses: []responseDefinition{
 					{statusCode: stdhttp.StatusCreated, description: "Created SLO", model: slocommand.CreateResult{}},
