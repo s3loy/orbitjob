@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	"orbitjob/internal/core/domain/slo"
 	"orbitjob/internal/domain/resource"
@@ -22,6 +23,7 @@ func NewSLORepository(db *sql.DB) *SLORepository {
 // Create inserts a new SLO and returns its snapshot.
 func (r *SLORepository) Create(ctx context.Context, tenantID string, spec slo.CreateSpec) (slo.Snapshot, error) {
 	var snap slo.Snapshot
+	var windowSecs int64
 
 	err := r.db.QueryRowContext(ctx, `
 		INSERT INTO slos (tenant_id, name, description, sli_id, target, window_type, window_duration, alert_fast_burn_rate, alert_slow_burn_rate)
@@ -29,14 +31,15 @@ func (r *SLORepository) Create(ctx context.Context, tenantID string, spec slo.Cr
 		RETURNING id, tenant_id, name, description, sli_id, target, window_type, window_duration,
 		          alert_fast_burn_rate, alert_slow_burn_rate, status, version, created_at, updated_at
 	`, tenantID, spec.Name, spec.Description, spec.SLIID, spec.Target, spec.WindowType,
-		spec.WindowDuration, spec.AlertFastBurnRate, spec.AlertSlowBurnRate).Scan(
+		spec.WindowDuration/time.Second, spec.AlertFastBurnRate, spec.AlertSlowBurnRate).Scan(
 		&snap.ID, &snap.TenantID, &snap.Name, &snap.Description, &snap.SLIID, &snap.Target,
-		&snap.WindowType, &snap.WindowDuration, &snap.AlertFastBurnRate, &snap.AlertSlowBurnRate,
+		&snap.WindowType, &windowSecs, &snap.AlertFastBurnRate, &snap.AlertSlowBurnRate,
 		&snap.Status, &snap.Version, &snap.CreatedAt, &snap.UpdatedAt,
 	)
 	if err != nil {
 		return snap, fmt.Errorf("insert slo: %w", err)
 	}
+	snap.WindowDuration = time.Duration(windowSecs) * time.Second
 
 	return snap, nil
 }
@@ -44,6 +47,7 @@ func (r *SLORepository) Create(ctx context.Context, tenantID string, spec slo.Cr
 // ChangeStatus updates an SLO's status.
 func (r *SLORepository) ChangeStatus(ctx context.Context, tenantID string, id int64, version int, status string) (slo.Snapshot, error) {
 	var snap slo.Snapshot
+	var windowSecs int64
 
 	err := r.db.QueryRowContext(ctx, `
 		UPDATE slos SET status = $1, version = version + 1, updated_at = now()
@@ -52,7 +56,7 @@ func (r *SLORepository) ChangeStatus(ctx context.Context, tenantID string, id in
 		          alert_fast_burn_rate, alert_slow_burn_rate, status, version, created_at, updated_at
 	`, status, tenantID, id, version).Scan(
 		&snap.ID, &snap.TenantID, &snap.Name, &snap.Description, &snap.SLIID, &snap.Target,
-		&snap.WindowType, &snap.WindowDuration, &snap.AlertFastBurnRate, &snap.AlertSlowBurnRate,
+		&snap.WindowType, &windowSecs, &snap.AlertFastBurnRate, &snap.AlertSlowBurnRate,
 		&snap.Status, &snap.Version, &snap.CreatedAt, &snap.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -61,6 +65,7 @@ func (r *SLORepository) ChangeStatus(ctx context.Context, tenantID string, id in
 	if err != nil {
 		return snap, fmt.Errorf("update slo status: %w", err)
 	}
+	snap.WindowDuration = time.Duration(windowSecs) * time.Second
 
 	return snap, nil
 }
@@ -106,14 +111,16 @@ func (r *SLORepository) scanSLOs(rows *sql.Rows) ([]slo.Snapshot, error) {
 	var slos []slo.Snapshot
 	for rows.Next() {
 		var snap slo.Snapshot
+		var windowSecs int64
 		err := rows.Scan(
 			&snap.ID, &snap.TenantID, &snap.Name, &snap.Description, &snap.SLIID, &snap.Target,
-			&snap.WindowType, &snap.WindowDuration, &snap.AlertFastBurnRate, &snap.AlertSlowBurnRate,
+			&snap.WindowType, &windowSecs, &snap.AlertFastBurnRate, &snap.AlertSlowBurnRate,
 			&snap.Status, &snap.Version, &snap.CreatedAt, &snap.UpdatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan slo: %w", err)
 		}
+		snap.WindowDuration = time.Duration(windowSecs) * time.Second
 		slos = append(slos, snap)
 	}
 	if err := rows.Err(); err != nil {

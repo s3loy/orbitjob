@@ -50,12 +50,19 @@ func NormalizeCreate(in CreateInput) (CreateSpec, error) {
 		if !ok {
 			return CreateSpec{}, validation.New("source_config.check_id", "check_id is required in source_config")
 		}
-		if _, ok := checkID.(float64); !ok {
-			if _, ok := checkID.(int64); !ok {
-				if _, ok := checkID.(int); !ok {
-					return CreateSpec{}, validation.New("source_config.check_id", "check_id must be a number")
-				}
-			}
+		var checkIDFloat float64
+		switch v := checkID.(type) {
+		case float64:
+			checkIDFloat = v
+		case int64:
+			checkIDFloat = float64(v)
+		case int:
+			checkIDFloat = float64(v)
+		default:
+			return CreateSpec{}, validation.New("source_config.check_id", "check_id must be a positive integer")
+		}
+		if checkIDFloat < 1 || checkIDFloat != float64(int64(checkIDFloat)) {
+			return CreateSpec{}, validation.New("source_config.check_id", "check_id must be a positive integer")
 		}
 	}
 

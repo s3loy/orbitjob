@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"orbitjob/internal/core/domain/sli"
+	"orbitjob/internal/domain/resource"
 )
 
 // SLIRepository provides write-side access to slis table.
@@ -23,6 +24,20 @@ func NewSLIRepository(db *sql.DB) *SLIRepository {
 func (r *SLIRepository) Create(ctx context.Context, tenantID string, spec sli.CreateSpec) (sli.Snapshot, error) {
 	var snap sli.Snapshot
 
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return snap, fmt.Errorf("begin create tx: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID); err != nil {
+		return snap, fmt.Errorf("set tenant context: %w", err)
+	}
+
 	sourceConfigBytes, err := json.Marshal(spec.SourceConfig)
 	if err != nil {
 		return snap, fmt.Errorf("marshal source_config: %w", err)
@@ -34,7 +49,7 @@ func (r *SLIRepository) Create(ctx context.Context, tenantID string, spec sli.Cr
 	}
 
 	var sourceConfigRaw, goodEventRaw []byte
-	err = r.db.QueryRowContext(ctx, `
+	err = tx.QueryRowContext(ctx, `
 		INSERT INTO slis (tenant_id, name, description, sli_type, source_type, source_config, aggregation, good_event_criteria)
 		VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8::jsonb)
 		RETURNING id, tenant_id, name, description, sli_type, source_type, source_config, aggregation, good_event_criteria, version, created_at, updated_at
@@ -57,12 +72,30 @@ func (r *SLIRepository) Create(ctx context.Context, tenantID string, spec sli.Cr
 		}
 	}
 
+	if err = tx.Commit(); err != nil {
+		return snap, fmt.Errorf("commit create sli: %w", err)
+	}
+
 	return snap, nil
 }
 
 // Delete soft-deletes an SLI.
 func (r *SLIRepository) Delete(ctx context.Context, tenantID string, id int64, version int) error {
-	result, err := r.db.ExecContext(ctx, `
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin delete tx: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID); err != nil {
+		return fmt.Errorf("set tenant context: %w", err)
+	}
+
+	result, err := tx.ExecContext(ctx, `
 		UPDATE slis SET deleted_at = now(), version = version + 1
 		WHERE tenant_id = $1 AND id = $2 AND version = $3 AND deleted_at IS NULL
 	`, tenantID, id, version)
@@ -75,7 +108,11 @@ func (r *SLIRepository) Delete(ctx context.Context, tenantID string, id int64, v
 		return fmt.Errorf("rows affected: %w", err)
 	}
 	if rows == 0 {
-		return fmt.Errorf("sli not found or version conflict: %d", id)
+		return &resource.NotFoundError{Resource: "sli", ID: id}
+	}
+
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit delete sli: %w", err)
 	}
 
 	return nil
@@ -83,8 +120,22 @@ func (r *SLIRepository) Delete(ctx context.Context, tenantID string, id int64, v
 
 // FindByCheckID finds all SLIs that source from the given check ID.
 func (r *SLIRepository) FindByCheckID(ctx context.Context, tenantID string, checkID int64) ([]sli.Snapshot, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin find tx: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID); err != nil {
+		return nil, fmt.Errorf("set tenant context: %w", err)
+	}
+
 	// Query SLIs where source_config contains the check_id.
-	rows, err := r.db.QueryContext(ctx, `
+	rows, err := tx.QueryContext(ctx, `
 		SELECT id, tenant_id, name, description, sli_type, source_type, source_config, aggregation, good_event_criteria, version, created_at, updated_at
 		FROM slis
 		WHERE tenant_id = $1 AND deleted_at IS NULL
@@ -96,7 +147,16 @@ func (r *SLIRepository) FindByCheckID(ctx context.Context, tenantID string, chec
 	}
 	defer func() { _ = rows.Close() }()
 
-	return r.scanSLIs(rows)
+	slis, err := r.scanSLIs(rows)
+	if err != nil {
+		return nil, err
+	}
+
+	if err = tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit find sli: %w", err)
+	}
+
+	return slis, nil
 }
 
 func (r *SLIRepository) scanSLIs(rows *sql.Rows) ([]sli.Snapshot, error) {

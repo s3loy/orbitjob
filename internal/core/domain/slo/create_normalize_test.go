@@ -119,8 +119,20 @@ func TestNormalizeCreate_TargetOutOfRange(t *testing.T) {
 }
 
 func TestNormalizeCreate_TargetBoundary(t *testing.T) {
-	// MinTarget + epsilon should work
+	// Exactly MinTarget should work (inclusive lower bound)
 	_, err := NormalizeCreate(CreateInput{
+		Name:           "test",
+		SLIID:          1,
+		Target:         MinTarget,
+		WindowType:     WindowTypeRolling,
+		WindowDuration: 30 * 24 * time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error for target at min: %v", err)
+	}
+
+	// MinTarget + epsilon should work
+	_, err = NormalizeCreate(CreateInput{
 		Name:           "test",
 		SLIID:          1,
 		Target:         MinTarget + 0.0001,

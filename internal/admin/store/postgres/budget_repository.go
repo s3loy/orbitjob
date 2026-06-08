@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"orbitjob/internal/core/domain/slo"
+	"orbitjob/internal/domain/resource"
 )
 
 // BudgetReadRepository provides read-side access to budgets table.
@@ -33,7 +34,7 @@ func (r *BudgetReadRepository) GetCurrent(ctx context.Context, tenantID string, 
 		&budget.Status, &budget.Version,
 	)
 	if err == sql.ErrNoRows {
-		return budget, fmt.Errorf("no budget found for slo %d", sloID)
+		return budget, &resource.NotFoundError{Resource: "budget", ID: sloID}
 	}
 	if err != nil {
 		return budget, fmt.Errorf("get current budget: %w", err)

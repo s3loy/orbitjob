@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	sloalertquery "orbitjob/internal/admin/app/sloalert/query"
+	"orbitjob/internal/domain/resource"
 )
 
 // budgetAlertRow is the internal scan target for budget_alerts queries.
@@ -44,7 +45,7 @@ func (r *BudgetAlertReadRepository) Get(ctx context.Context, tenantID string, id
 		&row.BurnRate, &row.Status, &row.TriggeredAt, &row.ResolvedAt,
 	)
 	if err == sql.ErrNoRows {
-		return sloalertquery.BudgetAlertItem{}, fmt.Errorf("budget alert not found: %d", id)
+		return sloalertquery.BudgetAlertItem{}, &resource.NotFoundError{Resource: "budget_alert", ID: id}
 	}
 	if err != nil {
 		return sloalertquery.BudgetAlertItem{}, fmt.Errorf("get budget alert: %w", err)

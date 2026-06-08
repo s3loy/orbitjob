@@ -419,7 +419,7 @@ type CreateSLORequest struct {
 	Description       *string `json:"description,omitempty"`
 	SLIID             int64   `json:"sli_id" binding:"required,min=1"`
 	Target            float64 `json:"target" binding:"required,min=0.0001,max=1"`
-	WindowType        string  `json:"window_type" binding:"omitempty,oneof=rolling calendar"`
+	WindowType        string  `json:"window_type" binding:"omitempty,oneof=rolling calendar quarterly"`
 	WindowDuration    string  `json:"window_duration" binding:"required"`
 	AlertFastBurnRate float64 `json:"alert_fast_burn_rate" binding:"omitempty,min=0.1"`
 	AlertSlowBurnRate float64 `json:"alert_slow_burn_rate" binding:"omitempty,min=0.1"`

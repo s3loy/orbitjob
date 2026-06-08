@@ -155,7 +155,16 @@ func (uc *TickUseCase) executeRun(ctx context.Context, tenantID string, run chec
 	}
 
 	if uc.sliRecorder != nil {
-		if err := uc.sliRecorder.RecordCheckRun(ctx, tenantID, chk.ID, run); err != nil {
+		completedRun := run
+		completedRun.Status = status
+		completedRun.Severity = &severity
+		completedRun.Output = result.Output
+		completedRun.EvaluationResult = evalResultMap
+		completedRun.DurationMs = &durationMs
+		now := uc.clock()
+		completedRun.FinishedAt = &now
+
+		if err := uc.sliRecorder.RecordCheckRun(ctx, tenantID, chk.ID, completedRun); err != nil {
 			slog.Error("failed to record sli event", "run_id", run.RunID, "error", err)
 		}
 	}

@@ -2768,6 +2768,7 @@ components:
           enum:
           - rolling
           - calendar
+          - quarterly
       required:
       - name
       - sli_id

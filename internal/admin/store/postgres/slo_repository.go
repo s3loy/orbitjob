@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	"orbitjob/internal/core/domain/slo"
 	"orbitjob/internal/domain/resource"
@@ -22,6 +23,7 @@ func NewSLOReadRepository(db *sql.DB) *SLOReadRepository {
 // Get retrieves an SLO by ID.
 func (r *SLOReadRepository) Get(ctx context.Context, tenantID string, id int64) (slo.Snapshot, error) {
 	var snap slo.Snapshot
+	var windowSecs int64
 
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, tenant_id, name, description, sli_id, target, window_type, window_duration,
@@ -30,7 +32,7 @@ func (r *SLOReadRepository) Get(ctx context.Context, tenantID string, id int64) 
 		WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
 	`, tenantID, id).Scan(
 		&snap.ID, &snap.TenantID, &snap.Name, &snap.Description, &snap.SLIID, &snap.Target,
-		&snap.WindowType, &snap.WindowDuration, &snap.AlertFastBurnRate, &snap.AlertSlowBurnRate,
+		&snap.WindowType, &windowSecs, &snap.AlertFastBurnRate, &snap.AlertSlowBurnRate,
 		&snap.Status, &snap.Version, &snap.CreatedAt, &snap.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -39,6 +41,7 @@ func (r *SLOReadRepository) Get(ctx context.Context, tenantID string, id int64) 
 	if err != nil {
 		return snap, fmt.Errorf("get slo: %w", err)
 	}
+	snap.WindowDuration = time.Duration(windowSecs) * time.Second
 
 	return snap, nil
 }
@@ -68,14 +71,16 @@ func (r *SLOReadRepository) List(ctx context.Context, tenantID string, limit, of
 	var slos []slo.Snapshot
 	for rows.Next() {
 		var snap slo.Snapshot
+		var windowSecs int64
 		err := rows.Scan(
 			&snap.ID, &snap.TenantID, &snap.Name, &snap.Description, &snap.SLIID, &snap.Target,
-			&snap.WindowType, &snap.WindowDuration, &snap.AlertFastBurnRate, &snap.AlertSlowBurnRate,
+			&snap.WindowType, &windowSecs, &snap.AlertFastBurnRate, &snap.AlertSlowBurnRate,
 			&snap.Status, &snap.Version, &snap.CreatedAt, &snap.UpdatedAt,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("scan slo: %w", err)
 		}
+		snap.WindowDuration = time.Duration(windowSecs) * time.Second
 		slos = append(slos, snap)
 	}
 	if err := rows.Err(); err != nil {

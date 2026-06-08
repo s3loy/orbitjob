@@ -233,6 +233,9 @@ func TestNormalizeCreate_CheckIDTypes(t *testing.T) {
 		{"int", int(42), false},
 		{"string", "42", true},
 		{"nil", nil, true},
+		{"fractional", float64(1.5), true},
+		{"zero", float64(0), true},
+		{"negative", float64(-1), true},
 	}
 
 	for _, tt := range tests {

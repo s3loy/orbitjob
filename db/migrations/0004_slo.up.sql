@@ -34,7 +34,7 @@ CREATE TABLE slos (
     sli_id BIGINT NOT NULL REFERENCES slis(id),
     target DECIMAL(5,4) NOT NULL,
     window_type VARCHAR(16) NOT NULL DEFAULT 'rolling',
-    window_duration INTERVAL NOT NULL DEFAULT '30 days',
+    window_duration BIGINT NOT NULL DEFAULT 2592000,
     alert_fast_burn_rate DECIMAL(6,2) NOT NULL DEFAULT 14.4,
     alert_slow_burn_rate DECIMAL(6,2) NOT NULL DEFAULT 2.0,
     status VARCHAR(16) NOT NULL DEFAULT 'active',

@@ -22,8 +22,8 @@ func NormalizeCreate(in CreateInput) (CreateSpec, error) {
 		return CreateSpec{}, validation.New("sli_id", "sli_id must be positive")
 	}
 
-	if in.Target <= MinTarget || in.Target > MaxTarget {
-		return CreateSpec{}, validation.New("target", fmt.Sprintf("target must be in range (%.4f, %.1f]", MinTarget, MaxTarget))
+	if in.Target < MinTarget || in.Target > MaxTarget {
+		return CreateSpec{}, validation.New("target", fmt.Sprintf("target must be in range [%.4f, %.1f]", MinTarget, MaxTarget))
 	}
 
 	windowType := in.WindowType

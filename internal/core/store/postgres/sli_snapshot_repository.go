@@ -30,7 +30,21 @@ func (r *SLISnapshotRepository) IncrementSnapshot(ctx context.Context, tenantID 
 		goodDelta = 1
 	}
 
-	_, err := r.db.ExecContext(ctx, `
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin increment tx: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID); err != nil {
+		return fmt.Errorf("set tenant context: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO sli_snapshots (tenant_id, sli_id, window_start, window_end, good_events_count, total_events_count, sli_value)
 		VALUES ($1, $2, $3, $4, $5, 1, $5::decimal / 1)
 		ON CONFLICT (tenant_id, sli_id, window_start)
@@ -45,6 +59,10 @@ func (r *SLISnapshotRepository) IncrementSnapshot(ctx context.Context, tenantID 
 		return fmt.Errorf("upsert sli snapshot: %w", err)
 	}
 
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit increment snapshot: %w", err)
+	}
+
 	return nil
 }
 
@@ -52,7 +70,21 @@ func (r *SLISnapshotRepository) IncrementSnapshot(ctx context.Context, tenantID 
 func (r *SLISnapshotRepository) AggregateWindow(ctx context.Context, tenantID string, sliID int64, start, end time.Time) (sloevaluate.WindowAggregate, error) {
 	var agg sloevaluate.WindowAggregate
 
-	err := r.db.QueryRowContext(ctx, `
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return agg, fmt.Errorf("begin aggregate tx: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID); err != nil {
+		return agg, fmt.Errorf("set tenant context: %w", err)
+	}
+
+	err = tx.QueryRowContext(ctx, `
 		SELECT COALESCE(SUM(good_events_count), 0), COALESCE(SUM(total_events_count), 0)
 		FROM sli_snapshots
 		WHERE tenant_id = $1 AND sli_id = $2 AND window_start >= $3 AND window_start < $4
@@ -63,6 +95,10 @@ func (r *SLISnapshotRepository) AggregateWindow(ctx context.Context, tenantID st
 
 	if agg.TotalEventsCount > 0 {
 		agg.SLIValue = float64(agg.GoodEventsCount) / float64(agg.TotalEventsCount)
+	}
+
+	if err = tx.Commit(); err != nil {
+		return agg, fmt.Errorf("commit aggregate snapshot: %w", err)
 	}
 
 	return agg, nil
