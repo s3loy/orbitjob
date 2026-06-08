@@ -1860,7 +1860,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/CreateSLOResponse"
+              $ref: "#/components/schemas/CreateSLORequest"
       responses:
         "201":
           description: Created SLO
@@ -2495,11 +2495,6 @@ components:
     ChangeSLOStatusRequest:
       type: object
       properties:
-        id:
-          type: integer
-          format: int64
-        tenant_id:
-          type: string
         version:
           type: integer
           minimum: 1
@@ -2746,7 +2741,7 @@ components:
       required:
       - name
       - sli_type
-    CreateSLOResponse:
+    CreateSLORequest:
       type: object
       properties:
         alert_fast_burn_rate:
