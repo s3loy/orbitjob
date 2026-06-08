@@ -1391,6 +1391,947 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/slis:
+    get:
+      operationId: listSLIs
+      summary: List SLIs
+      description: List service level indicators for one tenant.
+      tags:
+      - SLIs
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: tenant_id
+        in: query
+        schema:
+          type: string
+          default: default
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          default: 50
+          minimum: 1
+          maximum: 100
+      - name: offset
+        in: query
+        schema:
+          type: integer
+          default: 0
+          minimum: 0
+      responses:
+        "200":
+          description: SLI list
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SliListResponse"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: createSLI
+      summary: Create one SLI
+      description: Create a service level indicator definition.
+      tags:
+      - SLIs
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSLIRequest"
+      responses:
+        "201":
+          description: Created SLI
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateResult"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/slis/{id}:
+    get:
+      operationId: getSLI
+      summary: Get one SLI
+      description: Get one service level indicator by id.
+      tags:
+      - SLIs
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      responses:
+        "200":
+          description: SLI detail
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetItem"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: SLI not found
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteSLI
+      summary: Delete one SLI
+      description: Soft-delete a service level indicator by setting deleted_at.
+      tags:
+      - SLIs
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      - name: tenant_id
+        in: query
+        schema:
+          type: string
+          default: default
+          maxLength: 64
+      responses:
+        "200":
+          description: Deleted SLI
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: SLI not found
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/slo-alerts:
+    get:
+      operationId: listSLOAlerts
+      summary: List SLO alerts
+      description: List SLO alert entries for one tenant.
+      tags:
+      - SLO Alerts
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: tenant_id
+        in: query
+        schema:
+          type: string
+          default: default
+      - name: slo_id
+        in: query
+        schema:
+          type: integer
+          format: int64
+      - name: status
+        in: query
+        schema:
+          type: string
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          default: 50
+          minimum: 1
+          maximum: 100
+      - name: offset
+        in: query
+        schema:
+          type: integer
+          default: 0
+          minimum: 0
+      responses:
+        "200":
+          description: SLO alert list
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertListResponse"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/slo-alerts/{id}:
+    get:
+      operationId: getSLOAlert
+      summary: Get one SLO alert
+      description: Get one SLO alert by id.
+      tags:
+      - SLO Alerts
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      responses:
+        "200":
+          description: SLO alert detail
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetItem"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: SLO alert not found
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/slos:
+    get:
+      operationId: listSLOs
+      summary: List SLOs
+      description: List service level objectives for one tenant.
+      tags:
+      - SLOs
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: tenant_id
+        in: query
+        schema:
+          type: string
+          default: default
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          default: 50
+          minimum: 1
+          maximum: 100
+      - name: offset
+        in: query
+        schema:
+          type: integer
+          default: 0
+          minimum: 0
+      responses:
+        "200":
+          description: SLO list
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SloListResponse"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: createSLO
+      summary: Create one SLO
+      description: Create a service level objective definition.
+      tags:
+      - SLOs
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSLORequest"
+      responses:
+        "201":
+          description: Created SLO
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateResult"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/slos/{id}:
+    get:
+      operationId: getSLO
+      summary: Get one SLO
+      description: Get one service level objective by id.
+      tags:
+      - SLOs
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      responses:
+        "200":
+          description: SLO detail
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetItem"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: SLO not found
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteSLO
+      summary: Delete one SLO
+      description: Soft-delete a service level objective by setting deleted_at.
+      tags:
+      - SLOs
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      - name: tenant_id
+        in: query
+        schema:
+          type: string
+          default: default
+          maxLength: 64
+      responses:
+        "200":
+          description: Deleted SLO
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: SLO not found
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/slos/{id}/budget:
+    get:
+      operationId: getSLOBudget
+      summary: Get SLO budget
+      description: Get the current error budget for one SLO.
+      tags:
+      - SLO Budgets
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      responses:
+        "200":
+          description: SLO budget detail
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetItem"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: SLO not found
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/slos/{id}/budgets:
+    get:
+      operationId: listSLOBudgets
+      summary: List SLO budget history
+      description: List error budget history entries for one SLO.
+      tags:
+      - SLO Budgets
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: tenant_id
+        in: query
+        schema:
+          type: string
+          default: default
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          default: 50
+          minimum: 1
+          maximum: 100
+      - name: offset
+        in: query
+        schema:
+          type: integer
+          default: 0
+          minimum: 0
+      responses:
+        "200":
+          description: SLO budget history list
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BudgetListResponse"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/slos/{id}/pause:
+    post:
+      operationId: pauseSLO
+      summary: Pause one SLO
+      description: Pause an active service level objective using optimistic locking by version.
+      tags:
+      - SLOs
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      - name: tenant_id
+        in: query
+        schema:
+          type: string
+          default: default
+          maxLength: 64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangeSLOStatusRequest"
+      responses:
+        "200":
+          description: Paused SLO
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChangeStatusResult"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: SLO not found
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Version conflict
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/slos/{id}/resume:
+    post:
+      operationId: resumeSLO
+      summary: Resume one SLO
+      description: Resume a paused service level objective using optimistic locking by version.
+      tags:
+      - SLOs
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      - name: tenant_id
+        in: query
+        schema:
+          type: string
+          default: default
+          maxLength: 64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangeSLOStatusRequest"
+      responses:
+        "200":
+          description: Resumed SLO
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChangeStatusResult"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: SLO not found
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Version conflict
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /healthz:
     get:
       operationId: getHealthz
@@ -1481,6 +2422,15 @@ components:
       required:
       - code
       - message
+    AlertListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ListItem"
+      required:
+      - items
     AssertionRule:
       type: object
       properties:
@@ -1492,6 +2442,40 @@ components:
           type: string
         threshold:
           type: number
+    BudgetItem:
+      type: object
+      properties:
+        budget_consumed:
+          type: number
+        budget_remaining:
+          type: number
+        budget_total:
+          type: number
+        burn_rate:
+          type: number
+        status:
+          type: string
+        window_end:
+          type: string
+        window_start:
+          type: string
+      required:
+      - window_start
+      - window_end
+      - budget_total
+      - budget_consumed
+      - budget_remaining
+      - burn_rate
+      - status
+    BudgetListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ListItem"
+      required:
+      - items
     CancelInstanceRequest:
       type: object
       properties:
@@ -1501,6 +2485,14 @@ components:
       required:
       - version
     ChangeCheckStatusRequest:
+      type: object
+      properties:
+        version:
+          type: integer
+          minimum: 1
+      required:
+      - version
+    ChangeSLOStatusRequest:
       type: object
       properties:
         version:
@@ -1524,12 +2516,9 @@ components:
           format: int64
         status:
           type: string
-        version:
-          type: integer
       required:
       - id
       - status
-      - version
     CheckListResponse:
       type: object
       properties:
@@ -1679,75 +2668,112 @@ components:
     CreateResult:
       type: object
       properties:
-        assertion_rules:
-          type: array
-          items:
-            $ref: "#/components/schemas/AssertionRule"
-        check_config:
-          type: object
-          additionalProperties: true
-        check_type:
-          type: string
+        alert_fast_burn_rate:
+          type: number
+        alert_slow_burn_rate:
+          type: number
         created_at:
           type: string
-          format: date-time
-        cron_expr:
-          type: string
-          nullable: true
         description:
           type: string
           nullable: true
         id:
           type: integer
           format: int64
-        interval_sec:
+        name:
+          type: string
+        sli_id:
           type: integer
+          format: int64
+        status:
+          type: string
+        target:
+          type: number
+        version:
+          type: integer
+        window_duration:
+          type: string
+        window_type:
+          type: string
+      required:
+      - id
+      - name
+      - sli_id
+      - target
+      - window_type
+      - window_duration
+      - alert_fast_burn_rate
+      - alert_slow_burn_rate
+      - status
+      - version
+      - created_at
+    CreateSLIRequest:
+      type: object
+      properties:
+        aggregation:
+          type: string
+          enum:
+          - ratio
+          - count
+        description:
+          type: string
           nullable: true
-        labels:
+        good_event_criteria:
           type: object
           additionalProperties: true
         name:
           type: string
-        next_run_at:
+          maxLength: 128
+        sli_type:
           type: string
-          format: date-time
-          nullable: true
-        priority:
-          type: integer
-        retry_limit:
-          type: integer
-        schedule_type:
+          enum:
+          - availability
+          - latency
+          - quality
+          - custom
+        source_config:
+          type: object
+          additionalProperties: true
+        source_type:
           type: string
-        status:
-          type: string
-        tenant_id:
-          type: string
-        timeout_sec:
-          type: integer
-        timezone:
-          type: string
-        updated_at:
-          type: string
-          format: date-time
-        version:
-          type: integer
+          enum:
+          - check_run
       required:
-      - id
       - name
-      - tenant_id
-      - status
-      - check_type
-      - check_config
-      - assertion_rules
-      - schedule_type
-      - timezone
-      - timeout_sec
-      - retry_limit
-      - priority
-      - labels
-      - version
-      - created_at
-      - updated_at
+      - sli_type
+    CreateSLORequest:
+      type: object
+      properties:
+        alert_fast_burn_rate:
+          type: number
+        alert_slow_burn_rate:
+          type: number
+        description:
+          type: string
+          nullable: true
+        name:
+          type: string
+          maxLength: 128
+        sli_id:
+          type: integer
+          format: int64
+          minimum: 1
+        target:
+          type: number
+          maximum: 1
+        window_duration:
+          type: string
+        window_type:
+          type: string
+          enum:
+          - rolling
+          - calendar
+          - quarterly
+      required:
+      - name
+      - sli_id
+      - target
+      - window_duration
     DeleteResult:
       type: object
       properties:
@@ -1786,82 +2812,34 @@ components:
     GetItem:
       type: object
       properties:
-        concurrency_policy:
+        alert_type:
           type: string
-        created_at:
-          type: string
-          format: date-time
-        cron_expr:
-          type: string
-          nullable: true
-        handler_payload:
-          type: object
-          additionalProperties: true
-        handler_type:
-          type: string
+        budget_id:
+          type: integer
+          format: int64
+        burn_rate:
+          type: number
         id:
           type: integer
           format: int64
-        last_scheduled_at:
-          type: string
-          format: date-time
-          nullable: true
-        misfire_policy:
-          type: string
-        name:
-          type: string
-        next_run_at:
-          type: string
-          format: date-time
-          nullable: true
-        partition_key:
+        resolved_at:
           type: string
           nullable: true
-        priority:
+        slo_id:
           type: integer
-        retry_backoff_sec:
-          type: integer
-        retry_backoff_strategy:
-          type: string
-        retry_limit:
-          type: integer
-        schedule_summary:
-          type: string
+          format: int64
         status:
           type: string
-        tenant_id:
+        triggered_at:
           type: string
-        timeout_sec:
-          type: integer
-        timezone:
-          type: string
-        trigger_type:
-          type: string
-        updated_at:
-          type: string
-          format: date-time
-        version:
-          type: integer
       required:
       - id
-      - name
-      - tenant_id
-      - version
-      - priority
-      - trigger_type
-      - timezone
-      - schedule_summary
-      - handler_type
-      - handler_payload
-      - timeout_sec
-      - retry_limit
-      - retry_backoff_sec
-      - retry_backoff_strategy
-      - concurrency_policy
-      - misfire_policy
+      - slo_id
+      - budget_id
+      - alert_type
+      - burn_rate
       - status
-      - created_at
-      - updated_at
+      - triggered_at
     GetResult:
       type: object
       properties:
@@ -2016,31 +2994,45 @@ components:
     ListItem:
       type: object
       properties:
-        check_id:
-          type: integer
-          format: int64
-        created_at:
+        alert_type:
           type: string
-          format: date-time
-        duration_ms:
-          type: integer
-          nullable: true
+        burn_rate:
+          type: number
         id:
           type: integer
           format: int64
-        run_id:
-          type: string
-        severity:
-          type: string
-          nullable: true
+        slo_id:
+          type: integer
+          format: int64
         status:
+          type: string
+        triggered_at:
           type: string
       required:
       - id
-      - run_id
-      - check_id
+      - slo_id
+      - alert_type
+      - burn_rate
       - status
-      - created_at
+      - triggered_at
+    SliListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ListItem"
+      required:
+      - items
+    SloListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ListItem"
+      required:
+      - items
     Snapshot:
       type: object
     TriggerResult:

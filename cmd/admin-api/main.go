@@ -20,6 +20,12 @@ import (
 	instancecommand "orbitjob/internal/admin/app/instance/command"
 	instancequery "orbitjob/internal/admin/app/instance/query"
 	query "orbitjob/internal/admin/app/job/query"
+	slicommand "orbitjob/internal/admin/app/sli/command"
+	sliquery "orbitjob/internal/admin/app/sli/query"
+	slocommand "orbitjob/internal/admin/app/slo/command"
+	sloquery "orbitjob/internal/admin/app/slo/query"
+	slobudgetquery "orbitjob/internal/admin/app/slobudget/query"
+	sloalertquery "orbitjob/internal/admin/app/sloalert/query"
 	adminhttp "orbitjob/internal/admin/http"
 	"orbitjob/internal/admin/http/middleware"
 	adminpostgres "orbitjob/internal/admin/store/postgres"
@@ -134,6 +140,45 @@ func main() {
 	handler.SetDeleteCheckUseCase(deleteCheckUC)
 	handler.SetListCheckRunsUseCase(listCheckRunsUC)
 	handler.SetGetCheckRunUseCase(getCheckRunUC)
+
+	// SLO/SLI use cases.
+	sliWriteRepo := corepostgres.NewSLIRepository(db)
+	sliReadRepo := adminpostgres.NewSLIReadRepository(db)
+	createSLIUC := slicommand.NewCreateSLIUseCase(sliWriteRepo)
+	listSLIsUC := sliquery.NewListSLIsUseCase(sliReadRepo)
+	getSLIUC := sliquery.NewGetSLIUseCase(sliReadRepo)
+	deleteSLIUC := slicommand.NewDeleteSLIUseCase(sliWriteRepo)
+
+	sloWriteRepo := corepostgres.NewSLORepository(db)
+	sloReadRepo := adminpostgres.NewSLOReadRepository(db)
+	createSLOUC := slocommand.NewCreateSLOUseCase(sloWriteRepo)
+	listSLOsUC := sloquery.NewListSLOsUseCase(sloReadRepo)
+	getSLOUC := sloquery.NewGetSLOUseCase(sloReadRepo, adminpostgres.NewBudgetReadRepository(db))
+	statusSLOUC := slocommand.NewChangeSLOStatusUseCase(sloWriteRepo)
+	deleteSLOUC := slocommand.NewDeleteSLOUseCase(sloWriteRepo)
+
+	budgetReadRepo := adminpostgres.NewBudgetReadRepository(db)
+	getBudgetUC := slobudgetquery.NewGetBudgetUseCase(budgetReadRepo)
+	listBudgetHistoryUC := slobudgetquery.NewListBudgetHistoryUseCase(budgetReadRepo)
+
+	alertReadRepo := adminpostgres.NewBudgetAlertReadRepository(db)
+	getAlertUC := sloalertquery.NewGetAlertUseCase(alertReadRepo)
+	listAlertsUC := sloalertquery.NewListAlertsUseCase(alertReadRepo)
+
+	handler.SetCreateSLIUseCase(createSLIUC)
+	handler.SetListSLIsUseCase(listSLIsUC)
+	handler.SetGetSLIUseCase(getSLIUC)
+	handler.SetDeleteSLIUseCase(deleteSLIUC)
+	handler.SetCreateSLOUseCase(createSLOUC)
+	handler.SetListSLOsUseCase(listSLOsUC)
+	handler.SetGetSLOUseCase(getSLOUC)
+	handler.SetChangeSLOStatusUseCase(statusSLOUC)
+	handler.SetDeleteSLOUseCase(deleteSLOUC)
+	handler.SetGetBudgetUseCase(getBudgetUC)
+	handler.SetListBudgetHistoryUseCase(listBudgetHistoryUC)
+	handler.SetGetAlertUseCase(getAlertUC)
+	handler.SetListAlertsUseCase(listAlertsUC)
+
 	auth := middleware.NewAuth(db)
 	rl := middleware.NewRateLimiter(ctx)
 

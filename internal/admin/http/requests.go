@@ -1,11 +1,20 @@
 package http
 
 import (
+	"fmt"
+	"time"
+
 	checkcommand "orbitjob/internal/admin/app/check/command"
 	checkquery "orbitjob/internal/admin/app/check/query"
 	checkrunquery "orbitjob/internal/admin/app/checkrun/query"
 	command "orbitjob/internal/admin/app/job/command"
 	query "orbitjob/internal/admin/app/job/query"
+	slicommand "orbitjob/internal/admin/app/sli/command"
+	sliquery "orbitjob/internal/admin/app/sli/query"
+	slocommand "orbitjob/internal/admin/app/slo/command"
+	sloquery "orbitjob/internal/admin/app/slo/query"
+	slobudgetquery "orbitjob/internal/admin/app/slobudget/query"
+	sloalertquery "orbitjob/internal/admin/app/sloalert/query"
 	domaincheck "orbitjob/internal/core/domain/check"
 	domainjob "orbitjob/internal/core/domain/job"
 )
@@ -355,4 +364,152 @@ func (r ListCheckRunsRequest) ToListInput() checkrunquery.ListCheckRunsInput {
 // GetCheckRunRequest defines the route parameters for reading one check run.
 type GetCheckRunRequest struct {
 	ID int64 `uri:"id" binding:"required,min=1"`
+}
+
+// --- SLI Requests ---
+
+type CreateSLIRequest struct {
+	Name              string         `json:"name" binding:"required,max=128"`
+	Description       *string        `json:"description,omitempty"`
+	SLIType           string         `json:"sli_type" binding:"required,oneof=availability latency quality custom"`
+	SourceType        string         `json:"source_type" binding:"omitempty,oneof=check_run"`
+	SourceConfig      map[string]any `json:"source_config"`
+	Aggregation       string         `json:"aggregation" binding:"omitempty,oneof=ratio count"`
+	GoodEventCriteria map[string]any `json:"good_event_criteria"`
+}
+
+func (r CreateSLIRequest) ToCreateInput() slicommand.CreateInput {
+	return slicommand.CreateInput{
+		Name:              r.Name,
+		Description:       r.Description,
+		SLIType:           r.SLIType,
+		SourceType:        r.SourceType,
+		SourceConfig:      r.SourceConfig,
+		Aggregation:       r.Aggregation,
+		GoodEventCriteria: r.GoodEventCriteria,
+	}
+}
+
+type sliIDURI struct {
+	ID int64 `uri:"id" binding:"required,min=1"`
+}
+
+type GetSLIRequest struct {
+	ID int64 `uri:"id" binding:"required,min=1"`
+}
+
+type ListSLIsRequest struct {
+	TenantID string `form:"tenant_id"`
+	Limit    int    `form:"limit,default=50" binding:"min=1,max=100"`
+	Offset   int    `form:"offset,default=0" binding:"min=0"`
+}
+
+func (r ListSLIsRequest) ToListInput() sliquery.ListInput {
+	return sliquery.ListInput{
+		Limit:  r.Limit,
+		Offset: r.Offset,
+	}
+}
+
+// --- SLO Requests ---
+
+// CreateSLORequest defines the HTTP payload for creating an SLO.
+type CreateSLORequest struct {
+	Name              string  `json:"name" binding:"required,max=128"`
+	Description       *string `json:"description,omitempty"`
+	SLIID             int64   `json:"sli_id" binding:"required,min=1"`
+	Target            float64 `json:"target" binding:"required,min=0.0001,max=1"`
+	WindowType        string  `json:"window_type" binding:"omitempty,oneof=rolling calendar quarterly"`
+	WindowDuration    string  `json:"window_duration" binding:"required"`
+	AlertFastBurnRate float64 `json:"alert_fast_burn_rate" binding:"omitempty,min=0.1"`
+	AlertSlowBurnRate float64 `json:"alert_slow_burn_rate" binding:"omitempty,min=0.1"`
+}
+
+// ToCreateInput converts the HTTP request into a domain command input.
+func (r CreateSLORequest) ToCreateInput() (slocommand.CreateInput, error) {
+	dur, err := time.ParseDuration(r.WindowDuration)
+	if err != nil {
+		return slocommand.CreateInput{}, fmt.Errorf("invalid window_duration: %w", err)
+	}
+	return slocommand.CreateInput{
+		Name:              r.Name,
+		Description:       r.Description,
+		SLIID:             r.SLIID,
+		Target:            r.Target,
+		WindowType:        r.WindowType,
+		WindowDuration:    dur,
+		AlertFastBurnRate: r.AlertFastBurnRate,
+		AlertSlowBurnRate: r.AlertSlowBurnRate,
+	}, nil
+}
+
+type sloIDURI struct {
+	ID int64 `uri:"id" binding:"required,min=1"`
+}
+
+type GetSLORequest struct {
+	ID int64 `uri:"id" binding:"required,min=1"`
+}
+
+type ListSLOsRequest struct {
+	TenantID string `form:"tenant_id"`
+	Limit    int    `form:"limit,default=50" binding:"min=1,max=100"`
+	Offset   int    `form:"offset,default=0" binding:"min=0"`
+}
+
+func (r ListSLOsRequest) ToListInput() sloquery.ListInput {
+	return sloquery.ListInput{
+		Limit:  r.Limit,
+		Offset: r.Offset,
+	}
+}
+
+type ChangeSLOStatusRequest struct {
+	Version int `json:"version" binding:"required,min=1"`
+}
+
+func (r ChangeSLOStatusRequest) ToChangeStatusInput(id int64) slocommand.ChangeStatusInput {
+	return slocommand.ChangeStatusInput{
+		ID:      id,
+		Version: r.Version,
+	}
+}
+
+type GetSLOBudgetRequest struct {
+	SLOID int64 `uri:"id" binding:"required,min=1"`
+}
+
+type ListSLOBudgetsRequest struct {
+	TenantID string `form:"tenant_id"`
+	Limit    int    `form:"limit,default=50" binding:"min=1,max=100"`
+	Offset   int    `form:"offset,default=0" binding:"min=0"`
+}
+
+func (r ListSLOBudgetsRequest) ToListInput() slobudgetquery.ListInput {
+	return slobudgetquery.ListInput{
+		SLOID:  0, // will be set from URL
+		Limit:  r.Limit,
+		Offset: r.Offset,
+	}
+}
+
+type GetSLOAlertRequest struct {
+	ID int64 `uri:"id" binding:"required,min=1"`
+}
+
+type ListSLOAlertsRequest struct {
+	TenantID string `form:"tenant_id"`
+	SLOID    *int64 `form:"slo_id,omitempty"`
+	Status   *string `form:"status,omitempty"`
+	Limit    int    `form:"limit,default=50" binding:"min=1,max=100"`
+	Offset   int    `form:"offset,default=0" binding:"min=0"`
+}
+
+func (r ListSLOAlertsRequest) ToListInput() sloalertquery.ListInput {
+	return sloalertquery.ListInput{
+		SLOID:  r.SLOID,
+		Status: r.Status,
+		Limit:  r.Limit,
+		Offset: r.Offset,
+	}
 }

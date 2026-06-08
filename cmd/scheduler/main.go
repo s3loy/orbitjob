@@ -10,11 +10,13 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	adminpostgres "orbitjob/internal/admin/store/postgres"
 	"orbitjob/internal/core/app/checkschedule"
+	"orbitjob/internal/core/app/sloevaluate"
 	"orbitjob/internal/core/app/schedule"
 	domain "orbitjob/internal/core/domain"
 	corepostgres "orbitjob/internal/core/store/postgres"
@@ -390,6 +392,11 @@ func run(ctx context.Context) error {
 		return repo.CountActiveInstances(ctx)
 	}
 
+	// Worker context: cancelled when the scheduler leaves its main loop so
+	// background goroutines shut down deterministically in tests and deployments.
+	workerCtx, workerCancel := context.WithCancel(ctx)
+	defer workerCancel()
+
 	// Initialize check scheduler with a fixed interval to avoid data race on cfg.TickInterval.
 	checkRepo := corepostgres.NewCheckRepository(db)
 	checkRunRepo := corepostgres.NewCheckRunRepository(db)
@@ -400,15 +407,44 @@ func run(ctx context.Context) error {
 		defer ticker.Stop()
 		for {
 			select {
-			case <-ctx.Done():
+			case <-workerCtx.Done():
 				return
 			case <-ticker.C:
-				if _, err := checkScheduler.RunBatch(ctx, "default", 50); err != nil {
+				if _, err := checkScheduler.RunBatch(workerCtx, "default", 50); err != nil {
 					slog.Error("check scheduler tick failed", "error", err.Error())
 				}
 			}
 		}
 	}()
+
+	// Initialize SLO evaluator.
+	sloRepo := corepostgres.NewSLORepository(db)
+	snapshotRepo := corepostgres.NewSLISnapshotRepository(db)
+	budgetRepo := corepostgres.NewBudgetRepository(db)
+	alertRepo := corepostgres.NewBudgetAlertRepository(db)
+	sloEvaluator := sloevaluate.NewEvaluateUseCase(sloRepo, snapshotRepo, budgetRepo, alertRepo)
+
+	var evalWg sync.WaitGroup
+	startEvaluator := func() {
+		evalWg.Add(1)
+		go func() {
+			defer evalWg.Done()
+			ticker := time.NewTicker(5 * time.Minute)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-workerCtx.Done():
+					return
+				case <-ticker.C:
+					evalCtx, cancel := context.WithTimeout(workerCtx, 2*time.Minute)
+					if err := sloEvaluator.EvaluateAll(evalCtx, "default"); err != nil {
+						slog.Error("slo evaluation failed", "error", err.Error())
+					}
+					cancel()
+				}
+			}
+		}()
+	}
 
 	// Optional: etcd leader election for distributed HA.
 	if os.Getenv("ETCD_ENABLED") == "true" {
@@ -439,14 +475,19 @@ func run(ctx context.Context) error {
 			go watchSchedulerConfig(leaderCtx, watcher, &cfg)
 		}
 
+		startEvaluator()
 		runLoopFn(leaderCtx, runner, probe, queueDepth, &cfg, newWallClockTicker, time.Now)
 		slog.Warn("scheduler lost leadership, exiting")
+		workerCancel()
+		evalWg.Wait()
 		return nil
 	}
 
 	// PG-only mode: run directly (single-instance behaviour).
+	startEvaluator()
 	runLoopFn(ctx, runner, probe, queueDepth, &cfg, newWallClockTicker, time.Now)
-
+	workerCancel()
+	evalWg.Wait()
 	return nil
 }
 

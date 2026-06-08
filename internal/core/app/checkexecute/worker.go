@@ -19,16 +19,22 @@ import (
 type TickUseCase struct {
 	checkRepo    checkReader
 	checkRunRepo checkRunRepository
-	evaluator    *evaluate.Evaluator
+	sliRecorder  sliEventRecorder
+	evaluator    evaluator
 	clock        func() time.Time
 }
 
+type evaluator interface {
+	Evaluate(output map[string]any, rules []check.AssertionRule) evaluate.Result
+}
+
 // NewTickUseCase creates a new check execution use case.
-func NewTickUseCase(checkRepo checkReader, checkRunRepo checkRunRepository) *TickUseCase {
+func NewTickUseCase(checkRepo checkReader, checkRunRepo checkRunRepository, eval evaluator, recorder sliEventRecorder) *TickUseCase {
 	return &TickUseCase{
 		checkRepo:    checkRepo,
 		checkRunRepo: checkRunRepo,
-		evaluator:    evaluate.NewEvaluator(),
+		evaluator:    eval,
+		sliRecorder:  recorder,
 		clock:        func() time.Time { return time.Now().UTC() },
 	}
 }
@@ -40,6 +46,10 @@ type checkReader interface {
 type checkRunRepository interface {
 	ClaimNext(ctx context.Context, tenantID string, limit int, now time.Time) ([]checkrun.Snapshot, error)
 	Complete(ctx context.Context, tenantID string, id int64, status, severity string, output, evaluationResult map[string]any, durationMs int, now time.Time) error
+}
+
+type sliEventRecorder interface {
+	RecordCheckRun(ctx context.Context, tenantID string, checkID int64, run checkrun.Snapshot) error
 }
 
 // RunBatch claims and executes pending check runs.
@@ -142,6 +152,21 @@ func (uc *TickUseCase) executeRun(ctx context.Context, tenantID string, run chec
 
 	if err := uc.checkRunRepo.Complete(ctx, tenantID, run.ID, status, severity, result.Output, evalResultMap, durationMs, uc.clock()); err != nil {
 		return fmt.Errorf("complete check run: %w", err)
+	}
+
+	if uc.sliRecorder != nil {
+		completedRun := run
+		completedRun.Status = status
+		completedRun.Severity = &severity
+		completedRun.Output = result.Output
+		completedRun.EvaluationResult = evalResultMap
+		completedRun.DurationMs = &durationMs
+		now := uc.clock()
+		completedRun.FinishedAt = &now
+
+		if err := uc.sliRecorder.RecordCheckRun(ctx, tenantID, chk.ID, completedRun); err != nil {
+			slog.Error("failed to record sli event", "run_id", run.RunID, "error", err)
+		}
 	}
 
 	metrics.CheckRunsCompletedTotal.WithLabelValues(tenantID, chk.CheckType, severity).Inc()

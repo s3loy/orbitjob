@@ -1,6 +1,6 @@
 # OrbitJob
 
-[![Go](https://img.shields.io/badge/Go-1.26.3-00ADD8?logo=go)](https://go.dev)
+[![Go](https://img.shields.io/badge/Go-1.26.4-00ADD8?logo=go)](https://go.dev)
 [![License](https://img.shields.io/github/license/s3loy/orbitjob)](./LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/s3loy/orbitjob)](https://goreportcard.com/report/github.com/s3loy/orbitjob)
 [![Build Status](https://github.com/s3loy/orbitjob/actions/workflows/ci.yml/badge.svg)](https://github.com/s3loy/orbitjob/actions/workflows/ci.yml)
@@ -22,6 +22,7 @@ Pure Go. PostgreSQL is the only required dependency. Built-in observability, cro
 - **Flexible triggers** — Cron scheduling and manual trigger support
 - **Extensible handlers** — Built-in exec, HTTP, webhook, PGNotify; add your own custom handlers
 - **Automated inspections** — Define checks (HTTP health, metric thresholds), run on schedule, auto-evaluate severity, track history
+- **SLO monitoring** — Define SLI metrics and SLO targets, auto-track error budgets, detect burn rate alerts
 
 ## Quick Start
 

@@ -1,6 +1,6 @@
 # OrbitJob
 
-[![Go](https://img.shields.io/badge/Go-1.26.3-00ADD8?logo=go)](https://go.dev)
+[![Go](https://img.shields.io/badge/Go-1.26.4-00ADD8?logo=go)](https://go.dev)
 [![License](https://img.shields.io/github/license/s3loy/orbitjob)](./LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/s3loy/orbitjob)](https://goreportcard.com/report/github.com/s3loy/orbitjob)
 [![Build Status](https://github.com/s3loy/orbitjob/actions/workflows/ci.yml/badge.svg)](https://github.com/s3loy/orbitjob/actions/workflows/ci.yml)
@@ -22,6 +22,7 @@
 - **灵活触发** — 支持 cron 表达式调度与手动触发
 - **可扩展 handler** — 内置 exec、HTTP、webhook、PGNotify，支持自定义 handler
 - **自动化巡检** — 定义检查项（HTTP 健康、指标阈值），定时执行、自动评估严重度、追踪历史
+- **SLO 监控** — 定义 SLI 指标与 SLO 目标，自动追踪错误预算、检测 burn rate 告警
 
 ## 快速开始
 

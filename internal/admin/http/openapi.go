@@ -14,6 +14,12 @@ import (
 	command "orbitjob/internal/admin/app/job/command"
 	instancequery "orbitjob/internal/admin/app/instance/query"
 	query "orbitjob/internal/admin/app/job/query"
+	slicommand "orbitjob/internal/admin/app/sli/command"
+	sliquery "orbitjob/internal/admin/app/sli/query"
+	slocommand "orbitjob/internal/admin/app/slo/command"
+	sloquery "orbitjob/internal/admin/app/slo/query"
+	slobudgetquery "orbitjob/internal/admin/app/slobudget/query"
+	sloalertquery "orbitjob/internal/admin/app/sloalert/query"
 	domaininstance "orbitjob/internal/core/domain/instance"
 )
 
@@ -593,6 +599,277 @@ func adminAPIRoutes() []routeDefinition {
 					{statusCode: stdhttp.StatusOK, description: "Check run detail", model: checkrunquery.GetResult{}},
 					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
 					{statusCode: stdhttp.StatusNotFound, description: "Check run not found", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		// ==================== SLIs ====================
+		{
+			method: stdhttp.MethodPost,
+			path:   "/slis",
+			enabled: func(h *Handler) bool { return h != nil && h.createSLIUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.POST("/slis", h.CreateSLI) },
+			spec: operationDefinition{
+				id:                  "createSLI",
+				summary:             "Create one SLI",
+				description:         "Create a service level indicator definition.",
+				tags:                []string{"SLIs"},
+				requestBodyModel:    CreateSLIRequest{},
+				requestBodyRequired: true,
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusCreated, description: "Created SLI", model: slicommand.CreateResult{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		{
+			method: stdhttp.MethodGet,
+			path:   "/slis",
+			enabled: func(h *Handler) bool { return h != nil && h.listSLIsUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.GET("/slis", h.ListSLIs) },
+			spec: operationDefinition{
+				id:              "listSLIs",
+				summary:         "List SLIs",
+				description:     "List service level indicators for one tenant.",
+				tags:            []string{"SLIs"},
+				parameterModels: []any{ListSLIsRequest{}},
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "SLI list", model: sliListResponse{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		{
+			method: stdhttp.MethodGet,
+			path:   "/slis/:id",
+			enabled: func(h *Handler) bool { return h != nil && h.getSLIUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.GET("/slis/:id", h.GetSLI) },
+			spec: operationDefinition{
+				id:              "getSLI",
+				summary:         "Get one SLI",
+				description:     "Get one service level indicator by id.",
+				tags:            []string{"SLIs"},
+				parameterModels: []any{GetSLIRequest{}},
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "SLI detail", model: sliquery.GetItem{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusNotFound, description: "SLI not found", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		{
+			method: stdhttp.MethodDelete,
+			path:   "/slis/:id",
+			enabled: func(h *Handler) bool { return h != nil && h.deleteSLIUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.DELETE("/slis/:id", h.DeleteSLI) },
+			spec: operationDefinition{
+				id:              "deleteSLI",
+				summary:         "Delete one SLI",
+				description:     "Soft-delete a service level indicator by setting deleted_at.",
+				tags:            []string{"SLIs"},
+				parameterModels: []any{sliIDURI{}, tenantQueryRequest{}},
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "Deleted SLI"},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusNotFound, description: "SLI not found", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		// ==================== SLOs ====================
+		{
+			method: stdhttp.MethodPost,
+			path:   "/slos",
+			enabled: func(h *Handler) bool { return h != nil && h.createSLOUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.POST("/slos", h.CreateSLO) },
+			spec: operationDefinition{
+				id:                  "createSLO",
+				summary:             "Create one SLO",
+				description:         "Create a service level objective definition.",
+				tags:                []string{"SLOs"},
+				requestBodyModel:    CreateSLORequest{},
+				requestBodyRequired: true,
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusCreated, description: "Created SLO", model: slocommand.CreateResult{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		{
+			method: stdhttp.MethodGet,
+			path:   "/slos",
+			enabled: func(h *Handler) bool { return h != nil && h.listSLOsUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.GET("/slos", h.ListSLOs) },
+			spec: operationDefinition{
+				id:              "listSLOs",
+				summary:         "List SLOs",
+				description:     "List service level objectives for one tenant.",
+				tags:            []string{"SLOs"},
+				parameterModels: []any{ListSLOsRequest{}},
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "SLO list", model: sloListResponse{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		{
+			method: stdhttp.MethodGet,
+			path:   "/slos/:id",
+			enabled: func(h *Handler) bool { return h != nil && h.getSLOUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.GET("/slos/:id", h.GetSLO) },
+			spec: operationDefinition{
+				id:              "getSLO",
+				summary:         "Get one SLO",
+				description:     "Get one service level objective by id.",
+				tags:            []string{"SLOs"},
+				parameterModels: []any{GetSLORequest{}},
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "SLO detail", model: sloquery.GetItem{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusNotFound, description: "SLO not found", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		{
+			method: stdhttp.MethodPost,
+			path:   "/slos/:id/pause",
+			enabled: func(h *Handler) bool { return h != nil && h.statusSLOUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.POST("/slos/:id/pause", h.PauseSLO) },
+			spec: operationDefinition{
+				id:                  "pauseSLO",
+				summary:             "Pause one SLO",
+				description:         "Pause an active service level objective using optimistic locking by version.",
+				tags:                []string{"SLOs"},
+				parameterModels:     []any{sloIDURI{}, tenantQueryRequest{}},
+				requestBodyModel:    ChangeSLOStatusRequest{},
+				requestBodyRequired: true,
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "Paused SLO", model: slocommand.ChangeStatusResult{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusNotFound, description: "SLO not found", model: errorModel},
+					{statusCode: stdhttp.StatusConflict, description: "Version conflict", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		{
+			method: stdhttp.MethodPost,
+			path:   "/slos/:id/resume",
+			enabled: func(h *Handler) bool { return h != nil && h.statusSLOUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.POST("/slos/:id/resume", h.ResumeSLO) },
+			spec: operationDefinition{
+				id:                  "resumeSLO",
+				summary:             "Resume one SLO",
+				description:         "Resume a paused service level objective using optimistic locking by version.",
+				tags:                []string{"SLOs"},
+				parameterModels:     []any{sloIDURI{}, tenantQueryRequest{}},
+				requestBodyModel:    ChangeSLOStatusRequest{},
+				requestBodyRequired: true,
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "Resumed SLO", model: slocommand.ChangeStatusResult{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusNotFound, description: "SLO not found", model: errorModel},
+					{statusCode: stdhttp.StatusConflict, description: "Version conflict", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		{
+			method: stdhttp.MethodDelete,
+			path:   "/slos/:id",
+			enabled: func(h *Handler) bool { return h != nil && h.deleteSLOUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.DELETE("/slos/:id", h.DeleteSLO) },
+			spec: operationDefinition{
+				id:              "deleteSLO",
+				summary:         "Delete one SLO",
+				description:     "Soft-delete a service level objective by setting deleted_at.",
+				tags:            []string{"SLOs"},
+				parameterModels: []any{sloIDURI{}, tenantQueryRequest{}},
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "Deleted SLO"},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusNotFound, description: "SLO not found", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		{
+			method: stdhttp.MethodGet,
+			path:   "/slos/:id/budget",
+			enabled: func(h *Handler) bool { return h != nil && h.getBudgetUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.GET("/slos/:id/budget", h.GetSLOBudget) },
+			spec: operationDefinition{
+				id:              "getSLOBudget",
+				summary:         "Get SLO budget",
+				description:     "Get the current error budget for one SLO.",
+				tags:            []string{"SLO Budgets"},
+				parameterModels: []any{GetSLOBudgetRequest{}},
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "SLO budget detail", model: slobudgetquery.GetItem{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusNotFound, description: "SLO not found", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		{
+			method: stdhttp.MethodGet,
+			path:   "/slos/:id/budgets",
+			enabled: func(h *Handler) bool { return h != nil && h.listBudgetHistoryUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.GET("/slos/:id/budgets", h.ListSLOBudgets) },
+			spec: operationDefinition{
+				id:              "listSLOBudgets",
+				summary:         "List SLO budget history",
+				description:     "List error budget history entries for one SLO.",
+				tags:            []string{"SLO Budgets"},
+				parameterModels: []any{ListSLOBudgetsRequest{}},
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "SLO budget history list", model: budgetListResponse{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		// ==================== SLO Alerts ====================
+		{
+			method: stdhttp.MethodGet,
+			path:   "/slo-alerts",
+			enabled: func(h *Handler) bool { return h != nil && h.listAlertsUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.GET("/slo-alerts", h.ListSLOAlerts) },
+			spec: operationDefinition{
+				id:              "listSLOAlerts",
+				summary:         "List SLO alerts",
+				description:     "List SLO alert entries for one tenant.",
+				tags:            []string{"SLO Alerts"},
+				parameterModels: []any{ListSLOAlertsRequest{}},
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "SLO alert list", model: alertListResponse{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		{
+			method: stdhttp.MethodGet,
+			path:   "/slo-alerts/:id",
+			enabled: func(h *Handler) bool { return h != nil && h.getAlertUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.GET("/slo-alerts/:id", h.GetSLOAlert) },
+			spec: operationDefinition{
+				id:              "getSLOAlert",
+				summary:         "Get one SLO alert",
+				description:     "Get one SLO alert by id.",
+				tags:            []string{"SLO Alerts"},
+				parameterModels: []any{GetSLOAlertRequest{}},
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "SLO alert detail", model: sloalertquery.GetItem{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusNotFound, description: "SLO alert not found", model: errorModel},
 					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
 				},
 			},
