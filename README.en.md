@@ -22,6 +22,7 @@ Pure Go. PostgreSQL is the only required dependency. Built-in observability, cro
 - **Flexible triggers** — Cron scheduling and manual trigger support
 - **Extensible handlers** — Built-in exec, HTTP, webhook, PGNotify; add your own custom handlers
 - **Automated inspections** — Define checks (HTTP health, metric thresholds), run on schedule, auto-evaluate severity, track history
+- **SLO monitoring** — Define SLI metrics and SLO targets, auto-track error budgets, detect burn rate alerts
 
 ## Quick Start
 

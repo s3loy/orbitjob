@@ -47,10 +47,14 @@ func (r *SLIRepository) Create(ctx context.Context, tenantID string, spec sli.Cr
 	}
 
 	if len(sourceConfigRaw) > 0 {
-		_ = json.Unmarshal(sourceConfigRaw, &snap.SourceConfig)
+		if err := json.Unmarshal(sourceConfigRaw, &snap.SourceConfig); err != nil {
+			return snap, fmt.Errorf("unmarshal source_config: %w", err)
+		}
 	}
 	if len(goodEventRaw) > 0 {
-		_ = json.Unmarshal(goodEventRaw, &snap.GoodEventCriteria)
+		if err := json.Unmarshal(goodEventRaw, &snap.GoodEventCriteria); err != nil {
+			return snap, fmt.Errorf("unmarshal good_event_criteria: %w", err)
+		}
 	}
 
 	return snap, nil
@@ -108,10 +112,14 @@ func (r *SLIRepository) scanSLIs(rows *sql.Rows) ([]sli.Snapshot, error) {
 			return nil, fmt.Errorf("scan sli: %w", err)
 		}
 		if len(sourceConfigRaw) > 0 {
-			_ = json.Unmarshal(sourceConfigRaw, &snap.SourceConfig)
+			if err := json.Unmarshal(sourceConfigRaw, &snap.SourceConfig); err != nil {
+				return nil, fmt.Errorf("unmarshal source_config: %w", err)
+			}
 		}
 		if len(goodEventRaw) > 0 {
-			_ = json.Unmarshal(goodEventRaw, &snap.GoodEventCriteria)
+			if err := json.Unmarshal(goodEventRaw, &snap.GoodEventCriteria); err != nil {
+				return nil, fmt.Errorf("unmarshal good_event_criteria: %w", err)
+			}
 		}
 		slis = append(slis, snap)
 	}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"orbitjob/internal/core/domain/slo"
+	"orbitjob/internal/domain/validation"
 )
 
 // sloStatusChanger changes SLO status.
@@ -38,10 +39,10 @@ type ChangeStatusResult struct {
 // ChangeStatus changes an SLO's status.
 func (uc *ChangeSLOStatusUseCase) ChangeStatus(ctx context.Context, tenantID string, in ChangeStatusInput) (ChangeStatusResult, error) {
 	if in.ID <= 0 {
-		return ChangeStatusResult{}, fmt.Errorf("id must be positive")
+		return ChangeStatusResult{}, validation.New("id", "id must be positive")
 	}
 	if !slo.ValidStatuses[in.Status] {
-		return ChangeStatusResult{}, fmt.Errorf("invalid status: %s", in.Status)
+		return ChangeStatusResult{}, validation.New("status", fmt.Sprintf("invalid status: %s", in.Status))
 	}
 
 	snap, err := uc.repo.ChangeStatus(ctx, tenantID, in.ID, in.Version, in.Status)

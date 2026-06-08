@@ -2,9 +2,9 @@ package query
 
 import (
 	"context"
-	"fmt"
 
 	"orbitjob/internal/core/domain/slo"
+	"orbitjob/internal/domain/validation"
 )
 
 // budgetReader retrieves current budgets.
@@ -42,7 +42,7 @@ type GetItem struct {
 // Get retrieves the current budget for an SLO.
 func (uc *GetBudgetUseCase) Get(ctx context.Context, tenantID string, sloID int64) (GetItem, error) {
 	if sloID <= 0 {
-		return GetItem{}, fmt.Errorf("slo_id must be positive")
+		return GetItem{}, validation.New("slo_id", "slo_id must be positive")
 	}
 
 	budget, err := uc.repo.GetCurrent(ctx, tenantID, sloID)

@@ -223,3 +223,55 @@ func TestWindow_ElapsedAndRemainingSumToDuration(t *testing.T) {
 		t.Errorf("elapsed(%v) + remaining(%v) != duration(%v)", elapsed, remaining, duration)
 	}
 }
+
+func TestCalculateWindow_Quarterly(t *testing.T) {
+	tests := []struct {
+		name      string
+		now       time.Time
+		wantStart time.Time
+		wantEnd   time.Time
+	}{
+		{
+			name:      "q1_january",
+			now:       time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC),
+			wantStart: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+			wantEnd:   time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			name:      "q2_april",
+			now:       time.Date(2026, 4, 15, 12, 0, 0, 0, time.UTC),
+			wantStart: time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC),
+			wantEnd:   time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			name:      "q3_july",
+			now:       time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC),
+			wantStart: time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC),
+			wantEnd:   time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			name:      "q4_october",
+			now:       time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC),
+			wantStart: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC),
+			wantEnd:   time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			name:      "q4_december_year_boundary",
+			now:       time.Date(2026, 12, 31, 23, 59, 59, 0, time.UTC),
+			wantStart: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC),
+			wantEnd:   time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := CalculateWindow(WindowTypeQuarterly, 0, tt.now)
+			if !w.Start.Equal(tt.wantStart) {
+				t.Errorf("start = %v, want %v", w.Start, tt.wantStart)
+			}
+			if !w.End.Equal(tt.wantEnd) {
+				t.Errorf("end = %v, want %v", w.End, tt.wantEnd)
+			}
+		})
+	}
+}

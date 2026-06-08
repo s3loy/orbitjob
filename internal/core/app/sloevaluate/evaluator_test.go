@@ -48,11 +48,11 @@ type stubAlertWriter struct {
 }
 
 type alertCreateCall struct {
-	tenantID string
-	sloID    int64
-	budgetID int64
+	tenantID  string
+	sloID     int64
+	budgetID  int64
 	alertType string
-	burnRate float64
+	burnRate  float64
 }
 
 type alertResolveCall struct {
@@ -594,6 +594,192 @@ func TestEvaluateAll_NoDuplicateFastBurnAlert(t *testing.T) {
 	}
 }
 
+func TestEvaluateSLO_ReaderError(t *testing.T) {
+	wantErr := errors.New("db down")
+	reader := &stubSLOReader{
+		listFunc: func(_ context.Context, _ string) ([]slo.Snapshot, error) {
+			return nil, wantErr
+		},
+	}
+	agg := &stubSnapshotAggregator{}
+	bw := &stubBudgetWriter{}
+	aw := &stubAlertWriter{}
+
+	uc := NewEvaluateUseCase(reader, agg, bw, aw)
+	err := uc.EvaluateAll(context.Background(), "tenant-a")
+	if err == nil {
+		t.Fatal("expected error for reader failure")
+	}
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected error wrapping %v, got %v", wantErr, err)
+	}
+}
+
+func TestEvaluateSLO_BudgetUpsertError(t *testing.T) {
+	now := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
+	wantErr := errors.New("upsert failed")
+
+	reader := &stubSLOReader{
+		listFunc: func(_ context.Context, _ string) ([]slo.Snapshot, error) {
+			return []slo.Snapshot{
+				{ID: 1, SLIID: 10, Target: 0.99, WindowType: slo.WindowTypeRolling, WindowDuration: 30 * 24 * time.Hour, AlertFastBurnRate: 14.4, AlertSlowBurnRate: 2.0, Status: slo.StatusActive},
+			}, nil
+		},
+	}
+	agg := &stubSnapshotAggregator{
+		aggregateFunc: func(_ context.Context, _ string, _ int64, _, _ time.Time) (WindowAggregate, error) {
+			return WindowAggregate{GoodEventsCount: 50, TotalEventsCount: 100}, nil
+		},
+	}
+	bw := &stubBudgetWriter{err: wantErr}
+	aw := &stubAlertWriter{}
+
+	uc := NewEvaluateUseCase(reader, agg, bw, aw)
+	uc.clock = func() time.Time { return now }
+
+	err := uc.EvaluateSLO(context.Background(), "tenant-a", 1)
+	if err == nil {
+		t.Fatal("expected error for budget upsert failure")
+	}
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected error wrapping %v, got %v", wantErr, err)
+	}
+}
+
+func TestEvaluateSLO_BudgetAtRisk(t *testing.T) {
+	now := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
+
+	reader := &stubSLOReader{
+		listFunc: func(_ context.Context, _ string) ([]slo.Snapshot, error) {
+			return []slo.Snapshot{
+				{ID: 1, SLIID: 10, Target: 0.9, WindowType: slo.WindowTypeRolling, WindowDuration: 30 * 24 * time.Hour, AlertFastBurnRate: 14.4, AlertSlowBurnRate: 2.0, Status: slo.StatusActive},
+			}, nil
+		},
+	}
+	agg := &stubSnapshotAggregator{
+		aggregateFunc: func(_ context.Context, _ string, _ int64, _, _ time.Time) (WindowAggregate, error) {
+			// target=0.9, total=1000, good=901
+			// budgetTotal = 0.1 * 1000 = 100
+			// budgetConsumed = (1 - 0.901) * 1000 = 99
+			// budgetRemaining = 100 - 99 = 1
+			// 1/100 = 0.01 < 0.1 -> at_risk
+			return WindowAggregate{GoodEventsCount: 901, TotalEventsCount: 1000}, nil
+		},
+	}
+	bw := &stubBudgetWriter{}
+	aw := &stubAlertWriter{}
+
+	uc := NewEvaluateUseCase(reader, agg, bw, aw)
+	uc.clock = func() time.Time { return now }
+
+	err := uc.EvaluateAll(context.Background(), "tenant-a")
+	if err != nil {
+		t.Fatalf("EvaluateSLO() error = %v", err)
+	}
+	if len(bw.budgets) != 1 {
+		t.Fatalf("expected 1 budget, got %d", len(bw.budgets))
+	}
+	if bw.budgets[0].Status != slo.BudgetAtRisk {
+		t.Fatalf("expected status %q, got %q", slo.BudgetAtRisk, bw.budgets[0].Status)
+	}
+}
+
+func TestManageAlerts_GetActiveError(t *testing.T) {
+	now := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
+	wantErr := errors.New("get active failed")
+
+	reader := &stubSLOReader{
+		listFunc: func(_ context.Context, _ string) ([]slo.Snapshot, error) {
+			return []slo.Snapshot{
+				{ID: 1, SLIID: 10, Target: 0.99, WindowType: slo.WindowTypeRolling, WindowDuration: 30 * 24 * time.Hour, AlertFastBurnRate: 14.4, AlertSlowBurnRate: 2.0, Status: slo.StatusActive},
+			}, nil
+		},
+	}
+	agg := &stubSnapshotAggregator{
+		aggregateFunc: func(_ context.Context, _ string, _ int64, _, _ time.Time) (WindowAggregate, error) {
+			return WindowAggregate{GoodEventsCount: 50, TotalEventsCount: 100}, nil
+		},
+	}
+	bw := &stubBudgetWriter{}
+	aw := &stubAlertWriter{err: wantErr}
+
+	uc := NewEvaluateUseCase(reader, agg, bw, aw)
+	uc.clock = func() time.Time { return now }
+
+	// EvaluateSLO should return error for alert writer failure
+	err := uc.EvaluateSLO(context.Background(), "tenant-a", 1)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestManageAlerts_CreateAlertError(t *testing.T) {
+	now := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
+	wantErr := errors.New("create alert failed")
+
+	reader := &stubSLOReader{
+		listFunc: func(_ context.Context, _ string) ([]slo.Snapshot, error) {
+			return []slo.Snapshot{
+				{ID: 1, SLIID: 10, Target: 0.99, WindowType: slo.WindowTypeRolling, WindowDuration: 30 * 24 * time.Hour, AlertFastBurnRate: 14.4, AlertSlowBurnRate: 2.0, Status: slo.StatusActive},
+			}, nil
+		},
+	}
+	agg := &stubSnapshotAggregator{
+		aggregateFunc: func(_ context.Context, _ string, _ int64, _, _ time.Time) (WindowAggregate, error) {
+			return WindowAggregate{GoodEventsCount: 50, TotalEventsCount: 100}, nil
+		},
+	}
+	bw := &stubBudgetWriter{}
+	aw := &stubAlertWriter{activeAlerts: nil}
+
+	uc := NewEvaluateUseCase(reader, agg, bw, aw)
+	uc.clock = func() time.Time { return now }
+
+	// Override Create to return error
+	aw.err = wantErr
+
+	err := uc.EvaluateSLO(context.Background(), "tenant-a", 1)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestManageAlerts_ResolveAlertError(t *testing.T) {
+	now := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
+	wantErr := errors.New("resolve alert failed")
+
+	reader := &stubSLOReader{
+		listFunc: func(_ context.Context, _ string) ([]slo.Snapshot, error) {
+			return []slo.Snapshot{
+				{ID: 1, SLIID: 10, Target: 0.99, WindowType: slo.WindowTypeRolling, WindowDuration: 30 * 24 * time.Hour, AlertFastBurnRate: 14.4, AlertSlowBurnRate: 2.0, Status: slo.StatusActive},
+			}, nil
+		},
+	}
+	agg := &stubSnapshotAggregator{
+		aggregateFunc: func(_ context.Context, _ string, _ int64, _, _ time.Time) (WindowAggregate, error) {
+			// All good -> burn rate = 0, should resolve existing alerts
+			return WindowAggregate{GoodEventsCount: 100, TotalEventsCount: 100}, nil
+		},
+	}
+	bw := &stubBudgetWriter{}
+	aw := &stubAlertWriter{
+		activeAlerts: []AlertSnapshot{
+			{ID: 1, AlertType: "fast_burn", Status: "active"},
+		},
+	}
+
+	uc := NewEvaluateUseCase(reader, agg, bw, aw)
+	uc.clock = func() time.Time { return now }
+
+	// Override ResolveBySLOAndType to return error
+	aw.err = wantErr
+
+	err := uc.EvaluateSLO(context.Background(), "tenant-a", 1)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
 func TestEvaluateAll_NoDuplicateSlowBurnAlert(t *testing.T) {
 	now := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
 
@@ -640,5 +826,198 @@ func TestEvaluateAll_NoDuplicateSlowBurnAlert(t *testing.T) {
 	}
 	if len(aw.resolved) != 0 {
 		t.Fatalf("expected 0 resolves when still in slow burn, got %d", len(aw.resolved))
+	}
+}
+
+func TestNewEvaluateUseCase_CustomClock(t *testing.T) {
+	customNow := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	reader := &stubSLOReader{}
+	agg := &stubSnapshotAggregator{}
+	bw := &stubBudgetWriter{}
+	aw := &stubAlertWriter{}
+
+	uc := NewEvaluateUseCase(reader, agg, bw, aw)
+	uc.clock = func() time.Time { return customNow }
+
+	if uc.clock().Equal(customNow) {
+		// pass
+	} else {
+		t.Fatal("custom clock not set")
+	}
+}
+
+func TestEvaluateSLO_NoEvents_BudgetUpsertError(t *testing.T) {
+	now := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
+	wantErr := errors.New("upsert failed")
+
+	reader := &stubSLOReader{
+		listFunc: func(_ context.Context, _ string) ([]slo.Snapshot, error) {
+			return []slo.Snapshot{
+				{ID: 1, SLIID: 10, Target: 0.99, WindowType: slo.WindowTypeRolling, WindowDuration: 30 * 24 * time.Hour, AlertFastBurnRate: 14.4, AlertSlowBurnRate: 2.0, Status: slo.StatusActive},
+			}, nil
+		},
+	}
+	agg := &stubSnapshotAggregator{
+		aggregateFunc: func(_ context.Context, _ string, _ int64, _, _ time.Time) (WindowAggregate, error) {
+			return WindowAggregate{GoodEventsCount: 0, TotalEventsCount: 0}, nil
+		},
+	}
+	bw := &stubBudgetWriter{err: wantErr}
+	aw := &stubAlertWriter{}
+
+	uc := NewEvaluateUseCase(reader, agg, bw, aw)
+	uc.clock = func() time.Time { return now }
+
+	err := uc.EvaluateSLO(context.Background(), "tenant-a", 1)
+	if err == nil {
+		t.Fatal("expected error for budget upsert failure on no events")
+	}
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected error wrapping %v, got %v", wantErr, err)
+	}
+}
+
+func TestManageAlerts_CreateFastBurnError(t *testing.T) {
+	now := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
+	wantErr := errors.New("create fast burn alert failed")
+
+	reader := &stubSLOReader{
+		listFunc: func(_ context.Context, _ string) ([]slo.Snapshot, error) {
+			return []slo.Snapshot{
+				{ID: 1, SLIID: 10, Target: 0.99, WindowType: slo.WindowTypeRolling, WindowDuration: 30 * 24 * time.Hour, AlertFastBurnRate: 14.4, AlertSlowBurnRate: 2.0, Status: slo.StatusActive},
+			}, nil
+		},
+	}
+	agg := &stubSnapshotAggregator{
+		aggregateFunc: func(_ context.Context, _ string, _ int64, _, _ time.Time) (WindowAggregate, error) {
+			return WindowAggregate{GoodEventsCount: 50, TotalEventsCount: 100}, nil
+		},
+	}
+	bw := &stubBudgetWriter{}
+	aw := &stubAlertWriter{activeAlerts: nil}
+
+	uc := NewEvaluateUseCase(reader, agg, bw, aw)
+	uc.clock = func() time.Time { return now }
+	aw.err = wantErr
+
+	err := uc.EvaluateSLO(context.Background(), "tenant-a", 1)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestManageAlerts_ResolveFastBurnError(t *testing.T) {
+	now := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
+	wantErr := errors.New("resolve fast burn alert failed")
+
+	reader := &stubSLOReader{
+		listFunc: func(_ context.Context, _ string) ([]slo.Snapshot, error) {
+			return []slo.Snapshot{
+				{ID: 1, SLIID: 10, Target: 0.99, WindowType: slo.WindowTypeRolling, WindowDuration: 30 * 24 * time.Hour, AlertFastBurnRate: 14.4, AlertSlowBurnRate: 2.0, Status: slo.StatusActive},
+			}, nil
+		},
+	}
+	agg := &stubSnapshotAggregator{
+		aggregateFunc: func(_ context.Context, _ string, _ int64, _, _ time.Time) (WindowAggregate, error) {
+			return WindowAggregate{GoodEventsCount: 100, TotalEventsCount: 100}, nil
+		},
+	}
+	bw := &stubBudgetWriter{}
+	aw := &stubAlertWriter{
+		activeAlerts: []AlertSnapshot{
+			{ID: 1, AlertType: "fast_burn", Status: "active"},
+		},
+	}
+
+	uc := NewEvaluateUseCase(reader, agg, bw, aw)
+	uc.clock = func() time.Time { return now }
+	aw.err = wantErr
+
+	err := uc.EvaluateSLO(context.Background(), "tenant-a", 1)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestManageAlerts_CreateSlowBurnError(t *testing.T) {
+	now := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
+	wantErr := errors.New("create slow burn alert failed")
+
+	reader := &stubSLOReader{
+		listFunc: func(_ context.Context, _ string) ([]slo.Snapshot, error) {
+			return []slo.Snapshot{
+				{ID: 1, SLIID: 10, Target: 0.99, WindowType: slo.WindowTypeRolling, WindowDuration: 30 * 24 * time.Hour, AlertFastBurnRate: 14.4, AlertSlowBurnRate: 2.0, Status: slo.StatusActive},
+			}, nil
+		},
+	}
+	agg := &stubSnapshotAggregator{
+		aggregateFunc: func(_ context.Context, _ string, _ int64, _, _ time.Time) (WindowAggregate, error) {
+			return WindowAggregate{GoodEventsCount: 97, TotalEventsCount: 100}, nil
+		},
+	}
+	bw := &stubBudgetWriter{}
+	aw := &stubAlertWriter{activeAlerts: nil}
+
+	uc := NewEvaluateUseCase(reader, agg, bw, aw)
+	uc.clock = func() time.Time { return now }
+	aw.err = wantErr
+
+	err := uc.EvaluateSLO(context.Background(), "tenant-a", 1)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestManageAlerts_ResolveSlowBurnError(t *testing.T) {
+	now := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
+	wantErr := errors.New("resolve slow burn alert failed")
+
+	reader := &stubSLOReader{
+		listFunc: func(_ context.Context, _ string) ([]slo.Snapshot, error) {
+			return []slo.Snapshot{
+				{ID: 1, SLIID: 10, Target: 0.99, WindowType: slo.WindowTypeRolling, WindowDuration: 30 * 24 * time.Hour, AlertFastBurnRate: 14.4, AlertSlowBurnRate: 2.0, Status: slo.StatusActive},
+			}, nil
+		},
+	}
+	agg := &stubSnapshotAggregator{
+		aggregateFunc: func(_ context.Context, _ string, _ int64, _, _ time.Time) (WindowAggregate, error) {
+			return WindowAggregate{GoodEventsCount: 100, TotalEventsCount: 100}, nil
+		},
+	}
+	bw := &stubBudgetWriter{}
+	aw := &stubAlertWriter{
+		activeAlerts: []AlertSnapshot{
+			{ID: 2, AlertType: "slow_burn", Status: "active"},
+		},
+	}
+
+	uc := NewEvaluateUseCase(reader, agg, bw, aw)
+	uc.clock = func() time.Time { return now }
+	aw.err = wantErr
+
+	err := uc.EvaluateSLO(context.Background(), "tenant-a", 1)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestEvaluateSLO_ListActiveError(t *testing.T) {
+	wantErr := errors.New("db down")
+	reader := &stubSLOReader{
+		listFunc: func(_ context.Context, _ string) ([]slo.Snapshot, error) {
+			return nil, wantErr
+		},
+	}
+	agg := &stubSnapshotAggregator{}
+	bw := &stubBudgetWriter{}
+	aw := &stubAlertWriter{}
+
+	uc := NewEvaluateUseCase(reader, agg, bw, aw)
+	err := uc.EvaluateSLO(context.Background(), "tenant-a", 1)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected error wrapping %v, got %v", wantErr, err)
 	}
 }

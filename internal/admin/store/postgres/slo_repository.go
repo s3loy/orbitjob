@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"orbitjob/internal/core/domain/slo"
+	"orbitjob/internal/domain/resource"
 )
 
 // SLOReadRepository provides read-side access to slos table.
@@ -33,7 +34,7 @@ func (r *SLOReadRepository) Get(ctx context.Context, tenantID string, id int64) 
 		&snap.Status, &snap.Version, &snap.CreatedAt, &snap.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
-		return snap, fmt.Errorf("slo not found: %d", id)
+		return snap, &resource.NotFoundError{Resource: "slo", ID: id}
 	}
 	if err != nil {
 		return snap, fmt.Errorf("get slo: %w", err)

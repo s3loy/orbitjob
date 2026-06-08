@@ -2,7 +2,8 @@ package command
 
 import (
 	"context"
-	"fmt"
+
+	"orbitjob/internal/domain/validation"
 )
 
 // sliDeleter soft-deletes SLIs.
@@ -30,7 +31,7 @@ type DeleteInput struct {
 // Delete soft-deletes an SLI.
 func (uc *DeleteSLIUseCase) Delete(ctx context.Context, in DeleteInput) error {
 	if in.ID <= 0 {
-		return fmt.Errorf("id must be positive")
+		return validation.New("id", "id must be positive")
 	}
 	return uc.repo.Delete(ctx, in.TenantID, in.ID, in.Version)
 }

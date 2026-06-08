@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"orbitjob/internal/core/domain/sli"
+	"orbitjob/internal/domain/resource"
 )
 
 // SLIReadRepository provides read-side access to slis table.
@@ -33,17 +34,21 @@ func (r *SLIReadRepository) Get(ctx context.Context, tenantID string, id int64) 
 		&sourceConfigRaw, &snap.Aggregation, &goodEventRaw, &snap.Version, &snap.CreatedAt, &snap.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
-		return snap, fmt.Errorf("sli not found: %d", id)
+		return snap, &resource.NotFoundError{Resource: "sli", ID: id}
 	}
 	if err != nil {
 		return snap, fmt.Errorf("get sli: %w", err)
 	}
 
 	if len(sourceConfigRaw) > 0 {
-		_ = json.Unmarshal(sourceConfigRaw, &snap.SourceConfig)
+		if err := json.Unmarshal(sourceConfigRaw, &snap.SourceConfig); err != nil {
+			return snap, fmt.Errorf("unmarshal source_config: %w", err)
+		}
 	}
 	if len(goodEventRaw) > 0 {
-		_ = json.Unmarshal(goodEventRaw, &snap.GoodEventCriteria)
+		if err := json.Unmarshal(goodEventRaw, &snap.GoodEventCriteria); err != nil {
+			return snap, fmt.Errorf("unmarshal good_event_criteria: %w", err)
+		}
 	}
 
 	return snap, nil
@@ -82,10 +87,14 @@ func (r *SLIReadRepository) List(ctx context.Context, tenantID string, limit, of
 			return nil, 0, fmt.Errorf("scan sli: %w", err)
 		}
 		if len(sourceConfigRaw) > 0 {
-			_ = json.Unmarshal(sourceConfigRaw, &snap.SourceConfig)
+			if err := json.Unmarshal(sourceConfigRaw, &snap.SourceConfig); err != nil {
+				return nil, 0, fmt.Errorf("unmarshal source_config: %w", err)
+			}
 		}
 		if len(goodEventRaw) > 0 {
-			_ = json.Unmarshal(goodEventRaw, &snap.GoodEventCriteria)
+			if err := json.Unmarshal(goodEventRaw, &snap.GoodEventCriteria); err != nil {
+				return nil, 0, fmt.Errorf("unmarshal good_event_criteria: %w", err)
+			}
 		}
 		slis = append(slis, snap)
 	}

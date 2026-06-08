@@ -2,8 +2,9 @@ package query
 
 import (
 	"context"
-	"fmt"
 	"time"
+
+	"orbitjob/internal/domain/validation"
 )
 
 // BudgetAlertItem is the read model for a budget alert.
@@ -49,7 +50,7 @@ type GetItem struct {
 // Get retrieves a single budget alert.
 func (uc *GetAlertUseCase) Get(ctx context.Context, tenantID string, id int64) (GetItem, error) {
 	if id <= 0 {
-		return GetItem{}, fmt.Errorf("id must be positive")
+		return GetItem{}, validation.New("id", "id must be positive")
 	}
 
 	item, err := uc.repo.Get(ctx, tenantID, id)

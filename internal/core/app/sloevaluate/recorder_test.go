@@ -28,10 +28,10 @@ type stubSnapshotWriter struct {
 }
 
 type incrementCall struct {
-	tenantID   string
-	sliID      int64
+	tenantID    string
+	sliID       int64
 	windowStart time.Time
-	isGood     bool
+	isGood      bool
 }
 
 func (s *stubSnapshotWriter) IncrementSnapshot(ctx context.Context, tenantID string, sliID int64, windowStart time.Time, isGood bool) error {
@@ -380,5 +380,364 @@ func TestRecordCheckRun_Availability_CustomCriteria(t *testing.T) {
 	}
 	if writer.calls[0].isGood {
 		t.Fatalf("expected isGood=false when status does not match custom criteria")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// evaluateCriteria tests
+// ---------------------------------------------------------------------------
+
+func TestEvaluateCriteria_StatusTypeError(t *testing.T) {
+	recorder := NewCheckRunRecorder(nil, nil)
+	_, err := recorder.evaluateCriteria(checkrun.Snapshot{Status: checkrun.StatusSuccess}, map[string]any{"status": 123})
+	if err == nil {
+		t.Fatal("expected error for non-string status criteria")
+	}
+}
+
+func TestEvaluateCriteria_SeverityTypeError(t *testing.T) {
+	recorder := NewCheckRunRecorder(nil, nil)
+	_, err := recorder.evaluateCriteria(checkrun.Snapshot{Severity: ptr(checkrun.SeverityOK)}, map[string]any{"severity": 123})
+	if err == nil {
+		t.Fatal("expected error for non-string severity criteria")
+	}
+}
+
+func TestEvaluateCriteria_DurationMsNil(t *testing.T) {
+	recorder := NewCheckRunRecorder(nil, nil)
+	good, err := recorder.evaluateCriteria(checkrun.Snapshot{DurationMs: nil}, map[string]any{"duration_ms": map[string]any{"op": "<=", "value": 1000}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if good {
+		t.Fatal("expected false when DurationMs is nil")
+	}
+}
+
+func TestEvaluateCriteria_OutputKeyMatch(t *testing.T) {
+	recorder := NewCheckRunRecorder(nil, nil)
+	good, err := recorder.evaluateCriteria(checkrun.Snapshot{Output: map[string]any{"cpu": 50.0}}, map[string]any{"cpu": map[string]any{"op": "<=", "value": 100}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !good {
+		t.Fatal("expected true when output key matches criteria")
+	}
+}
+
+func TestEvaluateCriteria_OutputKeyMismatch(t *testing.T) {
+	recorder := NewCheckRunRecorder(nil, nil)
+	good, err := recorder.evaluateCriteria(checkrun.Snapshot{Output: map[string]any{"cpu": 150.0}}, map[string]any{"cpu": map[string]any{"op": "<=", "value": 100}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if good {
+		t.Fatal("expected false when output key exceeds criteria")
+	}
+}
+
+func TestEvaluateCriteria_OutputKeyTypeError(t *testing.T) {
+	recorder := NewCheckRunRecorder(nil, nil)
+	_, err := recorder.evaluateCriteria(checkrun.Snapshot{Output: map[string]any{"cpu": "not-a-number"}}, map[string]any{"cpu": map[string]any{"op": "<=", "value": 100}})
+	if err == nil {
+		t.Fatal("expected error when output key value cannot convert to float64")
+	}
+}
+
+func TestEvaluateCriteria_MissingOutputKey(t *testing.T) {
+	recorder := NewCheckRunRecorder(nil, nil)
+	good, err := recorder.evaluateCriteria(checkrun.Snapshot{Output: map[string]any{}}, map[string]any{"cpu": map[string]any{"op": "<=", "value": 100}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if good {
+		t.Fatal("expected false when output key is missing")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// evaluateNumericCondition tests
+// ---------------------------------------------------------------------------
+
+func TestEvaluateNumericCondition_SimpleEquality(t *testing.T) {
+	recorder := NewCheckRunRecorder(nil, nil)
+	good, err := recorder.evaluateNumericCondition(42.0, 42.0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !good {
+		t.Fatal("expected true for simple equality")
+	}
+}
+
+func TestEvaluateNumericCondition_SimpleInequality(t *testing.T) {
+	recorder := NewCheckRunRecorder(nil, nil)
+	good, err := recorder.evaluateNumericCondition(42.0, 99.0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if good {
+		t.Fatal("expected false for simple inequality")
+	}
+}
+
+func TestEvaluateNumericCondition_MissingOp(t *testing.T) {
+	recorder := NewCheckRunRecorder(nil, nil)
+	_, err := recorder.evaluateNumericCondition(42.0, map[string]any{"value": 100})
+	if err == nil {
+		t.Fatal("expected error when op is missing")
+	}
+}
+
+func TestEvaluateNumericCondition_MissingValue(t *testing.T) {
+	recorder := NewCheckRunRecorder(nil, nil)
+	_, err := recorder.evaluateNumericCondition(42.0, map[string]any{"op": "<="})
+	if err == nil {
+		t.Fatal("expected error when value is missing")
+	}
+}
+
+func TestEvaluateNumericCondition_AllOperators(t *testing.T) {
+	recorder := NewCheckRunRecorder(nil, nil)
+	tests := []struct {
+		op     string
+		actual float64
+		thresh float64
+		want   bool
+	}{
+		{"<", 5.0, 10.0, true},
+		{"<", 15.0, 10.0, false},
+		{"<=", 10.0, 10.0, true},
+		{"<=", 15.0, 10.0, false},
+		{">", 15.0, 10.0, true},
+		{">", 5.0, 10.0, false},
+		{">=", 10.0, 10.0, true},
+		{">=", 5.0, 10.0, false},
+		{"==", 10.0, 10.0, true},
+		{"==", 5.0, 10.0, false},
+		{"!=", 5.0, 10.0, true},
+		{"!=", 10.0, 10.0, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.op, func(t *testing.T) {
+			good, err := recorder.evaluateNumericCondition(tt.actual, map[string]any{"op": tt.op, "value": tt.thresh})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if good != tt.want {
+				t.Fatalf("op=%s actual=%v thresh=%v: want %v, got %v", tt.op, tt.actual, tt.thresh, tt.want, good)
+			}
+		})
+	}
+}
+
+func TestEvaluateNumericCondition_UnsupportedOp(t *testing.T) {
+	recorder := NewCheckRunRecorder(nil, nil)
+	_, err := recorder.evaluateNumericCondition(42.0, map[string]any{"op": "~~", "value": 100})
+	if err == nil {
+		t.Fatal("expected error for unsupported operator")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// toFloat64 tests
+// ---------------------------------------------------------------------------
+
+func TestToFloat64_AllTypes(t *testing.T) {
+	tests := []struct {
+		input any
+		want  float64
+	}{
+		{float64(3.14), 3.14},
+		{float32(2.5), 2.5},
+		{int(42), 42.0},
+		{int64(99), 99.0},
+		{int32(7), 7.0},
+		{uint(10), 10.0},
+		{uint64(100), 100.0},
+	}
+	for _, tt := range tests {
+		got, err := toFloat64(tt.input)
+		if err != nil {
+			t.Fatalf("toFloat64(%v) error = %v", tt.input, err)
+		}
+		if got != tt.want {
+			t.Fatalf("toFloat64(%v) = %v, want %v", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestToFloat64_Unsupported(t *testing.T) {
+	_, err := toFloat64("not-a-number")
+	if err == nil {
+		t.Fatal("expected error for unsupported type")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// isGoodEvent for Custom SLI
+// ---------------------------------------------------------------------------
+
+func TestIsGoodEvent_CustomSLI_MatchesCriteria(t *testing.T) {
+	now := time.Date(2026, 6, 4, 12, 30, 0, 0, time.UTC)
+
+	reader := &stubSLIReader{
+		findFunc: func(_ context.Context, _ string, _ int64) ([]sli.Snapshot, error) {
+			return []sli.Snapshot{
+				{
+					ID:      50,
+					SLIType: sli.TypeCustom,
+					GoodEventCriteria: map[string]any{
+						"status": checkrun.StatusSuccess,
+					},
+				},
+			}, nil
+		},
+	}
+	writer := &stubSnapshotWriter{}
+	recorder := NewCheckRunRecorder(reader, writer)
+	recorder.clock = func() time.Time { return now }
+
+	run := checkrun.Snapshot{ID: 500, Status: checkrun.StatusSuccess}
+	err := recorder.RecordCheckRun(context.Background(), "tenant-a", 42, run)
+	if err != nil {
+		t.Fatalf("RecordCheckRun() error = %v", err)
+	}
+	if len(writer.calls) != 1 || !writer.calls[0].isGood {
+		t.Fatal("expected custom SLI with matching criteria to be good")
+	}
+}
+
+func TestIsGoodEvent_CustomSLI_MismatchCriteria(t *testing.T) {
+	now := time.Date(2026, 6, 4, 12, 30, 0, 0, time.UTC)
+
+	reader := &stubSLIReader{
+		findFunc: func(_ context.Context, _ string, _ int64) ([]sli.Snapshot, error) {
+			return []sli.Snapshot{
+				{
+					ID:      51,
+					SLIType: sli.TypeCustom,
+					GoodEventCriteria: map[string]any{
+						"status": checkrun.StatusSuccess,
+					},
+				},
+			}, nil
+		},
+	}
+	writer := &stubSnapshotWriter{}
+	recorder := NewCheckRunRecorder(reader, writer)
+	recorder.clock = func() time.Time { return now }
+
+	run := checkrun.Snapshot{ID: 501, Status: checkrun.StatusFailed}
+	err := recorder.RecordCheckRun(context.Background(), "tenant-a", 42, run)
+	if err != nil {
+		t.Fatalf("RecordCheckRun() error = %v", err)
+	}
+	if len(writer.calls) != 1 || writer.calls[0].isGood {
+		t.Fatal("expected custom SLI with mismatching criteria to be bad")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// isGoodQuality with criteria
+// ---------------------------------------------------------------------------
+
+func TestIsGoodQuality_WithCriteria(t *testing.T) {
+	now := time.Date(2026, 6, 4, 12, 30, 0, 0, time.UTC)
+
+	reader := &stubSLIReader{
+		findFunc: func(_ context.Context, _ string, _ int64) ([]sli.Snapshot, error) {
+			return []sli.Snapshot{
+				{
+					ID:      60,
+					SLIType: sli.TypeQuality,
+					GoodEventCriteria: map[string]any{
+						"status": checkrun.StatusSuccess,
+					},
+				},
+			}, nil
+		},
+	}
+	writer := &stubSnapshotWriter{}
+	recorder := NewCheckRunRecorder(reader, writer)
+	recorder.clock = func() time.Time { return now }
+
+	// Matches criteria
+	run := checkrun.Snapshot{ID: 600, Status: checkrun.StatusSuccess}
+	err := recorder.RecordCheckRun(context.Background(), "tenant-a", 42, run)
+	if err != nil {
+		t.Fatalf("RecordCheckRun() error = %v", err)
+	}
+	if len(writer.calls) != 1 || !writer.calls[0].isGood {
+		t.Fatal("expected quality SLI with matching criteria to be good")
+	}
+
+	// Does not match criteria
+	writer.calls = nil
+	run2 := checkrun.Snapshot{ID: 601, Status: checkrun.StatusFailed}
+	err = recorder.RecordCheckRun(context.Background(), "tenant-a", 42, run2)
+	if err != nil {
+		t.Fatalf("RecordCheckRun() error = %v", err)
+	}
+	if len(writer.calls) != 1 || writer.calls[0].isGood {
+		t.Fatal("expected quality SLI with mismatching criteria to be bad")
+	}
+}
+
+func TestEvaluateCriteria_SeverityMatch(t *testing.T) {
+	recorder := NewCheckRunRecorder(nil, nil)
+	good, err := recorder.evaluateCriteria(
+		checkrun.Snapshot{Severity: ptr(checkrun.SeverityOK)},
+		map[string]any{"severity": checkrun.SeverityOK},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !good {
+		t.Fatal("expected true when severity matches")
+	}
+}
+
+func TestEvaluateCriteria_DurationMsConditionError(t *testing.T) {
+	recorder := NewCheckRunRecorder(nil, nil)
+	_, err := recorder.evaluateCriteria(
+		checkrun.Snapshot{DurationMs: ptr(100)},
+		map[string]any{"duration_ms": "not-a-map"},
+	)
+	if err == nil {
+		t.Fatal("expected error for malformed duration_ms condition")
+	}
+}
+
+func TestEvaluateCriteria_OutputNil(t *testing.T) {
+	recorder := NewCheckRunRecorder(nil, nil)
+	good, err := recorder.evaluateCriteria(
+		checkrun.Snapshot{Output: nil},
+		map[string]any{"cpu": map[string]any{"op": "<=", "value": 100}},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if good {
+		t.Fatal("expected false when output is nil")
+	}
+}
+
+func TestEvaluateCriteria_OutputKeyConditionError(t *testing.T) {
+	recorder := NewCheckRunRecorder(nil, nil)
+	_, err := recorder.evaluateCriteria(
+		checkrun.Snapshot{Output: map[string]any{"cpu": 50.0}},
+		map[string]any{"cpu": "not-a-map"},
+	)
+	if err == nil {
+		t.Fatal("expected error for malformed output key condition")
+	}
+}
+
+func TestEvaluateNumericCondition_SimpleEqualityError(t *testing.T) {
+	recorder := NewCheckRunRecorder(nil, nil)
+	_, err := recorder.evaluateNumericCondition(42.0, "not-a-number")
+	if err == nil {
+		t.Fatal("expected error for simple equality with non-numeric value")
 	}
 }
