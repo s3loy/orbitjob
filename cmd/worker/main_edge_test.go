@@ -61,7 +61,7 @@ func TestSendHeartbeat_UpsertError(t *testing.T) {
 	}
 
 	// This should not panic — error is logged, not returned
-	sendHeartbeat(context.Background(), hb, &cfg, func() time.Time { return now }, domainworker.StatusOnline)
+	sendHeartbeat(context.Background(), hb, &cfg, func() time.Time { return now }, "t1", domainworker.StatusOnline)
 }
 
 func TestSendHeartbeat_NormalizeError(t *testing.T) {
@@ -76,7 +76,7 @@ func TestSendHeartbeat_NormalizeError(t *testing.T) {
 	}
 
 	// This should not panic — normalize error is logged, not returned
-	sendHeartbeat(context.Background(), hb, &cfg, func() time.Time { return now }, domainworker.StatusOnline)
+	sendHeartbeat(context.Background(), hb, &cfg, func() time.Time { return now }, "t1", domainworker.StatusOnline)
 }
 
 // ---------------------------------------------------------------------------

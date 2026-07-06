@@ -37,6 +37,7 @@ import (
 
 type runtimeConfig struct {
 	TenantID          string
+	MultiTenant       bool
 	WorkerID          string
 	HealthPort        string
 	PollInterval      time.Duration
@@ -48,6 +49,12 @@ type runtimeConfig struct {
 	LeaseMax          time.Duration
 	LeaseDecay        float64
 	Labels            map[string]any
+
+	tenantLister tenantLister
+}
+
+type tenantLister interface {
+	ListActiveTenantIDs(ctx context.Context) ([]string, error)
 }
 
 type tickRunner interface {
@@ -163,8 +170,9 @@ func loadWorkerRuntimeConfig() (runtimeConfig, error) {
 	}
 
 	tenantID := os.Getenv("WORKER_TENANT_ID")
+	multiTenant := tenantID == ""
 	if tenantID == "" {
-		tenantID = "default"
+		tenantID = ""
 	}
 
 	pollIntervalSec, err := loadPositiveIntEnv("WORKER_POLL_INTERVAL_SEC", 2)
@@ -222,6 +230,7 @@ func loadWorkerRuntimeConfig() (runtimeConfig, error) {
 
 	return runtimeConfig{
 		TenantID:          tenantID,
+		MultiTenant:       multiTenant,
 		WorkerID:          workerID,
 		HealthPort:        healthPort,
 		PollInterval:      time.Duration(pollIntervalSec) * time.Second,
@@ -283,6 +292,21 @@ func loadJSONMapEnv(key string) (map[string]any, error) {
 	return m, nil
 }
 
+func tenantIDsForWorker(ctx context.Context, cfg *runtimeConfig) []string {
+	if !cfg.MultiTenant {
+		return []string{cfg.TenantID}
+	}
+	if cfg.tenantLister == nil {
+		return nil
+	}
+	ids, err := cfg.tenantLister.ListActiveTenantIDs(ctx)
+	if err != nil {
+		slog.Error("list active tenant ids failed", "error", err.Error())
+		return nil
+	}
+	return ids
+}
+
 func runLoop(
 	ctx context.Context,
 	runner tickRunner,
@@ -326,12 +350,19 @@ func runLoop(
 			slog.Info("worker poll interval reloaded", "interval_sec", cfg.PollInterval.Seconds())
 		}
 
-		n, err := runner.SubmitNext(ctx, pool, cfg.TenantID, cfg.WorkerID, cfg.Capacity, cfg.LeaseDuration, cfg.Labels)
-		if err != nil {
-			slog.Error("worker tick failed", "error", err.Error())
-		} else if n > 0 {
-			slog.Info("worker submitted tasks", "handled", n)
-			metrics.WorkerPoolSubmittedTotal.WithLabelValues(cfg.WorkerID, cfg.TenantID).Add(float64(n))
+		ids := tenantIDsForWorker(ctx, cfg)
+		handled := 0
+		for _, tenantID := range ids {
+			n, err := runner.SubmitNext(ctx, pool, tenantID, cfg.WorkerID, cfg.Capacity, cfg.LeaseDuration, cfg.Labels)
+			if err != nil {
+				slog.Error("worker tick failed", "tenant_id", tenantID, "error", err.Error())
+			} else {
+				handled += n
+			}
+		}
+		if handled > 0 {
+			slog.Info("worker submitted tasks", "handled", handled)
+			metrics.WorkerPoolSubmittedTotal.WithLabelValues(cfg.WorkerID, cfg.TenantID).Add(float64(handled))
 			idleCount = 0
 			resetToShortInterval()
 			select {
@@ -377,7 +408,7 @@ func heartbeatLoop(
 	newTicker func(time.Duration) workerTicker,
 	nowFn func() time.Time,
 ) {
-	sendHeartbeat(ctx, hb, cfg, nowFn, domainworker.StatusOnline)
+	sendHeartbeats(ctx, hb, cfg, nowFn, domainworker.StatusOnline)
 
 	ticker := newTicker(cfg.HeartbeatInterval)
 	defer ticker.Stop()
@@ -386,7 +417,7 @@ func heartbeatLoop(
 		select {
 		case <-ctx.Done():
 			drainCtx, drainCancel := context.WithTimeout(context.Background(), 3*time.Second)
-			sendHeartbeat(drainCtx, hb, cfg, nowFn, domainworker.StatusDraining)
+			sendHeartbeats(drainCtx, hb, cfg, nowFn, domainworker.StatusDraining)
 			drainCancel()
 
 			select {
@@ -396,12 +427,24 @@ func heartbeatLoop(
 			}
 
 			offCtx, offCancel := context.WithTimeout(context.Background(), 3*time.Second)
-			sendHeartbeat(offCtx, hb, cfg, nowFn, domainworker.StatusOffline)
+			sendHeartbeats(offCtx, hb, cfg, nowFn, domainworker.StatusOffline)
 			offCancel()
 			return
 		case <-ticker.Chan():
-			sendHeartbeat(ctx, hb, cfg, nowFn, domainworker.StatusOnline)
+			sendHeartbeats(ctx, hb, cfg, nowFn, domainworker.StatusOnline)
 		}
+	}
+}
+
+func sendHeartbeats(
+	ctx context.Context,
+	hb heartbeater,
+	cfg *runtimeConfig,
+	nowFn func() time.Time,
+	status string,
+) {
+	for _, tenantID := range tenantIDsForWorker(ctx, cfg) {
+		sendHeartbeat(ctx, hb, cfg, nowFn, tenantID, status)
 	}
 }
 
@@ -410,11 +453,12 @@ func sendHeartbeat(
 	hb heartbeater,
 	cfg *runtimeConfig,
 	nowFn func() time.Time,
+	tenantID string,
 	status string,
 ) {
 	now := nowFn()
 	spec, err := domainworker.NormalizeHeartbeat(now, domainworker.HeartbeatInput{
-		TenantID:       cfg.TenantID,
+		TenantID:       tenantID,
 		WorkerID:       cfg.WorkerID,
 		Status:         status,
 		LeaseExpiresAt: now.Add(cfg.LeaseDuration),
@@ -465,6 +509,7 @@ func run(ctx context.Context) error {
 	httpClient := buildHTTPClientFn()
 	inner := buildRunnerFn(db, httpClient)
 	hb := buildHeartbeaterFn(db)
+	cfg.tenantLister = corepostgres.NewExecutorRepository(db)
 
 	// Attach dynamic lease to the inner runner so execution durations are recorded.
 	dynamicLease := execute.NewDynamicLease(cfg.LeaseMin, cfg.LeaseMax, cfg.LeaseDecay)
