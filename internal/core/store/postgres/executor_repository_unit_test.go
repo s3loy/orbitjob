@@ -809,3 +809,64 @@ func TestScanAssignedTask_NullFields(t *testing.T) {
 		t.Fatalf("expected empty handler_payload, got %v", task.HandlerPayload)
 	}
 }
+
+func TestExecutorRepository_ListActiveTenantIDs_Success(t *testing.T) {
+	repo, mock := newExecutorRepoMock(t)
+
+	rows := sqlmock.NewRows([]string{"id"}).AddRow("tenant-a").AddRow("tenant-b")
+	mock.ExpectQuery("SELECT id FROM tenants WHERE status = 'active' ORDER BY id").
+		WillReturnRows(rows)
+
+	ids, err := repo.ListActiveTenantIDs(context.Background())
+	if err != nil {
+		t.Fatalf("ListActiveTenantIDs() error = %v", err)
+	}
+	if len(ids) != 2 || ids[0] != "tenant-a" || ids[1] != "tenant-b" {
+		t.Fatalf("expected [tenant-a tenant-b], got %v", ids)
+	}
+	assertMock(t, mock)
+}
+
+func TestExecutorRepository_ListActiveTenantIDs_Empty(t *testing.T) {
+	repo, mock := newExecutorRepoMock(t)
+
+	rows := sqlmock.NewRows([]string{"id"})
+	mock.ExpectQuery("SELECT id FROM tenants WHERE status = 'active' ORDER BY id").
+		WillReturnRows(rows)
+
+	ids, err := repo.ListActiveTenantIDs(context.Background())
+	if err != nil {
+		t.Fatalf("ListActiveTenantIDs() error = %v", err)
+	}
+	if len(ids) != 0 {
+		t.Fatalf("expected empty slice, got %v", ids)
+	}
+	assertMock(t, mock)
+}
+
+func TestExecutorRepository_ListActiveTenantIDs_QueryError(t *testing.T) {
+	repo, mock := newExecutorRepoMock(t)
+
+	mock.ExpectQuery("SELECT id FROM tenants WHERE status = 'active' ORDER BY id").
+		WillReturnError(errors.New("db down"))
+
+	_, err := repo.ListActiveTenantIDs(context.Background())
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	assertMock(t, mock)
+}
+
+func TestExecutorRepository_ListActiveTenantIDs_ScanError(t *testing.T) {
+	repo, mock := newExecutorRepoMock(t)
+
+	rows := sqlmock.NewRows([]string{"id"}).AddRow(nil)
+	mock.ExpectQuery("SELECT id FROM tenants WHERE status = 'active' ORDER BY id").
+		WillReturnRows(rows)
+
+	_, err := repo.ListActiveTenantIDs(context.Background())
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	assertMock(t, mock)
+}

@@ -165,6 +165,7 @@ func runDevScheduler(ctx context.Context, wg *sync.WaitGroup, db *sql.DB, cfg de
 
 type devDispatcherConfig struct {
 	TenantID      string
+	MultiTenant   bool
 	BatchSize     int
 	TickInterval  time.Duration
 	LeaseDuration time.Duration
@@ -172,14 +173,13 @@ type devDispatcherConfig struct {
 
 func loadDevDispatcherConfig() devDispatcherConfig {
 	tenant := os.Getenv("DISPATCHER_TENANT_ID")
-	if tenant == "" {
-		tenant = "default"
-	}
+	multiTenant := tenant == ""
 	batch, _ := loadDevPositiveInt("DISPATCHER_BATCH_SIZE", 50)
 	tick, _ := loadDevPositiveInt("DISPATCHER_TICK_INTERVAL_SEC", 2)
 	lease, _ := loadDevPositiveInt("DISPATCHER_LEASE_DURATION_SEC", 30)
 	return devDispatcherConfig{
 		TenantID:      tenant,
+		MultiTenant:   multiTenant,
 		BatchSize:     batch,
 		TickInterval:  time.Duration(tick) * time.Second,
 		LeaseDuration: time.Duration(lease) * time.Second,
@@ -196,39 +196,61 @@ func runDevDispatcher(ctx context.Context, wg *sync.WaitGroup, db *sql.DB, cfg d
 
 	for {
 		now := time.Now().UTC()
-		spec := domaininstance.ClaimSpec{
-			TenantID:       cfg.TenantID,
-			LeaseExpiresAt: now.Add(cfg.LeaseDuration),
-			Now:            now,
-		}
-		handled, err := runner.RunBatch(ctx, spec, cfg.BatchSize)
-		if err != nil {
-			slog.Error("dispatcher tick failed", "error", err)
-		} else {
-			slog.Info("dispatcher tick completed", "dispatched", handled)
+		ids := devTenantIDs(ctx, cfg.MultiTenant, cfg.TenantID, repo)
+		for _, tenantID := range ids {
+			spec := domaininstance.ClaimSpec{
+				TenantID:       tenantID,
+				LeaseExpiresAt: now.Add(cfg.LeaseDuration),
+				Now:            now,
+			}
+			handled, err := runner.RunBatch(ctx, spec, cfg.BatchSize)
+			if err != nil {
+				slog.Error("dispatcher tick failed", "tenant_id", tenantID, "error", err)
+			} else {
+				slog.Info("dispatcher tick completed", "tenant_id", tenantID, "dispatched", handled)
+			}
 		}
 
 		select {
 		case <-ctx.Done():
-				slog.Info("dispatcher draining, running final tick")
-				drainCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				now := time.Now().UTC()
-				if handled, err := runner.RunBatch(drainCtx, domaininstance.ClaimSpec{TenantID: cfg.TenantID, LeaseExpiresAt: now.Add(cfg.LeaseDuration), Now: now}, cfg.BatchSize); err != nil {
-					slog.Error("dispatcher drain tick failed", "error", err)
+			slog.Info("dispatcher draining, running final tick")
+			drainCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			now := time.Now().UTC()
+			for _, tenantID := range devTenantIDs(drainCtx, cfg.MultiTenant, cfg.TenantID, repo) {
+				if handled, err := runner.RunBatch(drainCtx, domaininstance.ClaimSpec{TenantID: tenantID, LeaseExpiresAt: now.Add(cfg.LeaseDuration), Now: now}, cfg.BatchSize); err != nil {
+					slog.Error("dispatcher drain tick failed", "tenant_id", tenantID, "error", err)
 				} else {
-					slog.Info("dispatcher drain tick completed", "dispatched", handled)
+					slog.Info("dispatcher drain tick completed", "tenant_id", tenantID, "dispatched", handled)
 				}
-				cancel()
-				return
+			}
+			cancel()
+			return
 		case <-ticker.C:
 		}
 	}
+}
+
+type devTenantLister interface {
+	ListActiveTenantIDs(ctx context.Context) ([]string, error)
+}
+
+func devTenantIDs(ctx context.Context, multiTenant bool, tenantID string, lister devTenantLister) []string {
+	if !multiTenant {
+		return []string{tenantID}
+	}
+	ids, err := lister.ListActiveTenantIDs(ctx)
+	if err != nil {
+		slog.Error("list active tenant ids failed", "error", err)
+		return nil
+	}
+	return ids
 }
 
 // --- Worker helpers ---
 
 type devWorkerConfig struct {
 	TenantID          string
+	MultiTenant       bool
 	WorkerID          string
 	PollInterval      time.Duration
 	HeartbeatInterval time.Duration
@@ -244,9 +266,7 @@ func loadDevWorkerConfig() devWorkerConfig {
 		workerID = hostname + "-dev-" + uuid.New().String()[:8]
 	}
 	tenant := os.Getenv("WORKER_TENANT_ID")
-	if tenant == "" {
-		tenant = "default"
-	}
+	multiTenant := tenant == ""
 	poll, _ := loadDevPositiveInt("WORKER_POLL_INTERVAL_SEC", 2)
 	hb, _ := loadDevPositiveInt("WORKER_HEARTBEAT_INTERVAL_SEC", 10)
 	lease, _ := loadDevPositiveInt("WORKER_LEASE_DURATION_SEC", 60)
@@ -254,6 +274,7 @@ func loadDevWorkerConfig() devWorkerConfig {
 	labels := loadDevJSONMapEnv("WORKER_LABELS")
 	return devWorkerConfig{
 		TenantID:          tenant,
+		MultiTenant:       multiTenant,
 		WorkerID:          workerID,
 		PollInterval:      time.Duration(poll) * time.Second,
 		HeartbeatInterval: time.Duration(hb) * time.Second,
@@ -282,7 +303,7 @@ func runDevWorker(ctx context.Context, wg *sync.WaitGroup, db *sql.DB, cfg devWo
 	go runDevHeartbeat(ctx, &hbWg, db, cfg)
 
 	// Poll loop — run immediately on start, then on tick.
-	runDevWorkerOnce(ctx, runner, cfg)
+	runDevWorkerOnce(ctx, runner, cfg, repo)
 
 	ticker := time.NewTicker(cfg.PollInterval)
 	defer ticker.Stop()
@@ -293,17 +314,19 @@ func runDevWorker(ctx context.Context, wg *sync.WaitGroup, db *sql.DB, cfg devWo
 			hbWg.Wait()
 			return
 		case <-ticker.C:
-			runDevWorkerOnce(ctx, runner, cfg)
+			runDevWorkerOnce(ctx, runner, cfg, repo)
 		}
 	}
 }
 
-func runDevWorkerOnce(ctx context.Context, runner *execute.TickUseCase, cfg devWorkerConfig) {
-	n, err := runner.RunOnce(ctx, cfg.TenantID, cfg.WorkerID, cfg.Capacity, cfg.LeaseDuration, cfg.Labels)
-	if err != nil {
-		slog.Error("worker tick failed", "error", err)
-	} else if n > 0 {
-		slog.Info("worker executed task", "handled", n)
+func runDevWorkerOnce(ctx context.Context, runner *execute.TickUseCase, cfg devWorkerConfig, lister devTenantLister) {
+	for _, tenantID := range devTenantIDs(ctx, cfg.MultiTenant, cfg.TenantID, lister) {
+		n, err := runner.RunOnce(ctx, tenantID, cfg.WorkerID, cfg.Capacity, cfg.LeaseDuration, cfg.Labels)
+		if err != nil {
+			slog.Error("worker tick failed", "tenant_id", tenantID, "error", err)
+		} else if n > 0 {
+			slog.Info("worker executed task", "tenant_id", tenantID, "handled", n)
+		}
 	}
 }
 
@@ -311,21 +334,24 @@ func runDevHeartbeat(ctx context.Context, wg *sync.WaitGroup, db *sql.DB, cfg de
 	defer wg.Done()
 
 	hb := corepostgres.NewWorkerRepository(db)
+	lister := corepostgres.NewExecutorRepository(db)
 
 	sendHb := func(hbCtx context.Context, status string) {
-		spec, err := domainworker.NormalizeHeartbeat(time.Now(), domainworker.HeartbeatInput{
-			TenantID:       cfg.TenantID,
-			WorkerID:       cfg.WorkerID,
-			Status:         status,
-			LeaseExpiresAt: time.Now().Add(cfg.LeaseDuration),
-			Capacity:       cfg.Capacity,
-		})
-		if err != nil {
-			slog.Error("normalize heartbeat failed", "error", err)
-			return
-		}
-		if _, err := hb.UpsertHeartbeat(hbCtx, spec); err != nil {
-			slog.Error("heartbeat failed", "error", err)
+		for _, tenantID := range devTenantIDs(hbCtx, cfg.MultiTenant, cfg.TenantID, lister) {
+			spec, err := domainworker.NormalizeHeartbeat(time.Now(), domainworker.HeartbeatInput{
+				TenantID:       tenantID,
+				WorkerID:       cfg.WorkerID,
+				Status:         status,
+				LeaseExpiresAt: time.Now().Add(cfg.LeaseDuration),
+				Capacity:       cfg.Capacity,
+			})
+			if err != nil {
+				slog.Error("normalize heartbeat failed", "error", err)
+				return
+			}
+			if _, err := hb.UpsertHeartbeat(hbCtx, spec); err != nil {
+				slog.Error("heartbeat failed", "error", err)
+			}
 		}
 	}
 

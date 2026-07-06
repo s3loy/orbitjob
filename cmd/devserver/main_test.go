@@ -95,8 +95,11 @@ func TestLoadDevSchedulerConfig_InvalidFallback(t *testing.T) {
 
 func TestLoadDevDispatcherConfig_Defaults(t *testing.T) {
 	cfg := loadDevDispatcherConfig()
-	if cfg.TenantID != "default" {
-		t.Fatalf("expected TenantID=default, got %q", cfg.TenantID)
+	if cfg.TenantID != "" {
+		t.Fatalf("expected TenantID empty when env not set, got %q", cfg.TenantID)
+	}
+	if !cfg.MultiTenant {
+		t.Fatalf("expected MultiTenant=true when env not set")
 	}
 	if cfg.BatchSize != 50 {
 		t.Fatalf("expected BatchSize=50, got %d", cfg.BatchSize)
@@ -114,6 +117,9 @@ func TestLoadDevDispatcherConfig_CustomTenant(t *testing.T) {
 	cfg := loadDevDispatcherConfig()
 	if cfg.TenantID != "tenant-custom" {
 		t.Fatalf("expected TenantID=tenant-custom, got %q", cfg.TenantID)
+	}
+	if cfg.MultiTenant {
+		t.Fatalf("expected MultiTenant=false when env is set")
 	}
 }
 
@@ -134,8 +140,11 @@ func TestLoadDevDispatcherConfig_CustomValues(t *testing.T) {
 
 func TestLoadDevWorkerConfig_Defaults(t *testing.T) {
 	cfg := loadDevWorkerConfig()
-	if cfg.TenantID != "default" {
-		t.Fatalf("expected TenantID=default, got %q", cfg.TenantID)
+	if cfg.TenantID != "" {
+		t.Fatalf("expected TenantID empty when env not set, got %q", cfg.TenantID)
+	}
+	if !cfg.MultiTenant {
+		t.Fatalf("expected MultiTenant=true when env not set")
 	}
 	if cfg.WorkerID == "" {
 		t.Fatal("expected non-empty WorkerID")
@@ -171,6 +180,9 @@ func TestLoadDevWorkerConfig_CustomValues(t *testing.T) {
 	cfg := loadDevWorkerConfig()
 	if cfg.TenantID != "tenant-w" {
 		t.Fatalf("expected TenantID=tenant-w, got %q", cfg.TenantID)
+	}
+	if cfg.MultiTenant {
+		t.Fatalf("expected MultiTenant=false when env is set")
 	}
 	if cfg.Capacity != 5 {
 		t.Fatalf("expected Capacity=5, got %d", cfg.Capacity)

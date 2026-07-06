@@ -25,8 +25,11 @@ type stubTickRunner struct {
 	callCh chan struct{}
 	onCall func(int)
 
-	handled        int
+	handled         int
 	housekeepingErr error
+
+	tenantIDs       []string
+	tenantErr       error
 }
 
 func (s *stubTickRunner) RunBatch(ctx context.Context, spec domaininstance.ClaimSpec, limit int) (int, error) {
@@ -59,7 +62,15 @@ func (s *stubTickRunner) QuickTick(ctx context.Context, spec domaininstance.Clai
 }
 
 func (s *stubTickRunner) ListActiveTenantIDs(_ context.Context) ([]string, error) {
-	return []string{"default"}, nil
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.tenantErr != nil {
+		return nil, s.tenantErr
+	}
+	if s.tenantIDs == nil {
+		return []string{"default"}, nil
+	}
+	return s.tenantIDs, nil
 }
 
 func (s *stubTickRunner) RunHousekeeping(_ context.Context, _ time.Time) error {
@@ -696,5 +707,136 @@ func TestRunLoop_SwitchesBackToShortInterval(t *testing.T) {
 	// Should have stopped ticker twice: once for long interval, once for switching back
 	if ticker.stopCount < 2 {
 		t.Fatalf("expected ticker.Stop() at least twice (long + switch back), got %d", ticker.stopCount)
+	}
+}
+
+func TestRunLoop_MultiTenantDiscoversAndDispatches(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ticker := newFakeTicker()
+	runner := &stubTickRunner{
+		handled:   1,
+		tenantIDs: []string{"tenant-a", "tenant-b"},
+		onCall: func(callNo int) {
+			if callNo == 2 {
+				cancel()
+			}
+		},
+	}
+
+	done := make(chan struct{})
+	go func() {
+		runLoop(ctx, runner, &runtimeConfig{
+			BatchSize:     5,
+			TickInterval:  time.Second,
+			LeaseDuration: 30 * time.Second,
+		}, nil, func(time.Duration) schedulerTicker {
+			return ticker
+		}, func() time.Time { return time.Now().UTC() }, nil)
+		close(done)
+	}()
+
+	ticker.ch <- time.Now()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatalf("runLoop did not stop")
+	}
+
+	if runner.callCount() != 4 {
+		t.Fatalf("expected 4 RunBatch calls (2 tenants x 2 ticks), got %d", runner.callCount())
+	}
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if runner.specs[0].TenantID != "tenant-a" || runner.specs[1].TenantID != "tenant-b" {
+		t.Fatalf("expected first tick tenants tenant-a and tenant-b, got %+v", runner.specs)
+	}
+}
+
+func TestRunLoop_MultiTenantListErrorNoFallback(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ticker := newFakeTicker()
+	runner := &stubTickRunner{
+		tenantErr: errors.New("db down"),
+		onCall: func(callNo int) {
+			if callNo == 0 {
+				// RunBatch should not be called when tenant discovery fails.
+				t.Fatalf("RunBatch should not be called when tenant discovery fails")
+			}
+		},
+	}
+
+	done := make(chan struct{})
+	go func() {
+		runLoop(ctx, runner, &runtimeConfig{
+			BatchSize:     5,
+			TickInterval:  time.Second,
+			LeaseDuration: 30 * time.Second,
+		}, nil, func(time.Duration) schedulerTicker {
+			return ticker
+		}, func() time.Time { return time.Now().UTC() }, nil)
+		close(done)
+	}()
+
+	ticker.ch <- time.Now()
+
+	// Give it a moment to process the idle tick, then cancel.
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatalf("runLoop did not stop")
+	}
+
+	if runner.callCount() != 0 {
+		t.Fatalf("expected 0 RunBatch calls when tenant discovery fails, got %d", runner.callCount())
+	}
+}
+
+func TestRunLoop_MultiTenantEmptyListNoFallback(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ticker := newFakeTicker()
+	runner := &stubTickRunner{
+		tenantIDs: []string{},
+		onCall: func(callNo int) {
+			if callNo == 0 {
+				t.Fatalf("RunBatch should not be called when tenant list is empty")
+			}
+		},
+	}
+
+	done := make(chan struct{})
+	go func() {
+		runLoop(ctx, runner, &runtimeConfig{
+			BatchSize:     5,
+			TickInterval:  time.Second,
+			LeaseDuration: 30 * time.Second,
+		}, nil, func(time.Duration) schedulerTicker {
+			return ticker
+		}, func() time.Time { return time.Now().UTC() }, nil)
+		close(done)
+	}()
+
+	ticker.ch <- time.Now()
+
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatalf("runLoop did not stop")
+	}
+
+	if runner.callCount() != 0 {
+		t.Fatalf("expected 0 RunBatch calls when tenant list is empty, got %d", runner.callCount())
 	}
 }

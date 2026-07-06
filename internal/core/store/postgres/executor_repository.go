@@ -408,3 +408,28 @@ func (r *ExecutorRepository) CountActiveWorkers(ctx context.Context, tenantID st
 	}
 	return count, nil
 }
+
+// ListActiveTenantIDs returns IDs of tenants with status = 'active'.
+func (r *ExecutorRepository) ListActiveTenantIDs(ctx context.Context) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id FROM tenants WHERE status = 'active' ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("list active tenant ids: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan tenant id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate tenant rows: %w", err)
+	}
+	if ids == nil {
+		ids = []string{}
+	}
+	return ids, nil
+}
