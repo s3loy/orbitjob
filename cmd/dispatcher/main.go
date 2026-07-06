@@ -206,11 +206,8 @@ func runLoop(
 		}
 		ids, err := runner.ListActiveTenantIDs(ctx)
 		if err != nil {
-			slog.Error("list active tenant ids failed, falling back to default", "error", err.Error())
-			return []string{"default"}
-		}
-		if len(ids) == 0 {
-			ids = []string{"default"}
+			slog.Error("list active tenant ids failed", "error", err.Error())
+			return nil
 		}
 		cachedTenantIDs = ids
 		tenantCacheExpires = time.Now().Add(tenantCacheTTL)
