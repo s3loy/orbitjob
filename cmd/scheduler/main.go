@@ -343,6 +343,29 @@ func watchSchedulerConfig(ctx context.Context, watcher config.Watcher, cfg *runt
 	})
 }
 
+type tenantLister interface {
+	ListActiveTenantIDs(ctx context.Context) ([]string, error)
+}
+
+// forEachActiveTenant discovers active tenants and invokes f for each one.
+// Errors from listing or from individual tenants are logged but not returned,
+// so background loops keep running even if one tenant fails.
+func forEachActiveTenant(ctx context.Context, lister tenantLister, f func(context.Context, string) error) {
+	ids, err := lister.ListActiveTenantIDs(ctx)
+	if err != nil {
+		slog.Error("list active tenant ids failed", "error", err.Error())
+		return
+	}
+	if len(ids) == 0 {
+		return
+	}
+	for _, id := range ids {
+		if err := f(ctx, id); err != nil {
+			slog.Error("tenant operation failed", "tenant_id", id, "error", err.Error())
+		}
+	}
+}
+
 func run(ctx context.Context) error {
 	if err := loadDotenvFn(); err != nil {
 		return err
@@ -410,9 +433,10 @@ func run(ctx context.Context) error {
 			case <-workerCtx.Done():
 				return
 			case <-ticker.C:
-				if _, err := checkScheduler.RunBatch(workerCtx, "default", 50); err != nil {
-					slog.Error("check scheduler tick failed", "error", err.Error())
-				}
+				forEachActiveTenant(workerCtx, repo, func(ctx context.Context, tenantID string) error {
+					_, err := checkScheduler.RunBatch(ctx, tenantID, 50)
+					return err
+				})
 			}
 		}
 	}()
@@ -436,11 +460,11 @@ func run(ctx context.Context) error {
 				case <-workerCtx.Done():
 					return
 				case <-ticker.C:
-					evalCtx, cancel := context.WithTimeout(workerCtx, 2*time.Minute)
-					if err := sloEvaluator.EvaluateAll(evalCtx, "default"); err != nil {
-						slog.Error("slo evaluation failed", "error", err.Error())
-					}
-					cancel()
+					forEachActiveTenant(workerCtx, repo, func(ctx context.Context, tenantID string) error {
+						evalCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+						defer cancel()
+						return sloEvaluator.EvaluateAll(evalCtx, tenantID)
+					})
 				}
 			}
 		}()

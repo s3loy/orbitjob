@@ -403,3 +403,61 @@ func TestRun_PingDBError(t *testing.T) {
 		t.Fatalf("expected runLoop not to run when ping fails")
 	}
 }
+
+type mockTenantLister struct {
+	ids []string
+	err error
+}
+
+func (m *mockTenantLister) ListActiveTenantIDs(_ context.Context) ([]string, error) {
+	return m.ids, m.err
+}
+
+func TestForEachActiveTenant_ListsAndCalls(t *testing.T) {
+	lister := &mockTenantLister{ids: []string{"tenant-a", "tenant-b"}}
+	var called []string
+
+	forEachActiveTenant(context.Background(), lister, func(_ context.Context, tenantID string) error {
+		called = append(called, tenantID)
+		return nil
+	})
+
+	if len(called) != 2 || called[0] != "tenant-a" || called[1] != "tenant-b" {
+		t.Fatalf("expected [tenant-a tenant-b], got %v", called)
+	}
+}
+
+func TestForEachActiveTenant_ListErrorLogs(t *testing.T) {
+	lister := &mockTenantLister{err: errors.New("db down")}
+
+	forEachActiveTenant(context.Background(), lister, func(_ context.Context, tenantID string) error {
+		t.Fatalf("callback should not be called when list fails")
+		return nil
+	})
+}
+
+func TestForEachActiveTenant_Empty(t *testing.T) {
+	lister := &mockTenantLister{ids: []string{}}
+
+	forEachActiveTenant(context.Background(), lister, func(_ context.Context, tenantID string) error {
+		t.Fatalf("callback should not be called when list is empty")
+		return nil
+	})
+}
+
+func TestForEachActiveTenant_PerTenantErrorContinues(t *testing.T) {
+	lister := &mockTenantLister{ids: []string{"tenant-a", "tenant-b"}}
+	var called []string
+
+	forEachActiveTenant(context.Background(), lister, func(_ context.Context, tenantID string) error {
+		called = append(called, tenantID)
+		if tenantID == "tenant-a" {
+			return errors.New("boom")
+		}
+		return nil
+	})
+
+	if len(called) != 2 {
+		t.Fatalf("expected both tenants to be processed, got %v", called)
+	}
+}
