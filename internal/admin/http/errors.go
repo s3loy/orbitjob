@@ -3,40 +3,61 @@ package http
 import (
 	"errors"
 
+	"github.com/go-playground/validator/v10"
+
+	"orbitjob/internal/admin/http/apperror"
+	domainjob "orbitjob/internal/core/domain/job"
 	"orbitjob/internal/domain/resource"
 	"orbitjob/internal/domain/validation"
 )
 
-// ErrorCode is the machine-readable error category, stable for clients to depend on.
-type ErrorCode string
+// toBindAPIError maps a Gin binding error to the stable API error structure.
+// Validation tag failures become VALIDATION_ERROR; JSON/type/Content-Type
+// failures become MALFORMED_REQUEST per PRD 11.2.
+// When multiple validation failures exist, only the first is reported.
+func toBindAPIError(err error) apperror.APIError {
+	var ve validator.ValidationErrors
+	if errors.As(err, &ve) {
+		fe := ve[0]
+		return apperror.APIError{
+			Code:    apperror.CodeValidation,
+			Message: humanReadableTag(fe),
+			Field:   fe.Field(),
+		}
+	}
 
-const (
-	ErrCodeValidation ErrorCode = "VALIDATION_ERROR"
-	ErrCodeNotFound   ErrorCode = "NOT_FOUND"
-	ErrCodeConflict   ErrorCode = "CONFLICT"
-	ErrCodeInternal   ErrorCode = "INTERNAL_ERROR"
-)
-
-// APIError is the stable HTTP error response structure.
-type APIError struct {
-	Code    ErrorCode `json:"code"`
-	Message string    `json:"message"`
-	Field   string    `json:"field,omitempty"`
-}
-
-func toBindAPIError(_ error) APIError {
-	return APIError{
-		Code:    ErrCodeValidation,
-		Message: "invalid request",
+	return apperror.APIError{
+		Code:    apperror.CodeMalformedRequest,
+		Message: "request could not be parsed",
 	}
 }
 
-// toAPIError maps a domain error to the stable API error structure.
-func toAPIError(err error) APIError {
+// humanReadableTag converts a validator tag to a short, human-readable message.
+func humanReadableTag(fe validator.FieldError) string {
+	switch fe.Tag() {
+	case "required":
+		return "field is required"
+	case "min":
+		return "value is below minimum"
+	case "max":
+		return "value is above maximum"
+	case "oneof":
+		return "value must be one of the allowed options"
+	case "gt", "gte":
+		return "value is too small"
+	case "lt", "lte":
+		return "value is too large"
+	default:
+		return "field validation failed"
+	}
+}
+
+// toAPIError maps a domain/use-case error to the stable API error structure.
+func toAPIError(err error) apperror.APIError {
 	var ve *validation.Error
 	if validation.As(err, &ve) {
-		return APIError{
-			Code:    ErrCodeValidation,
+		return apperror.APIError{
+			Code:    apperror.CodeValidation,
 			Message: ve.Message,
 			Field:   ve.Field,
 		}
@@ -44,8 +65,8 @@ func toAPIError(err error) APIError {
 
 	var ne *resource.NotFoundError
 	if errors.As(err, &ne) {
-		return APIError{
-			Code:    ErrCodeNotFound,
+		return apperror.APIError{
+			Code:    apperror.CodeNotFound,
 			Message: "resource not found",
 			Field:   ne.Resource,
 		}
@@ -62,15 +83,24 @@ func toAPIError(err error) APIError {
 			message = "resource conflict"
 		}
 
-		return APIError{
-			Code:    ErrCodeConflict,
+		return apperror.APIError{
+			Code:    apperror.CodeConflict,
 			Message: message,
 			Field:   field,
 		}
 	}
 
-	return APIError{
-		Code:    ErrCodeInternal,
+	var qe *domainjob.QuotaExceededError
+	if errors.As(err, &qe) {
+		return apperror.APIError{
+			Code:    apperror.CodeQuotaExhausted,
+			Message: "quota exhausted",
+			Field:   qe.Quota,
+		}
+	}
+
+	return apperror.APIError{
+		Code:    apperror.CodeInternal,
 		Message: "an internal error occurred",
 	}
 }

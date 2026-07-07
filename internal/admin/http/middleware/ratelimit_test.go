@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -9,6 +10,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"orbitjob/internal/admin/http/apperror"
 )
 
 func TestRateLimiter_AllowsFirstRequest(t *testing.T) {
@@ -431,5 +434,47 @@ func TestTryAllow_TokenCapExact(t *testing.T) {
 
 	if !rl.tryAllow(groupRead, "no-cap-tenant", cfg) {
 		t.Fatal("expected request to be allowed")
+	}
+}
+
+func TestRateLimiter_BlockedResponseBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rl := NewRateLimiter(context.Background())
+
+	r := gin.New()
+	r.Use(rl.Middleware())
+	r.POST("/api/v1/jobs", func(c *gin.Context) {
+		c.Status(http.StatusCreated)
+	})
+
+	// Exhaust bucket.
+	for range 10 {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest("POST", "/api/v1/jobs", nil)
+		req = req.WithContext(WithTenantID(req.Context(), "tenant-a", TenantSourceHeader))
+		r.ServeHTTP(w, req)
+	}
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/jobs", nil)
+	req = req.WithContext(WithTenantID(req.Context(), "tenant-a", TenantSourceHeader))
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429, got %d", w.Code)
+	}
+	if got := w.Header().Get("Retry-After"); got != "1" {
+		t.Fatalf("expected Retry-After=1, got %q", got)
+	}
+
+	var body apperror.ErrorResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("invalid JSON body: %v", err)
+	}
+	if body.Error.Code != apperror.CodeRateLimited {
+		t.Fatalf("expected code=%q, got %q", apperror.CodeRateLimited, body.Error.Code)
+	}
+	if body.Error.Message == "" {
+		t.Fatal("expected non-empty message")
 	}
 }

@@ -1,6 +1,9 @@
 package http
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestHandler_OpenAPIDocument(t *testing.T) {
 	handler := NewHandler(
@@ -129,6 +132,72 @@ func TestServiceOpenAPIDocument_IncludesAdminRoutesWithoutHandler(t *testing.T) 
 	}
 	if _, ok := doc.Paths["/openapi.json"]; !ok {
 		t.Fatal("expected /openapi.json path to be present in service OpenAPI document")
+	}
+}
+
+func TestOpenAPIDocument_ErrorCodeEnum(t *testing.T) {
+	doc := ServiceOpenAPIDocument()
+
+	apiErrorSchema, ok := doc.Components.Schemas["APIError"]
+	if !ok {
+		t.Fatal("expected APIError schema")
+	}
+	codeSchema, ok := apiErrorSchema.Properties["code"]
+	if !ok {
+		t.Fatal("expected APIError.code property")
+	}
+	want := []string{
+		"MALFORMED_REQUEST",
+		"VALIDATION_ERROR",
+		"UNAUTHORIZED",
+		"FORBIDDEN",
+		"NOT_FOUND",
+		"CONFLICT",
+		"RATE_LIMITED",
+		"QUOTA_EXHAUSTED",
+		"INTERNAL_ERROR",
+		"SERVICE_UNAVAILABLE",
+	}
+	if len(codeSchema.Enum) != len(want) {
+		t.Fatalf("expected code enum length %d, got %d: %v", len(want), len(codeSchema.Enum), codeSchema.Enum)
+	}
+	for i, v := range want {
+		if codeSchema.Enum[i] != v {
+			t.Fatalf("expected code enum[%d]=%q, got %q", i, v, codeSchema.Enum[i])
+		}
+	}
+}
+
+func TestOpenAPIDocument_AdminRoutesHaveUnauthorizedAndRateLimited(t *testing.T) {
+	doc := ServiceOpenAPIDocument()
+
+	for path, item := range doc.Paths {
+		if !strings.HasPrefix(path, "/api/v1/") {
+			continue
+		}
+		for method, op := range map[string]*Operation{
+			"GET":    item.Get,
+			"POST":   item.Post,
+			"PUT":    item.Put,
+			"DELETE": item.Delete,
+		} {
+			if op == nil {
+				continue
+			}
+			if _, ok := op.Responses["401"]; !ok {
+				t.Fatalf("expected 401 response for %s %s", method, path)
+			}
+			resp429, ok := op.Responses["429"]
+			if !ok {
+				t.Fatalf("expected 429 response for %s %s", method, path)
+			}
+			if resp429.Headers == nil {
+				t.Fatalf("expected 429 headers for %s %s", method, path)
+			}
+			if _, ok := resp429.Headers["Retry-After"]; !ok {
+				t.Fatalf("expected Retry-After header on 429 for %s %s", method, path)
+			}
+		}
 	}
 }
 

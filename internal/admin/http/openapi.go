@@ -11,15 +11,16 @@ import (
 	checkcommand "orbitjob/internal/admin/app/check/command"
 	checkquery "orbitjob/internal/admin/app/check/query"
 	checkrunquery "orbitjob/internal/admin/app/checkrun/query"
-	command "orbitjob/internal/admin/app/job/command"
 	instancequery "orbitjob/internal/admin/app/instance/query"
+	command "orbitjob/internal/admin/app/job/command"
 	query "orbitjob/internal/admin/app/job/query"
 	slicommand "orbitjob/internal/admin/app/sli/command"
 	sliquery "orbitjob/internal/admin/app/sli/query"
 	slocommand "orbitjob/internal/admin/app/slo/command"
 	sloquery "orbitjob/internal/admin/app/slo/query"
-	slobudgetquery "orbitjob/internal/admin/app/slobudget/query"
 	sloalertquery "orbitjob/internal/admin/app/sloalert/query"
+	slobudgetquery "orbitjob/internal/admin/app/slobudget/query"
+	"orbitjob/internal/admin/http/apperror"
 	domaininstance "orbitjob/internal/core/domain/instance"
 )
 
@@ -51,6 +52,7 @@ type responseDefinition struct {
 	description string
 	model       any
 	contentType string
+	headers     map[string]Header
 }
 
 type OpenAPIDocument struct {
@@ -71,9 +73,9 @@ type OpenAPIComponents struct {
 }
 
 type PathItem struct {
-	Get  *Operation `json:"get,omitempty"`
-	Post *Operation `json:"post,omitempty"`
-	Put  *Operation `json:"put,omitempty"`
+	Get    *Operation `json:"get,omitempty"`
+	Post   *Operation `json:"post,omitempty"`
+	Put    *Operation `json:"put,omitempty"`
 	Delete *Operation `json:"delete,omitempty"`
 }
 
@@ -201,9 +203,26 @@ func serviceAPIRoutes() []routeDefinition {
 }
 
 func adminAPIRoutes() []routeDefinition {
-	errorModel := errorResponse{}
+	errorModel := apperror.ErrorResponse{}
 
-	return []routeDefinition{
+	unauthorizedResponse := responseDefinition{
+		statusCode:  stdhttp.StatusUnauthorized,
+		description: "Unauthorized",
+		model:       errorModel,
+	}
+	rateLimitedResponse := responseDefinition{
+		statusCode:  stdhttp.StatusTooManyRequests,
+		description: "Rate limit exceeded",
+		model:       errorModel,
+		headers: map[string]Header{
+			"Retry-After": {
+				Description: "Minimum seconds until the request may be retried (default 1)",
+				Schema:      Schema{Type: "string"},
+			},
+		},
+	}
+
+	routes := []routeDefinition{
 		{
 			method: stdhttp.MethodGet,
 			path:   "/jobs",
@@ -346,14 +365,14 @@ func adminAPIRoutes() []routeDefinition {
 				responses: []responseDefinition{
 					{statusCode: stdhttp.StatusCreated, description: "Created job", model: command.CreateResult{}},
 					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
-{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
 				},
 			},
 		},
 		{
-			method: stdhttp.MethodPost,
-			path:   "/jobs/:id/trigger",
-			enabled: func(h *Handler) bool { return h != nil && h.triggerJobUC != nil },
+			method:   stdhttp.MethodPost,
+			path:     "/jobs/:id/trigger",
+			enabled:  func(h *Handler) bool { return h != nil && h.triggerJobUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.POST("/jobs/:id/trigger", h.TriggerJob) },
 			spec: operationDefinition{
 				id:              "triggerJob",
@@ -369,9 +388,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodDelete,
-			path:   "/jobs/:id",
-			enabled: func(h *Handler) bool { return h != nil && h.deleteJobUC != nil },
+			method:   stdhttp.MethodDelete,
+			path:     "/jobs/:id",
+			enabled:  func(h *Handler) bool { return h != nil && h.deleteJobUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.DELETE("/jobs/:id", h.DeleteJob) },
 			spec: operationDefinition{
 				id:              "deleteJob",
@@ -388,9 +407,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodGet,
-			path:   "/instances",
-			enabled: func(h *Handler) bool { return h != nil && h.listInstancesUC != nil },
+			method:   stdhttp.MethodGet,
+			path:     "/instances",
+			enabled:  func(h *Handler) bool { return h != nil && h.listInstancesUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.GET("/instances", h.ListInstances) },
 			spec: operationDefinition{
 				id:              "listInstances",
@@ -406,9 +425,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodGet,
-			path:   "/instances/:run_id",
-			enabled: func(h *Handler) bool { return h != nil && h.getInstanceUC != nil },
+			method:   stdhttp.MethodGet,
+			path:     "/instances/:run_id",
+			enabled:  func(h *Handler) bool { return h != nil && h.getInstanceUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.GET("/instances/:run_id", h.GetInstance) },
 			spec: operationDefinition{
 				id:              "getInstance",
@@ -425,9 +444,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodPost,
-			path:   "/instances/:run_id/cancel",
-			enabled: func(h *Handler) bool { return h != nil && h.cancelInstanceUC != nil },
+			method:   stdhttp.MethodPost,
+			path:     "/instances/:run_id/cancel",
+			enabled:  func(h *Handler) bool { return h != nil && h.cancelInstanceUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.POST("/instances/:run_id/cancel", h.CancelInstance) },
 			spec: operationDefinition{
 				id:                  "cancelInstance",
@@ -446,9 +465,9 @@ func adminAPIRoutes() []routeDefinition {
 		},
 		// ==================== Checks ====================
 		{
-			method: stdhttp.MethodPost,
-			path:   "/checks",
-			enabled: func(h *Handler) bool { return h != nil && h.createCheckUC != nil },
+			method:   stdhttp.MethodPost,
+			path:     "/checks",
+			enabled:  func(h *Handler) bool { return h != nil && h.createCheckUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.POST("/checks", h.CreateCheck) },
 			spec: operationDefinition{
 				id:                  "createCheck",
@@ -465,9 +484,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodGet,
-			path:   "/checks",
-			enabled: func(h *Handler) bool { return h != nil && h.listChecksUC != nil },
+			method:   stdhttp.MethodGet,
+			path:     "/checks",
+			enabled:  func(h *Handler) bool { return h != nil && h.listChecksUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.GET("/checks", h.ListChecks) },
 			spec: operationDefinition{
 				id:              "listChecks",
@@ -483,9 +502,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodGet,
-			path:   "/checks/:id",
-			enabled: func(h *Handler) bool { return h != nil && h.getCheckUC != nil },
+			method:   stdhttp.MethodGet,
+			path:     "/checks/:id",
+			enabled:  func(h *Handler) bool { return h != nil && h.getCheckUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.GET("/checks/:id", h.GetCheck) },
 			spec: operationDefinition{
 				id:              "getCheck",
@@ -502,9 +521,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodPost,
-			path:   "/checks/:id/pause",
-			enabled: func(h *Handler) bool { return h != nil && h.pauseCheckUC != nil },
+			method:   stdhttp.MethodPost,
+			path:     "/checks/:id/pause",
+			enabled:  func(h *Handler) bool { return h != nil && h.pauseCheckUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.POST("/checks/:id/pause", h.PauseCheck) },
 			spec: operationDefinition{
 				id:                  "pauseCheck",
@@ -524,9 +543,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodPost,
-			path:   "/checks/:id/resume",
-			enabled: func(h *Handler) bool { return h != nil && h.resumeCheckUC != nil },
+			method:   stdhttp.MethodPost,
+			path:     "/checks/:id/resume",
+			enabled:  func(h *Handler) bool { return h != nil && h.resumeCheckUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.POST("/checks/:id/resume", h.ResumeCheck) },
 			spec: operationDefinition{
 				id:                  "resumeCheck",
@@ -546,16 +565,16 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodDelete,
-			path:   "/checks/:id",
-			enabled: func(h *Handler) bool { return h != nil && h.deleteCheckUC != nil },
+			method:   stdhttp.MethodDelete,
+			path:     "/checks/:id",
+			enabled:  func(h *Handler) bool { return h != nil && h.deleteCheckUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.DELETE("/checks/:id", h.DeleteCheck) },
 			spec: operationDefinition{
-				id:              "deleteCheck",
-				summary:         "Delete one check",
-				description:     "Soft-delete a check definition by setting deleted_at.",
-				tags:            []string{"Checks"},
-				parameterModels: []any{checkIDURI{}, tenantQueryRequest{}},
+				id:                  "deleteCheck",
+				summary:             "Delete one check",
+				description:         "Soft-delete a check definition by setting deleted_at.",
+				tags:                []string{"Checks"},
+				parameterModels:     []any{checkIDURI{}, tenantQueryRequest{}},
 				requestBodyRequired: true,
 				responses: []responseDefinition{
 					{statusCode: stdhttp.StatusOK, description: "Deleted check"},
@@ -567,9 +586,9 @@ func adminAPIRoutes() []routeDefinition {
 		},
 		// ==================== Check Runs ====================
 		{
-			method: stdhttp.MethodGet,
-			path:   "/check-runs",
-			enabled: func(h *Handler) bool { return h != nil && h.listCheckRunsUC != nil },
+			method:   stdhttp.MethodGet,
+			path:     "/check-runs",
+			enabled:  func(h *Handler) bool { return h != nil && h.listCheckRunsUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.GET("/check-runs", h.ListCheckRuns) },
 			spec: operationDefinition{
 				id:              "listCheckRuns",
@@ -585,9 +604,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodGet,
-			path:   "/check-runs/:id",
-			enabled: func(h *Handler) bool { return h != nil && h.getCheckRunUC != nil },
+			method:   stdhttp.MethodGet,
+			path:     "/check-runs/:id",
+			enabled:  func(h *Handler) bool { return h != nil && h.getCheckRunUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.GET("/check-runs/:id", h.GetCheckRun) },
 			spec: operationDefinition{
 				id:              "getCheckRun",
@@ -605,9 +624,9 @@ func adminAPIRoutes() []routeDefinition {
 		},
 		// ==================== SLIs ====================
 		{
-			method: stdhttp.MethodPost,
-			path:   "/slis",
-			enabled: func(h *Handler) bool { return h != nil && h.createSLIUC != nil },
+			method:   stdhttp.MethodPost,
+			path:     "/slis",
+			enabled:  func(h *Handler) bool { return h != nil && h.createSLIUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.POST("/slis", h.CreateSLI) },
 			spec: operationDefinition{
 				id:                  "createSLI",
@@ -624,9 +643,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodGet,
-			path:   "/slis",
-			enabled: func(h *Handler) bool { return h != nil && h.listSLIsUC != nil },
+			method:   stdhttp.MethodGet,
+			path:     "/slis",
+			enabled:  func(h *Handler) bool { return h != nil && h.listSLIsUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.GET("/slis", h.ListSLIs) },
 			spec: operationDefinition{
 				id:              "listSLIs",
@@ -642,9 +661,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodGet,
-			path:   "/slis/:id",
-			enabled: func(h *Handler) bool { return h != nil && h.getSLIUC != nil },
+			method:   stdhttp.MethodGet,
+			path:     "/slis/:id",
+			enabled:  func(h *Handler) bool { return h != nil && h.getSLIUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.GET("/slis/:id", h.GetSLI) },
 			spec: operationDefinition{
 				id:              "getSLI",
@@ -661,9 +680,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodDelete,
-			path:   "/slis/:id",
-			enabled: func(h *Handler) bool { return h != nil && h.deleteSLIUC != nil },
+			method:   stdhttp.MethodDelete,
+			path:     "/slis/:id",
+			enabled:  func(h *Handler) bool { return h != nil && h.deleteSLIUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.DELETE("/slis/:id", h.DeleteSLI) },
 			spec: operationDefinition{
 				id:              "deleteSLI",
@@ -681,9 +700,9 @@ func adminAPIRoutes() []routeDefinition {
 		},
 		// ==================== SLOs ====================
 		{
-			method: stdhttp.MethodPost,
-			path:   "/slos",
-			enabled: func(h *Handler) bool { return h != nil && h.createSLOUC != nil },
+			method:   stdhttp.MethodPost,
+			path:     "/slos",
+			enabled:  func(h *Handler) bool { return h != nil && h.createSLOUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.POST("/slos", h.CreateSLO) },
 			spec: operationDefinition{
 				id:                  "createSLO",
@@ -700,9 +719,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodGet,
-			path:   "/slos",
-			enabled: func(h *Handler) bool { return h != nil && h.listSLOsUC != nil },
+			method:   stdhttp.MethodGet,
+			path:     "/slos",
+			enabled:  func(h *Handler) bool { return h != nil && h.listSLOsUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.GET("/slos", h.ListSLOs) },
 			spec: operationDefinition{
 				id:              "listSLOs",
@@ -718,9 +737,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodGet,
-			path:   "/slos/:id",
-			enabled: func(h *Handler) bool { return h != nil && h.getSLOUC != nil },
+			method:   stdhttp.MethodGet,
+			path:     "/slos/:id",
+			enabled:  func(h *Handler) bool { return h != nil && h.getSLOUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.GET("/slos/:id", h.GetSLO) },
 			spec: operationDefinition{
 				id:              "getSLO",
@@ -737,9 +756,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodPost,
-			path:   "/slos/:id/pause",
-			enabled: func(h *Handler) bool { return h != nil && h.statusSLOUC != nil },
+			method:   stdhttp.MethodPost,
+			path:     "/slos/:id/pause",
+			enabled:  func(h *Handler) bool { return h != nil && h.statusSLOUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.POST("/slos/:id/pause", h.PauseSLO) },
 			spec: operationDefinition{
 				id:                  "pauseSLO",
@@ -759,9 +778,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodPost,
-			path:   "/slos/:id/resume",
-			enabled: func(h *Handler) bool { return h != nil && h.statusSLOUC != nil },
+			method:   stdhttp.MethodPost,
+			path:     "/slos/:id/resume",
+			enabled:  func(h *Handler) bool { return h != nil && h.statusSLOUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.POST("/slos/:id/resume", h.ResumeSLO) },
 			spec: operationDefinition{
 				id:                  "resumeSLO",
@@ -781,9 +800,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodDelete,
-			path:   "/slos/:id",
-			enabled: func(h *Handler) bool { return h != nil && h.deleteSLOUC != nil },
+			method:   stdhttp.MethodDelete,
+			path:     "/slos/:id",
+			enabled:  func(h *Handler) bool { return h != nil && h.deleteSLOUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.DELETE("/slos/:id", h.DeleteSLO) },
 			spec: operationDefinition{
 				id:              "deleteSLO",
@@ -800,9 +819,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodGet,
-			path:   "/slos/:id/budget",
-			enabled: func(h *Handler) bool { return h != nil && h.getBudgetUC != nil },
+			method:   stdhttp.MethodGet,
+			path:     "/slos/:id/budget",
+			enabled:  func(h *Handler) bool { return h != nil && h.getBudgetUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.GET("/slos/:id/budget", h.GetSLOBudget) },
 			spec: operationDefinition{
 				id:              "getSLOBudget",
@@ -819,9 +838,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodGet,
-			path:   "/slos/:id/budgets",
-			enabled: func(h *Handler) bool { return h != nil && h.listBudgetHistoryUC != nil },
+			method:   stdhttp.MethodGet,
+			path:     "/slos/:id/budgets",
+			enabled:  func(h *Handler) bool { return h != nil && h.listBudgetHistoryUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.GET("/slos/:id/budgets", h.ListSLOBudgets) },
 			spec: operationDefinition{
 				id:              "listSLOBudgets",
@@ -838,9 +857,9 @@ func adminAPIRoutes() []routeDefinition {
 		},
 		// ==================== SLO Alerts ====================
 		{
-			method: stdhttp.MethodGet,
-			path:   "/slo-alerts",
-			enabled: func(h *Handler) bool { return h != nil && h.listAlertsUC != nil },
+			method:   stdhttp.MethodGet,
+			path:     "/slo-alerts",
+			enabled:  func(h *Handler) bool { return h != nil && h.listAlertsUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.GET("/slo-alerts", h.ListSLOAlerts) },
 			spec: operationDefinition{
 				id:              "listSLOAlerts",
@@ -856,9 +875,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodGet,
-			path:   "/slo-alerts/:id",
-			enabled: func(h *Handler) bool { return h != nil && h.getAlertUC != nil },
+			method:   stdhttp.MethodGet,
+			path:     "/slo-alerts/:id",
+			enabled:  func(h *Handler) bool { return h != nil && h.getAlertUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.GET("/slo-alerts/:id", h.GetSLOAlert) },
 			spec: operationDefinition{
 				id:              "getSLOAlert",
@@ -875,6 +894,12 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 	}
+
+	for i := range routes {
+		routes[i].spec.responses = append(routes[i].spec.responses, unauthorizedResponse, rateLimitedResponse)
+	}
+
+	return routes
 }
 
 // ServiceOpenAPIDocument builds the full service-level OpenAPI document.
@@ -978,6 +1003,14 @@ func (d operationDefinition) build(registry *schemaRegistry) Operation {
 				contentType: {
 					Schema: registry.schemaForModel(response.model, schemaModeResponse),
 				},
+			}
+		}
+		if len(response.headers) > 0 {
+			if item.Headers == nil {
+				item.Headers = map[string]Header{}
+			}
+			for name, header := range response.headers {
+				item.Headers[name] = header
 			}
 		}
 		applyStandardResponseHeaders(&item)
@@ -1135,6 +1168,25 @@ func (r *schemaRegistry) schemaForType(t reflect.Type, mode schemaMode) Schema {
 }
 
 func (r *schemaRegistry) applySchemaDefaults(name string, schema *Schema) {
+	if name == "APIError" {
+		if property, ok := schema.Properties["code"]; ok {
+			property.Enum = []string{
+				string(apperror.CodeMalformedRequest),
+				string(apperror.CodeValidation),
+				string(apperror.CodeUnauthorized),
+				string(apperror.CodeForbidden),
+				string(apperror.CodeNotFound),
+				string(apperror.CodeConflict),
+				string(apperror.CodeRateLimited),
+				string(apperror.CodeQuotaExhausted),
+				string(apperror.CodeInternal),
+				string(apperror.CodeServiceUnavailable),
+			}
+			schema.Properties["code"] = property
+		}
+		return
+	}
+
 	if name != "CreateJobRequest" {
 		return
 	}

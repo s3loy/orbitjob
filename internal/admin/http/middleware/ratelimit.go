@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"orbitjob/internal/admin/http/apperror"
 	"orbitjob/internal/platform/metrics"
 )
 
@@ -104,10 +105,9 @@ func (rl *RateLimiter) Middleware() gin.HandlerFunc {
 
 		if !rl.tryAllow(group, tenantID, cfg) {
 			metrics.RateLimitHits.WithLabelValues(tenantID, string(group)).Inc()
-			c.Header("Retry-After", "1")
-			c.AbortWithStatusJSON(429, gin.H{
-				"code":    "RATE_LIMITED",
-				"message": "rate limit exceeded",
+			apperror.Write(c, 429, apperror.APIError{
+				Code:    apperror.CodeRateLimited,
+				Message: "rate limit exceeded",
 			})
 			return
 		}

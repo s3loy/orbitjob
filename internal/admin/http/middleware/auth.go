@@ -8,6 +8,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
+
+	"orbitjob/internal/admin/http/apperror"
 )
 
 type apiKeyRow struct {
@@ -19,7 +21,6 @@ type apiKeyRow struct {
 }
 
 // Auth extracts tenant_id from a Bearer token validated against api_keys.
-// Falls back to X-OrbitJob-Tenant-Id header if no Bearer token is present.
 type Auth struct {
 	DB *sql.DB
 }
@@ -44,9 +45,9 @@ func (a *Auth) Middleware() gin.HandlerFunc {
 			return
 		}
 		// Auth required but failed → abort.
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-			"code":    "UNAUTHORIZED",
-			"message": "valid Bearer token required",
+		apperror.Write(c, http.StatusUnauthorized, apperror.APIError{
+			Code:    apperror.CodeUnauthorized,
+			Message: "valid Bearer token required",
 		})
 	}
 }

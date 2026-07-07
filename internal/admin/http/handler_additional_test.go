@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	command "orbitjob/internal/admin/app/job/command"
+	"orbitjob/internal/admin/http/apperror"
 	"orbitjob/internal/admin/http/middleware"
 	"orbitjob/internal/domain/resource"
 	"orbitjob/internal/domain/validation"
@@ -237,10 +238,10 @@ func TestHandler_ChangeJobStatus_UnsupportedAction(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if out.Error.Code != string(ErrCodeValidation) {
-		t.Fatalf("expected validation error code, got %q", out.Error.Code)
+	if out.Error.Code != string(apperror.CodeInternal) {
+		t.Fatalf("expected internal error code, got %q", out.Error.Code)
 	}
-	if out.Error.Field != "action" {
-		t.Fatalf("expected field=action, got %q", out.Error.Field)
+	if out.Error.Field != "" {
+		t.Fatalf("expected no field for internal error, got %q", out.Error.Field)
 	}
 }

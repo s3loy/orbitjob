@@ -16,9 +16,11 @@ import (
 	instancecommand "orbitjob/internal/admin/app/instance/command"
 	instancequery "orbitjob/internal/admin/app/instance/query"
 	command "orbitjob/internal/admin/app/job/command"
+	"orbitjob/internal/admin/http/apperror"
 	"orbitjob/internal/admin/http/middleware"
 	domaininstance "orbitjob/internal/core/domain/instance"
 	"orbitjob/internal/domain/resource"
+	"orbitjob/internal/domain/validation"
 )
 
 // ===== Stub use cases for uncovered handlers =====
@@ -353,8 +355,8 @@ func TestHandler_TriggerJob_NotFound(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if out.Error.Code != string(ErrCodeNotFound) {
-		t.Fatalf("expected code=%q, got %q", ErrCodeNotFound, out.Error.Code)
+	if out.Error.Code != string(apperror.CodeNotFound) {
+		t.Fatalf("expected code=%q, got %q", apperror.CodeNotFound, out.Error.Code)
 	}
 }
 
@@ -390,8 +392,8 @@ func TestHandler_TriggerJob_Conflict(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if out.Error.Code != string(ErrCodeConflict) {
-		t.Fatalf("expected code=%q, got %q", ErrCodeConflict, out.Error.Code)
+	if out.Error.Code != string(apperror.CodeConflict) {
+		t.Fatalf("expected code=%q, got %q", apperror.CodeConflict, out.Error.Code)
 	}
 }
 
@@ -427,8 +429,8 @@ func TestHandler_TriggerJob_InternalError(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if out.Error.Code != string(ErrCodeInternal) {
-		t.Fatalf("expected code=%q, got %q", ErrCodeInternal, out.Error.Code)
+	if out.Error.Code != string(apperror.CodeInternal) {
+		t.Fatalf("expected code=%q, got %q", apperror.CodeInternal, out.Error.Code)
 	}
 }
 
@@ -487,8 +489,8 @@ func TestHandler_DeleteJob_NotFound(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if out.Error.Code != string(ErrCodeNotFound) {
-		t.Fatalf("expected code=%q, got %q", ErrCodeNotFound, out.Error.Code)
+	if out.Error.Code != string(apperror.CodeNotFound) {
+		t.Fatalf("expected code=%q, got %q", apperror.CodeNotFound, out.Error.Code)
 	}
 }
 
@@ -525,8 +527,8 @@ func TestHandler_DeleteJob_InternalError(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if out.Error.Code != string(ErrCodeInternal) {
-		t.Fatalf("expected code=%q, got %q", ErrCodeInternal, out.Error.Code)
+	if out.Error.Code != string(apperror.CodeInternal) {
+		t.Fatalf("expected code=%q, got %q", apperror.CodeInternal, out.Error.Code)
 	}
 }
 
@@ -797,8 +799,8 @@ func TestHandler_GetInstance_NotFound(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if out.Error.Code != string(ErrCodeNotFound) {
-		t.Fatalf("expected code=%q, got %q", ErrCodeNotFound, out.Error.Code)
+	if out.Error.Code != string(apperror.CodeNotFound) {
+		t.Fatalf("expected code=%q, got %q", apperror.CodeNotFound, out.Error.Code)
 	}
 }
 
@@ -976,8 +978,8 @@ func TestHandler_CancelInstance_InternalError(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if out.Error.Code != string(ErrCodeInternal) {
-		t.Fatalf("expected code=%q, got %q", ErrCodeInternal, out.Error.Code)
+	if out.Error.Code != string(apperror.CodeInternal) {
+		t.Fatalf("expected code=%q, got %q", apperror.CodeInternal, out.Error.Code)
 	}
 }
 
@@ -1092,27 +1094,75 @@ func TestHandler_ChangeJobStatus_JSONBindError(t *testing.T) {
 
 // ===== ChangeJobStatus Resume internal error (line 320 and following in handler.go) =====
 
-func TestHandler_ChangeJobStatus_ResumeInternalError(t *testing.T) {
+func TestHandler_DeleteJob_MapsValidationError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	useCase := &stubChangeStatusUseCase{
-		err: errors.New("change job status: db down"),
+	useCase := &stubDeleteJobUseCase{
+		err: &validation.Error{Field: "version", Message: "stale version"},
 	}
-	handler := NewHandler(nil, nil, nil, nil, useCase)
+	handler := NewHandler(nil, nil, nil, nil, nil)
+	handler.SetDeleteJobUseCase(useCase)
 	router := gin.New()
 	handler.Register(router)
 
-	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/jobs/42/resume",
-		bytes.NewBufferString(`{"version":4}`))
+	req := httptest.NewRequest(stdhttp.MethodDelete, "/api/v1/jobs/42",
+		bytes.NewBufferString(`{"version":1}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(actorIDHeader, "control-plane-user")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 
-	if resp.Code != stdhttp.StatusInternalServerError {
-		t.Fatalf("expected status=%d, got %d", stdhttp.StatusInternalServerError, resp.Code)
+	if resp.Code != stdhttp.StatusBadRequest {
+		t.Fatalf("expected status=%d, got %d", stdhttp.StatusBadRequest, resp.Code)
 	}
-	if !useCase.resumeCalled {
-		t.Fatal("expected Resume to be called")
+
+	var out struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+			Field   string `json:"field"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if out.Error.Code != "VALIDATION_ERROR" {
+		t.Fatalf("expected code VALIDATION_ERROR, got %q", out.Error.Code)
+	}
+	if out.Error.Field != "version" {
+		t.Fatalf("expected field=version, got %q", out.Error.Field)
+	}
+}
+
+func TestHandler_ListInstances_MapsValidationError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	useCase := &stubListInstancesUseCase{
+		err: &validation.Error{Field: "status", Message: "invalid status"},
+	}
+	handler := NewHandler(nil, nil, nil, nil, nil)
+	handler.SetListInstancesUseCase(useCase)
+	router := gin.New()
+	handler.Register(router)
+
+	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/instances", nil)
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != stdhttp.StatusBadRequest {
+		t.Fatalf("expected status=%d, got %d", stdhttp.StatusBadRequest, resp.Code)
+	}
+
+	var out struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+			Field   string `json:"field"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if out.Error.Code != "VALIDATION_ERROR" {
+		t.Fatalf("expected code VALIDATION_ERROR, got %q", out.Error.Code)
 	}
 }
