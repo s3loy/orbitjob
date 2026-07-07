@@ -2,8 +2,10 @@ package http
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 
+	"github.com/go-playground/universal-translator"
 	"github.com/go-playground/validator/v10"
 
 	"orbitjob/internal/admin/http/apperror"
@@ -154,4 +156,48 @@ func TestToBindAPIError_Validation(t *testing.T) {
 	if got.Field != "Name" {
 		t.Fatalf("expected field=%q, got %q", "Name", got.Field)
 	}
+	if got.Message != "field is required" {
+		t.Fatalf("expected message=%q, got %q", "field is required", got.Message)
+	}
 }
+
+func TestHumanReadableTag(t *testing.T) {
+	tests := []struct {
+		tag  string
+		want string
+	}{
+		{"required", "field is required"},
+		{"min", "value is below minimum"},
+		{"max", "value is above maximum"},
+		{"oneof", "value must be one of the allowed options"},
+		{"gte", "value is too small"},
+		{"lte", "value is too large"},
+		{"unknown", "field validation failed"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.tag, func(t *testing.T) {
+			fe := fakeFieldError{tag: tt.tag}
+			if got := humanReadableTag(fe); got != tt.want {
+				t.Fatalf("expected message=%q, got %q", tt.want, got)
+			}
+		})
+	}
+}
+
+type fakeFieldError struct {
+	tag string
+}
+
+func (f fakeFieldError) Tag() string               { return f.tag }
+func (f fakeFieldError) ActualTag() string         { return f.tag }
+func (f fakeFieldError) Namespace() string         { return "" }
+func (f fakeFieldError) StructNamespace() string   { return "" }
+func (f fakeFieldError) Field() string             { return "" }
+func (f fakeFieldError) StructField() string       { return "" }
+func (f fakeFieldError) Value() interface{}        { return nil }
+func (f fakeFieldError) Param() string             { return "" }
+func (f fakeFieldError) Kind() reflect.Kind        { return reflect.String }
+func (f fakeFieldError) Type() reflect.Type        { return nil }
+func (f fakeFieldError) Translate(_ ut.Translator) string { return "" }
+func (f fakeFieldError) Error() string             { return "" }

@@ -82,3 +82,34 @@ func TestWrite_RateLimitedSetsRetryAfter(t *testing.T) {
 		t.Errorf("expected Retry-After=1, got %q", got)
 	}
 }
+
+func TestWrite_RateLimitedPreservesCallerRetryAfter(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Header("Retry-After", "5")
+
+	Write(c, http.StatusTooManyRequests, APIError{
+		Code:    CodeRateLimited,
+		Message: "rate limit exceeded",
+	})
+
+	if got := w.Header().Get("Retry-After"); got != "5" {
+		t.Errorf("expected caller Retry-After=5, got %q", got)
+	}
+}
+
+func TestWrite_QuotaExhaustedSetsRetryAfter(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+
+	Write(c, http.StatusTooManyRequests, APIError{
+		Code:    CodeQuotaExhausted,
+		Message: "quota exhausted",
+	})
+
+	if got := w.Header().Get("Retry-After"); got != "1" {
+		t.Errorf("expected Retry-After=1, got %q", got)
+	}
+}

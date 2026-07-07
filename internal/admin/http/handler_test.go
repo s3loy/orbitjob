@@ -345,6 +345,47 @@ func TestHandler_CreateJob_BindError(t *testing.T) {
 	}
 }
 
+func TestHandler_CreateJob_MalformedJSON(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	useCase := &stubCreateJobUseCase{}
+	handler := NewHandler(useCase, nil, nil, nil, nil)
+	router := gin.New()
+	handler.Register(router)
+
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/jobs",
+		bytes.NewBufferString(`{"trigger_type":"manual",`))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != stdhttp.StatusBadRequest {
+		t.Fatalf("expected status=%d, got %d", stdhttp.StatusBadRequest, resp.Code)
+	}
+	if useCase.called {
+		t.Fatalf("expected use case not to be called on bind error")
+	}
+
+	var out struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+			Field   string `json:"field"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+
+	if out.Error.Code != "MALFORMED_REQUEST" {
+		t.Fatalf("expected code MALFORMED_REQUEST, got %q", out.Error.Code)
+	}
+	if out.Error.Message == "" {
+		t.Fatal("expected malformed request message to be non-empty")
+	}
+}
+
 func TestHandler_ListJobs_BindError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
