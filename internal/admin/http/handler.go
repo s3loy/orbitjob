@@ -14,6 +14,8 @@ import (
 	instancequery "orbitjob/internal/admin/app/instance/query"
 	command "orbitjob/internal/admin/app/job/command"
 	query "orbitjob/internal/admin/app/job/query"
+	tenantcommand "orbitjob/internal/admin/app/tenant/command"
+	tenantquery "orbitjob/internal/admin/app/tenant/query"
 	slicommand "orbitjob/internal/admin/app/sli/command"
 	sliquery "orbitjob/internal/admin/app/sli/query"
 	slocommand "orbitjob/internal/admin/app/slo/command"
@@ -154,6 +156,18 @@ type listAlertsUseCase interface {
 	List(ctx context.Context, in sloalertquery.ListInput) (sloalertquery.ListResult, error)
 }
 
+type createTenantUseCase interface {
+	Create(ctx context.Context, in tenantcommand.CreateInput) (tenantcommand.CreateResult, error)
+}
+
+type listTenantsUseCase interface {
+	List(ctx context.Context, in tenantquery.ListInput) ([]tenantquery.ListItem, error)
+}
+
+type getTenantUseCase interface {
+	Get(ctx context.Context, in tenantquery.GetInput) (tenantquery.GetResult, error)
+}
+
 type checkListResponse struct {
 	Items []checkquery.ListItem `json:"items"`
 }
@@ -184,6 +198,10 @@ type budgetListResponse struct {
 
 type alertListResponse struct {
 	Items []sloalertquery.ListItem `json:"items"`
+}
+
+type tenantListResponse struct {
+	Items []tenantquery.ListItem `json:"items"`
 }
 
 // Handler wires HTTP endpoints to application use cases.
@@ -219,6 +237,9 @@ type Handler struct {
 	listBudgetHistoryUC listBudgetHistoryUseCase
 	getAlertUC          getAlertUseCase
 	listAlertsUC        listAlertsUseCase
+	createTenantUC      createTenantUseCase
+	listTenantsUC       listTenantsUseCase
+	getTenantUC         getTenantUseCase
 }
 
 func NewHandler(
@@ -265,6 +286,9 @@ func (h *Handler) SetListBudgetHistoryUseCase(uc listBudgetHistoryUseCase) {
 }
 func (h *Handler) SetGetAlertUseCase(uc getAlertUseCase)     { h.getAlertUC = uc }
 func (h *Handler) SetListAlertsUseCase(uc listAlertsUseCase) { h.listAlertsUC = uc }
+func (h *Handler) SetCreateTenantUseCase(uc createTenantUseCase) { h.createTenantUC = uc }
+func (h *Handler) SetListTenantsUseCase(uc listTenantsUseCase)   { h.listTenantsUC = uc }
+func (h *Handler) SetGetTenantUseCase(uc getTenantUseCase)       { h.getTenantUC = uc }
 
 // Register mounts HTTP routes for the admin API.
 func (h *Handler) Register(r gin.IRouter) {
@@ -1053,4 +1077,55 @@ func (h *Handler) ListSLOAlerts(c *gin.Context) {
 	}
 
 	c.JSON(stdhttp.StatusOK, alertListResponse{Items: out.Items})
+}
+
+// CreateTenant handles tenant creation requests.
+func (h *Handler) CreateTenant(c *gin.Context) {
+	var req CreateTenantRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	out, err := h.createTenantUC.Create(c.Request.Context(), req.ToCreateInput())
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+
+	c.JSON(stdhttp.StatusCreated, out)
+}
+
+// ListTenants handles tenant list queries.
+func (h *Handler) ListTenants(c *gin.Context) {
+	var req ListTenantsRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	out, err := h.listTenantsUC.List(c.Request.Context(), req.ToListInput())
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+
+	c.JSON(stdhttp.StatusOK, tenantListResponse{Items: out})
+}
+
+// GetTenant handles one tenant detail query.
+func (h *Handler) GetTenant(c *gin.Context) {
+	var req TenantURI
+	if err := c.ShouldBindUri(&req); err != nil {
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	out, err := h.getTenantUC.Get(c.Request.Context(), tenantquery.GetInput{ID: req.ID})
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+
+	c.JSON(stdhttp.StatusOK, out)
 }

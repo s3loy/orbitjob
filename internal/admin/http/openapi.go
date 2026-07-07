@@ -14,6 +14,8 @@ import (
 	instancequery "orbitjob/internal/admin/app/instance/query"
 	command "orbitjob/internal/admin/app/job/command"
 	query "orbitjob/internal/admin/app/job/query"
+	tenantcommand "orbitjob/internal/admin/app/tenant/command"
+	tenantquery "orbitjob/internal/admin/app/tenant/query"
 	slicommand "orbitjob/internal/admin/app/sli/command"
 	sliquery "orbitjob/internal/admin/app/sli/query"
 	slocommand "orbitjob/internal/admin/app/slo/command"
@@ -889,6 +891,63 @@ func adminAPIRoutes() []routeDefinition {
 					{statusCode: stdhttp.StatusOK, description: "SLO alert detail", model: sloalertquery.GetItem{}},
 					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
 					{statusCode: stdhttp.StatusNotFound, description: "SLO alert not found", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		// ==================== Tenants ====================
+		{
+			method:   stdhttp.MethodPost,
+			path:     "/tenants",
+			enabled:  func(h *Handler) bool { return h != nil && h.createTenantUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.POST("/tenants", h.CreateTenant) },
+			spec: operationDefinition{
+				id:                  "createTenant",
+				summary:             "Create one tenant",
+				description:         "Create a new tenant. Status defaults to active when omitted.",
+				tags:                []string{"Tenants"},
+				requestBodyModel:    CreateTenantRequest{},
+				requestBodyRequired: true,
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusCreated, description: "Created tenant", model: tenantcommand.CreateResult{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		{
+			method:   stdhttp.MethodGet,
+			path:     "/tenants",
+			enabled:  func(h *Handler) bool { return h != nil && h.listTenantsUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.GET("/tenants", h.ListTenants) },
+			spec: operationDefinition{
+				id:              "listTenants",
+				summary:         "List tenants",
+				description:     "List tenants. Limit defaults to 50 when omitted.",
+				tags:            []string{"Tenants"},
+				parameterModels: []any{ListTenantsRequest{}},
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "Tenant list", model: tenantListResponse{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		{
+			method:   stdhttp.MethodGet,
+			path:     "/tenants/:id",
+			enabled:  func(h *Handler) bool { return h != nil && h.getTenantUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.GET("/tenants/:id", h.GetTenant) },
+			spec: operationDefinition{
+				id:              "getTenant",
+				summary:         "Get one tenant",
+				description:     "Get one tenant by id.",
+				tags:            []string{"Tenants"},
+				parameterModels: []any{TenantURI{}},
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "Tenant detail", model: tenantquery.GetResult{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusNotFound, description: "Tenant not found", model: errorModel},
 					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
 				},
 			},

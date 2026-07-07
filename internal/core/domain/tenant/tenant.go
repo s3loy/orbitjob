@@ -46,6 +46,20 @@ func NormalizeCreateTenant(in CreateTenantInput) (CreateTenantInput, error) {
 	return CreateTenantInput{Slug: slug, Name: name}, nil
 }
 
+// Validate checks that the tenant has the required fields and a valid status.
+func (t *Tenant) Validate() error {
+	if t.Slug == "" {
+		return validation.New("slug", "required")
+	}
+	if t.Name == "" {
+		return validation.New("name", "required")
+	}
+	if t.Status != "" && t.Status != StatusActive && t.Status != StatusSuspended {
+		return validation.New("status", "must be active or suspended")
+	}
+	return nil
+}
+
 type ApiKey struct {
 	ID          string
 	TenantID    string

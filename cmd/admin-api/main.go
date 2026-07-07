@@ -20,6 +20,8 @@ import (
 	instancecommand "orbitjob/internal/admin/app/instance/command"
 	instancequery "orbitjob/internal/admin/app/instance/query"
 	query "orbitjob/internal/admin/app/job/query"
+	tenantcommand "orbitjob/internal/admin/app/tenant/command"
+	tenantquery "orbitjob/internal/admin/app/tenant/query"
 	slicommand "orbitjob/internal/admin/app/sli/command"
 	sliquery "orbitjob/internal/admin/app/sli/query"
 	slocommand "orbitjob/internal/admin/app/slo/command"
@@ -178,6 +180,16 @@ func main() {
 	handler.SetListBudgetHistoryUseCase(listBudgetHistoryUC)
 	handler.SetGetAlertUseCase(getAlertUC)
 	handler.SetListAlertsUseCase(listAlertsUC)
+
+	// Tenant use cases.
+	tenantRepo := adminpostgres.NewTenantRepository(db)
+	createTenantUC := tenantcommand.NewCreator(tenantRepo)
+	listTenantsUC := tenantquery.NewLister(tenantRepo)
+	getTenantUC := tenantquery.NewGetter(tenantRepo)
+
+	handler.SetCreateTenantUseCase(createTenantUC)
+	handler.SetListTenantsUseCase(listTenantsUC)
+	handler.SetGetTenantUseCase(getTenantUC)
 
 	auth := middleware.NewAuth(db)
 	rl := middleware.NewRateLimiter(ctx)

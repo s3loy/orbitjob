@@ -3190,6 +3190,260 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/tenants:
+    get:
+      operationId: listTenants
+      summary: List tenants
+      description: List tenants. Limit defaults to 50 when omitted.
+      tags:
+      - Tenants
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          default: 50
+          minimum: 1
+          maximum: 100
+      - name: offset
+        in: query
+        schema:
+          type: integer
+          default: 0
+          minimum: 0
+      responses:
+        "200":
+          description: Tenant list
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantListResponse"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: createTenant
+      summary: Create one tenant
+      description: Create a new tenant. Status defaults to active when omitted.
+      tags:
+      - Tenants
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTenantRequest"
+      responses:
+        "201":
+          description: Created tenant
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateResult"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/tenants/{id}:
+    get:
+      operationId: getTenant
+      summary: Get one tenant
+      description: Get one tenant by id.
+      tags:
+      - Tenants
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          maxLength: 26
+      responses:
+        "200":
+          description: Tenant detail
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetResult"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Tenant not found
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /healthz:
     get:
       operationId: getHealthz
@@ -3537,45 +3791,19 @@ components:
     CreateResult:
       type: object
       properties:
-        alert_fast_burn_rate:
-          type: number
-        alert_slow_burn_rate:
-          type: number
-        created_at:
-          type: string
-        description:
-          type: string
-          nullable: true
         id:
-          type: integer
-          format: int64
+          type: string
         name:
           type: string
-        sli_id:
-          type: integer
-          format: int64
+        slug:
+          type: string
         status:
-          type: string
-        target:
-          type: number
-        version:
-          type: integer
-        window_duration:
-          type: string
-        window_type:
           type: string
       required:
       - id
+      - slug
       - name
-      - sli_id
-      - target
-      - window_type
-      - window_duration
-      - alert_fast_burn_rate
-      - alert_slow_burn_rate
       - status
-      - version
-      - created_at
     CreateSLIRequest:
       type: object
       properties:
@@ -3643,6 +3871,23 @@ components:
       - sli_id
       - target
       - window_duration
+    CreateTenantRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 128
+        slug:
+          type: string
+          maxLength: 64
+        status:
+          type: string
+          enum:
+          - active
+          - suspended
+      required:
+      - slug
+      - name
     DeleteResult:
       type: object
       properties:
@@ -3712,57 +3957,19 @@ components:
     GetResult:
       type: object
       properties:
-        check_id:
-          type: integer
-          format: int64
-        created_at:
-          type: string
-          format: date-time
-        duration_ms:
-          type: integer
-          nullable: true
-        evaluation_result:
-          type: object
-          additionalProperties: true
-        finished_at:
-          type: string
-          format: date-time
-          nullable: true
         id:
-          type: integer
-          format: int64
-        output:
-          type: object
-          additionalProperties: true
-        run_id:
           type: string
-        scheduled_at:
+        name:
           type: string
-          format: date-time
-        severity:
+        slug:
           type: string
-          nullable: true
-        started_at:
-          type: string
-          format: date-time
-          nullable: true
         status:
           type: string
-        tenant_id:
-          type: string
-        version:
-          type: integer
       required:
       - id
-      - run_id
-      - tenant_id
-      - check_id
+      - slug
+      - name
       - status
-      - output
-      - evaluation_result
-      - scheduled_at
-      - version
-      - created_at
     HealthzResponse:
       type: object
       properties:
@@ -3863,27 +4070,19 @@ components:
     ListItem:
       type: object
       properties:
-        alert_type:
-          type: string
-        burn_rate:
-          type: number
         id:
-          type: integer
-          format: int64
-        slo_id:
-          type: integer
-          format: int64
-        status:
           type: string
-        triggered_at:
+        name:
+          type: string
+        slug:
+          type: string
+        status:
           type: string
       required:
       - id
-      - slo_id
-      - alert_type
-      - burn_rate
+      - slug
+      - name
       - status
-      - triggered_at
     SliListResponse:
       type: object
       properties:
@@ -3904,6 +4103,15 @@ components:
       - items
     Snapshot:
       type: object
+    TenantListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ListItem"
+      required:
+      - items
     TriggerResult:
       type: object
       properties:
