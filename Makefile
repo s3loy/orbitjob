@@ -21,6 +21,7 @@ build-all:
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/scheduler   ./cmd/scheduler/
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/dispatcher  ./cmd/dispatcher/
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/worker      ./cmd/worker/
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/bootstrap   ./cmd/bootstrap/
 
 # ---- Test ----
 test:
@@ -46,7 +47,7 @@ bench-etcd-compare:
 	bash scripts/bench-etcd.sh
 
 integration:
-	go test -count=1 -tags integration ./internal/platform/postgrestest ./internal/admin/store/postgres ./internal/core/store/postgres
+	go test -count=1 -tags integration ./internal/platform/postgrestest ./internal/admin/store/postgres ./internal/core/store/postgres ./db/migrations
 
 # ---- Lint & Vet ----
 lint:

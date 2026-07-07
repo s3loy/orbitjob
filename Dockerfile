@@ -47,6 +47,13 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -trimpath -ldflags="-s -w" -o /out/healthcheck ./cmd/healthcheck/
 
+FROM base AS build-bootstrap
+COPY . .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags="-s -w" -o /out/bootstrap ./cmd/bootstrap/
+
 # ============================================================
 # Final images (FROM scratch)
 # ============================================================
@@ -77,11 +84,17 @@ COPY --from=build-dispatcher /out/dispatcher /dispatcher
 USER 65534:65534
 ENTRYPOINT ["/dispatcher"]
 
-FROM scratch AS worker
-COPY --from=build-worker /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=build-worker /usr/share/zoneinfo /usr/share/zoneinfo
-COPY --from=build-worker /etc/passwd /etc/passwd
+FROM alpine:3.21 AS worker
+RUN apk add --no-cache coreutils ca-certificates tzdata
 COPY --from=build-healthcheck /out/healthcheck /healthcheck
 COPY --from=build-worker /out/worker /worker
 USER 65534:65534
 ENTRYPOINT ["/worker"]
+
+FROM scratch AS bootstrap
+COPY --from=build-bootstrap /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=build-bootstrap /usr/share/zoneinfo /usr/share/zoneinfo
+COPY --from=build-bootstrap /etc/passwd /etc/passwd
+COPY --from=build-bootstrap /out/bootstrap /bootstrap
+USER 65534:65534
+ENTRYPOINT ["/bootstrap"]
