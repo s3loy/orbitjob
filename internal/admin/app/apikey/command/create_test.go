@@ -123,8 +123,15 @@ func TestCreator_Create_KeyPrefixShort(t *testing.T) {
 	}
 }
 
+type failingReader struct{}
+
+func (f *failingReader) Read(p []byte) (int, error) {
+	return 0, errors.New("rand failed")
+}
+
 func TestGenerateAPIKey_Error(t *testing.T) {
-	// generateAPIKey now uses crypto/rand.Read directly; simulate failure by
-	// passing a reader that always fails is no longer possible, so we rely on
-	// the success path being exercised in TestCreator_Create_Success.
+	_, err := generateAPIKey(&failingReader{})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
 }

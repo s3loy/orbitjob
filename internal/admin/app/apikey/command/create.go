@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -46,7 +47,7 @@ type Creator struct {
 func NewCreator(repo apiKeyCreator) *Creator {
 	return &Creator{
 		repo:        repo,
-		generateKey: generateAPIKey,
+		generateKey: func() (string, error) { return generateAPIKey(rand.Reader) },
 		hashKey:     func(key []byte) ([]byte, error) { return bcrypt.GenerateFromPassword(key, bcrypt.DefaultCost) },
 	}
 }
@@ -79,9 +80,9 @@ func (c *Creator) Create(ctx context.Context, in CreateInput) (APIKeyCreateResul
 	}, nil
 }
 
-func generateAPIKey() (string, error) {
+func generateAPIKey(r io.Reader) (string, error) {
 	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
+	if _, err := io.ReadFull(r, b); err != nil {
 		return "", err
 	}
 	return apiKeyPrefix + base64.URLEncoding.EncodeToString(b), nil
