@@ -21,7 +21,7 @@ func TestTenantRepository_Create(t *testing.T) {
 
 	repo := NewTenantRepository(db)
 	mock.ExpectBegin()
-	mock.ExpectExec(`SET LOCAL app\.tenant_id = \$1`).
+	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
 		WithArgs("01HZX").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`INSERT INTO tenants`).
@@ -51,7 +51,7 @@ func TestTenantRepository_Create_DBError(t *testing.T) {
 
 	repo := NewTenantRepository(db)
 	mock.ExpectBegin()
-	mock.ExpectExec(`SET LOCAL app\.tenant_id = \$1`).
+	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
 		WithArgs("01HZX").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`INSERT INTO tenants`).
@@ -78,7 +78,7 @@ func TestTenantRepository_List(t *testing.T) {
 
 	repo := NewTenantRepository(db)
 	mock.ExpectBegin()
-	mock.ExpectExec(`SET LOCAL app\.tenant_id = \$1`).
+	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
 		WithArgs("tenant1").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT id, slug, name, status FROM tenants`).
@@ -111,7 +111,7 @@ func TestTenantRepository_List_DBError(t *testing.T) {
 
 	repo := NewTenantRepository(db)
 	mock.ExpectBegin()
-	mock.ExpectExec(`SET LOCAL app\.tenant_id = \$1`).
+	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
 		WithArgs("tenant1").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT id, slug, name, status FROM tenants`).
@@ -132,7 +132,7 @@ func TestTenantRepository_Get(t *testing.T) {
 
 	repo := NewTenantRepository(db)
 	mock.ExpectBegin()
-	mock.ExpectExec(`SET LOCAL app\.tenant_id = \$1`).
+	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
 		WithArgs("tenant1").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT id, slug, name, status FROM tenants WHERE id = \$1`).
@@ -162,7 +162,7 @@ func TestTenantRepository_Get_NotFound(t *testing.T) {
 
 	repo := NewTenantRepository(db)
 	mock.ExpectBegin()
-	mock.ExpectExec(`SET LOCAL app\.tenant_id = \$1`).
+	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
 		WithArgs("tenant1").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT id, slug, name, status FROM tenants WHERE id = \$1`).
@@ -195,7 +195,7 @@ func TestTenantRepository_Get_DBError(t *testing.T) {
 
 	repo := NewTenantRepository(db)
 	mock.ExpectBegin()
-	mock.ExpectExec(`SET LOCAL app\.tenant_id = \$1`).
+	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
 		WithArgs("tenant1").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT id, slug, name, status FROM tenants WHERE id = \$1`).
@@ -217,7 +217,7 @@ func TestTenantRepository_List_EmptyResult(t *testing.T) {
 
 	repo := NewTenantRepository(db)
 	mock.ExpectBegin()
-	mock.ExpectExec(`SET LOCAL app\.tenant_id = \$1`).
+	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
 		WithArgs("tenant1").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT id, slug, name, status FROM tenants`).
@@ -249,7 +249,7 @@ func TestTenantRepository_List_RowsError(t *testing.T) {
 		AddRow("01HZX", "acme", "Acme Corp", "active").
 		RowError(0, errors.New("iteration failure"))
 	mock.ExpectBegin()
-	mock.ExpectExec(`SET LOCAL app\.tenant_id = \$1`).
+	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
 		WithArgs("tenant1").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT id, slug, name, status FROM tenants`).

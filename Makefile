@@ -47,7 +47,7 @@ bench-etcd-compare:
 	bash scripts/bench-etcd.sh
 
 integration:
-	go test -count=1 -tags integration ./internal/platform/postgrestest ./internal/admin/store/postgres ./internal/core/store/postgres
+	go test -count=1 -tags integration ./db/migrations ./internal/platform/postgrestest ./internal/admin/bootstrap ./internal/admin/http ./internal/admin/store/postgres ./internal/core/store/postgres
 
 # ---- Lint & Vet ----
 lint:

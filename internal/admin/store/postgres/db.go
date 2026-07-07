@@ -31,7 +31,7 @@ func WithTenant(ctx context.Context, db *sql.DB, tenantID string) (*sql.Tx, erro
 	if err != nil {
 		return nil, err
 	}
-	if _, err := tx.ExecContext(ctx, "SET LOCAL app.tenant_id = $1", tenantID); err != nil {
+	if _, err := tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID); err != nil {
 		_ = tx.Rollback()
 		return nil, err
 	}

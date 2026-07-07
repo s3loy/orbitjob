@@ -20,7 +20,7 @@ func TestAPIKeyRepository_Create(t *testing.T) {
 
 	repo := NewAPIKeyRepository(db)
 	mock.ExpectBegin()
-	mock.ExpectExec(`SET LOCAL app\.tenant_id = \$1`).
+	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
 		WithArgs("tenant1").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`INSERT INTO api_keys`).
@@ -45,7 +45,7 @@ func TestAPIKeyRepository_Create_DBError(t *testing.T) {
 
 	repo := NewAPIKeyRepository(db)
 	mock.ExpectBegin()
-	mock.ExpectExec(`SET LOCAL app\.tenant_id = \$1`).
+	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
 		WithArgs("tenant1").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`INSERT INTO api_keys`).
@@ -68,7 +68,7 @@ func TestAPIKeyRepository_ListByTenant(t *testing.T) {
 	repo := NewAPIKeyRepository(db)
 	createdAt := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
 	mock.ExpectBegin()
-	mock.ExpectExec(`SET LOCAL app\.tenant_id = \$1`).
+	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
 		WithArgs("tenant1").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT id, key_prefix, created_at, revoked_at FROM api_keys`).
@@ -104,7 +104,7 @@ func TestAPIKeyRepository_ListByTenant_EmptyResult(t *testing.T) {
 
 	repo := NewAPIKeyRepository(db)
 	mock.ExpectBegin()
-	mock.ExpectExec(`SET LOCAL app\.tenant_id = \$1`).
+	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
 		WithArgs("tenant1").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT id, key_prefix, created_at, revoked_at FROM api_keys`).
@@ -133,7 +133,7 @@ func TestAPIKeyRepository_ListByTenant_DBError(t *testing.T) {
 
 	repo := NewAPIKeyRepository(db)
 	mock.ExpectBegin()
-	mock.ExpectExec(`SET LOCAL app\.tenant_id = \$1`).
+	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
 		WithArgs("tenant1").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT id, key_prefix, created_at, revoked_at FROM api_keys`).
@@ -158,7 +158,7 @@ func TestAPIKeyRepository_ListByTenant_RowsError(t *testing.T) {
 		AddRow("01HZX", "otj_abc123", createdAt, nil).
 		RowError(0, errors.New("iteration failure"))
 	mock.ExpectBegin()
-	mock.ExpectExec(`SET LOCAL app\.tenant_id = \$1`).
+	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
 		WithArgs("tenant1").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT id, key_prefix, created_at, revoked_at FROM api_keys`).
@@ -182,7 +182,7 @@ func TestAPIKeyRepository_ListByTenant_ScanError(t *testing.T) {
 	rows := sqlmock.NewRows([]string{"id", "key_prefix", "created_at", "revoked_at"}).
 		AddRow("01HZX", "otj_abc123", "not-a-time", nil)
 	mock.ExpectBegin()
-	mock.ExpectExec(`SET LOCAL app\.tenant_id = \$1`).
+	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
 		WithArgs("tenant1").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT id, key_prefix, created_at, revoked_at FROM api_keys`).
@@ -204,7 +204,7 @@ func TestAPIKeyRepository_Revoke(t *testing.T) {
 
 	repo := NewAPIKeyRepository(db)
 	mock.ExpectBegin()
-	mock.ExpectExec(`SET LOCAL app\.tenant_id = \$1`).
+	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
 		WithArgs("tenant1").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`UPDATE api_keys SET revoked_at = \$1`).
@@ -229,7 +229,7 @@ func TestAPIKeyRepository_Revoke_NotFound(t *testing.T) {
 
 	repo := NewAPIKeyRepository(db)
 	mock.ExpectBegin()
-	mock.ExpectExec(`SET LOCAL app\.tenant_id = \$1`).
+	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
 		WithArgs("tenant1").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`UPDATE api_keys SET revoked_at = \$1`).
@@ -262,7 +262,7 @@ func TestAPIKeyRepository_Revoke_DBError(t *testing.T) {
 
 	repo := NewAPIKeyRepository(db)
 	mock.ExpectBegin()
-	mock.ExpectExec(`SET LOCAL app\.tenant_id = \$1`).
+	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
 		WithArgs("tenant1").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`UPDATE api_keys SET revoked_at = \$1`).
@@ -284,7 +284,7 @@ func TestAPIKeyRepository_Revoke_RowsAffectedError(t *testing.T) {
 
 	repo := NewAPIKeyRepository(db)
 	mock.ExpectBegin()
-	mock.ExpectExec(`SET LOCAL app\.tenant_id = \$1`).
+	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
 		WithArgs("tenant1").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`UPDATE api_keys SET revoked_at = \$1`).

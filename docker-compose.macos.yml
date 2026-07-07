@@ -1,0 +1,12 @@
+# macOS Docker Desktop override
+# Docker Desktop for macOS stores container logs inside the Linux VM;
+# mounting /var/lib/docker/containers from the host does not work, so
+# Promtail cannot collect container logs. Use this override to disable
+# Promtail and rely on `docker compose logs <service>` instead.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.macos.yml up -d
+services:
+  promtail:
+    profiles:
+      - disabled

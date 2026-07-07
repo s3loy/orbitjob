@@ -33,7 +33,10 @@ const (
 	minAPIKeyLength = 12
 )
 
-var errAPIKeyTooShort = errors.New("bootstrap api key must be at least 12 characters")
+var (
+	errAPIKeyTooShort = errors.New("bootstrap api key must be at least 12 characters")
+	errAPIKeyRequired = errors.New("bootstrap api key is required when default key is disallowed")
+)
 
 // Options controls bootstrap behavior.
 type Options struct {
@@ -44,6 +47,9 @@ type Options struct {
 	// Writer persists the created API key to an external secret store.
 	// nil means do not write the secret externally.
 	Writer SecretWriter
+	// DisallowDefaultKey prevents the built-in development key from being used
+	// when APIKey is empty. It should be true in production.
+	DisallowDefaultKey bool
 }
 
 // Result reports what bootstrap changed.
@@ -65,6 +71,9 @@ func EnsureDefault(ctx context.Context, db *sql.DB, opts Options) (Result, error
 
 	key := opts.APIKey
 	if key == "" {
+		if opts.DisallowDefaultKey {
+			return Result{}, errAPIKeyRequired
+		}
 		key = DefaultAPIKey
 	}
 	if len(key) < minAPIKeyLength {

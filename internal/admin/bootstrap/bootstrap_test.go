@@ -150,6 +150,19 @@ func TestEnsureDefault_CustomKey(t *testing.T) {
 	}
 }
 
+func TestEnsureDefault_KeyRequiredWhenDefaultNotAllowed(t *testing.T) {
+	db, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("new mock: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	_, err = EnsureDefault(t.Context(), db, Options{DisallowDefaultKey: true})
+	if err == nil {
+		t.Fatal("expected error when default key is not allowed and no key provided")
+	}
+}
+
 func TestEnsureDefault_KeyTooShort(t *testing.T) {
 	db, _, err := sqlmock.New()
 	if err != nil {

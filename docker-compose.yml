@@ -108,6 +108,7 @@ services:
       dockerfile: Dockerfile
       target: bootstrap
     environment:
+      APP_ENV: production
       ADMIN_DSN: "postgres://orbitjob:${PG_PASSWORD}@pgbouncer:6432/orbitjob?sslmode=disable"
       ADMIN_BOOTSTRAP_SECRET_BACKEND: local
       ADMIN_BOOTSTRAP_SECRET_ROOT: /run/secrets/orbitjob

@@ -11,6 +11,64 @@ import (
 	"k8s.io/client-go/rest"
 )
 
+func TestResolveBootstrapOptions_ProductionRequiresKey(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("ADMIN_BOOTSTRAP_API_KEY", "")
+
+	_, err := resolveBootstrapOptions()
+	if err == nil {
+		t.Fatal("expected error in production without ADMIN_BOOTSTRAP_API_KEY")
+	}
+}
+
+func TestResolveBootstrapOptions_ProductionWithKey(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("ADMIN_BOOTSTRAP_API_KEY", "otj_prod_key_12345")
+
+	opts, err := resolveBootstrapOptions()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if opts.APIKey != "otj_prod_key_12345" {
+		t.Fatalf("expected api key, got %q", opts.APIKey)
+	}
+	if !opts.DisallowDefaultKey {
+		t.Fatal("expected default key to be disallowed in production")
+	}
+}
+
+func TestResolveBootstrapOptions_DevelopmentAllowsDefault(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("ADMIN_BOOTSTRAP_API_KEY", "")
+
+	opts, err := resolveBootstrapOptions()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if opts.DisallowDefaultKey {
+		t.Fatal("expected default key to be allowed in development")
+	}
+	if opts.APIKey != "" {
+		t.Fatal("expected empty api key to fall back to default")
+	}
+}
+
+func TestResolveBootstrapOptions_DevelopmentUsesExplicitKey(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("ADMIN_BOOTSTRAP_API_KEY", "otj_dev_key_12345")
+
+	opts, err := resolveBootstrapOptions()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if opts.APIKey != "otj_dev_key_12345" {
+		t.Fatalf("expected explicit api key, got %q", opts.APIKey)
+	}
+	if opts.DisallowDefaultKey {
+		t.Fatal("expected default key to be allowed in development")
+	}
+}
+
 func TestResolveDSN_ArgumentFirst(t *testing.T) {
 	t.Setenv("DATABASE_DSN", "")
 	t.Setenv("ADMIN_DSN", "")
@@ -250,4 +308,3 @@ func TestNewSecretWriter_K8sClientError(t *testing.T) {
 		t.Fatal("expected error from k8s client creation")
 	}
 }
-

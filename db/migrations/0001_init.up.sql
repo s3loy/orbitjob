@@ -542,6 +542,7 @@ CREATE TABLE IF NOT EXISTS tenants (
   CONSTRAINT chk_tenants_name_non_empty CHECK (name <> '')
 );
 
+DROP TRIGGER IF EXISTS trg_tenants_set_updated_at ON tenants;
 CREATE TRIGGER trg_tenants_set_updated_at
   BEFORE UPDATE ON tenants
   FOR EACH ROW
@@ -624,7 +625,7 @@ COMMIT;
 -- Stage A: Create RLS policies but leave RLS disabled.
 -- To activate (Stage C), run: ALTER TABLE <name> ENABLE ROW LEVEL SECURITY;
 -- Policies use current_setting('app.tenant_id') which is set by the application
--- via SET LOCAL app.tenant_id at the start of each transaction.
+-- via SELECT set_config('app.tenant_id', tenant_id, true) at the start of each transaction.
 
 -- ============================================================
 -- jobs table

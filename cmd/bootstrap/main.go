@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -19,7 +20,7 @@ import (
 
 // Test seams for newSecretWriter.
 var (
-	inClusterConfigFn = rest.InClusterConfig
+	inClusterConfigFn     = rest.InClusterConfig
 	newKubernetesClientFn = func(cfg *rest.Config) (kubernetes.Interface, error) {
 		return kubernetes.NewForConfig(cfg)
 	}
@@ -47,10 +48,12 @@ func main() {
 		log.Fatalf("secret writer: %v", err)
 	}
 
-	opts := bootstrap.Options{
-		APIKey: os.Getenv("ADMIN_BOOTSTRAP_API_KEY"),
-		Writer: writer,
+	opts, err := resolveBootstrapOptions()
+	if err != nil {
+		log.Fatal(err)
 	}
+	opts.Writer = writer
+
 	res, err := bootstrap.EnsureDefault(context.Background(), db, opts)
 	if err != nil {
 		log.Fatalf("bootstrap: %v", err)
@@ -61,6 +64,17 @@ func main() {
 		return
 	}
 	fmt.Fprintln(os.Stderr, "Default API key already exists.")
+}
+
+func resolveBootstrapOptions() (bootstrap.Options, error) {
+	opts := bootstrap.Options{
+		APIKey:             os.Getenv("ADMIN_BOOTSTRAP_API_KEY"),
+		DisallowDefaultKey: os.Getenv("APP_ENV") == "production",
+	}
+	if opts.APIKey == "" && opts.DisallowDefaultKey {
+		return bootstrap.Options{}, errors.New("ADMIN_BOOTSTRAP_API_KEY is required when APP_ENV=production")
+	}
+	return opts, nil
 }
 
 func resolveDSN(args []string) string {
