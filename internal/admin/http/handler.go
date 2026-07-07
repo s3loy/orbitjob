@@ -1204,11 +1204,12 @@ func (h *Handler) RevokeAPIKey(c *gin.Context) {
 		return
 	}
 
-	if err := h.revokeAPIKeyUC.Revoke(c.Request.Context(), apikeycommand.RevokeInput{ID: pathReq.ID, TenantID: middleware.GetTenantID(c)}); err != nil {
+	tenantID := middleware.GetTenantID(c)
+	if err := h.revokeAPIKeyUC.Revoke(c.Request.Context(), apikeycommand.RevokeInput{ID: pathReq.ID, TenantID: tenantID}); err != nil {
 		writeAPIError(c, err)
 		return
 	}
 
-	metrics.APIKeysRevokedTotal.WithLabelValues(middleware.GetTenantID(c)).Inc()
+	metrics.APIKeysRevokedTotal.WithLabelValues(tenantID).Inc()
 	c.JSON(stdhttp.StatusOK, apikeycommand.APIKeyRevokeResult{Revoked: true})
 }

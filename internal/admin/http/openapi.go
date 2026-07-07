@@ -966,7 +966,7 @@ func adminAPIRoutes() []routeDefinition {
 				tags:                []string{"API Keys"},
 				parameterModels:     []any{TenantURI{}},
 				requestBodyModel:    CreateAPIKeyRequest{},
-				requestBodyRequired: true,
+				requestBodyRequired: false,
 				responses: []responseDefinition{
 					{statusCode: stdhttp.StatusCreated, description: "Created API key", model: apikeycommand.APIKeyCreateResult{}},
 					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},

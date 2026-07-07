@@ -17,11 +17,11 @@ type APIKeyRepository struct{ db *sql.DB }
 func NewAPIKeyRepository(db *sql.DB) *APIKeyRepository { return &APIKeyRepository{db: db} }
 
 // Create inserts a new API key.
-func (r *APIKeyRepository) Create(ctx context.Context, tenantID, id, keyHash, keyPrefix string, createdAt time.Time) error {
+func (r *APIKeyRepository) Create(ctx context.Context, tenantID, id, keyHash, keyPrefix string) error {
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO api_keys (id, tenant_id, key_hash, key_prefix, permissions, created_at)
-		VALUES ($1, $2, $3, $4, '{}', $5)
-	`, id, tenantID, keyHash, keyPrefix, createdAt)
+		INSERT INTO api_keys (id, tenant_id, key_hash, key_prefix)
+		VALUES ($1, $2, $3, $4)
+	`, id, tenantID, keyHash, keyPrefix)
 	if err != nil {
 		return fmt.Errorf("insert api key: %w", err)
 	}
@@ -29,6 +29,8 @@ func (r *APIKeyRepository) Create(ctx context.Context, tenantID, id, keyHash, ke
 }
 
 // ListByTenant returns all API keys for a tenant, excluding key_hash.
+// Returning []apikey.APIKey (a core/domain type) keeps the store package below
+// the app layer and avoids an import cycle between admin/app and admin/store.
 func (r *APIKeyRepository) ListByTenant(ctx context.Context, tenantID string) ([]apikey.APIKey, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, key_prefix, created_at, revoked_at

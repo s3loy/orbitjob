@@ -19,12 +19,11 @@ func TestAPIKeyRepository_Create(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	repo := NewAPIKeyRepository(db)
-	createdAt := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
 	mock.ExpectExec(`INSERT INTO api_keys`).
-		WithArgs("01HZX", "tenant1", "hash", "otj_abc123", createdAt).
+		WithArgs("01HZX", "tenant1", "hash", "otj_abc123").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	if err := repo.Create(context.Background(), "tenant1", "01HZX", "hash", "otj_abc123", createdAt); err != nil {
+	if err := repo.Create(context.Background(), "tenant1", "01HZX", "hash", "otj_abc123"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -40,12 +39,11 @@ func TestAPIKeyRepository_Create_DBError(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	repo := NewAPIKeyRepository(db)
-	createdAt := time.Now().UTC()
 	mock.ExpectExec(`INSERT INTO api_keys`).
-		WithArgs("01HZX", "tenant1", "hash", "otj_abc123", createdAt).
+		WithArgs("01HZX", "tenant1", "hash", "otj_abc123").
 		WillReturnError(errors.New("db down"))
 
-	if err := repo.Create(context.Background(), "tenant1", "01HZX", "hash", "otj_abc123", createdAt); err == nil {
+	if err := repo.Create(context.Background(), "tenant1", "01HZX", "hash", "otj_abc123"); err == nil {
 		t.Fatal("expected error, got nil")
 	}
 }

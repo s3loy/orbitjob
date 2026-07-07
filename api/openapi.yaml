@@ -3632,7 +3632,6 @@ paths:
           type: string
           maxLength: 26
       requestBody:
-        required: true
         content:
           application/json:
             schema:

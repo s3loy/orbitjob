@@ -3,8 +3,8 @@ package command
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"fmt"
-	"io"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -13,10 +13,8 @@ import (
 )
 
 const (
-	apiKeyPrefix    = "otj_"
-	apiKeyRandomLen = 24
-	apiKeyMinLen    = 12
-	apiKeyAlphabet  = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	apiKeyPrefix = "otj_"
+	apiKeyMinLen = 12
 )
 
 // CreateInput is the control-plane command model for creating an API key.
@@ -34,7 +32,7 @@ type APIKeyCreateResult struct {
 }
 
 type apiKeyCreator interface {
-	Create(ctx context.Context, tenantID, id, keyHash, keyPrefix string, createdAt time.Time) error
+	Create(ctx context.Context, tenantID, id, keyHash, keyPrefix string) error
 }
 
 // Creator creates API keys.
@@ -48,7 +46,7 @@ type Creator struct {
 func NewCreator(repo apiKeyCreator) *Creator {
 	return &Creator{
 		repo:        repo,
-		generateKey: func() (string, error) { return generateAPIKey(rand.Reader) },
+		generateKey: generateAPIKey,
 		hashKey:     func(key []byte) ([]byte, error) { return bcrypt.GenerateFromPassword(key, bcrypt.DefaultCost) },
 	}
 }
@@ -65,11 +63,11 @@ func (c *Creator) Create(ctx context.Context, in CreateInput) (APIKeyCreateResul
 		return APIKeyCreateResult{}, fmt.Errorf("hash api key: %w", err)
 	}
 
-	createdAt := time.Now().UTC()
 	id := scan.GenerateID()
 	prefix := keyPrefix(key)
+	createdAt := time.Now().UTC()
 
-	if err := c.repo.Create(ctx, in.TenantID, id, string(hash), prefix, createdAt); err != nil {
+	if err := c.repo.Create(ctx, in.TenantID, id, string(hash), prefix); err != nil {
 		return APIKeyCreateResult{}, fmt.Errorf("create api key: %w", err)
 	}
 
@@ -81,15 +79,12 @@ func (c *Creator) Create(ctx context.Context, in CreateInput) (APIKeyCreateResul
 	}, nil
 }
 
-func generateAPIKey(r io.Reader) (string, error) {
-	b := make([]byte, apiKeyRandomLen)
-	if _, err := io.ReadFull(r, b); err != nil {
+func generateAPIKey() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
-	for i := range b {
-		b[i] = apiKeyAlphabet[int(b[i])%len(apiKeyAlphabet)]
-	}
-	return apiKeyPrefix + string(b), nil
+	return apiKeyPrefix + base64.URLEncoding.EncodeToString(b), nil
 }
 
 func keyPrefix(key string) string {
