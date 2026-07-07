@@ -24,10 +24,16 @@ type (
 )
 
 const (
-	ErrCodeValidation = string(apperror.CodeValidation)
-	ErrCodeNotFound   = string(apperror.CodeNotFound)
-	ErrCodeConflict   = string(apperror.CodeConflict)
-	ErrCodeInternal   = string(apperror.CodeInternal)
+	ErrCodeMalformedRequest   = apperror.CodeMalformedRequest
+	ErrCodeValidation         = apperror.CodeValidation
+	ErrCodeUnauthorized       = apperror.CodeUnauthorized
+	ErrCodeForbidden          = apperror.CodeForbidden
+	ErrCodeNotFound           = apperror.CodeNotFound
+	ErrCodeConflict           = apperror.CodeConflict
+	ErrCodeRateLimited        = apperror.CodeRateLimited
+	ErrCodeQuotaExhausted     = apperror.CodeQuotaExhausted
+	ErrCodeInternal           = apperror.CodeInternal
+	ErrCodeServiceUnavailable = apperror.CodeServiceUnavailable
 )
 
 var (

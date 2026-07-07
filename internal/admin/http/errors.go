@@ -14,13 +14,14 @@ import (
 // toBindAPIError maps a Gin binding error to the stable API error structure.
 // Validation tag failures become VALIDATION_ERROR; JSON/type/Content-Type
 // failures become MALFORMED_REQUEST per PRD 11.2.
+// When multiple validation failures exist, only the first is reported.
 func toBindAPIError(err error) apperror.APIError {
 	var ve validator.ValidationErrors
 	if errors.As(err, &ve) {
 		fe := ve[0]
 		return apperror.APIError{
 			Code:    apperror.CodeValidation,
-			Message: fe.Tag(),
+			Message: humanReadableTag(fe),
 			Field:   fe.Field(),
 		}
 	}
@@ -28,6 +29,26 @@ func toBindAPIError(err error) apperror.APIError {
 	return apperror.APIError{
 		Code:    apperror.CodeMalformedRequest,
 		Message: "request could not be parsed",
+	}
+}
+
+// humanReadableTag converts a validator tag to a short, human-readable message.
+func humanReadableTag(fe validator.FieldError) string {
+	switch fe.Tag() {
+	case "required":
+		return "field is required"
+	case "min":
+		return "value is below minimum"
+	case "max":
+		return "value is above maximum"
+	case "oneof":
+		return "value must be one of the allowed options"
+	case "gt", "gte":
+		return "value is too small"
+	case "lt", "lte":
+		return "value is too large"
+	default:
+		return "field validation failed"
 	}
 }
 

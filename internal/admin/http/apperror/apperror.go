@@ -36,9 +36,10 @@ type ErrorResponse struct {
 }
 
 // Write writes the error response and aborts the gin context.
-// For 429 Too Many Requests it also sets Retry-After: 1.
+// For 429 Too Many Requests it also sets Retry-After (default 1 second) unless
+// the caller already set it on the response writer.
 func Write(c *gin.Context, statusCode int, apiErr APIError) {
-	if statusCode == http.StatusTooManyRequests {
+	if statusCode == http.StatusTooManyRequests && c.Writer.Header().Get("Retry-After") == "" {
 		c.Header("Retry-After", "1")
 	}
 	c.AbortWithStatusJSON(statusCode, ErrorResponse{Error: apiErr})
@@ -59,6 +60,8 @@ func StatusForCode(code Code) int {
 		return http.StatusConflict
 	case CodeRateLimited, CodeQuotaExhausted:
 		return http.StatusTooManyRequests
+	case CodeInternal:
+		return http.StatusInternalServerError
 	case CodeServiceUnavailable:
 		return http.StatusServiceUnavailable
 	default:

@@ -21,7 +21,6 @@ type apiKeyRow struct {
 }
 
 // Auth extracts tenant_id from a Bearer token validated against api_keys.
-// Falls back to X-OrbitJob-Tenant-Id header if no Bearer token is present.
 type Auth struct {
 	DB *sql.DB
 }

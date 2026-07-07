@@ -89,7 +89,7 @@ paths:
           description: Rate limit exceeded
           headers:
             Retry-After:
-              description: Seconds until the request may be retried
+              description: Minimum seconds until the request may be retried (default 1)
               schema:
                 type: string
             X-Trace-ID:
@@ -180,7 +180,7 @@ paths:
           description: Rate limit exceeded
           headers:
             Retry-After:
-              description: Seconds until the request may be retried
+              description: Minimum seconds until the request may be retried (default 1)
               schema:
                 type: string
             X-Trace-ID:
@@ -279,7 +279,7 @@ paths:
           description: Rate limit exceeded
           headers:
             Retry-After:
-              description: Seconds until the request may be retried
+              description: Minimum seconds until the request may be retried (default 1)
               schema:
                 type: string
             X-Trace-ID:
@@ -357,7 +357,7 @@ paths:
           description: Rate limit exceeded
           headers:
             Retry-After:
-              description: Seconds until the request may be retried
+              description: Minimum seconds until the request may be retried (default 1)
               schema:
                 type: string
             X-Trace-ID:
@@ -454,7 +454,7 @@ paths:
           description: Rate limit exceeded
           headers:
             Retry-After:
-              description: Seconds until the request may be retried
+              description: Minimum seconds until the request may be retried (default 1)
               schema:
                 type: string
             X-Trace-ID:
@@ -546,7 +546,7 @@ paths:
           description: Rate limit exceeded
           headers:
             Retry-After:
-              description: Seconds until the request may be retried
+              description: Minimum seconds until the request may be retried (default 1)
               schema:
                 type: string
             X-Trace-ID:
@@ -660,7 +660,7 @@ paths:
           description: Rate limit exceeded
           headers:
             Retry-After:
-              description: Seconds until the request may be retried
+              description: Minimum seconds until the request may be retried (default 1)
               schema:
                 type: string
             X-Trace-ID:
@@ -774,7 +774,7 @@ paths:
           description: Rate limit exceeded
           headers:
             Retry-After:
-              description: Seconds until the request may be retried
+              description: Minimum seconds until the request may be retried (default 1)
               schema:
                 type: string
             X-Trace-ID:
@@ -872,7 +872,7 @@ paths:
           description: Rate limit exceeded
           headers:
             Retry-After:
-              description: Seconds until the request may be retried
+              description: Minimum seconds until the request may be retried (default 1)
               schema:
                 type: string
             X-Trace-ID:
@@ -963,7 +963,7 @@ paths:
           description: Rate limit exceeded
           headers:
             Retry-After:
-              description: Seconds until the request may be retried
+              description: Minimum seconds until the request may be retried (default 1)
               schema:
                 type: string
             X-Trace-ID:
@@ -1049,7 +1049,7 @@ paths:
           description: Rate limit exceeded
           headers:
             Retry-After:
-              description: Seconds until the request may be retried
+              description: Minimum seconds until the request may be retried (default 1)
               schema:
                 type: string
             X-Trace-ID:
@@ -1148,7 +1148,7 @@ paths:
           description: Rate limit exceeded
           headers:
             Retry-After:
-              description: Seconds until the request may be retried
+              description: Minimum seconds until the request may be retried (default 1)
               schema:
                 type: string
             X-Trace-ID:
@@ -1226,7 +1226,7 @@ paths:
           description: Rate limit exceeded
           headers:
             Retry-After:
-              description: Seconds until the request may be retried
+              description: Minimum seconds until the request may be retried (default 1)
               schema:
                 type: string
             X-Trace-ID:
@@ -1323,7 +1323,7 @@ paths:
           description: Rate limit exceeded
           headers:
             Retry-After:
-              description: Seconds until the request may be retried
+              description: Minimum seconds until the request may be retried (default 1)
               schema:
                 type: string
             X-Trace-ID:
@@ -1442,7 +1442,7 @@ paths:
           description: Rate limit exceeded
           headers:
             Retry-After:
-              description: Seconds until the request may be retried
+              description: Minimum seconds until the request may be retried (default 1)
               schema:
                 type: string
             X-Trace-ID:
@@ -1538,7 +1538,7 @@ paths:
           description: Rate limit exceeded
           headers:
             Retry-After:
-              description: Seconds until the request may be retried
+              description: Minimum seconds until the request may be retried (default 1)
               schema:
                 type: string
             X-Trace-ID:
@@ -1658,7 +1658,7 @@ paths:
           description: Rate limit exceeded
           headers:
             Retry-After:
-              description: Seconds until the request may be retried
+              description: Minimum seconds until the request may be retried (default 1)
               schema:
                 type: string
             X-Trace-ID:
@@ -1778,7 +1778,7 @@ paths:
           description: Rate limit exceeded
           headers:
             Retry-After:
-              description: Seconds until the request may be retried
+              description: Minimum seconds until the request may be retried (default 1)
               schema:
                 type: string
             X-Trace-ID:
@@ -1863,7 +1863,7 @@ paths:
           description: Rate limit exceeded
           headers:
             Retry-After:
-              description: Seconds until the request may be retried
+              description: Minimum seconds until the request may be retried (default 1)
               schema:
                 type: string
             X-Trace-ID:
@@ -1954,7 +1954,7 @@ paths:
           description: Rate limit exceeded
           headers:
             Retry-After:
-              description: Seconds until the request may be retried
+              description: Minimum seconds until the request may be retried (default 1)
               schema:
                 type: string
             X-Trace-ID:
@@ -2032,7 +2032,7 @@ paths:
           description: Rate limit exceeded
           headers:
             Retry-After:
-              description: Seconds until the request may be retried
+              description: Minimum seconds until the request may be retried (default 1)
               schema:
                 type: string
             X-Trace-ID:
@@ -2123,7 +2123,7 @@ paths:
           description: Rate limit exceeded
           headers:
             Retry-After:
-              description: Seconds until the request may be retried
+              description: Minimum seconds until the request may be retried (default 1)
               schema:
                 type: string
             X-Trace-ID:
@@ -2215,7 +2215,7 @@ paths:
           description: Rate limit exceeded
           headers:
             Retry-After:
-              description: Seconds until the request may be retried
+              description: Minimum seconds until the request may be retried (default 1)
               schema:
                 type: string
             X-Trace-ID:
@@ -2315,7 +2315,7 @@ paths:
           description: Rate limit exceeded
           headers:
             Retry-After:
-              description: Seconds until the request may be retried
+              description: Minimum seconds until the request may be retried (default 1)
               schema:
                 type: string
             X-Trace-ID:
@@ -2406,7 +2406,7 @@ paths:
           description: Rate limit exceeded
           headers:
             Retry-After:
-              description: Seconds until the request may be retried
+              description: Minimum seconds until the request may be retried (default 1)
               schema:
                 type: string
             X-Trace-ID:
@@ -2497,7 +2497,7 @@ paths:
           description: Rate limit exceeded
           headers:
             Retry-After:
-              description: Seconds until the request may be retried
+              description: Minimum seconds until the request may be retried (default 1)
               schema:
                 type: string
             X-Trace-ID:
@@ -2575,7 +2575,7 @@ paths:
           description: Rate limit exceeded
           headers:
             Retry-After:
-              description: Seconds until the request may be retried
+              description: Minimum seconds until the request may be retried (default 1)
               schema:
                 type: string
             X-Trace-ID:
@@ -2666,7 +2666,7 @@ paths:
           description: Rate limit exceeded
           headers:
             Retry-After:
-              description: Seconds until the request may be retried
+              description: Minimum seconds until the request may be retried (default 1)
               schema:
                 type: string
             X-Trace-ID:
@@ -2758,7 +2758,7 @@ paths:
           description: Rate limit exceeded
           headers:
             Retry-After:
-              description: Seconds until the request may be retried
+              description: Minimum seconds until the request may be retried (default 1)
               schema:
                 type: string
             X-Trace-ID:
@@ -2849,7 +2849,7 @@ paths:
           description: Rate limit exceeded
           headers:
             Retry-After:
-              description: Seconds until the request may be retried
+              description: Minimum seconds until the request may be retried (default 1)
               schema:
                 type: string
             X-Trace-ID:
@@ -2940,7 +2940,7 @@ paths:
           description: Rate limit exceeded
           headers:
             Retry-After:
-              description: Seconds until the request may be retried
+              description: Minimum seconds until the request may be retried (default 1)
               schema:
                 type: string
             X-Trace-ID:
@@ -3054,7 +3054,7 @@ paths:
           description: Rate limit exceeded
           headers:
             Retry-After:
-              description: Seconds until the request may be retried
+              description: Minimum seconds until the request may be retried (default 1)
               schema:
                 type: string
             X-Trace-ID:
@@ -3168,7 +3168,7 @@ paths:
           description: Rate limit exceeded
           headers:
             Retry-After:
-              description: Seconds until the request may be retried
+              description: Minimum seconds until the request may be retried (default 1)
               schema:
                 type: string
             X-Trace-ID:

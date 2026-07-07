@@ -216,7 +216,7 @@ func adminAPIRoutes() []routeDefinition {
 		model:       errorModel,
 		headers: map[string]Header{
 			"Retry-After": {
-				Description: "Seconds until the request may be retried",
+				Description: "Minimum seconds until the request may be retried (default 1)",
 				Schema:      Schema{Type: "string"},
 			},
 		},
