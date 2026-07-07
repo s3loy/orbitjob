@@ -157,15 +157,15 @@ type listAlertsUseCase interface {
 }
 
 type createTenantUseCase interface {
-	Create(ctx context.Context, in tenantcommand.CreateInput) (tenantcommand.CreateResult, error)
+	Create(ctx context.Context, in tenantcommand.CreateInput) (tenantcommand.TenantCreateResult, error)
 }
 
 type listTenantsUseCase interface {
-	List(ctx context.Context, in tenantquery.ListInput) ([]tenantquery.ListItem, error)
+	List(ctx context.Context, in tenantquery.ListInput) ([]tenantquery.TenantListItem, error)
 }
 
 type getTenantUseCase interface {
-	Get(ctx context.Context, in tenantquery.GetInput) (tenantquery.GetResult, error)
+	Get(ctx context.Context, in tenantquery.GetInput) (tenantquery.TenantGetResult, error)
 }
 
 type checkListResponse struct {
@@ -201,7 +201,7 @@ type alertListResponse struct {
 }
 
 type tenantListResponse struct {
-	Items []tenantquery.ListItem `json:"items"`
+	Items []tenantquery.TenantListItem `json:"items"`
 }
 
 // Handler wires HTTP endpoints to application use cases.

@@ -3305,7 +3305,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CreateResult"
+                $ref: "#/components/schemas/TenantCreateResult"
         "400":
           description: Invalid request
           headers:
@@ -3384,7 +3384,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/GetResult"
+                $ref: "#/components/schemas/TenantGetResult"
         "400":
           description: Invalid request
           headers:
@@ -3791,19 +3791,45 @@ components:
     CreateResult:
       type: object
       properties:
-        id:
+        alert_fast_burn_rate:
+          type: number
+        alert_slow_burn_rate:
+          type: number
+        created_at:
           type: string
+        description:
+          type: string
+          nullable: true
+        id:
+          type: integer
+          format: int64
         name:
           type: string
-        slug:
-          type: string
+        sli_id:
+          type: integer
+          format: int64
         status:
+          type: string
+        target:
+          type: number
+        version:
+          type: integer
+        window_duration:
+          type: string
+        window_type:
           type: string
       required:
       - id
-      - slug
       - name
+      - sli_id
+      - target
+      - window_type
+      - window_duration
+      - alert_fast_burn_rate
+      - alert_slow_burn_rate
       - status
+      - version
+      - created_at
     CreateSLIRequest:
       type: object
       properties:
@@ -3957,19 +3983,57 @@ components:
     GetResult:
       type: object
       properties:
+        check_id:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+        duration_ms:
+          type: integer
+          nullable: true
+        evaluation_result:
+          type: object
+          additionalProperties: true
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
         id:
+          type: integer
+          format: int64
+        output:
+          type: object
+          additionalProperties: true
+        run_id:
           type: string
-        name:
+        scheduled_at:
           type: string
-        slug:
+          format: date-time
+        severity:
           type: string
+          nullable: true
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
         status:
           type: string
+        tenant_id:
+          type: string
+        version:
+          type: integer
       required:
       - id
-      - slug
-      - name
+      - run_id
+      - tenant_id
+      - check_id
       - status
+      - output
+      - evaluation_result
+      - scheduled_at
+      - version
+      - created_at
     HealthzResponse:
       type: object
       properties:
@@ -4070,19 +4134,27 @@ components:
     ListItem:
       type: object
       properties:
+        alert_type:
+          type: string
+        burn_rate:
+          type: number
         id:
-          type: string
-        name:
-          type: string
-        slug:
-          type: string
+          type: integer
+          format: int64
+        slo_id:
+          type: integer
+          format: int64
         status:
+          type: string
+        triggered_at:
           type: string
       required:
       - id
-      - slug
-      - name
+      - slo_id
+      - alert_type
+      - burn_rate
       - status
+      - triggered_at
     SliListResponse:
       type: object
       properties:
@@ -4103,13 +4175,61 @@ components:
       - items
     Snapshot:
       type: object
+    TenantCreateResult:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        slug:
+          type: string
+        status:
+          type: string
+      required:
+      - id
+      - slug
+      - name
+      - status
+    TenantGetResult:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        slug:
+          type: string
+        status:
+          type: string
+      required:
+      - id
+      - slug
+      - name
+      - status
+    TenantListItem:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        slug:
+          type: string
+        status:
+          type: string
+      required:
+      - id
+      - slug
+      - name
+      - status
     TenantListResponse:
       type: object
       properties:
         items:
           type: array
           items:
-            $ref: "#/components/schemas/ListItem"
+            $ref: "#/components/schemas/TenantListItem"
       required:
       - items
     TriggerResult:

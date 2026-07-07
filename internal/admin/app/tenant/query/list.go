@@ -1,6 +1,10 @@
 package query
 
-import "context"
+import (
+	"context"
+
+	"orbitjob/internal/core/domain/tenant"
+)
 
 const (
 	defaultListLimit = 50
@@ -13,8 +17,8 @@ type ListInput struct {
 	Offset int
 }
 
-// ListItem is the control-plane read model used by GET /api/v1/tenants.
-type ListItem struct {
+// TenantListItem is the control-plane read model used by GET /api/v1/tenants.
+type TenantListItem struct {
 	ID     string `json:"id"`
 	Slug   string `json:"slug"`
 	Name   string `json:"name"`
@@ -22,7 +26,7 @@ type ListItem struct {
 }
 
 type tenantListReader interface {
-	List(ctx context.Context, limit, offset int) ([]ListItem, error)
+	List(ctx context.Context, limit, offset int) ([]tenant.Tenant, error)
 }
 
 // Lister lists tenants.
@@ -36,7 +40,7 @@ func NewLister(repo tenantListReader) *Lister {
 }
 
 // List returns a paginated list of tenants.
-func (uc *Lister) List(ctx context.Context, in ListInput) ([]ListItem, error) {
+func (uc *Lister) List(ctx context.Context, in ListInput) ([]TenantListItem, error) {
 	limit := in.Limit
 	if limit <= 0 {
 		limit = defaultListLimit
@@ -48,5 +52,18 @@ func (uc *Lister) List(ctx context.Context, in ListInput) ([]ListItem, error) {
 	if offset < 0 {
 		offset = 0
 	}
-	return uc.repo.List(ctx, limit, offset)
+	tt, err := uc.repo.List(ctx, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]TenantListItem, len(tt))
+	for i, t := range tt {
+		out[i] = TenantListItem{
+			ID:     t.ID,
+			Slug:   t.Slug,
+			Name:   t.Name,
+			Status: t.Status,
+		}
+	}
+	return out, nil
 }

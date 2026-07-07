@@ -909,7 +909,7 @@ func adminAPIRoutes() []routeDefinition {
 				requestBodyModel:    CreateTenantRequest{},
 				requestBodyRequired: true,
 				responses: []responseDefinition{
-					{statusCode: stdhttp.StatusCreated, description: "Created tenant", model: tenantcommand.CreateResult{}},
+					{statusCode: stdhttp.StatusCreated, description: "Created tenant", model: tenantcommand.TenantCreateResult{}},
 					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
 					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
 				},
@@ -945,7 +945,7 @@ func adminAPIRoutes() []routeDefinition {
 				tags:            []string{"Tenants"},
 				parameterModels: []any{TenantURI{}},
 				responses: []responseDefinition{
-					{statusCode: stdhttp.StatusOK, description: "Tenant detail", model: tenantquery.GetResult{}},
+					{statusCode: stdhttp.StatusOK, description: "Tenant detail", model: tenantquery.TenantGetResult{}},
 					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
 					{statusCode: stdhttp.StatusNotFound, description: "Tenant not found", model: errorModel},
 					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},

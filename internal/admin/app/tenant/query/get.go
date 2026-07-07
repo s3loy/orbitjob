@@ -1,14 +1,18 @@
 package query
 
-import "context"
+import (
+	"context"
+
+	"orbitjob/internal/core/domain/tenant"
+)
 
 // GetInput is the control-plane query model for reading one tenant.
 type GetInput struct {
 	ID string
 }
 
-// GetResult is the control-plane read model used by GET /api/v1/tenants/:id.
-type GetResult struct {
+// TenantGetResult is the control-plane read model used by GET /api/v1/tenants/:id.
+type TenantGetResult struct {
 	ID     string `json:"id"`
 	Slug   string `json:"slug"`
 	Name   string `json:"name"`
@@ -16,7 +20,7 @@ type GetResult struct {
 }
 
 type tenantGetReader interface {
-	Get(ctx context.Context, id string) (GetResult, error)
+	Get(ctx context.Context, id string) (tenant.Tenant, error)
 }
 
 // Getter reads one tenant.
@@ -30,6 +34,15 @@ func NewGetter(repo tenantGetReader) *Getter {
 }
 
 // Get returns one tenant by ID.
-func (uc *Getter) Get(ctx context.Context, in GetInput) (GetResult, error) {
-	return uc.repo.Get(ctx, in.ID)
+func (uc *Getter) Get(ctx context.Context, in GetInput) (TenantGetResult, error) {
+	t, err := uc.repo.Get(ctx, in.ID)
+	if err != nil {
+		return TenantGetResult{}, err
+	}
+	return TenantGetResult{
+		ID:     t.ID,
+		Slug:   t.Slug,
+		Name:   t.Name,
+		Status: t.Status,
+	}, nil
 }

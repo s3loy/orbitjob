@@ -4,23 +4,25 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"orbitjob/internal/core/domain/tenant"
 )
 
 type stubTenantGetReader struct {
 	called bool
 	id     string
-	result GetResult
+	result tenant.Tenant
 	err    error
 }
 
-func (s *stubTenantGetReader) Get(ctx context.Context, id string) (GetResult, error) {
+func (s *stubTenantGetReader) Get(ctx context.Context, id string) (tenant.Tenant, error) {
 	s.called = true
 	s.id = id
 	return s.result, s.err
 }
 
 func TestGetter_Get_Success(t *testing.T) {
-	repo := &stubTenantGetReader{result: GetResult{ID: "t1", Slug: "acme"}}
+	repo := &stubTenantGetReader{result: tenant.Tenant{ID: "t1", Slug: "acme"}}
 	uc := NewGetter(repo)
 
 	out, err := uc.Get(context.Background(), GetInput{ID: "t1"})

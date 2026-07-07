@@ -15,8 +15,8 @@ type CreateInput struct {
 	Status string
 }
 
-// CreateResult is the control-plane response model for a created tenant.
-type CreateResult struct {
+// TenantCreateResult is the control-plane response model for a created tenant.
+type TenantCreateResult struct {
 	ID     string `json:"id"`
 	Slug   string `json:"slug"`
 	Name   string `json:"name"`
@@ -38,13 +38,13 @@ func NewCreator(repo tenantCreator) *Creator {
 }
 
 // Create normalizes input, generates an ID, and persists a new tenant.
-func (c *Creator) Create(ctx context.Context, in CreateInput) (CreateResult, error) {
+func (c *Creator) Create(ctx context.Context, in CreateInput) (TenantCreateResult, error) {
 	normalized, err := tenant.NormalizeCreateTenant(tenant.CreateTenantInput{
 		Slug: in.Slug,
 		Name: in.Name,
 	})
 	if err != nil {
-		return CreateResult{}, err
+		return TenantCreateResult{}, err
 	}
 
 	t := &tenant.Tenant{
@@ -57,14 +57,14 @@ func (c *Creator) Create(ctx context.Context, in CreateInput) (CreateResult, err
 		t.Status = tenant.StatusActive
 	}
 	if err := t.Validate(); err != nil {
-		return CreateResult{}, err
+		return TenantCreateResult{}, err
 	}
 
 	if err := c.repo.Create(ctx, t); err != nil {
-		return CreateResult{}, fmt.Errorf("create tenant: %w", err)
+		return TenantCreateResult{}, fmt.Errorf("create tenant: %w", err)
 	}
 
-	return CreateResult{
+	return TenantCreateResult{
 		ID:     t.ID,
 		Slug:   t.Slug,
 		Name:   t.Name,

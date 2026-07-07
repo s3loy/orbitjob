@@ -8,8 +8,8 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 
-	"orbitjob/internal/admin/app/tenant/query"
 	"orbitjob/internal/core/domain/tenant"
+	"orbitjob/internal/domain/resource"
 )
 
 func TestTenantRepository_Create(t *testing.T) {
@@ -140,8 +140,19 @@ func TestTenantRepository_Get_NotFound(t *testing.T) {
 		WithArgs("01HZX").
 		WillReturnError(sql.ErrNoRows)
 
-	if _, err := repo.Get(context.Background(), "01HZX"); err == nil {
+	_, err = repo.Get(context.Background(), "01HZX")
+	if err == nil {
 		t.Fatal("expected error, got nil")
+	}
+	var notFound *resource.NotFoundError
+	if !errors.As(err, &notFound) {
+		t.Fatalf("expected *resource.NotFoundError, got %T", err)
+	}
+	if notFound.Resource != "tenant" {
+		t.Fatalf("expected resource=%q, got %q", "tenant", notFound.Resource)
+	}
+	if notFound.ID != "01HZX" {
+		t.Fatalf("expected id=%q, got %q", "01HZX", notFound.ID)
 	}
 }
 
@@ -205,5 +216,3 @@ func TestTenantRepository_List_RowsError(t *testing.T) {
 		t.Fatal("expected rows iteration error")
 	}
 }
-
-var _ = query.ListItem{}

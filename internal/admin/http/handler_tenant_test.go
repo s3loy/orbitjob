@@ -20,11 +20,11 @@ import (
 type stubCreateTenantUseCase struct {
 	called bool
 	in     tenantcommand.CreateInput
-	out    tenantcommand.CreateResult
+	out    tenantcommand.TenantCreateResult
 	err    error
 }
 
-func (s *stubCreateTenantUseCase) Create(ctx context.Context, in tenantcommand.CreateInput) (tenantcommand.CreateResult, error) {
+func (s *stubCreateTenantUseCase) Create(ctx context.Context, in tenantcommand.CreateInput) (tenantcommand.TenantCreateResult, error) {
 	s.called = true
 	s.in = in
 	return s.out, s.err
@@ -33,11 +33,11 @@ func (s *stubCreateTenantUseCase) Create(ctx context.Context, in tenantcommand.C
 type stubListTenantsUseCase struct {
 	called bool
 	in     tenantquery.ListInput
-	out    []tenantquery.ListItem
+	out    []tenantquery.TenantListItem
 	err    error
 }
 
-func (s *stubListTenantsUseCase) List(ctx context.Context, in tenantquery.ListInput) ([]tenantquery.ListItem, error) {
+func (s *stubListTenantsUseCase) List(ctx context.Context, in tenantquery.ListInput) ([]tenantquery.TenantListItem, error) {
 	s.called = true
 	s.in = in
 	return s.out, s.err
@@ -46,11 +46,11 @@ func (s *stubListTenantsUseCase) List(ctx context.Context, in tenantquery.ListIn
 type stubGetTenantUseCase struct {
 	called bool
 	in     tenantquery.GetInput
-	out    tenantquery.GetResult
+	out    tenantquery.TenantGetResult
 	err    error
 }
 
-func (s *stubGetTenantUseCase) Get(ctx context.Context, in tenantquery.GetInput) (tenantquery.GetResult, error) {
+func (s *stubGetTenantUseCase) Get(ctx context.Context, in tenantquery.GetInput) (tenantquery.TenantGetResult, error) {
 	s.called = true
 	s.in = in
 	return s.out, s.err
@@ -60,7 +60,7 @@ func TestHandler_CreateTenant(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	uc := &stubCreateTenantUseCase{
-		out: tenantcommand.CreateResult{
+		out: tenantcommand.TenantCreateResult{
 			ID:     "01HZX",
 			Slug:   "acme",
 			Name:   "Acme Corp",
@@ -93,7 +93,7 @@ func TestHandler_CreateTenant(t *testing.T) {
 		t.Fatalf("expected name=%q, got %q", "Acme Corp", uc.in.Name)
 	}
 
-	var out tenantcommand.CreateResult
+	var out tenantcommand.TenantCreateResult
 	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestHandler_ListTenants(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	uc := &stubListTenantsUseCase{
-		out: []tenantquery.ListItem{
+		out: []tenantquery.TenantListItem{
 			{ID: "01HZX", Slug: "acme", Name: "Acme Corp", Status: tenant.StatusActive},
 		},
 	}
@@ -218,7 +218,7 @@ func TestHandler_GetTenant(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	uc := &stubGetTenantUseCase{
-		out: tenantquery.GetResult{
+		out: tenantquery.TenantGetResult{
 			ID:     "01HZX",
 			Slug:   "acme",
 			Name:   "Acme Corp",

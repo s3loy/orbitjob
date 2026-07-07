@@ -4,17 +4,19 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"orbitjob/internal/core/domain/tenant"
 )
 
 type stubTenantListReader struct {
 	called     bool
 	limit      int
 	offset     int
-	returnList []ListItem
+	returnList []tenant.Tenant
 	err        error
 }
 
-func (s *stubTenantListReader) List(ctx context.Context, limit, offset int) ([]ListItem, error) {
+func (s *stubTenantListReader) List(ctx context.Context, limit, offset int) ([]tenant.Tenant, error) {
 	s.called = true
 	s.limit = limit
 	s.offset = offset
@@ -22,7 +24,7 @@ func (s *stubTenantListReader) List(ctx context.Context, limit, offset int) ([]L
 }
 
 func TestLister_List_Defaults(t *testing.T) {
-	repo := &stubTenantListReader{returnList: []ListItem{{ID: "t1", Slug: "acme"}}}
+	repo := &stubTenantListReader{returnList: []tenant.Tenant{{ID: "t1", Slug: "acme"}}}
 	uc := NewLister(repo)
 
 	out, err := uc.List(context.Background(), ListInput{})
