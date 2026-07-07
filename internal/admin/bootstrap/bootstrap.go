@@ -20,7 +20,20 @@ const (
 	// DefaultAPIKey is the key used when ADMIN_BOOTSTRAP_API_KEY is not set.
 	// It is only suitable for local development.
 	DefaultAPIKey = "otj_devkey_2026"
+
+	defaultTenantSlug   = "default"
+	defaultTenantName   = "Default"
+	defaultTenantStatus = "active"
+
+	defaultAPIKeyPermissions = "{}"
+
+	defaultSecretName    = "bootstrap-api-key"
+	defaultSecretDataKey = "api-key"
+
+	minAPIKeyLength = 12
 )
+
+var errAPIKeyTooShort = errors.New("bootstrap api key must be at least 12 characters")
 
 // Options controls bootstrap behavior.
 type Options struct {
@@ -54,10 +67,10 @@ func EnsureDefault(ctx context.Context, db *sql.DB, opts Options) (Result, error
 	if key == "" {
 		key = DefaultAPIKey
 	}
-	if len(key) < 12 {
-		return Result{}, fmt.Errorf("bootstrap api key must be at least 12 characters")
+	if len(key) < minAPIKeyLength {
+		return Result{}, errAPIKeyTooShort
 	}
-	prefix := key[:12]
+	prefix := key[:minAPIKeyLength]
 
 	hash, err := hashPasswordFn([]byte(key), bcrypt.DefaultCost)
 	if err != nil {
@@ -79,10 +92,10 @@ func EnsureDefault(ctx context.Context, db *sql.DB, opts Options) (Result, error
 	var tenantID string
 	if err = tx.QueryRowContext(ctx, `
 		INSERT INTO tenants (id, slug, name, status, created_at, updated_at)
-		VALUES ($1, $2, $3, 'active', now(), now())
+		VALUES ($1, $2, $3, $4, now(), now())
 		ON CONFLICT (id) DO NOTHING
 		RETURNING id
-	`, DefaultTenantID, "default", "Default").Scan(&tenantID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	`, DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus).Scan(&tenantID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return Result{}, fmt.Errorf("ensure default tenant: %w", err)
 	}
 	res.TenantCreated = err == nil
@@ -90,10 +103,10 @@ func EnsureDefault(ctx context.Context, db *sql.DB, opts Options) (Result, error
 	var keyID string
 	if err = tx.QueryRowContext(ctx, `
 		INSERT INTO api_keys (id, tenant_id, key_hash, key_prefix, permissions, created_at)
-		VALUES ($1, $2, $3, $4, '{}', now())
+		VALUES ($1, $2, $3, $4, $5, now())
 		ON CONFLICT (id) DO NOTHING
 		RETURNING id
-	`, DefaultAPIKeyID, DefaultTenantID, string(hash), prefix).Scan(&keyID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	`, DefaultAPIKeyID, DefaultTenantID, string(hash), prefix, defaultAPIKeyPermissions).Scan(&keyID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return Result{}, fmt.Errorf("ensure default api key: %w", err)
 	}
 	res.KeyCreated = err == nil
@@ -103,8 +116,8 @@ func EnsureDefault(ctx context.Context, db *sql.DB, opts Options) (Result, error
 	}
 
 	if res.KeyCreated && opts.Writer != nil {
-		if err := opts.Writer.Write(ctx, "bootstrap-api-key", map[string]string{
-			"api-key": key,
+		if err := opts.Writer.Write(ctx, defaultSecretName, map[string]string{
+			defaultSecretDataKey: key,
 		}); err != nil {
 			return Result{}, fmt.Errorf("write bootstrap secret: %w", err)
 		}
@@ -114,8 +127,8 @@ func EnsureDefault(ctx context.Context, db *sql.DB, opts Options) (Result, error
 }
 
 func maskKey(key string) string {
-	if len(key) <= 12 {
-		return key + "..."
+	if len(key) > minAPIKeyLength {
+		return key[:minAPIKeyLength] + "..."
 	}
-	return key[:12] + "..."
+	return "..."
 }

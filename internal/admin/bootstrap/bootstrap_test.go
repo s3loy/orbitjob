@@ -37,10 +37,10 @@ func TestEnsureDefault_FirstRun(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("INSERT INTO tenants").
-		WithArgs(DefaultTenantID, "default", "Default").
+		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(DefaultTenantID))
 	mock.ExpectQuery("INSERT INTO api_keys").
-		WithArgs(DefaultAPIKeyID, DefaultTenantID, sqlmock.AnyArg(), DefaultAPIKey[:12]).
+		WithArgs(DefaultAPIKeyID, DefaultTenantID, sqlmock.AnyArg(), DefaultAPIKey[:12], defaultAPIKeyPermissions).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(DefaultAPIKeyID))
 	mock.ExpectCommit()
 
@@ -71,10 +71,10 @@ func TestEnsureDefault_TenantExistsKeyNew(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("INSERT INTO tenants").
-		WithArgs(DefaultTenantID, "default", "Default").
+		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus).
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectQuery("INSERT INTO api_keys").
-		WithArgs(DefaultAPIKeyID, DefaultTenantID, sqlmock.AnyArg(), DefaultAPIKey[:12]).
+		WithArgs(DefaultAPIKeyID, DefaultTenantID, sqlmock.AnyArg(), DefaultAPIKey[:12], defaultAPIKeyPermissions).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(DefaultAPIKeyID))
 	mock.ExpectCommit()
 
@@ -88,6 +88,9 @@ func TestEnsureDefault_TenantExistsKeyNew(t *testing.T) {
 	if !res.KeyCreated {
 		t.Fatalf("expected key created")
 	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
 }
 
 func TestEnsureDefault_BothExist(t *testing.T) {
@@ -99,10 +102,10 @@ func TestEnsureDefault_BothExist(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("INSERT INTO tenants").
-		WithArgs(DefaultTenantID, "default", "Default").
+		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus).
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectQuery("INSERT INTO api_keys").
-		WithArgs(DefaultAPIKeyID, DefaultTenantID, sqlmock.AnyArg(), DefaultAPIKey[:12]).
+		WithArgs(DefaultAPIKeyID, DefaultTenantID, sqlmock.AnyArg(), DefaultAPIKey[:12], defaultAPIKeyPermissions).
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectCommit()
 
@@ -112,6 +115,9 @@ func TestEnsureDefault_BothExist(t *testing.T) {
 	}
 	if res.TenantCreated || res.KeyCreated {
 		t.Fatalf("expected nothing created, got %+v", res)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
 	}
 }
 
@@ -125,10 +131,10 @@ func TestEnsureDefault_CustomKey(t *testing.T) {
 	customKey := "otj_customkey_42"
 	mock.ExpectBegin()
 	mock.ExpectQuery("INSERT INTO tenants").
-		WithArgs(DefaultTenantID, "default", "Default").
+		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(DefaultTenantID))
 	mock.ExpectQuery("INSERT INTO api_keys").
-		WithArgs(DefaultAPIKeyID, DefaultTenantID, sqlmock.AnyArg(), customKey[:12]).
+		WithArgs(DefaultAPIKeyID, DefaultTenantID, sqlmock.AnyArg(), customKey[:12], defaultAPIKeyPermissions).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(DefaultAPIKeyID))
 	mock.ExpectCommit()
 
@@ -138,6 +144,9 @@ func TestEnsureDefault_CustomKey(t *testing.T) {
 	}
 	if res.MaskedKey != customKey[:12]+"..." {
 		t.Fatalf("unexpected masked key: %s", res.MaskedKey)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
 	}
 }
 
@@ -150,7 +159,7 @@ func TestEnsureDefault_KeyTooShort(t *testing.T) {
 
 	_, err = EnsureDefault(t.Context(), db, Options{APIKey: "short"})
 	if err == nil {
-		t.Fatal("expected error for short key")
+		t.Fatal("expected error for short key, got nil")
 	}
 }
 
@@ -169,7 +178,7 @@ func TestEnsureDefault_HashError(t *testing.T) {
 
 	_, err = EnsureDefault(t.Context(), db, Options{})
 	if err == nil {
-		t.Fatal("expected error")
+		t.Fatal("expected error from bcrypt, got nil")
 	}
 }
 
@@ -184,7 +193,10 @@ func TestEnsureDefault_BeginError(t *testing.T) {
 
 	_, err = EnsureDefault(t.Context(), db, Options{})
 	if err == nil {
-		t.Fatal("expected error")
+		t.Fatal("expected error from begin, got nil")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
 	}
 }
 
@@ -197,13 +209,16 @@ func TestEnsureDefault_TenantQueryError(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("INSERT INTO tenants").
-		WithArgs(DefaultTenantID, "default", "Default").
+		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus).
 		WillReturnError(errors.New("tenant insert failed"))
 	mock.ExpectRollback()
 
 	_, err = EnsureDefault(t.Context(), db, Options{})
 	if err == nil {
-		t.Fatal("expected error")
+		t.Fatal("expected error from tenant insert, got nil")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
 	}
 }
 
@@ -216,16 +231,19 @@ func TestEnsureDefault_KeyQueryError(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("INSERT INTO tenants").
-		WithArgs(DefaultTenantID, "default", "Default").
+		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(DefaultTenantID))
 	mock.ExpectQuery("INSERT INTO api_keys").
-		WithArgs(DefaultAPIKeyID, DefaultTenantID, sqlmock.AnyArg(), DefaultAPIKey[:12]).
+		WithArgs(DefaultAPIKeyID, DefaultTenantID, sqlmock.AnyArg(), DefaultAPIKey[:12], defaultAPIKeyPermissions).
 		WillReturnError(errors.New("key insert failed"))
 	mock.ExpectRollback()
 
 	_, err = EnsureDefault(t.Context(), db, Options{})
 	if err == nil {
-		t.Fatal("expected error")
+		t.Fatal("expected error from api key insert, got nil")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
 	}
 }
 
@@ -238,16 +256,19 @@ func TestEnsureDefault_CommitError(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("INSERT INTO tenants").
-		WithArgs(DefaultTenantID, "default", "Default").
+		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(DefaultTenantID))
 	mock.ExpectQuery("INSERT INTO api_keys").
-		WithArgs(DefaultAPIKeyID, DefaultTenantID, sqlmock.AnyArg(), DefaultAPIKey[:12]).
+		WithArgs(DefaultAPIKeyID, DefaultTenantID, sqlmock.AnyArg(), DefaultAPIKey[:12], defaultAPIKeyPermissions).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(DefaultAPIKeyID))
 	mock.ExpectCommit().WillReturnError(errors.New("commit failed"))
 
 	_, err = EnsureDefault(t.Context(), db, Options{})
 	if err == nil {
-		t.Fatal("expected error")
+		t.Fatal("expected error from commit, got nil")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
 	}
 }
 
@@ -256,8 +277,8 @@ func TestMaskKey(t *testing.T) {
 		in, want string
 	}{
 		{"otj_devkey_2026", "otj_devkey_2..."},
-		{"short", "short..."},
-		{"exactlytwelv", "exactlytwelv..."},
+		{"short", "..."},
+		{"exactlytwelv", "..."},
 	}
 	for _, c := range cases {
 		got := maskKey(c.in)
@@ -291,10 +312,10 @@ func TestEnsureDefault_WritesSecretWhenKeyCreated(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("INSERT INTO tenants").
-		WithArgs(DefaultTenantID, "default", "Default").
+		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(DefaultTenantID))
 	mock.ExpectQuery("INSERT INTO api_keys").
-		WithArgs(DefaultAPIKeyID, DefaultTenantID, sqlmock.AnyArg(), DefaultAPIKey[:12]).
+		WithArgs(DefaultAPIKeyID, DefaultTenantID, sqlmock.AnyArg(), DefaultAPIKey[:12], defaultAPIKeyPermissions).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(DefaultAPIKeyID))
 	mock.ExpectCommit()
 
@@ -309,11 +330,14 @@ func TestEnsureDefault_WritesSecretWhenKeyCreated(t *testing.T) {
 	if len(writer.calls) != 1 {
 		t.Fatalf("expected 1 writer call, got %d", len(writer.calls))
 	}
-	if writer.calls[0].name != "bootstrap-api-key" {
+	if writer.calls[0].name != defaultSecretName {
 		t.Fatalf("unexpected secret name: %s", writer.calls[0].name)
 	}
-	if writer.calls[0].data["api-key"] != DefaultAPIKey {
+	if writer.calls[0].data[defaultSecretDataKey] != DefaultAPIKey {
 		t.Fatalf("unexpected secret data")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
 	}
 }
 
@@ -326,10 +350,10 @@ func TestEnsureDefault_SkipsSecretWhenKeyExists(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("INSERT INTO tenants").
-		WithArgs(DefaultTenantID, "default", "Default").
+		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(DefaultTenantID))
 	mock.ExpectQuery("INSERT INTO api_keys").
-		WithArgs(DefaultAPIKeyID, DefaultTenantID, sqlmock.AnyArg(), DefaultAPIKey[:12]).
+		WithArgs(DefaultAPIKeyID, DefaultTenantID, sqlmock.AnyArg(), DefaultAPIKey[:12], defaultAPIKeyPermissions).
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectCommit()
 
@@ -344,6 +368,9 @@ func TestEnsureDefault_SkipsSecretWhenKeyExists(t *testing.T) {
 	if len(writer.calls) != 0 {
 		t.Fatalf("expected no writer calls, got %d", len(writer.calls))
 	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
 }
 
 func TestEnsureDefault_WriterError(t *testing.T) {
@@ -355,16 +382,19 @@ func TestEnsureDefault_WriterError(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("INSERT INTO tenants").
-		WithArgs(DefaultTenantID, "default", "Default").
+		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(DefaultTenantID))
 	mock.ExpectQuery("INSERT INTO api_keys").
-		WithArgs(DefaultAPIKeyID, DefaultTenantID, sqlmock.AnyArg(), DefaultAPIKey[:12]).
+		WithArgs(DefaultAPIKeyID, DefaultTenantID, sqlmock.AnyArg(), DefaultAPIKey[:12], defaultAPIKeyPermissions).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(DefaultAPIKeyID))
 	mock.ExpectCommit()
 
 	writer := &fakeSecretWriter{err: errors.New("write failed")}
 	_, err = EnsureDefault(t.Context(), db, Options{Writer: writer})
 	if err == nil {
-		t.Fatal("expected error")
+		t.Fatal("expected error from writer, got nil")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
 	}
 }
