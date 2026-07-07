@@ -84,8 +84,10 @@ COPY --from=build-dispatcher /out/dispatcher /dispatcher
 USER 65534:65534
 ENTRYPOINT ["/dispatcher"]
 
-FROM alpine:3.21 AS worker
-RUN apk add --no-cache coreutils ca-certificates tzdata
+FROM scratch AS worker
+COPY --from=build-worker /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=build-worker /usr/share/zoneinfo /usr/share/zoneinfo
+COPY --from=build-worker /etc/passwd /etc/passwd
 COPY --from=build-healthcheck /out/healthcheck /healthcheck
 COPY --from=build-worker /out/worker /worker
 USER 65534:65534

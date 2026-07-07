@@ -2,6 +2,7 @@
 # 11 services: PostgreSQL + PgBouncer + migration + 4 Go components + observability stack
 
 x-go-defaults: &go-defaults
+  env_file: .env
   cap_drop:
     - ALL
   read_only: true
@@ -13,10 +14,11 @@ services:
   # ── PostgreSQL 17 ──────────────────────────────────────────────
   pg:
     image: postgres:17-alpine
+    env_file: .env
     environment:
       POSTGRES_DB: orbitjob
       POSTGRES_USER: orbitjob
-      POSTGRES_PASSWORD: ${PG_PASSWORD:-postgres}
+      POSTGRES_PASSWORD: ${PG_PASSWORD}
     command:
       - -c
       - shared_buffers=512MB
@@ -54,14 +56,14 @@ services:
   # ── PgBouncer ──────────────────────────────────────────────────
   pgbouncer:
     image: edoburu/pgbouncer:v1.25.1-p0
+    env_file: .env
     environment:
       DB_HOST: pg
       DB_PORT: "5432"
       DB_USER: orbitjob
-      DB_PASSWORD: ${PG_PASSWORD:-postgres}
+      DB_PASSWORD: ${PG_PASSWORD}
       DB_NAME: orbitjob
-      AUTH_TYPE: scram-sha-256
-      POOL_MODE: session
+      POOL_MODE: transaction
       DEFAULT_POOL_SIZE: "20"
       MAX_CLIENT_CONN: "200"
       MAX_DB_CONNECTIONS: "50"
@@ -78,6 +80,7 @@ services:
   # .sql file in sorted order directly against PG.
   migrate:
     image: postgres:17-alpine
+    env_file: .env
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -88,8 +91,6 @@ services:
           psql "postgres://orbitjob:$${PG_PASSWORD}@pg:5432/orbitjob?sslmode=disable" -f "$$f"
         done
         echo "=== Migrations complete ==="
-    environment:
-      PG_PASSWORD: ${PG_PASSWORD:-postgres}
     volumes:
       - ./db/migrations:/migrations:ro
     depends_on:
@@ -107,7 +108,7 @@ services:
       dockerfile: Dockerfile
       target: bootstrap
     environment:
-      ADMIN_DSN: "postgres://orbitjob:${PG_PASSWORD:-postgres}@pgbouncer:6432/orbitjob?sslmode=disable"
+      ADMIN_DSN: "postgres://orbitjob:${PG_PASSWORD}@pgbouncer:6432/orbitjob?sslmode=disable"
       ADMIN_BOOTSTRAP_SECRET_BACKEND: local
       ADMIN_BOOTSTRAP_SECRET_ROOT: /run/secrets/orbitjob
     volumes:
@@ -130,10 +131,7 @@ services:
       - "8080:8080"
     environment:
       APP_ENV: production
-      ADMIN_DSN: "postgres://orbitjob:${PG_PASSWORD:-postgres}@pgbouncer:6432/orbitjob?sslmode=disable"
-    networks:
-      - frontend
-      - backend
+      ADMIN_DSN: "postgres://orbitjob:${PG_PASSWORD}@pgbouncer:6432/orbitjob?sslmode=disable"
     volumes:
       - bootstrap_secrets:/run/secrets/orbitjob:ro
     depends_on:
@@ -164,7 +162,7 @@ services:
     environment:
       APP_ENV: production
       SCHEDULER_HEALTH_PORT: "6060"
-      SCHEDULER_DSN: "postgres://orbitjob:${PG_PASSWORD:-postgres}@pgbouncer:6432/orbitjob?sslmode=disable"
+      SCHEDULER_DSN: "postgres://orbitjob:${PG_PASSWORD}@pgbouncer:6432/orbitjob?sslmode=disable"
       GOMAXPROCS: "1"
       GOMEMLIMIT: 100MiB
     depends_on:
@@ -193,7 +191,7 @@ services:
     environment:
       APP_ENV: production
       DISPATCHER_HEALTH_PORT: "6061"
-      DISPATCHER_DSN: "postgres://orbitjob:${PG_PASSWORD:-postgres}@pgbouncer:6432/orbitjob?sslmode=disable"
+      DISPATCHER_DSN: "postgres://orbitjob:${PG_PASSWORD}@pgbouncer:6432/orbitjob?sslmode=disable"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -220,7 +218,7 @@ services:
     environment:
       APP_ENV: production
       WORKER_HEALTH_PORT: "6062"
-      WORKER_DSN: "postgres://orbitjob:${PG_PASSWORD:-postgres}@pgbouncer:6432/orbitjob?sslmode=disable"
+      WORKER_DSN: "postgres://orbitjob:${PG_PASSWORD}@pgbouncer:6432/orbitjob?sslmode=disable"
       WORKER_CAPACITY: "5"
       GOMEMLIMIT: 400MiB
     depends_on:
@@ -273,28 +271,27 @@ services:
   # ── Prometheus ─────────────────────────────────────────────────
   prometheus:
     image: prom/prometheus:v3.3.1
+    env_file: .env
     volumes:
       - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./config/prometheus/rules.yml:/etc/prometheus/rules.yml:ro
       - prometheus_data:/prometheus
-    ports:
-      - "9090:9090"
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=15d
       - --web.enable-lifecycle
     networks:
-      - frontend
       - backend
     restart: unless-stopped
 
   # ── Grafana ────────────────────────────────────────────────────
   grafana:
     image: grafana/grafana:11.6.0
+    env_file: .env
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?GRAFANA_PASSWORD must be set in .env}
       GF_AUTH_ANONYMOUS_ENABLED: "false"
     ports:
       - "3000:3000"
