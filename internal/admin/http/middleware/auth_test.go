@@ -2,13 +2,16 @@ package middleware
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/gin-gonic/gin"
-	sqlmock "github.com/DATA-DOG/go-sqlmock"
 	"golang.org/x/crypto/bcrypt"
+
+	"orbitjob/internal/admin/http/apperror"
 )
 
 func TestAuth_BearerToken_Valid(t *testing.T) {
@@ -246,5 +249,35 @@ func TestValidateAPIKey_Expired(t *testing.T) {
 	_, ok := auth.validateAPIKey(context.Background(), key)
 	if ok {
 		t.Fatal("expected false for expired key")
+	}
+}
+
+func TestAuth_UnauthorizedResponseBody(t *testing.T) {
+	db, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	auth := NewAuth(db)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/api/v1/jobs", nil)
+
+	auth.Middleware()(c)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", w.Code)
+	}
+
+	var body apperror.ErrorResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("invalid JSON body: %v", err)
+	}
+	if body.Error.Code != apperror.CodeUnauthorized {
+		t.Fatalf("expected code=%q, got %q", apperror.CodeUnauthorized, body.Error.Code)
+	}
+	if body.Error.Message == "" {
+		t.Fatal("expected non-empty message")
 	}
 }

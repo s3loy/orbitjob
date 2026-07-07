@@ -376,11 +376,11 @@ func TestHandler_ListJobs_BindError(t *testing.T) {
 		t.Fatalf("unmarshal response: %v", err)
 	}
 
-	if out.Error.Code != "VALIDATION_ERROR" {
-		t.Fatalf("expected code VALIDATION_ERROR, got %q", out.Error.Code)
+	if out.Error.Code != "MALFORMED_REQUEST" {
+		t.Fatalf("expected code MALFORMED_REQUEST, got %q", out.Error.Code)
 	}
 	if out.Error.Message == "" {
-		t.Fatal("expected validation error message to be non-empty")
+		t.Fatal("expected malformed request error message to be non-empty")
 	}
 	if out.Error.Code == "INTERNAL_ERROR" {
 		t.Fatal("bind error must not be mapped to INTERNAL_ERROR")

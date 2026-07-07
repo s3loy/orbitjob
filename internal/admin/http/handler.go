@@ -18,12 +18,12 @@ import (
 	sliquery "orbitjob/internal/admin/app/sli/query"
 	slocommand "orbitjob/internal/admin/app/slo/command"
 	sloquery "orbitjob/internal/admin/app/slo/query"
-	slobudgetquery "orbitjob/internal/admin/app/slobudget/query"
 	sloalertquery "orbitjob/internal/admin/app/sloalert/query"
+	slobudgetquery "orbitjob/internal/admin/app/slobudget/query"
+	"orbitjob/internal/admin/http/apperror"
 	"orbitjob/internal/admin/http/middleware"
 	domaincheck "orbitjob/internal/core/domain/check"
 	domaininstance "orbitjob/internal/core/domain/instance"
-	"orbitjob/internal/domain/resource"
 	"orbitjob/internal/domain/validation"
 )
 
@@ -186,21 +186,17 @@ type alertListResponse struct {
 	Items []sloalertquery.ListItem `json:"items"`
 }
 
-type errorResponse struct {
-	Error APIError `json:"error"`
-}
-
 // Handler wires HTTP endpoints to application use cases.
 type Handler struct {
-	createJobUC      createJobUseCase
-	listJobsUC       listJobsUseCase
-	getJobUC         getJobUseCase
-	updateJobUC      updateJobUseCase
-	statusJobUC      changeJobStatusUseCase
-	deleteJobUC      deleteJobUseCase
-	triggerJobUC     triggerJobUseCase
-	listInstancesUC  listInstancesUseCase
-	getInstanceUC    getInstanceUseCase
+	createJobUC         createJobUseCase
+	listJobsUC          listJobsUseCase
+	getJobUC            getJobUseCase
+	updateJobUC         updateJobUseCase
+	statusJobUC         changeJobStatusUseCase
+	deleteJobUC         deleteJobUseCase
+	triggerJobUC        triggerJobUseCase
+	listInstancesUC     listInstancesUseCase
+	getInstanceUC       getInstanceUseCase
 	cancelInstanceUC    cancelInstanceUseCase
 	createCheckUC       createCheckUseCase
 	listChecksUC        listChecksUseCase
@@ -241,32 +237,34 @@ func NewHandler(
 	}
 }
 
-func (h *Handler) SetDeleteJobUseCase(uc deleteJobUseCase)           { h.deleteJobUC = uc }
-func (h *Handler) SetTriggerJobUseCase(uc triggerJobUseCase)         { h.triggerJobUC = uc }
-func (h *Handler) SetListInstancesUseCase(uc listInstancesUseCase)   { h.listInstancesUC = uc }
-func (h *Handler) SetGetInstanceUseCase(uc getInstanceUseCase)       { h.getInstanceUC = uc }
-func (h *Handler) SetCancelInstanceUseCase(uc cancelInstanceUseCase) { h.cancelInstanceUC = uc }
-func (h *Handler) SetCreateCheckUseCase(uc createCheckUseCase)       { h.createCheckUC = uc }
-func (h *Handler) SetListChecksUseCase(uc listChecksUseCase)         { h.listChecksUC = uc }
-func (h *Handler) SetGetCheckUseCase(uc getCheckUseCase)             { h.getCheckUC = uc }
-func (h *Handler) SetPauseCheckUseCase(uc pauseCheckUseCase)         { h.pauseCheckUC = uc }
-func (h *Handler) SetResumeCheckUseCase(uc resumeCheckUseCase)       { h.resumeCheckUC = uc }
-func (h *Handler) SetDeleteCheckUseCase(uc deleteCheckUseCase)       { h.deleteCheckUC = uc }
-func (h *Handler) SetListCheckRunsUseCase(uc listCheckRunsUseCase)   { h.listCheckRunsUC = uc }
-func (h *Handler) SetGetCheckRunUseCase(uc getCheckRunUseCase)       { h.getCheckRunUC = uc }
-func (h *Handler) SetCreateSLIUseCase(uc createSLIUseCase)           { h.createSLIUC = uc }
-func (h *Handler) SetListSLIsUseCase(uc listSLIsUseCase)             { h.listSLIsUC = uc }
-func (h *Handler) SetGetSLIUseCase(uc getSLIUseCase)                 { h.getSLIUC = uc }
-func (h *Handler) SetDeleteSLIUseCase(uc deleteSLIUseCase)           { h.deleteSLIUC = uc }
-func (h *Handler) SetCreateSLOUseCase(uc createSLOUseCase)           { h.createSLOUC = uc }
-func (h *Handler) SetListSLOsUseCase(uc listSLOsUseCase)             { h.listSLOsUC = uc }
-func (h *Handler) SetGetSLOUseCase(uc getSLOUseCase)                 { h.getSLOUC = uc }
+func (h *Handler) SetDeleteJobUseCase(uc deleteJobUseCase)             { h.deleteJobUC = uc }
+func (h *Handler) SetTriggerJobUseCase(uc triggerJobUseCase)           { h.triggerJobUC = uc }
+func (h *Handler) SetListInstancesUseCase(uc listInstancesUseCase)     { h.listInstancesUC = uc }
+func (h *Handler) SetGetInstanceUseCase(uc getInstanceUseCase)         { h.getInstanceUC = uc }
+func (h *Handler) SetCancelInstanceUseCase(uc cancelInstanceUseCase)   { h.cancelInstanceUC = uc }
+func (h *Handler) SetCreateCheckUseCase(uc createCheckUseCase)         { h.createCheckUC = uc }
+func (h *Handler) SetListChecksUseCase(uc listChecksUseCase)           { h.listChecksUC = uc }
+func (h *Handler) SetGetCheckUseCase(uc getCheckUseCase)               { h.getCheckUC = uc }
+func (h *Handler) SetPauseCheckUseCase(uc pauseCheckUseCase)           { h.pauseCheckUC = uc }
+func (h *Handler) SetResumeCheckUseCase(uc resumeCheckUseCase)         { h.resumeCheckUC = uc }
+func (h *Handler) SetDeleteCheckUseCase(uc deleteCheckUseCase)         { h.deleteCheckUC = uc }
+func (h *Handler) SetListCheckRunsUseCase(uc listCheckRunsUseCase)     { h.listCheckRunsUC = uc }
+func (h *Handler) SetGetCheckRunUseCase(uc getCheckRunUseCase)         { h.getCheckRunUC = uc }
+func (h *Handler) SetCreateSLIUseCase(uc createSLIUseCase)             { h.createSLIUC = uc }
+func (h *Handler) SetListSLIsUseCase(uc listSLIsUseCase)               { h.listSLIsUC = uc }
+func (h *Handler) SetGetSLIUseCase(uc getSLIUseCase)                   { h.getSLIUC = uc }
+func (h *Handler) SetDeleteSLIUseCase(uc deleteSLIUseCase)             { h.deleteSLIUC = uc }
+func (h *Handler) SetCreateSLOUseCase(uc createSLOUseCase)             { h.createSLOUC = uc }
+func (h *Handler) SetListSLOsUseCase(uc listSLOsUseCase)               { h.listSLOsUC = uc }
+func (h *Handler) SetGetSLOUseCase(uc getSLOUseCase)                   { h.getSLOUC = uc }
 func (h *Handler) SetChangeSLOStatusUseCase(uc changeSLOStatusUseCase) { h.statusSLOUC = uc }
-func (h *Handler) SetDeleteSLOUseCase(uc deleteSLOUseCase)           { h.deleteSLOUC = uc }
-func (h *Handler) SetGetBudgetUseCase(uc getBudgetUseCase)           { h.getBudgetUC = uc }
-func (h *Handler) SetListBudgetHistoryUseCase(uc listBudgetHistoryUseCase) { h.listBudgetHistoryUC = uc }
-func (h *Handler) SetGetAlertUseCase(uc getAlertUseCase)             { h.getAlertUC = uc }
-func (h *Handler) SetListAlertsUseCase(uc listAlertsUseCase)         { h.listAlertsUC = uc }
+func (h *Handler) SetDeleteSLOUseCase(uc deleteSLOUseCase)             { h.deleteSLOUC = uc }
+func (h *Handler) SetGetBudgetUseCase(uc getBudgetUseCase)             { h.getBudgetUC = uc }
+func (h *Handler) SetListBudgetHistoryUseCase(uc listBudgetHistoryUseCase) {
+	h.listBudgetHistoryUC = uc
+}
+func (h *Handler) SetGetAlertUseCase(uc getAlertUseCase)     { h.getAlertUC = uc }
+func (h *Handler) SetListAlertsUseCase(uc listAlertsUseCase) { h.listAlertsUC = uc }
 
 // Register mounts HTTP routes for the admin API.
 func (h *Handler) Register(r gin.IRouter) {
@@ -283,7 +281,7 @@ func (h *Handler) Register(r gin.IRouter) {
 func (h *Handler) CreateJob(c *gin.Context) {
 	var req CreateJobRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
@@ -291,13 +289,11 @@ func (h *Handler) CreateJob(c *gin.Context) {
 	in.TenantID = middleware.GetTenantID(c)
 	out, err := h.createJobUC.Create(c.Request.Context(), in)
 	if err != nil {
-		if validation.Is(err) {
-			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
-			return
+		apiErr := toAPIError(err)
+		if apiErr.Code == apperror.CodeInternal {
+			_ = c.Error(err)
 		}
-
-		_ = c.Error(err)
-		writeAPIError(c, stdhttp.StatusInternalServerError, toAPIError(err))
+		apperror.Write(c, apperror.StatusForCode(apiErr.Code), apiErr)
 		return
 	}
 
@@ -308,7 +304,7 @@ func (h *Handler) CreateJob(c *gin.Context) {
 func (h *Handler) ListJobs(c *gin.Context) {
 	var req ListJobsRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
@@ -316,13 +312,11 @@ func (h *Handler) ListJobs(c *gin.Context) {
 	in.TenantID = middleware.GetTenantID(c)
 	out, err := h.listJobsUC.List(c.Request.Context(), in)
 	if err != nil {
-		if validation.Is(err) {
-			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
-			return
+		apiErr := toAPIError(err)
+		if apiErr.Code == apperror.CodeInternal {
+			_ = c.Error(err)
 		}
-
-		_ = c.Error(err)
-		writeAPIError(c, stdhttp.StatusInternalServerError, toAPIError(err))
+		apperror.Write(c, apperror.StatusForCode(apiErr.Code), apiErr)
 		return
 	}
 
@@ -335,11 +329,11 @@ func (h *Handler) ListJobs(c *gin.Context) {
 func (h *Handler) GetJob(c *gin.Context) {
 	var req GetJobRequest
 	if err := c.ShouldBindUri(&req); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 	if err := c.ShouldBindQuery(&req); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
@@ -347,18 +341,11 @@ func (h *Handler) GetJob(c *gin.Context) {
 	in.TenantID = middleware.GetTenantID(c)
 	out, err := h.getJobUC.Get(c.Request.Context(), in)
 	if err != nil {
-		if validation.Is(err) {
-			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
-			return
-		}
 		apiErr := toAPIError(err)
-		if apiErr.Code == ErrCodeNotFound {
-			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
-			return
+		if apiErr.Code == apperror.CodeInternal {
+			_ = c.Error(err)
 		}
-
-		_ = c.Error(err)
-		writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
+		apperror.Write(c, apperror.StatusForCode(apiErr.Code), apiErr)
 		return
 	}
 
@@ -369,7 +356,7 @@ func (h *Handler) GetJob(c *gin.Context) {
 func (h *Handler) UpdateJob(c *gin.Context) {
 	var pathReq jobIDURI
 	if err := c.ShouldBindUri(&pathReq); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
@@ -377,14 +364,14 @@ func (h *Handler) UpdateJob(c *gin.Context) {
 		ID: pathReq.ID,
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
 	tenantID := middleware.GetTenantID(c)
 	actorID, err := requiredActorID(c)
 	if err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toAPIError(err))
 		return
 	}
 
@@ -393,43 +380,23 @@ func (h *Handler) UpdateJob(c *gin.Context) {
 		TenantID: tenantID,
 	})
 	if err != nil {
-		if validation.Is(err) {
-			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
-			return
-		}
-
 		apiErr := toAPIError(err)
-		if apiErr.Code == ErrCodeNotFound {
-			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
-			return
+		if apiErr.Code == apperror.CodeInternal {
+			_ = c.Error(err)
 		}
-
-		_ = c.Error(err)
-		writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
+		apperror.Write(c, apperror.StatusForCode(apiErr.Code), apiErr)
 		return
 	}
 
 	req.TenantID = tenantID
 	out, err := h.updateJobUC.Update(c.Request.Context(), req.ToUpdateInput(current, actorID))
 	if err != nil {
-		if validation.Is(err) {
-			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
-			return
-		}
-
 		apiErr := toAPIError(err)
-		switch apiErr.Code {
-		case ErrCodeNotFound:
-			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
-			return
-		case ErrCodeConflict:
-			writeAPIError(c, stdhttp.StatusConflict, apiErr)
-			return
-		default:
+		if apiErr.Code == apperror.CodeInternal {
 			_ = c.Error(err)
-			writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
-			return
 		}
+		apperror.Write(c, apperror.StatusForCode(apiErr.Code), apiErr)
+		return
 	}
 
 	c.JSON(stdhttp.StatusOK, out)
@@ -453,7 +420,7 @@ const (
 func (h *Handler) changeJobStatus(c *gin.Context, action string) {
 	var pathReq jobIDURI
 	if err := c.ShouldBindUri(&pathReq); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
@@ -462,13 +429,13 @@ func (h *Handler) changeJobStatus(c *gin.Context, action string) {
 		TenantID: middleware.GetTenantID(c),
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
 	actorID, err := requiredActorID(c)
 	if err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toAPIError(err))
 		return
 	}
 
@@ -481,28 +448,17 @@ func (h *Handler) changeJobStatus(c *gin.Context, action string) {
 	case domainResume:
 		out, err = h.statusJobUC.Resume(c.Request.Context(), req.ToChangeStatusInput(actorID))
 	default:
-		writeAPIError(c, stdhttp.StatusInternalServerError, toAPIError(validation.New("action", "unsupported status action")))
+		apiErr := apperror.APIError{Code: apperror.CodeInternal, Message: "unsupported status action"}
+		apperror.Write(c, apperror.StatusForCode(apiErr.Code), apiErr)
 		return
 	}
 	if err != nil {
-		if validation.Is(err) {
-			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
-			return
-		}
-
 		apiErr := toAPIError(err)
-		switch apiErr.Code {
-		case ErrCodeNotFound:
-			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
-			return
-		case ErrCodeConflict:
-			writeAPIError(c, stdhttp.StatusConflict, apiErr)
-			return
-		default:
+		if apiErr.Code == apperror.CodeInternal {
 			_ = c.Error(err)
-			writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
-			return
 		}
+		apperror.Write(c, apperror.StatusForCode(apiErr.Code), apiErr)
+		return
 	}
 
 	c.JSON(stdhttp.StatusOK, out)
@@ -526,7 +482,7 @@ func parseIdempotencyKey(c *gin.Context) (*string, error) {
 func (h *Handler) TriggerJob(c *gin.Context) {
 	var pathReq jobIDURI
 	if err := c.ShouldBindUri(&pathReq); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
@@ -538,7 +494,7 @@ func (h *Handler) TriggerJob(c *gin.Context) {
 
 	reqCtx := c.Request.Context()
 	if key, err := parseIdempotencyKey(c); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toAPIError(err))
 		return
 	} else if key != nil {
 		reqCtx = middleware.WithIdempotencyKey(reqCtx, *key)
@@ -547,17 +503,10 @@ func (h *Handler) TriggerJob(c *gin.Context) {
 	out, err := h.triggerJobUC.Trigger(reqCtx, in)
 	if err != nil {
 		apiErr := toAPIError(err)
-		switch apiErr.Code {
-		case ErrCodeValidation:
-			writeAPIError(c, stdhttp.StatusBadRequest, apiErr)
-		case ErrCodeNotFound:
-			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
-		case ErrCodeConflict:
-			writeAPIError(c, stdhttp.StatusConflict, apiErr)
-		default:
+		if apiErr.Code == apperror.CodeInternal {
 			_ = c.Error(err)
-			writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
 		}
+		apperror.Write(c, apperror.StatusForCode(apiErr.Code), apiErr)
 		return
 	}
 
@@ -568,7 +517,7 @@ func (h *Handler) TriggerJob(c *gin.Context) {
 func (h *Handler) DeleteJob(c *gin.Context) {
 	var pathReq jobIDURI
 	if err := c.ShouldBindUri(&pathReq); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
@@ -579,12 +528,12 @@ func (h *Handler) DeleteJob(c *gin.Context) {
 	})
 	if err != nil {
 		apiErr := toAPIError(err)
-		if apiErr.Code == ErrCodeNotFound {
-			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
+		if apiErr.Code == apperror.CodeNotFound {
+			apperror.Write(c, stdhttp.StatusNotFound, apiErr)
 			return
 		}
 		_ = c.Error(err)
-		writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
+		apperror.Write(c, stdhttp.StatusInternalServerError, apiErr)
 		return
 	}
 
@@ -595,7 +544,7 @@ func (h *Handler) DeleteJob(c *gin.Context) {
 func (h *Handler) ListInstances(c *gin.Context) {
 	var req ListInstancesRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
@@ -608,7 +557,7 @@ func (h *Handler) ListInstances(c *gin.Context) {
 	})
 	if err != nil {
 		_ = c.Error(err)
-		writeAPIError(c, stdhttp.StatusInternalServerError, toAPIError(err))
+		apperror.Write(c, stdhttp.StatusInternalServerError, toAPIError(err))
 		return
 	}
 
@@ -619,18 +568,17 @@ func (h *Handler) ListInstances(c *gin.Context) {
 func (h *Handler) GetInstance(c *gin.Context) {
 	var pathReq instanceRunIDURI
 	if err := c.ShouldBindUri(&pathReq); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
 	out, err := h.getInstanceUC.Get(c.Request.Context(), pathReq.RunID)
 	if err != nil {
-		if _, ok := err.(*resource.NotFoundError); ok {
-			writeAPIError(c, stdhttp.StatusNotFound, toAPIError(err))
-			return
+		apiErr := toAPIError(err)
+		if apiErr.Code == apperror.CodeInternal {
+			_ = c.Error(err)
 		}
-		_ = c.Error(err)
-		writeAPIError(c, stdhttp.StatusInternalServerError, toAPIError(err))
+		apperror.Write(c, apperror.StatusForCode(apiErr.Code), apiErr)
 		return
 	}
 
@@ -641,7 +589,7 @@ func (h *Handler) GetInstance(c *gin.Context) {
 func (h *Handler) CancelInstance(c *gin.Context) {
 	var pathReq instanceRunIDURI
 	if err := c.ShouldBindUri(&pathReq); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
@@ -649,7 +597,7 @@ func (h *Handler) CancelInstance(c *gin.Context) {
 		Version int `json:"version" binding:"required,min=1"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
@@ -659,32 +607,21 @@ func (h *Handler) CancelInstance(c *gin.Context) {
 	})
 	if err != nil {
 		apiErr := toAPIError(err)
-		switch apiErr.Code {
-		case ErrCodeNotFound:
-			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
-		case ErrCodeConflict:
-			writeAPIError(c, stdhttp.StatusConflict, apiErr)
-		default:
+		if apiErr.Code == apperror.CodeInternal {
 			_ = c.Error(err)
-			writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
 		}
+		apperror.Write(c, apperror.StatusForCode(apiErr.Code), apiErr)
 		return
 	}
 
 	c.JSON(stdhttp.StatusOK, out)
 }
 
-func writeAPIError(c *gin.Context, statusCode int, apiErr APIError) {
-	c.JSON(statusCode, errorResponse{
-		Error: apiErr,
-	})
-}
-
 // CreateCheck handles check creation requests.
 func (h *Handler) CreateCheck(c *gin.Context) {
 	var req CreateCheckRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
@@ -692,12 +629,11 @@ func (h *Handler) CreateCheck(c *gin.Context) {
 	in.TenantID = middleware.GetTenantID(c)
 	out, err := h.createCheckUC.Create(c.Request.Context(), in)
 	if err != nil {
-		if validation.Is(err) {
-			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
-			return
+		apiErr := toAPIError(err)
+		if apiErr.Code == apperror.CodeInternal {
+			_ = c.Error(err)
 		}
-		_ = c.Error(err)
-		writeAPIError(c, stdhttp.StatusInternalServerError, toAPIError(err))
+		apperror.Write(c, apperror.StatusForCode(apiErr.Code), apiErr)
 		return
 	}
 
@@ -708,7 +644,7 @@ func (h *Handler) CreateCheck(c *gin.Context) {
 func (h *Handler) ListChecks(c *gin.Context) {
 	var req ListChecksRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
@@ -716,12 +652,11 @@ func (h *Handler) ListChecks(c *gin.Context) {
 	in.TenantID = middleware.GetTenantID(c)
 	out, err := h.listChecksUC.List(c.Request.Context(), in)
 	if err != nil {
-		if validation.Is(err) {
-			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
-			return
+		apiErr := toAPIError(err)
+		if apiErr.Code == apperror.CodeInternal {
+			_ = c.Error(err)
 		}
-		_ = c.Error(err)
-		writeAPIError(c, stdhttp.StatusInternalServerError, toAPIError(err))
+		apperror.Write(c, apperror.StatusForCode(apiErr.Code), apiErr)
 		return
 	}
 
@@ -732,27 +667,21 @@ func (h *Handler) ListChecks(c *gin.Context) {
 func (h *Handler) GetCheck(c *gin.Context) {
 	var req GetCheckRequest
 	if err := c.ShouldBindUri(&req); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 	if err := c.ShouldBindQuery(&req); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
 	out, err := h.getCheckUC.Get(c.Request.Context(), middleware.GetTenantID(c), req.ID)
 	if err != nil {
-		if validation.Is(err) {
-			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
-			return
-		}
 		apiErr := toAPIError(err)
-		if apiErr.Code == ErrCodeNotFound {
-			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
-			return
+		if apiErr.Code == apperror.CodeInternal {
+			_ = c.Error(err)
 		}
-		_ = c.Error(err)
-		writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
+		apperror.Write(c, apperror.StatusForCode(apiErr.Code), apiErr)
 		return
 	}
 
@@ -772,7 +701,7 @@ func (h *Handler) ResumeCheck(c *gin.Context) {
 func (h *Handler) changeCheckStatus(c *gin.Context, action string) {
 	var pathReq checkIDURI
 	if err := c.ShouldBindUri(&pathReq); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
@@ -781,7 +710,7 @@ func (h *Handler) changeCheckStatus(c *gin.Context, action string) {
 		TenantID: middleware.GetTenantID(c),
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
@@ -793,27 +722,17 @@ func (h *Handler) changeCheckStatus(c *gin.Context, action string) {
 	case domaincheck.ActionResume:
 		out, err = h.resumeCheckUC.Resume(c.Request.Context(), req.ToChangeStatusInput())
 	default:
-		writeAPIError(c, stdhttp.StatusInternalServerError, toAPIError(validation.New("action", "unsupported status action")))
+		apiErr := apperror.APIError{Code: apperror.CodeInternal, Message: "unsupported status action"}
+		apperror.Write(c, apperror.StatusForCode(apiErr.Code), apiErr)
 		return
 	}
 	if err != nil {
-		if validation.Is(err) {
-			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
-			return
-		}
 		apiErr := toAPIError(err)
-		switch apiErr.Code {
-		case ErrCodeNotFound:
-			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
-			return
-		case ErrCodeConflict:
-			writeAPIError(c, stdhttp.StatusConflict, apiErr)
-			return
-		default:
+		if apiErr.Code == apperror.CodeInternal {
 			_ = c.Error(err)
-			writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
-			return
 		}
+		apperror.Write(c, apperror.StatusForCode(apiErr.Code), apiErr)
+		return
 	}
 
 	c.JSON(stdhttp.StatusOK, out)
@@ -823,7 +742,7 @@ func (h *Handler) changeCheckStatus(c *gin.Context, action string) {
 func (h *Handler) DeleteCheck(c *gin.Context) {
 	var pathReq checkIDURI
 	if err := c.ShouldBindUri(&pathReq); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
@@ -831,7 +750,7 @@ func (h *Handler) DeleteCheck(c *gin.Context) {
 		Version int `json:"version" binding:"required,min=1"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
@@ -842,12 +761,12 @@ func (h *Handler) DeleteCheck(c *gin.Context) {
 	})
 	if err != nil {
 		apiErr := toAPIError(err)
-		if apiErr.Code == ErrCodeNotFound {
-			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
+		if apiErr.Code == apperror.CodeNotFound {
+			apperror.Write(c, stdhttp.StatusNotFound, apiErr)
 			return
 		}
 		_ = c.Error(err)
-		writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
+		apperror.Write(c, stdhttp.StatusInternalServerError, apiErr)
 		return
 	}
 
@@ -858,7 +777,7 @@ func (h *Handler) DeleteCheck(c *gin.Context) {
 func (h *Handler) ListCheckRuns(c *gin.Context) {
 	var req ListCheckRunsRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
@@ -866,12 +785,11 @@ func (h *Handler) ListCheckRuns(c *gin.Context) {
 	in.TenantID = middleware.GetTenantID(c)
 	out, err := h.listCheckRunsUC.List(c.Request.Context(), in)
 	if err != nil {
-		if validation.Is(err) {
-			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
-			return
+		apiErr := toAPIError(err)
+		if apiErr.Code == apperror.CodeInternal {
+			_ = c.Error(err)
 		}
-		_ = c.Error(err)
-		writeAPIError(c, stdhttp.StatusInternalServerError, toAPIError(err))
+		apperror.Write(c, apperror.StatusForCode(apiErr.Code), apiErr)
 		return
 	}
 
@@ -882,23 +800,17 @@ func (h *Handler) ListCheckRuns(c *gin.Context) {
 func (h *Handler) GetCheckRun(c *gin.Context) {
 	var req GetCheckRunRequest
 	if err := c.ShouldBindUri(&req); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
 	out, err := h.getCheckRunUC.Get(c.Request.Context(), middleware.GetTenantID(c), req.ID)
 	if err != nil {
-		if validation.Is(err) {
-			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
-			return
-		}
 		apiErr := toAPIError(err)
-		if apiErr.Code == ErrCodeNotFound {
-			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
-			return
+		if apiErr.Code == apperror.CodeInternal {
+			_ = c.Error(err)
 		}
-		_ = c.Error(err)
-		writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
+		apperror.Write(c, apperror.StatusForCode(apiErr.Code), apiErr)
 		return
 	}
 
@@ -909,7 +821,7 @@ func (h *Handler) GetCheckRun(c *gin.Context) {
 func (h *Handler) CreateSLI(c *gin.Context) {
 	var req CreateSLIRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
@@ -917,12 +829,11 @@ func (h *Handler) CreateSLI(c *gin.Context) {
 	in.TenantID = middleware.GetTenantID(c)
 	out, err := h.createSLIUC.Create(c.Request.Context(), in)
 	if err != nil {
-		if validation.Is(err) {
-			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
-			return
+		apiErr := toAPIError(err)
+		if apiErr.Code == apperror.CodeInternal {
+			_ = c.Error(err)
 		}
-		_ = c.Error(err)
-		writeAPIError(c, stdhttp.StatusInternalServerError, toAPIError(err))
+		apperror.Write(c, apperror.StatusForCode(apiErr.Code), apiErr)
 		return
 	}
 
@@ -933,7 +844,7 @@ func (h *Handler) CreateSLI(c *gin.Context) {
 func (h *Handler) ListSLIs(c *gin.Context) {
 	var req ListSLIsRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
@@ -941,12 +852,11 @@ func (h *Handler) ListSLIs(c *gin.Context) {
 	in.TenantID = middleware.GetTenantID(c)
 	out, err := h.listSLIsUC.List(c.Request.Context(), in)
 	if err != nil {
-		if validation.Is(err) {
-			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
-			return
+		apiErr := toAPIError(err)
+		if apiErr.Code == apperror.CodeInternal {
+			_ = c.Error(err)
 		}
-		_ = c.Error(err)
-		writeAPIError(c, stdhttp.StatusInternalServerError, toAPIError(err))
+		apperror.Write(c, apperror.StatusForCode(apiErr.Code), apiErr)
 		return
 	}
 
@@ -957,23 +867,17 @@ func (h *Handler) ListSLIs(c *gin.Context) {
 func (h *Handler) GetSLI(c *gin.Context) {
 	var req GetSLIRequest
 	if err := c.ShouldBindUri(&req); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
 	out, err := h.getSLIUC.Get(c.Request.Context(), middleware.GetTenantID(c), req.ID)
 	if err != nil {
-		if validation.Is(err) {
-			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
-			return
-		}
 		apiErr := toAPIError(err)
-		if apiErr.Code == ErrCodeNotFound {
-			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
-			return
+		if apiErr.Code == apperror.CodeInternal {
+			_ = c.Error(err)
 		}
-		_ = c.Error(err)
-		writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
+		apperror.Write(c, apperror.StatusForCode(apiErr.Code), apiErr)
 		return
 	}
 
@@ -984,7 +888,7 @@ func (h *Handler) GetSLI(c *gin.Context) {
 func (h *Handler) DeleteSLI(c *gin.Context) {
 	var pathReq sliIDURI
 	if err := c.ShouldBindUri(&pathReq); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
@@ -992,7 +896,7 @@ func (h *Handler) DeleteSLI(c *gin.Context) {
 		Version int `json:"version" binding:"required,min=1"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
@@ -1003,12 +907,12 @@ func (h *Handler) DeleteSLI(c *gin.Context) {
 	})
 	if err != nil {
 		apiErr := toAPIError(err)
-		if apiErr.Code == ErrCodeNotFound {
-			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
+		if apiErr.Code == apperror.CodeNotFound {
+			apperror.Write(c, stdhttp.StatusNotFound, apiErr)
 			return
 		}
 		_ = c.Error(err)
-		writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
+		apperror.Write(c, stdhttp.StatusInternalServerError, apiErr)
 		return
 	}
 
@@ -1019,24 +923,23 @@ func (h *Handler) DeleteSLI(c *gin.Context) {
 func (h *Handler) CreateSLO(c *gin.Context) {
 	var req CreateSLORequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
 	in, err := req.ToCreateInput()
 	if err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, APIError{Code: ErrCodeValidation, Message: err.Error()})
+		apperror.Write(c, stdhttp.StatusBadRequest, apperror.APIError{Code: apperror.CodeValidation, Message: err.Error()})
 		return
 	}
 	in.TenantID = middleware.GetTenantID(c)
 	out, err := h.createSLOUC.Create(c.Request.Context(), in)
 	if err != nil {
-		if validation.Is(err) {
-			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
-			return
+		apiErr := toAPIError(err)
+		if apiErr.Code == apperror.CodeInternal {
+			_ = c.Error(err)
 		}
-		_ = c.Error(err)
-		writeAPIError(c, stdhttp.StatusInternalServerError, toAPIError(err))
+		apperror.Write(c, apperror.StatusForCode(apiErr.Code), apiErr)
 		return
 	}
 
@@ -1047,7 +950,7 @@ func (h *Handler) CreateSLO(c *gin.Context) {
 func (h *Handler) ListSLOs(c *gin.Context) {
 	var req ListSLOsRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
@@ -1055,12 +958,11 @@ func (h *Handler) ListSLOs(c *gin.Context) {
 	in.TenantID = middleware.GetTenantID(c)
 	out, err := h.listSLOsUC.List(c.Request.Context(), in)
 	if err != nil {
-		if validation.Is(err) {
-			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
-			return
+		apiErr := toAPIError(err)
+		if apiErr.Code == apperror.CodeInternal {
+			_ = c.Error(err)
 		}
-		_ = c.Error(err)
-		writeAPIError(c, stdhttp.StatusInternalServerError, toAPIError(err))
+		apperror.Write(c, apperror.StatusForCode(apiErr.Code), apiErr)
 		return
 	}
 
@@ -1071,23 +973,17 @@ func (h *Handler) ListSLOs(c *gin.Context) {
 func (h *Handler) GetSLO(c *gin.Context) {
 	var req GetSLORequest
 	if err := c.ShouldBindUri(&req); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
 	out, err := h.getSLOUC.Get(c.Request.Context(), middleware.GetTenantID(c), req.ID)
 	if err != nil {
-		if validation.Is(err) {
-			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
-			return
-		}
 		apiErr := toAPIError(err)
-		if apiErr.Code == ErrCodeNotFound {
-			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
-			return
+		if apiErr.Code == apperror.CodeInternal {
+			_ = c.Error(err)
 		}
-		_ = c.Error(err)
-		writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
+		apperror.Write(c, apperror.StatusForCode(apiErr.Code), apiErr)
 		return
 	}
 
@@ -1107,7 +1003,7 @@ func (h *Handler) ResumeSLO(c *gin.Context) {
 func (h *Handler) changeSLOStatus(c *gin.Context, action string) {
 	var pathReq sloIDURI
 	if err := c.ShouldBindUri(&pathReq); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
@@ -1115,7 +1011,7 @@ func (h *Handler) changeSLOStatus(c *gin.Context, action string) {
 		Version int `json:"version" binding:"required,min=1"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
@@ -1131,27 +1027,17 @@ func (h *Handler) changeSLOStatus(c *gin.Context, action string) {
 	case "resume":
 		out, err = h.statusSLOUC.Resume(c.Request.Context(), middleware.GetTenantID(c), in)
 	default:
-		writeAPIError(c, stdhttp.StatusInternalServerError, APIError{Code: "internal", Message: "unsupported action"})
+		apiErr := apperror.APIError{Code: apperror.CodeInternal, Message: "unsupported action"}
+		apperror.Write(c, apperror.StatusForCode(apiErr.Code), apiErr)
 		return
 	}
 	if err != nil {
-		if validation.Is(err) {
-			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
-			return
-		}
 		apiErr := toAPIError(err)
-		switch apiErr.Code {
-		case ErrCodeNotFound:
-			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
-			return
-		case ErrCodeConflict:
-			writeAPIError(c, stdhttp.StatusConflict, apiErr)
-			return
-		default:
+		if apiErr.Code == apperror.CodeInternal {
 			_ = c.Error(err)
-			writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
-			return
 		}
+		apperror.Write(c, apperror.StatusForCode(apiErr.Code), apiErr)
+		return
 	}
 
 	c.JSON(stdhttp.StatusOK, out)
@@ -1161,7 +1047,7 @@ func (h *Handler) changeSLOStatus(c *gin.Context, action string) {
 func (h *Handler) DeleteSLO(c *gin.Context) {
 	var pathReq sloIDURI
 	if err := c.ShouldBindUri(&pathReq); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
@@ -1169,7 +1055,7 @@ func (h *Handler) DeleteSLO(c *gin.Context) {
 		Version int `json:"version" binding:"required,min=1"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
@@ -1181,15 +1067,15 @@ func (h *Handler) DeleteSLO(c *gin.Context) {
 	if err != nil {
 		apiErr := toAPIError(err)
 		switch apiErr.Code {
-		case ErrCodeNotFound:
-			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
+		case apperror.CodeNotFound:
+			apperror.Write(c, stdhttp.StatusNotFound, apiErr)
 			return
-		case ErrCodeConflict:
-			writeAPIError(c, stdhttp.StatusConflict, apiErr)
+		case apperror.CodeConflict:
+			apperror.Write(c, stdhttp.StatusConflict, apiErr)
 			return
 		default:
 			_ = c.Error(err)
-			writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
+			apperror.Write(c, stdhttp.StatusInternalServerError, apiErr)
 			return
 		}
 	}
@@ -1201,23 +1087,17 @@ func (h *Handler) DeleteSLO(c *gin.Context) {
 func (h *Handler) GetSLOBudget(c *gin.Context) {
 	var req GetSLOBudgetRequest
 	if err := c.ShouldBindUri(&req); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
 	out, err := h.getBudgetUC.Get(c.Request.Context(), middleware.GetTenantID(c), req.SLOID)
 	if err != nil {
-		if validation.Is(err) {
-			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
-			return
-		}
 		apiErr := toAPIError(err)
-		if apiErr.Code == ErrCodeNotFound {
-			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
-			return
+		if apiErr.Code == apperror.CodeInternal {
+			_ = c.Error(err)
 		}
-		_ = c.Error(err)
-		writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
+		apperror.Write(c, apperror.StatusForCode(apiErr.Code), apiErr)
 		return
 	}
 
@@ -1228,13 +1108,13 @@ func (h *Handler) GetSLOBudget(c *gin.Context) {
 func (h *Handler) ListSLOBudgets(c *gin.Context) {
 	var pathReq sloIDURI
 	if err := c.ShouldBindUri(&pathReq); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
 	var req ListSLOBudgetsRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
@@ -1243,12 +1123,11 @@ func (h *Handler) ListSLOBudgets(c *gin.Context) {
 	in.TenantID = middleware.GetTenantID(c)
 	out, err := h.listBudgetHistoryUC.List(c.Request.Context(), in)
 	if err != nil {
-		if validation.Is(err) {
-			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
-			return
+		apiErr := toAPIError(err)
+		if apiErr.Code == apperror.CodeInternal {
+			_ = c.Error(err)
 		}
-		_ = c.Error(err)
-		writeAPIError(c, stdhttp.StatusInternalServerError, toAPIError(err))
+		apperror.Write(c, apperror.StatusForCode(apiErr.Code), apiErr)
 		return
 	}
 
@@ -1259,23 +1138,17 @@ func (h *Handler) ListSLOBudgets(c *gin.Context) {
 func (h *Handler) GetSLOAlert(c *gin.Context) {
 	var req GetSLOAlertRequest
 	if err := c.ShouldBindUri(&req); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
 	out, err := h.getAlertUC.Get(c.Request.Context(), middleware.GetTenantID(c), req.ID)
 	if err != nil {
-		if validation.Is(err) {
-			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
-			return
-		}
 		apiErr := toAPIError(err)
-		if apiErr.Code == ErrCodeNotFound {
-			writeAPIError(c, stdhttp.StatusNotFound, apiErr)
-			return
+		if apiErr.Code == apperror.CodeInternal {
+			_ = c.Error(err)
 		}
-		_ = c.Error(err)
-		writeAPIError(c, stdhttp.StatusInternalServerError, apiErr)
+		apperror.Write(c, apperror.StatusForCode(apiErr.Code), apiErr)
 		return
 	}
 
@@ -1286,7 +1159,7 @@ func (h *Handler) GetSLOAlert(c *gin.Context) {
 func (h *Handler) ListSLOAlerts(c *gin.Context) {
 	var req ListSLOAlertsRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
-		writeAPIError(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
@@ -1294,12 +1167,11 @@ func (h *Handler) ListSLOAlerts(c *gin.Context) {
 	in.TenantID = middleware.GetTenantID(c)
 	out, err := h.listAlertsUC.List(c.Request.Context(), in)
 	if err != nil {
-		if validation.Is(err) {
-			writeAPIError(c, stdhttp.StatusBadRequest, toAPIError(err))
-			return
+		apiErr := toAPIError(err)
+		if apiErr.Code == apperror.CodeInternal {
+			_ = c.Error(err)
 		}
-		_ = c.Error(err)
-		writeAPIError(c, stdhttp.StatusInternalServerError, toAPIError(err))
+		apperror.Write(c, apperror.StatusForCode(apiErr.Code), apiErr)
 		return
 	}
 

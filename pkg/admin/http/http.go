@@ -1,33 +1,36 @@
 // Package http provides the admin HTTP handler.
 package http
 
-import internal "orbitjob/internal/admin/http"
+import (
+	"orbitjob/internal/admin/http"
+	"orbitjob/internal/admin/http/apperror"
+)
 
 type (
-	Handler           = internal.Handler
-	OpenAPIDocument   = internal.OpenAPIDocument
-	OpenAPIInfo       = internal.OpenAPIInfo
-	OpenAPIComponents = internal.OpenAPIComponents
-	PathItem          = internal.PathItem
-	Operation         = internal.Operation
-	Parameter         = internal.Parameter
-	RequestBody       = internal.RequestBody
-	Response          = internal.Response
-	Header            = internal.Header
-	MediaType         = internal.MediaType
-	Schema            = internal.Schema
-	ErrorCode         = internal.ErrorCode
-	APIError          = internal.APIError
+	Handler           = http.Handler
+	OpenAPIDocument   = http.OpenAPIDocument
+	OpenAPIInfo       = http.OpenAPIInfo
+	OpenAPIComponents = http.OpenAPIComponents
+	PathItem          = http.PathItem
+	Operation         = http.Operation
+	Parameter         = http.Parameter
+	RequestBody       = http.RequestBody
+	Response          = http.Response
+	Header            = http.Header
+	MediaType         = http.MediaType
+	Schema            = http.Schema
+	ErrorCode         = apperror.Code
+	APIError          = apperror.APIError
 )
 
 const (
-	ErrCodeValidation = internal.ErrCodeValidation
-	ErrCodeNotFound   = internal.ErrCodeNotFound
-	ErrCodeConflict   = internal.ErrCodeConflict
-	ErrCodeInternal   = internal.ErrCodeInternal
+	ErrCodeValidation = string(apperror.CodeValidation)
+	ErrCodeNotFound   = string(apperror.CodeNotFound)
+	ErrCodeConflict   = string(apperror.CodeConflict)
+	ErrCodeInternal   = string(apperror.CodeInternal)
 )
 
 var (
-	NewHandler             = internal.NewHandler
-	ServiceOpenAPIDocument = internal.ServiceOpenAPIDocument
+	NewHandler             = http.NewHandler
+	ServiceOpenAPIDocument = http.ServiceOpenAPIDocument
 )

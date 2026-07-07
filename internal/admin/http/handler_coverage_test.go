@@ -16,6 +16,7 @@ import (
 	instancecommand "orbitjob/internal/admin/app/instance/command"
 	instancequery "orbitjob/internal/admin/app/instance/query"
 	command "orbitjob/internal/admin/app/job/command"
+	"orbitjob/internal/admin/http/apperror"
 	"orbitjob/internal/admin/http/middleware"
 	domaininstance "orbitjob/internal/core/domain/instance"
 	"orbitjob/internal/domain/resource"
@@ -353,8 +354,8 @@ func TestHandler_TriggerJob_NotFound(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if out.Error.Code != string(ErrCodeNotFound) {
-		t.Fatalf("expected code=%q, got %q", ErrCodeNotFound, out.Error.Code)
+	if out.Error.Code != string(apperror.CodeNotFound) {
+		t.Fatalf("expected code=%q, got %q", apperror.CodeNotFound, out.Error.Code)
 	}
 }
 
@@ -390,8 +391,8 @@ func TestHandler_TriggerJob_Conflict(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if out.Error.Code != string(ErrCodeConflict) {
-		t.Fatalf("expected code=%q, got %q", ErrCodeConflict, out.Error.Code)
+	if out.Error.Code != string(apperror.CodeConflict) {
+		t.Fatalf("expected code=%q, got %q", apperror.CodeConflict, out.Error.Code)
 	}
 }
 
@@ -427,8 +428,8 @@ func TestHandler_TriggerJob_InternalError(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if out.Error.Code != string(ErrCodeInternal) {
-		t.Fatalf("expected code=%q, got %q", ErrCodeInternal, out.Error.Code)
+	if out.Error.Code != string(apperror.CodeInternal) {
+		t.Fatalf("expected code=%q, got %q", apperror.CodeInternal, out.Error.Code)
 	}
 }
 
@@ -487,8 +488,8 @@ func TestHandler_DeleteJob_NotFound(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if out.Error.Code != string(ErrCodeNotFound) {
-		t.Fatalf("expected code=%q, got %q", ErrCodeNotFound, out.Error.Code)
+	if out.Error.Code != string(apperror.CodeNotFound) {
+		t.Fatalf("expected code=%q, got %q", apperror.CodeNotFound, out.Error.Code)
 	}
 }
 
@@ -525,8 +526,8 @@ func TestHandler_DeleteJob_InternalError(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if out.Error.Code != string(ErrCodeInternal) {
-		t.Fatalf("expected code=%q, got %q", ErrCodeInternal, out.Error.Code)
+	if out.Error.Code != string(apperror.CodeInternal) {
+		t.Fatalf("expected code=%q, got %q", apperror.CodeInternal, out.Error.Code)
 	}
 }
 
@@ -797,8 +798,8 @@ func TestHandler_GetInstance_NotFound(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if out.Error.Code != string(ErrCodeNotFound) {
-		t.Fatalf("expected code=%q, got %q", ErrCodeNotFound, out.Error.Code)
+	if out.Error.Code != string(apperror.CodeNotFound) {
+		t.Fatalf("expected code=%q, got %q", apperror.CodeNotFound, out.Error.Code)
 	}
 }
 
@@ -976,8 +977,8 @@ func TestHandler_CancelInstance_InternalError(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if out.Error.Code != string(ErrCodeInternal) {
-		t.Fatalf("expected code=%q, got %q", ErrCodeInternal, out.Error.Code)
+	if out.Error.Code != string(apperror.CodeInternal) {
+		t.Fatalf("expected code=%q, got %q", apperror.CodeInternal, out.Error.Code)
 	}
 }
 
