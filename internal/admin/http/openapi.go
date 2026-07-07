@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	apikeycommand "orbitjob/internal/admin/app/apikey/command"
 	checkcommand "orbitjob/internal/admin/app/check/command"
 	checkquery "orbitjob/internal/admin/app/check/query"
 	checkrunquery "orbitjob/internal/admin/app/checkrun/query"
@@ -948,6 +949,64 @@ func adminAPIRoutes() []routeDefinition {
 					{statusCode: stdhttp.StatusOK, description: "Tenant detail", model: tenantquery.TenantGetResult{}},
 					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
 					{statusCode: stdhttp.StatusNotFound, description: "Tenant not found", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		// ==================== API Keys ====================
+		{
+			method:   stdhttp.MethodPost,
+			path:     "/tenants/:id/api_keys",
+			enabled:  func(h *Handler) bool { return h != nil && h.createAPIKeyUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.POST("/tenants/:id/api_keys", h.CreateAPIKey) },
+			spec: operationDefinition{
+				id:                  "createAPIKey",
+				summary:             "Create one API key",
+				description:         "Create a new API key for a tenant. The full key is returned only once.",
+				tags:                []string{"API Keys"},
+				parameterModels:     []any{TenantURI{}},
+				requestBodyModel:    CreateAPIKeyRequest{},
+				requestBodyRequired: true,
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusCreated, description: "Created API key", model: apikeycommand.APIKeyCreateResult{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		{
+			method:   stdhttp.MethodGet,
+			path:     "/tenants/:id/api_keys",
+			enabled:  func(h *Handler) bool { return h != nil && h.listAPIKeysUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.GET("/tenants/:id/api_keys", h.ListAPIKeys) },
+			spec: operationDefinition{
+				id:              "listAPIKeys",
+				summary:         "List API keys",
+				description:     "List API keys for a tenant. Full keys and hashes are never exposed.",
+				tags:            []string{"API Keys"},
+				parameterModels: []any{TenantURI{}},
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "API key list", model: apiKeyListResponse{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		{
+			method:   stdhttp.MethodPost,
+			path:     "/api_keys/:id/revoke",
+			enabled:  func(h *Handler) bool { return h != nil && h.revokeAPIKeyUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.POST("/api_keys/:id/revoke", h.RevokeAPIKey) },
+			spec: operationDefinition{
+				id:              "revokeAPIKey",
+				summary:         "Revoke one API key",
+				description:     "Revoke an API key. The key must belong to the caller's tenant and not already be revoked.",
+				tags:            []string{"API Keys"},
+				parameterModels: []any{APIKeyURI{}},
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "Revoked API key", model: apikeycommand.APIKeyRevokeResult{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusNotFound, description: "API key not found", model: errorModel},
 					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
 				},
 			},

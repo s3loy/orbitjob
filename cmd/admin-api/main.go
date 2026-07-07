@@ -16,6 +16,8 @@ import (
 	checkcommand "orbitjob/internal/admin/app/check/command"
 	checkquery "orbitjob/internal/admin/app/check/query"
 	checkrunquery "orbitjob/internal/admin/app/checkrun/query"
+	apikeycommand "orbitjob/internal/admin/app/apikey/command"
+	apikeyquery "orbitjob/internal/admin/app/apikey/query"
 	command "orbitjob/internal/admin/app/job/command"
 	instancecommand "orbitjob/internal/admin/app/instance/command"
 	instancequery "orbitjob/internal/admin/app/instance/query"
@@ -190,6 +192,16 @@ func main() {
 	handler.SetCreateTenantUseCase(createTenantUC)
 	handler.SetListTenantsUseCase(listTenantsUC)
 	handler.SetGetTenantUseCase(getTenantUC)
+
+	// API key use cases.
+	apiKeyRepo := adminpostgres.NewAPIKeyRepository(db)
+	createAPIKeyUC := apikeycommand.NewCreator(apiKeyRepo)
+	listAPIKeysUC := apikeyquery.NewLister(apiKeyRepo)
+	revokeAPIKeyUC := apikeycommand.NewRevoker(apiKeyRepo)
+
+	handler.SetCreateAPIKeyUseCase(createAPIKeyUC)
+	handler.SetListAPIKeysUseCase(listAPIKeysUC)
+	handler.SetRevokeAPIKeyUseCase(revokeAPIKeyUC)
 
 	auth := middleware.NewAuth(db)
 	rl := middleware.NewRateLimiter(ctx)

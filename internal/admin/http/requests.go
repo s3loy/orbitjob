@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	apikeycommand "orbitjob/internal/admin/app/apikey/command"
 	checkcommand "orbitjob/internal/admin/app/check/command"
 	checkquery "orbitjob/internal/admin/app/check/query"
 	checkrunquery "orbitjob/internal/admin/app/checkrun/query"
@@ -550,5 +551,22 @@ func (r ListTenantsRequest) ToListInput() tenantquery.ListInput {
 
 // TenantURI defines the route parameters for reading one tenant.
 type TenantURI struct {
+	ID string `uri:"id" binding:"required,max=26"`
+}
+
+// ==================== API Keys ====================
+
+// CreateAPIKeyRequest defines the HTTP payload for creating an API key.
+type CreateAPIKeyRequest struct{}
+
+// ToCreateInput converts the HTTP request into an admin command input.
+func (r CreateAPIKeyRequest) ToCreateInput(tenantID string) apikeycommand.CreateInput {
+	return apikeycommand.CreateInput{
+		TenantID: tenantID,
+	}
+}
+
+// APIKeyURI defines the route parameters for revoking one API key.
+type APIKeyURI struct {
 	ID string `uri:"id" binding:"required,max=26"`
 }

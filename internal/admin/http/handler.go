@@ -7,6 +7,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	apikeycommand "orbitjob/internal/admin/app/apikey/command"
+	apikeyquery "orbitjob/internal/admin/app/apikey/query"
 	checkcommand "orbitjob/internal/admin/app/check/command"
 	checkquery "orbitjob/internal/admin/app/check/query"
 	checkrunquery "orbitjob/internal/admin/app/checkrun/query"
@@ -27,6 +29,7 @@ import (
 	domaincheck "orbitjob/internal/core/domain/check"
 	domaininstance "orbitjob/internal/core/domain/instance"
 	"orbitjob/internal/domain/validation"
+	"orbitjob/internal/platform/metrics"
 )
 
 // createJobUseCase defines the application capability required by the HTTP handler.
@@ -168,6 +171,18 @@ type getTenantUseCase interface {
 	Get(ctx context.Context, in tenantquery.GetInput) (tenantquery.TenantGetResult, error)
 }
 
+type createAPIKeyUseCase interface {
+	Create(ctx context.Context, in apikeycommand.CreateInput) (apikeycommand.APIKeyCreateResult, error)
+}
+
+type listAPIKeysUseCase interface {
+	List(ctx context.Context, in apikeyquery.ListInput) ([]apikeyquery.APIKeyListItem, error)
+}
+
+type revokeAPIKeyUseCase interface {
+	Revoke(ctx context.Context, in apikeycommand.RevokeInput) error
+}
+
 type checkListResponse struct {
 	Items []checkquery.ListItem `json:"items"`
 }
@@ -202,6 +217,10 @@ type alertListResponse struct {
 
 type tenantListResponse struct {
 	Items []tenantquery.TenantListItem `json:"items"`
+}
+
+type apiKeyListResponse struct {
+	Items []apikeyquery.APIKeyListItem `json:"items"`
 }
 
 // Handler wires HTTP endpoints to application use cases.
@@ -240,6 +259,9 @@ type Handler struct {
 	createTenantUC      createTenantUseCase
 	listTenantsUC       listTenantsUseCase
 	getTenantUC         getTenantUseCase
+	createAPIKeyUC      createAPIKeyUseCase
+	listAPIKeysUC       listAPIKeysUseCase
+	revokeAPIKeyUC      revokeAPIKeyUseCase
 }
 
 func NewHandler(
@@ -289,6 +311,9 @@ func (h *Handler) SetListAlertsUseCase(uc listAlertsUseCase) { h.listAlertsUC = 
 func (h *Handler) SetCreateTenantUseCase(uc createTenantUseCase) { h.createTenantUC = uc }
 func (h *Handler) SetListTenantsUseCase(uc listTenantsUseCase)   { h.listTenantsUC = uc }
 func (h *Handler) SetGetTenantUseCase(uc getTenantUseCase)       { h.getTenantUC = uc }
+func (h *Handler) SetCreateAPIKeyUseCase(uc createAPIKeyUseCase) { h.createAPIKeyUC = uc }
+func (h *Handler) SetListAPIKeysUseCase(uc listAPIKeysUseCase)   { h.listAPIKeysUC = uc }
+func (h *Handler) SetRevokeAPIKeyUseCase(uc revokeAPIKeyUseCase) { h.revokeAPIKeyUC = uc }
 
 // Register mounts HTTP routes for the admin API.
 func (h *Handler) Register(r gin.IRouter) {
@@ -1128,4 +1153,62 @@ func (h *Handler) GetTenant(c *gin.Context) {
 	}
 
 	c.JSON(stdhttp.StatusOK, out)
+}
+
+// CreateAPIKey handles API key creation requests.
+func (h *Handler) CreateAPIKey(c *gin.Context) {
+	var pathReq TenantURI
+	if err := c.ShouldBindUri(&pathReq); err != nil {
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	var req CreateAPIKeyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	out, err := h.createAPIKeyUC.Create(c.Request.Context(), req.ToCreateInput(pathReq.ID))
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+
+	metrics.APIKeysTotal.WithLabelValues(pathReq.ID).Inc()
+	c.JSON(stdhttp.StatusCreated, out)
+}
+
+// ListAPIKeys handles API key list queries.
+func (h *Handler) ListAPIKeys(c *gin.Context) {
+	var pathReq TenantURI
+	if err := c.ShouldBindUri(&pathReq); err != nil {
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	out, err := h.listAPIKeysUC.List(c.Request.Context(), apikeyquery.ListInput{TenantID: pathReq.ID})
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+
+	c.JSON(stdhttp.StatusOK, apiKeyListResponse{Items: out})
+}
+
+// RevokeAPIKey handles API key revocation requests.
+func (h *Handler) RevokeAPIKey(c *gin.Context) {
+	var pathReq APIKeyURI
+	if err := c.ShouldBindUri(&pathReq); err != nil {
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+
+	if err := h.revokeAPIKeyUC.Revoke(c.Request.Context(), apikeycommand.RevokeInput{ID: pathReq.ID, TenantID: middleware.GetTenantID(c)}); err != nil {
+		writeAPIError(c, err)
+		return
+	}
+
+	metrics.APIKeysRevokedTotal.WithLabelValues(middleware.GetTenantID(c)).Inc()
+	c.JSON(stdhttp.StatusOK, apikeycommand.APIKeyRevokeResult{Revoked: true})
 }
