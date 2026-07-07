@@ -335,7 +335,11 @@ func (h *Handler) CreateJob(c *gin.Context) {
 	}
 
 	in := req.ToCreateInput()
-	in.TenantID = middleware.GetTenantID(c)
+	var ok bool
+	in.TenantID, ok = requireTenantID(c, req.TenantID)
+	if !ok {
+		return
+	}
 	out, err := h.createJobUC.Create(c.Request.Context(), in)
 	if err != nil {
 		writeAPIError(c, err)
@@ -354,7 +358,11 @@ func (h *Handler) ListJobs(c *gin.Context) {
 	}
 
 	in := req.ToListInput()
-	in.TenantID = middleware.GetTenantID(c)
+	var ok bool
+	in.TenantID, ok = requireTenantID(c, req.TenantID)
+	if !ok {
+		return
+	}
 	out, err := h.listJobsUC.List(c.Request.Context(), in)
 	if err != nil {
 		writeAPIError(c, err)
@@ -379,7 +387,11 @@ func (h *Handler) GetJob(c *gin.Context) {
 	}
 
 	in := req.ToGetInput()
-	in.TenantID = middleware.GetTenantID(c)
+	var ok bool
+	in.TenantID, ok = requireTenantID(c, req.TenantID)
+	if !ok {
+		return
+	}
 	out, err := h.getJobUC.Get(c.Request.Context(), in)
 	if err != nil {
 		writeAPIError(c, err)
@@ -405,7 +417,10 @@ func (h *Handler) UpdateJob(c *gin.Context) {
 		return
 	}
 
-	tenantID := middleware.GetTenantID(c)
+	tenantID, ok := requireTenantID(c, "")
+	if !ok {
+		return
+	}
 	actorID, err := requiredActorID(c)
 	if err != nil {
 		apperror.Write(c, stdhttp.StatusBadRequest, toAPIError(err))
@@ -454,8 +469,12 @@ func (h *Handler) changeJobStatus(c *gin.Context, action string) {
 	}
 
 	req := ChangeStatusRequest{
-		ID:       pathReq.ID,
-		TenantID: middleware.GetTenantID(c),
+		ID: pathReq.ID,
+	}
+	var ok bool
+	req.TenantID, ok = requireTenantID(c, "")
+	if !ok {
+		return
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
@@ -514,6 +533,21 @@ func writeAPIError(c *gin.Context, err error) {
 	apperror.Write(c, apperror.StatusForCode(apiErr.Code), apiErr)
 }
 
+// requireTenantID resolves a tenant from the explicit request value, falling
+// back to the tenant established by authentication. If neither is present it
+// writes a 403 Forbidden response and returns false.
+func requireTenantID(c *gin.Context, fromRequest string) (string, bool) {
+	tenantID, err := middleware.ResolveTenantID(c, fromRequest)
+	if err != nil {
+		apperror.Write(c, stdhttp.StatusForbidden, apperror.APIError{
+			Code:    apperror.CodeForbidden,
+			Message: "tenant required",
+		})
+		return "", false
+	}
+	return tenantID, true
+}
+
 // TriggerJob handles manual trigger requests.
 func (h *Handler) TriggerJob(c *gin.Context) {
 	var pathReq jobIDURI
@@ -522,7 +556,10 @@ func (h *Handler) TriggerJob(c *gin.Context) {
 		return
 	}
 
-	tenantID := middleware.GetTenantID(c)
+	tenantID, ok := requireTenantID(c, "")
+	if !ok {
+		return
+	}
 	in := command.TriggerInput{
 		JobID:    pathReq.ID,
 		TenantID: tenantID,
@@ -553,7 +590,10 @@ func (h *Handler) DeleteJob(c *gin.Context) {
 		return
 	}
 
-	tenantID := middleware.GetTenantID(c)
+	tenantID, ok := requireTenantID(c, "")
+	if !ok {
+		return
+	}
 	out, err := h.deleteJobUC.Delete(c.Request.Context(), command.DeleteInput{
 		ID:       pathReq.ID,
 		TenantID: tenantID,
@@ -574,7 +614,10 @@ func (h *Handler) ListInstances(c *gin.Context) {
 		return
 	}
 
-	tenantID := middleware.GetTenantID(c)
+	tenantID, ok := requireTenantID(c, "")
+	if !ok {
+		return
+	}
 	out, err := h.listInstancesUC.List(c.Request.Context(), instancequery.ListInstancesInput{
 		TenantID: tenantID,
 		Status:   req.Status,
@@ -643,7 +686,11 @@ func (h *Handler) CreateCheck(c *gin.Context) {
 	}
 
 	in := req.ToCreateInput()
-	in.TenantID = middleware.GetTenantID(c)
+	var ok bool
+	in.TenantID, ok = requireTenantID(c, req.TenantID)
+	if !ok {
+		return
+	}
 	out, err := h.createCheckUC.Create(c.Request.Context(), in)
 	if err != nil {
 		writeAPIError(c, err)
@@ -662,7 +709,11 @@ func (h *Handler) ListChecks(c *gin.Context) {
 	}
 
 	in := req.ToListInput()
-	in.TenantID = middleware.GetTenantID(c)
+	var ok bool
+	in.TenantID, ok = requireTenantID(c, req.TenantID)
+	if !ok {
+		return
+	}
 	out, err := h.listChecksUC.List(c.Request.Context(), in)
 	if err != nil {
 		writeAPIError(c, err)
@@ -684,7 +735,11 @@ func (h *Handler) GetCheck(c *gin.Context) {
 		return
 	}
 
-	out, err := h.getCheckUC.Get(c.Request.Context(), middleware.GetTenantID(c), req.ID)
+	tenantID, ok := requireTenantID(c, req.TenantID)
+	if !ok {
+		return
+	}
+	out, err := h.getCheckUC.Get(c.Request.Context(), tenantID, req.ID)
 	if err != nil {
 		writeAPIError(c, err)
 		return
@@ -711,8 +766,12 @@ func (h *Handler) changeCheckStatus(c *gin.Context, action string) {
 	}
 
 	req := ChangeCheckStatusRequest{
-		ID:       pathReq.ID,
-		TenantID: middleware.GetTenantID(c),
+		ID: pathReq.ID,
+	}
+	var ok bool
+	req.TenantID, ok = requireTenantID(c, "")
+	if !ok {
+		return
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
@@ -755,9 +814,14 @@ func (h *Handler) DeleteCheck(c *gin.Context) {
 		return
 	}
 
+	tenantID, ok := requireTenantID(c, "")
+	if !ok {
+		return
+	}
+
 	err := h.deleteCheckUC.Delete(c.Request.Context(), checkcommand.DeleteInput{
 		ID:       pathReq.ID,
-		TenantID: middleware.GetTenantID(c),
+		TenantID: tenantID,
 		Version:  body.Version,
 	})
 	if err != nil {
@@ -777,7 +841,11 @@ func (h *Handler) ListCheckRuns(c *gin.Context) {
 	}
 
 	in := req.ToListInput()
-	in.TenantID = middleware.GetTenantID(c)
+	var ok bool
+	in.TenantID, ok = requireTenantID(c, req.TenantID)
+	if !ok {
+		return
+	}
 	out, err := h.listCheckRunsUC.List(c.Request.Context(), in)
 	if err != nil {
 		writeAPIError(c, err)
@@ -795,7 +863,11 @@ func (h *Handler) GetCheckRun(c *gin.Context) {
 		return
 	}
 
-	out, err := h.getCheckRunUC.Get(c.Request.Context(), middleware.GetTenantID(c), req.ID)
+	tenantID, ok := requireTenantID(c, "")
+	if !ok {
+		return
+	}
+	out, err := h.getCheckRunUC.Get(c.Request.Context(), tenantID, req.ID)
 	if err != nil {
 		writeAPIError(c, err)
 		return
@@ -813,7 +885,11 @@ func (h *Handler) CreateSLI(c *gin.Context) {
 	}
 
 	in := req.ToCreateInput()
-	in.TenantID = middleware.GetTenantID(c)
+	var ok bool
+	in.TenantID, ok = requireTenantID(c, "")
+	if !ok {
+		return
+	}
 	out, err := h.createSLIUC.Create(c.Request.Context(), in)
 	if err != nil {
 		writeAPIError(c, err)
@@ -832,7 +908,11 @@ func (h *Handler) ListSLIs(c *gin.Context) {
 	}
 
 	in := req.ToListInput()
-	in.TenantID = middleware.GetTenantID(c)
+	var ok bool
+	in.TenantID, ok = requireTenantID(c, req.TenantID)
+	if !ok {
+		return
+	}
 	out, err := h.listSLIsUC.List(c.Request.Context(), in)
 	if err != nil {
 		writeAPIError(c, err)
@@ -850,7 +930,11 @@ func (h *Handler) GetSLI(c *gin.Context) {
 		return
 	}
 
-	out, err := h.getSLIUC.Get(c.Request.Context(), middleware.GetTenantID(c), req.ID)
+	tenantID, ok := requireTenantID(c, "")
+	if !ok {
+		return
+	}
+	out, err := h.getSLIUC.Get(c.Request.Context(), tenantID, req.ID)
 	if err != nil {
 		writeAPIError(c, err)
 		return
@@ -875,8 +959,13 @@ func (h *Handler) DeleteSLI(c *gin.Context) {
 		return
 	}
 
+	tenantID, ok := requireTenantID(c, "")
+	if !ok {
+		return
+	}
+
 	err := h.deleteSLIUC.Delete(c.Request.Context(), slicommand.DeleteInput{
-		TenantID: middleware.GetTenantID(c),
+		TenantID: tenantID,
 		ID:       pathReq.ID,
 		Version:  body.Version,
 	})
@@ -901,7 +990,11 @@ func (h *Handler) CreateSLO(c *gin.Context) {
 		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
-	in.TenantID = middleware.GetTenantID(c)
+	var ok bool
+	in.TenantID, ok = requireTenantID(c, "")
+	if !ok {
+		return
+	}
 	out, err := h.createSLOUC.Create(c.Request.Context(), in)
 	if err != nil {
 		writeAPIError(c, err)
@@ -920,7 +1013,11 @@ func (h *Handler) ListSLOs(c *gin.Context) {
 	}
 
 	in := req.ToListInput()
-	in.TenantID = middleware.GetTenantID(c)
+	var ok bool
+	in.TenantID, ok = requireTenantID(c, req.TenantID)
+	if !ok {
+		return
+	}
 	out, err := h.listSLOsUC.List(c.Request.Context(), in)
 	if err != nil {
 		writeAPIError(c, err)
@@ -938,7 +1035,11 @@ func (h *Handler) GetSLO(c *gin.Context) {
 		return
 	}
 
-	out, err := h.getSLOUC.Get(c.Request.Context(), middleware.GetTenantID(c), req.ID)
+	tenantID, ok := requireTenantID(c, "")
+	if !ok {
+		return
+	}
+	out, err := h.getSLOUC.Get(c.Request.Context(), tenantID, req.ID)
 	if err != nil {
 		writeAPIError(c, err)
 		return
@@ -976,13 +1077,17 @@ func (h *Handler) changeSLOStatus(c *gin.Context, action string) {
 		ID:      pathReq.ID,
 		Version: body.Version,
 	}
+	tenantID, ok := requireTenantID(c, "")
+	if !ok {
+		return
+	}
 	var out slocommand.ChangeStatusResult
 	var err error
 	switch action {
 	case "pause":
-		out, err = h.statusSLOUC.Pause(c.Request.Context(), middleware.GetTenantID(c), in)
+		out, err = h.statusSLOUC.Pause(c.Request.Context(), tenantID, in)
 	case "resume":
-		out, err = h.statusSLOUC.Resume(c.Request.Context(), middleware.GetTenantID(c), in)
+		out, err = h.statusSLOUC.Resume(c.Request.Context(), tenantID, in)
 	default:
 		apiErr := apperror.APIError{Code: apperror.CodeInternal, Message: "unsupported action"}
 		apperror.Write(c, apperror.StatusForCode(apiErr.Code), apiErr)
@@ -1012,8 +1117,13 @@ func (h *Handler) DeleteSLO(c *gin.Context) {
 		return
 	}
 
+	tenantID, ok := requireTenantID(c, "")
+	if !ok {
+		return
+	}
+
 	err := h.deleteSLOUC.Delete(c.Request.Context(), slocommand.DeleteInput{
-		TenantID: middleware.GetTenantID(c),
+		TenantID: tenantID,
 		ID:       pathReq.ID,
 		Version:  body.Version,
 	})
@@ -1033,7 +1143,11 @@ func (h *Handler) GetSLOBudget(c *gin.Context) {
 		return
 	}
 
-	out, err := h.getBudgetUC.Get(c.Request.Context(), middleware.GetTenantID(c), req.SLOID)
+	tenantID, ok := requireTenantID(c, "")
+	if !ok {
+		return
+	}
+	out, err := h.getBudgetUC.Get(c.Request.Context(), tenantID, req.SLOID)
 	if err != nil {
 		writeAPIError(c, err)
 		return
@@ -1058,7 +1172,11 @@ func (h *Handler) ListSLOBudgets(c *gin.Context) {
 
 	in := req.ToListInput()
 	in.SLOID = pathReq.ID
-	in.TenantID = middleware.GetTenantID(c)
+	var ok bool
+	in.TenantID, ok = requireTenantID(c, req.TenantID)
+	if !ok {
+		return
+	}
 	out, err := h.listBudgetHistoryUC.List(c.Request.Context(), in)
 	if err != nil {
 		writeAPIError(c, err)
@@ -1076,7 +1194,11 @@ func (h *Handler) GetSLOAlert(c *gin.Context) {
 		return
 	}
 
-	out, err := h.getAlertUC.Get(c.Request.Context(), middleware.GetTenantID(c), req.ID)
+	tenantID, ok := requireTenantID(c, "")
+	if !ok {
+		return
+	}
+	out, err := h.getAlertUC.Get(c.Request.Context(), tenantID, req.ID)
 	if err != nil {
 		writeAPIError(c, err)
 		return
@@ -1094,7 +1216,11 @@ func (h *Handler) ListSLOAlerts(c *gin.Context) {
 	}
 
 	in := req.ToListInput()
-	in.TenantID = middleware.GetTenantID(c)
+	var ok bool
+	in.TenantID, ok = requireTenantID(c, req.TenantID)
+	if !ok {
+		return
+	}
 	out, err := h.listAlertsUC.List(c.Request.Context(), in)
 	if err != nil {
 		writeAPIError(c, err)
@@ -1129,7 +1255,13 @@ func (h *Handler) ListTenants(c *gin.Context) {
 		return
 	}
 
-	out, err := h.listTenantsUC.List(c.Request.Context(), req.ToListInput())
+	tenantID, ok := requireTenantID(c, "")
+	if !ok {
+		return
+	}
+	in := req.ToListInput()
+	in.TenantID = tenantID
+	out, err := h.listTenantsUC.List(c.Request.Context(), in)
 	if err != nil {
 		writeAPIError(c, err)
 		return
@@ -1146,7 +1278,11 @@ func (h *Handler) GetTenant(c *gin.Context) {
 		return
 	}
 
-	out, err := h.getTenantUC.Get(c.Request.Context(), tenantquery.GetInput{ID: req.ID})
+	tenantID, ok := requireTenantID(c, "")
+	if !ok {
+		return
+	}
+	out, err := h.getTenantUC.Get(c.Request.Context(), tenantquery.GetInput{TenantID: tenantID, ID: req.ID})
 	if err != nil {
 		writeAPIError(c, err)
 		return
@@ -1204,7 +1340,10 @@ func (h *Handler) RevokeAPIKey(c *gin.Context) {
 		return
 	}
 
-	tenantID := middleware.GetTenantID(c)
+	tenantID, ok := requireTenantID(c, "")
+	if !ok {
+		return
+	}
 	if err := h.revokeAPIKeyUC.Revoke(c.Request.Context(), apikeycommand.RevokeInput{ID: pathReq.ID, TenantID: tenantID}); err != nil {
 		writeAPIError(c, err)
 		return

@@ -13,8 +13,9 @@ const (
 
 // ListInput is the control-plane query model for listing tenants.
 type ListInput struct {
-	Limit  int
-	Offset int
+	TenantID string
+	Limit    int
+	Offset   int
 }
 
 // TenantListItem is the control-plane read model used by GET /api/v1/tenants.
@@ -26,7 +27,7 @@ type TenantListItem struct {
 }
 
 type tenantListReader interface {
-	List(ctx context.Context, limit, offset int) ([]tenant.Tenant, error)
+	List(ctx context.Context, tenantID string, limit, offset int) ([]tenant.Tenant, error)
 }
 
 // Lister lists tenants.
@@ -52,7 +53,7 @@ func (uc *Lister) List(ctx context.Context, in ListInput) ([]TenantListItem, err
 	if offset < 0 {
 		offset = 0
 	}
-	tt, err := uc.repo.List(ctx, limit, offset)
+	tt, err := uc.repo.List(ctx, in.TenantID, limit, offset)
 	if err != nil {
 		return nil, err
 	}

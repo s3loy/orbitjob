@@ -70,8 +70,7 @@ func TestHandler_CreateTenant(t *testing.T) {
 	handler := NewHandler(nil, nil, nil, nil, nil)
 	handler.SetCreateTenantUseCase(uc)
 
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	body := `{"slug":"acme","name":"Acme Corp"}`
 	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/tenants", bytes.NewBufferString(body))
@@ -109,8 +108,7 @@ func TestHandler_CreateTenant_BindError(t *testing.T) {
 	handler := NewHandler(nil, nil, nil, nil, nil)
 	handler.SetCreateTenantUseCase(uc)
 
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/tenants", bytes.NewBufferString(`{}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -135,8 +133,7 @@ func TestHandler_CreateTenant_UseCaseError(t *testing.T) {
 	handler := NewHandler(nil, nil, nil, nil, nil)
 	handler.SetCreateTenantUseCase(uc)
 
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/tenants",
 		bytes.NewBufferString(`{"slug":"","name":"Acme"}`))
@@ -161,8 +158,7 @@ func TestHandler_ListTenants(t *testing.T) {
 	handler := NewHandler(nil, nil, nil, nil, nil)
 	handler.SetListTenantsUseCase(uc)
 
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/tenants?limit=10&offset=5", nil)
 	resp := httptest.NewRecorder()
@@ -201,8 +197,7 @@ func TestHandler_ListTenants_UseCaseError(t *testing.T) {
 	handler := NewHandler(nil, nil, nil, nil, nil)
 	handler.SetListTenantsUseCase(uc)
 
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/tenants", nil)
 	resp := httptest.NewRecorder()
@@ -228,8 +223,7 @@ func TestHandler_GetTenant(t *testing.T) {
 	handler := NewHandler(nil, nil, nil, nil, nil)
 	handler.SetGetTenantUseCase(uc)
 
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/tenants/01HZX", nil)
 	resp := httptest.NewRecorder()
@@ -254,8 +248,7 @@ func TestHandler_GetTenant_BindError(t *testing.T) {
 	handler := NewHandler(nil, nil, nil, nil, nil)
 	handler.SetGetTenantUseCase(uc)
 
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/tenants/", nil)
 	resp := httptest.NewRecorder()
@@ -274,8 +267,7 @@ func TestHandler_GetTenant_UseCaseError(t *testing.T) {
 	handler := NewHandler(nil, nil, nil, nil, nil)
 	handler.SetGetTenantUseCase(uc)
 
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/tenants/01HZX", nil)
 	resp := httptest.NewRecorder()

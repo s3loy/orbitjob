@@ -18,21 +18,33 @@ func NewAPIKeyRepository(db *sql.DB) *APIKeyRepository { return &APIKeyRepositor
 
 // Create inserts a new API key.
 func (r *APIKeyRepository) Create(ctx context.Context, tenantID, id, keyHash, keyPrefix string) error {
-	_, err := r.db.ExecContext(ctx, `
+	tx, err := WithTenant(ctx, r.db, tenantID)
+	if err != nil {
+		return fmt.Errorf("begin tenant transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO api_keys (id, tenant_id, key_hash, key_prefix)
 		VALUES ($1, $2, $3, $4)
 	`, id, tenantID, keyHash, keyPrefix)
 	if err != nil {
 		return fmt.Errorf("insert api key: %w", err)
 	}
-	return nil
+	return tx.Commit()
 }
 
 // ListByTenant returns all API keys for a tenant, excluding key_hash.
 // Returning []apikey.APIKey (a core/domain type) keeps the store package below
 // the app layer and avoids an import cycle between admin/app and admin/store.
 func (r *APIKeyRepository) ListByTenant(ctx context.Context, tenantID string) ([]apikey.APIKey, error) {
-	rows, err := r.db.QueryContext(ctx, `
+	tx, err := WithTenant(ctx, r.db, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("begin tenant transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	rows, err := tx.QueryContext(ctx, `
 		SELECT id, key_prefix, created_at, revoked_at
 		FROM api_keys
 		WHERE tenant_id = $1
@@ -57,13 +69,22 @@ func (r *APIKeyRepository) ListByTenant(ctx context.Context, tenantID string) ([
 	if out == nil {
 		out = []apikey.APIKey{}
 	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit tenant transaction: %w", err)
+	}
 	return out, nil
 }
 
 // Revoke marks an API key as revoked if it belongs to the tenant and is not already revoked.
 func (r *APIKeyRepository) Revoke(ctx context.Context, tenantID, id string) error {
+	tx, err := WithTenant(ctx, r.db, tenantID)
+	if err != nil {
+		return fmt.Errorf("begin tenant transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	now := time.Now().UTC()
-	res, err := r.db.ExecContext(ctx, `
+	res, err := tx.ExecContext(ctx, `
 		UPDATE api_keys SET revoked_at = $1
 		WHERE id = $2 AND tenant_id = $3 AND revoked_at IS NULL
 	`, now, id, tenantID)
@@ -78,5 +99,5 @@ func (r *APIKeyRepository) Revoke(ctx context.Context, tenantID, id string) erro
 	if affected == 0 {
 		return &resource.NotFoundError{Resource: "api_key", ID: id}
 	}
-	return nil
+	return tx.Commit()
 }

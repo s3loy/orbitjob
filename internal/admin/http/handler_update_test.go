@@ -176,8 +176,7 @@ func TestHandler_UpdateJob_BindError(t *testing.T) {
 	getUseCase := &stubGetJobUseCase{}
 	useCase := &stubUpdateJobUseCase{}
 	handler := NewHandler(nil, nil, getUseCase, useCase, nil)
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	req := httptest.NewRequest(stdhttp.MethodPut, "/api/v1/jobs/bad",
 		bytes.NewBufferString(`{"version":1}`))
@@ -204,8 +203,7 @@ func TestHandler_UpdateJob_MissingActor(t *testing.T) {
 	getUseCase := &stubGetJobUseCase{}
 	useCase := &stubUpdateJobUseCase{}
 	handler := NewHandler(nil, nil, getUseCase, useCase, nil)
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	body := `{
 		"version": 1,
@@ -244,8 +242,7 @@ func TestHandler_UpdateJob_ValidationError(t *testing.T) {
 		},
 	}
 	handler := NewHandler(nil, nil, getUseCase, useCase, nil)
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	body := `{
 		"version": 1,
@@ -277,8 +274,7 @@ func TestHandler_UpdateJob_NotFound(t *testing.T) {
 	}
 	useCase := &stubUpdateJobUseCase{}
 	handler := NewHandler(nil, nil, getUseCase, useCase, nil)
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	body := `{
 		"version": 1,
@@ -316,8 +312,7 @@ func TestHandler_UpdateJob_Conflict(t *testing.T) {
 		},
 	}
 	handler := NewHandler(nil, nil, getUseCase, useCase, nil)
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	body := `{
 		"version": 1,
@@ -348,8 +343,7 @@ func TestHandler_UpdateJob_InternalError(t *testing.T) {
 		err: errors.New("update job: db down"),
 	}
 	handler := NewHandler(nil, nil, getUseCase, useCase, nil)
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	body := `{
 		"version": 1,

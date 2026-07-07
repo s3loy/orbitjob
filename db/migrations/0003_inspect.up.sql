@@ -279,11 +279,13 @@ EXECUTE FUNCTION set_updated_at();
 -- ============================================================
 -- RLS Policies
 -- ============================================================
+DROP POLICY IF EXISTS checks_tenant_isolation ON checks;
 CREATE POLICY checks_tenant_isolation ON checks
     FOR ALL
     USING (tenant_id = current_setting('app.tenant_id'))
     WITH CHECK (tenant_id = current_setting('app.tenant_id'));
 
+DROP POLICY IF EXISTS check_runs_tenant_isolation ON check_runs;
 CREATE POLICY check_runs_tenant_isolation ON check_runs
     FOR ALL
     USING (tenant_id = current_setting('app.tenant_id'))
