@@ -43,10 +43,7 @@ func (s *stubTickRunner) SubmitNext(_ context.Context, _ *execute.WorkerPool, te
 	s.mu.Unlock()
 
 	if callCh != nil {
-		select {
-		case callCh <- struct{}{}:
-		default:
-		}
+		callCh <- struct{}{}
 	}
 	if onCall != nil {
 		onCall(callNo)
