@@ -1,6 +1,7 @@
 // cmd/bootstrap is a standalone CLI to ensure the default tenant and initial
-// API key exist. It prints the full key to stdout only when a new key is
-// created, making it suitable for scripted first-time setup.
+// API key exist. It persists the key to a SecretWriter backend (local file or
+// Kubernetes Secret) and prints status messages to stderr, making it suitable
+// for scripted first-time setup.
 package main
 
 import (
@@ -11,6 +12,22 @@ import (
 
 	"orbitjob/internal/admin/bootstrap"
 	adminpostgres "orbitjob/internal/admin/store/postgres"
+
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+)
+
+// Test seams for newSecretWriter.
+var (
+	inClusterConfigFn = rest.InClusterConfig
+	newKubernetesClientFn = func(cfg *rest.Config) (kubernetes.Interface, error) {
+		return kubernetes.NewForConfig(cfg)
+	}
+)
+
+const (
+	defaultSecretRoot = "/run/secrets/orbitjob"
+	defaultNamespace  = "orbitjob-system"
 )
 
 func main() {
@@ -25,12 +42,14 @@ func main() {
 	}
 	defer func() { _ = db.Close() }()
 
-	key := os.Getenv("ADMIN_BOOTSTRAP_API_KEY")
-	if key == "" {
-		key = bootstrap.DefaultAPIKey
+	writer, err := newSecretWriter()
+	if err != nil {
+		log.Fatalf("secret writer: %v", err)
 	}
+
 	opts := bootstrap.Options{
-		APIKey: key,
+		APIKey: os.Getenv("ADMIN_BOOTSTRAP_API_KEY"),
+		Writer: writer,
 	}
 	res, err := bootstrap.EnsureDefault(context.Background(), db, opts)
 	if err != nil {
@@ -39,10 +58,8 @@ func main() {
 
 	if res.KeyCreated {
 		fmt.Fprintln(os.Stderr, "Bootstrap API key created.")
-		fmt.Println(key)
 		return
 	}
-
 	fmt.Fprintln(os.Stderr, "Default API key already exists.")
 }
 
@@ -54,4 +71,32 @@ func resolveDSN(args []string) string {
 		return d
 	}
 	return os.Getenv("ADMIN_DSN")
+}
+
+func newSecretWriter() (bootstrap.SecretWriter, error) {
+	if os.Getenv("ADMIN_BOOTSTRAP_SECRET_BACKEND") == "local" || !inCluster() {
+		root := os.Getenv("ADMIN_BOOTSTRAP_SECRET_ROOT")
+		if root == "" {
+			root = defaultSecretRoot
+		}
+		return &bootstrap.LocalFileSecretWriter{Root: root}, nil
+	}
+
+	cfg, err := inClusterConfigFn()
+	if err != nil {
+		return nil, fmt.Errorf("in-cluster config: %w", err)
+	}
+	client, err := newKubernetesClientFn(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("k8s client: %w", err)
+	}
+	ns := os.Getenv("ADMIN_BOOTSTRAP_NAMESPACE")
+	if ns == "" {
+		ns = defaultNamespace
+	}
+	return &bootstrap.K8sSecretWriter{Client: client, Namespace: ns}, nil
+}
+
+func inCluster() bool {
+	return os.Getenv("KUBERNETES_SERVICE_HOST") != ""
 }
