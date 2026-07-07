@@ -18,6 +18,8 @@ services:
 
   # ── Admin API: hot-reload with devserver ────────────────────
   admin-api:
+    ports:
+      - "8080:8080"
     environment:
       APP_ENV: development
     deploy:
@@ -59,6 +61,8 @@ services:
 
   # ── Grafana: dev-friendly defaults ──────────────────────────
   grafana:
+    ports:
+      - "3000:3000"
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}

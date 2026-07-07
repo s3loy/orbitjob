@@ -1,6 +1,29 @@
 # OrbitJob 生产部署
 
-systemd + Go 二进制部署
+systemd + Go 二进制部署。本地/开发环境可直接使用 Docker Compose，详见仓库根目录 `docker-compose.yml`。
+
+## Docker Compose 快速启动（本地/开发）
+
+```bash
+# Linux：无需 .env，直接启动
+docker compose up -d --build
+
+# macOS Docker Desktop：Promtail 无法读取容器日志，使用 override 禁用
+docker compose -f docker-compose.yml -f docker-compose.macos.yml up -d --build
+```
+
+默认会创建：
+- PostgreSQL 用户/数据库、PgBouncer、自动 migrations
+- 默认 tenant 和初始 API key `otj_devkey_2026`（可通过 `ADMIN_BOOTSTRAP_API_KEY` 覆盖）
+- Prometheus (http://localhost:9090)、Grafana (http://localhost:3000)、Admin API (http://localhost:8080)
+
+查看初始 key：
+
+```bash
+go run ./cmd/bootstrap "$DATABASE_DSN"
+```
+
+macOS 下日志请使用 `docker compose logs <service>` 查看。
 
 ## 前置条件
 
