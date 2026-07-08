@@ -322,3 +322,145 @@ func TestInstanceRepository_GetByRunID_DBError(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+var attemptColumns = []string{
+	"attempt_no", "worker_id", "status", "started_at", "finished_at",
+	"result_code", "error_msg",
+}
+
+func TestInstanceRepository_ListAttempts_Success(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	now := time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC)
+	workerID := "worker-1"
+	resultCode := "200"
+	errorMsg := "timeout"
+	rows := sqlmock.NewRows(attemptColumns).
+		AddRow(1, workerID, "success", now, now, resultCode, nil).
+		AddRow(2, nil, "failed", now, now, nil, errorMsg)
+
+	mock.ExpectQuery(`SELECT a\.attempt_no, a\.worker_id, a\.status, a\.started_at, a\.finished_at,\s*a\.result_code, a\.error_msg\s+FROM job_instance_attempts a\s+JOIN job_instances i ON a\.tenant_id = i\.tenant_id AND a\.instance_id = i\.id\s+WHERE i\.tenant_id = \$1 AND i\.run_id = \$2\s+ORDER BY a\.attempt_no ASC`).
+		WithArgs("default", "run-001").
+		WillReturnRows(rows)
+
+	repo := NewInstanceRepository(db)
+	items, err := repo.ListAttempts(context.Background(), "default", "run-001")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(items))
+	}
+	if items[0].AttemptNo != 1 {
+		t.Fatalf("expected attempt_no=1, got %d", items[0].AttemptNo)
+	}
+	if items[0].WorkerID == nil || *items[0].WorkerID != workerID {
+		t.Fatalf("expected worker_id=%q, got %v", workerID, items[0].WorkerID)
+	}
+	if items[0].ResultCode == nil || *items[0].ResultCode != resultCode {
+		t.Fatalf("expected result_code=%q, got %v", resultCode, items[0].ResultCode)
+	}
+	if items[0].ErrorMsg != nil {
+		t.Fatalf("expected error_msg=nil, got %v", *items[0].ErrorMsg)
+	}
+	if items[1].WorkerID != nil {
+		t.Fatalf("expected nil worker_id, got %v", *items[1].WorkerID)
+	}
+	if items[1].ResultCode != nil {
+		t.Fatalf("expected nil result_code, got %v", *items[1].ResultCode)
+	}
+	if items[1].ErrorMsg == nil || *items[1].ErrorMsg != errorMsg {
+		t.Fatalf("expected error_msg=%q, got %v", errorMsg, items[1].ErrorMsg)
+	}
+}
+
+func TestInstanceRepository_ListAttempts_Empty(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	rows := sqlmock.NewRows(attemptColumns)
+	mock.ExpectQuery(`SELECT a\.attempt_no, a\.worker_id, a\.status, a\.started_at, a\.finished_at,\s*a\.result_code, a\.error_msg\s+FROM job_instance_attempts a\s+JOIN job_instances i ON a\.tenant_id = i\.tenant_id AND a\.instance_id = i\.id\s+WHERE i\.tenant_id = \$1 AND i\.run_id = \$2\s+ORDER BY a\.attempt_no ASC`).
+		WithArgs("default", "run-001").
+		WillReturnRows(rows)
+
+	repo := NewInstanceRepository(db)
+	items, err := repo.ListAttempts(context.Background(), "default", "run-001")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected 0 items, got %d", len(items))
+	}
+}
+
+func TestInstanceRepository_ListAttempts_DBError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	mock.ExpectQuery(`SELECT a\.attempt_no, a\.worker_id, a\.status, a\.started_at, a\.finished_at,
+\s+a\.result_code, a\.error_msg
+\s+FROM job_instance_attempts a
+\s+JOIN job_instances i ON a\.tenant_id = i\.tenant_id AND a\.instance_id = i\.id
+\s+WHERE i\.tenant_id = \$1 AND i\.run_id = \$2
+\s+ORDER BY a\.attempt_no ASC`).
+		WithArgs("default", "run-001").
+		WillReturnError(errors.New("connection refused"))
+
+	repo := NewInstanceRepository(db)
+	_, err = repo.ListAttempts(context.Background(), "default", "run-001")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestInstanceRepository_ListAttempts_ScanError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	rows := sqlmock.NewRows(attemptColumns).
+		AddRow("not-an-int", nil, "success", nil, nil, nil, nil)
+	mock.ExpectQuery(`SELECT a\.attempt_no, a\.worker_id, a\.status, a\.started_at, a\.finished_at,\s*a\.result_code, a\.error_msg\s+FROM job_instance_attempts a\s+JOIN job_instances i ON a\.tenant_id = i\.tenant_id AND a\.instance_id = i\.id\s+WHERE i\.tenant_id = \$1 AND i\.run_id = \$2\s+ORDER BY a\.attempt_no ASC`).
+		WithArgs("default", "run-001").
+		WillReturnRows(rows)
+
+	repo := NewInstanceRepository(db)
+	_, err = repo.ListAttempts(context.Background(), "default", "run-001")
+	if err == nil {
+		t.Fatal("expected scan error")
+	}
+}
+
+func TestInstanceRepository_ListAttempts_RowsError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	rows := sqlmock.NewRows(attemptColumns).
+		AddRow(1, nil, "success", nil, nil, nil, nil).
+		RowError(0, errors.New("iteration failure"))
+	mock.ExpectQuery(`SELECT a\.attempt_no, a\.worker_id, a\.status, a\.started_at, a\.finished_at,\s*a\.result_code, a\.error_msg\s+FROM job_instance_attempts a\s+JOIN job_instances i ON a\.tenant_id = i\.tenant_id AND a\.instance_id = i\.id\s+WHERE i\.tenant_id = \$1 AND i\.run_id = \$2\s+ORDER BY a\.attempt_no ASC`).
+		WithArgs("default", "run-001").
+		WillReturnRows(rows)
+
+	repo := NewInstanceRepository(db)
+	_, err = repo.ListAttempts(context.Background(), "default", "run-001")
+	if err == nil {
+		t.Fatal("expected rows iteration error")
+	}
+}
+

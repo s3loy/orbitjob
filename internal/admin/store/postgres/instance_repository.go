@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 
+	instancequery "orbitjob/internal/admin/app/instance/query"
 	"orbitjob/internal/platform/scan"
 
 	domaininstance "orbitjob/internal/core/domain/instance"
@@ -111,6 +112,42 @@ func (r *InstanceRepository) GetByRunID(ctx context.Context, runID string) (doma
 	`, runID)
 
 	return scanInstanceSnapshot(row)
+}
+
+func (r *InstanceRepository) ListAttempts(ctx context.Context, tenantID, runID string) ([]instancequery.AttemptItem, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT a.attempt_no, a.worker_id, a.status, a.started_at, a.finished_at,
+			   a.result_code, a.error_msg
+		FROM job_instance_attempts a
+		JOIN job_instances i ON a.tenant_id = i.tenant_id AND a.instance_id = i.id
+		WHERE i.tenant_id = $1 AND i.run_id = $2
+		ORDER BY a.attempt_no ASC
+	`, tenantID, runID)
+	if err != nil {
+		return nil, fmt.Errorf("list attempts: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []instancequery.AttemptItem
+	for rows.Next() {
+		var item instancequery.AttemptItem
+		var workerID, resultCode, errorMsg sql.NullString
+		var startedAt, finishedAt sql.NullTime
+		if err := rows.Scan(&item.AttemptNo, &workerID, &item.Status, &startedAt, &finishedAt,
+			&resultCode, &errorMsg); err != nil {
+			return nil, fmt.Errorf("scan attempt: %w", err)
+		}
+		item.WorkerID = scan.NullStringPtr(workerID)
+		item.StartedAt = scan.NullTimePtr(startedAt)
+		item.FinishedAt = scan.NullTimePtr(finishedAt)
+		item.ResultCode = scan.NullStringPtr(resultCode)
+		item.ErrorMsg = scan.NullStringPtr(errorMsg)
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate attempts: %w", err)
+	}
+	return out, nil
 }
 
 func scanInstanceSnapshot(scanner interface {

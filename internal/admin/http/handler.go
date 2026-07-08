@@ -74,6 +74,10 @@ type cancelInstanceUseCase interface {
 	Cancel(ctx context.Context, in instancecommand.CancelInstanceInput) (domaininstance.Snapshot, error)
 }
 
+type listAttemptsUseCase interface {
+	List(ctx context.Context, tenantID, runID string) ([]instancequery.AttemptItem, error)
+}
+
 type createCheckUseCase interface {
 	Create(ctx context.Context, in checkcommand.CreateInput) (checkcommand.CreateResult, error)
 }
@@ -199,6 +203,10 @@ type instanceListResponse struct {
 	Items []instancequery.InstanceItem `json:"items"`
 }
 
+type attemptListResponse struct {
+	Items []instancequery.AttemptItem `json:"items"`
+}
+
 type sliListResponse struct {
 	Items []sliquery.ListItem `json:"items"`
 }
@@ -235,6 +243,7 @@ type Handler struct {
 	listInstancesUC     listInstancesUseCase
 	getInstanceUC       getInstanceUseCase
 	cancelInstanceUC    cancelInstanceUseCase
+	listAttemptsUC      listAttemptsUseCase
 	createCheckUC       createCheckUseCase
 	listChecksUC        listChecksUseCase
 	getCheckUC          getCheckUseCase
@@ -285,6 +294,7 @@ func (h *Handler) SetTriggerJobUseCase(uc triggerJobUseCase)           { h.trigg
 func (h *Handler) SetListInstancesUseCase(uc listInstancesUseCase)     { h.listInstancesUC = uc }
 func (h *Handler) SetGetInstanceUseCase(uc getInstanceUseCase)         { h.getInstanceUC = uc }
 func (h *Handler) SetCancelInstanceUseCase(uc cancelInstanceUseCase)   { h.cancelInstanceUC = uc }
+func (h *Handler) SetListAttemptsUseCase(uc listAttemptsUseCase)       { h.listAttemptsUC = uc }
 func (h *Handler) SetCreateCheckUseCase(uc createCheckUseCase)         { h.createCheckUC = uc }
 func (h *Handler) SetListChecksUseCase(uc listChecksUseCase)           { h.listChecksUC = uc }
 func (h *Handler) SetGetCheckUseCase(uc getCheckUseCase)               { h.getCheckUC = uc }
@@ -679,6 +689,25 @@ func (h *Handler) CancelInstance(c *gin.Context) {
 	}
 
 	c.JSON(stdhttp.StatusOK, out)
+}
+
+// ListAttempts lists the per-attempt execution trail for an instance.
+func (h *Handler) ListAttempts(c *gin.Context) {
+	var pathReq instanceRunIDURI
+	if err := c.ShouldBindUri(&pathReq); err != nil {
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
+	}
+	tenantID, ok := requireTenantID(c, "")
+	if !ok {
+		return
+	}
+	out, err := h.listAttemptsUC.List(c.Request.Context(), tenantID, pathReq.RunID)
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	c.JSON(stdhttp.StatusOK, attemptListResponse{Items: out})
 }
 
 // CreateCheck handles check creation requests.

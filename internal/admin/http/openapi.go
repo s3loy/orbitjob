@@ -467,6 +467,24 @@ func adminAPIRoutes() []routeDefinition {
 				},
 			},
 		},
+		{
+			method:   stdhttp.MethodGet,
+			path:     "/instances/:run_id/attempts",
+			enabled:  func(h *Handler) bool { return h != nil && h.listAttemptsUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.GET("/instances/:run_id/attempts", h.ListAttempts) },
+			spec: operationDefinition{
+				id:              "listAttempts",
+				summary:         "List instance attempts",
+				description:     "List the per-attempt execution trail for one instance by run_id.",
+				tags:            []string{"Instances"},
+				parameterModels: []any{instanceRunIDURI{}},
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "Attempt list", model: attemptListResponse{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
 		// ==================== Checks ====================
 		{
 			method:   stdhttp.MethodPost,

@@ -393,6 +393,7 @@ func setupDevAdminServer(db *sql.DB) *http.Server {
 	h.SetListInstancesUseCase(instancequery.NewListInstancesUseCase(instanceReadRepo))
 	h.SetGetInstanceUseCase(instancequery.NewGetInstanceUseCase(instanceReadRepo))
 	h.SetCancelInstanceUseCase(instancecommand.NewCancelInstanceUseCase(instanceReadRepo, instanceWriteRepo))
+	h.SetListAttemptsUseCase(instancequery.NewListAttemptsUseCase(instanceReadRepo))
 	auth := middleware.NewAuth(db)
 
 	r := gin.Default()
