@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
@@ -16,10 +15,8 @@ import (
 
 const maxResponseBodyBytes = 4096
 
-const allowLoopbackEnv = "ORBITJOB_HTTP_HANDLER_ALLOW_LOOPBACK"
-
-// loopbackNetworks defines IP ranges that are blocked by default but may be
-// allowed in test environments via ORBITJOB_HTTP_HANDLER_ALLOW_LOOPBACK=true.
+// loopbackNetworks defines IP ranges that are blocked by default. They are only
+// allowed in integration-test builds via the allowLoopback package variable.
 var loopbackNetworks = []*net.IPNet{
 	{IP: net.IPv4(127, 0, 0, 0), Mask: net.CIDRMask(8, 32)},
 	{IP: net.IP{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}, Mask: net.CIDRMask(128, 128)}, // ::1/128 IPv6 loopback
@@ -37,13 +34,8 @@ var privateNetworks = []*net.IPNet{
 
 var metadataIP = net.IPv4(169, 254, 169, 254)
 
-// allowLoopback returns true when the test-only environment variable
-// ORBITJOB_HTTP_HANDLER_ALLOW_LOOPBACK is set to "true". Production code
-// must never set this variable; it exists only to let integration tests
-// exercise the real HTTP handler against httptest.NewServer endpoints.
-func allowLoopback() bool {
-	return os.Getenv(allowLoopbackEnv) == "true"
-}
+// allowLoopback is always false in production builds. The integration-test
+// build file provides a setter to enable it for tests only.
 
 // validateCallbackURL is overridable for tests.
 var validateCallbackURL = validateURLImpl
@@ -62,7 +54,7 @@ var isBlockedIP = func(ip net.IP) bool {
 			return true
 		}
 	}
-	if !allowLoopback() {
+	if !allowLoopback {
 		for _, network := range loopbackNetworks {
 			if network.Contains(ip) {
 				return true

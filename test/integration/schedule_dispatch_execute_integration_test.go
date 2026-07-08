@@ -20,8 +20,6 @@ import (
 )
 
 func TestCronJob_EndToEnd(t *testing.T) {
-	t.Setenv("ORBITJOB_HTTP_HANDLER_ALLOW_LOOPBACK", "true")
-
 	ctx := context.Background()
 	db := postgrestest.Open(t)
 
@@ -165,6 +163,7 @@ func TestCronJob_EndToEnd(t *testing.T) {
 	}
 
 	// Execute the handler against the test server.
+	handler.SetAllowLoopbackForTest(true)
 	result := handler.NewHTTP(nil).Execute(ctx, task)
 	if !result.Success {
 		t.Fatalf("expected handler success, got result_code=%q error=%q", result.ResultCode, result.ErrorMsg)

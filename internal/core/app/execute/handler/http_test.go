@@ -267,8 +267,10 @@ func TestHTTP_SSRF_BadScheme(t *testing.T) {
 	}
 }
 
-func TestHTTP_AllowLoopbackEnv(t *testing.T) {
-	t.Setenv(allowLoopbackEnv, "true")
+func TestHTTP_AllowLoopbackForTest(t *testing.T) {
+	save := allowLoopback
+	allowLoopback = true
+	defer func() { allowLoopback = save }()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -281,15 +283,17 @@ func TestHTTP_AllowLoopbackEnv(t *testing.T) {
 		"method": "GET",
 	}))
 	if !result.Success {
-		t.Fatalf("expected success with %s=true, got error: %s", allowLoopbackEnv, result.ErrorMsg)
+		t.Fatalf("expected success with allowLoopback=true, got error: %s", result.ErrorMsg)
 	}
 	if result.ResultCode != "200" {
 		t.Fatalf("expected result_code=200, got %q", result.ResultCode)
 	}
 }
 
-func TestHTTP_AllowLoopbackEnv_PrivateStillBlocked(t *testing.T) {
-	t.Setenv(allowLoopbackEnv, "true")
+func TestHTTP_AllowLoopbackForTest_PrivateStillBlocked(t *testing.T) {
+	save := allowLoopback
+	allowLoopback = true
+	defer func() { allowLoopback = save }()
 
 	h := NewHTTP(nil)
 	result := h.Execute(context.Background(), makeHTTPTask(map[string]any{
