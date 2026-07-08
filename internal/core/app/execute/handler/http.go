@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -15,19 +16,34 @@ import (
 
 const maxResponseBodyBytes = 4096
 
+const allowLoopbackEnv = "ORBITJOB_HTTP_HANDLER_ALLOW_LOOPBACK"
+
+// loopbackNetworks defines IP ranges that are blocked by default but may be
+// allowed in test environments via ORBITJOB_HTTP_HANDLER_ALLOW_LOOPBACK=true.
+var loopbackNetworks = []*net.IPNet{
+	{IP: net.IPv4(127, 0, 0, 0), Mask: net.CIDRMask(8, 32)},
+	{IP: net.IP{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}, Mask: net.CIDRMask(128, 128)}, // ::1/128 IPv6 loopback
+}
+
 // privateNetworks defines IP ranges blocked for SSRF protection.
 var privateNetworks = []*net.IPNet{
 	{IP: net.IPv4(10, 0, 0, 0), Mask: net.CIDRMask(8, 32)},
 	{IP: net.IPv4(172, 16, 0, 0), Mask: net.CIDRMask(12, 32)},
 	{IP: net.IPv4(192, 168, 0, 0), Mask: net.CIDRMask(16, 32)},
-	{IP: net.IPv4(127, 0, 0, 0), Mask: net.CIDRMask(8, 32)},
 	{IP: net.IPv4(169, 254, 0, 0), Mask: net.CIDRMask(16, 32)}, // link-local
-	{IP: net.IP{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}, Mask: net.CIDRMask(128, 128)}, // ::1/128 IPv6 loopback
 	{IP: net.IP{0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, Mask: net.CIDRMask(10, 128)}, // fe80::/10 IPv6 link-local
 	{IP: net.IP{0xfd, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, Mask: net.CIDRMask(8, 128)}, // fd00::/8 IPv6 ULA
 }
 
 var metadataIP = net.IPv4(169, 254, 169, 254)
+
+// allowLoopback returns true when the test-only environment variable
+// ORBITJOB_HTTP_HANDLER_ALLOW_LOOPBACK is set to "true". Production code
+// must never set this variable; it exists only to let integration tests
+// exercise the real HTTP handler against httptest.NewServer endpoints.
+func allowLoopback() bool {
+	return os.Getenv(allowLoopbackEnv) == "true"
+}
 
 // validateCallbackURL is overridable for tests.
 var validateCallbackURL = validateURLImpl
@@ -44,6 +60,13 @@ var isBlockedIP = func(ip net.IP) bool {
 	for _, network := range privateNetworks {
 		if network.Contains(ip) {
 			return true
+		}
+	}
+	if !allowLoopback() {
+		for _, network := range loopbackNetworks {
+			if network.Contains(ip) {
+				return true
+			}
 		}
 	}
 	return false

@@ -1075,6 +1075,86 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/instances/{run_id}/attempts:
+    get:
+      operationId: listAttempts
+      summary: List instance attempts
+      description: List the per-attempt execution trail for one instance by run_id.
+      tags:
+      - Instances
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 64
+      responses:
+        "200":
+          description: Attempt list
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttemptListResponse"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/instances/{run_id}/cancel:
     post:
       operationId: cancelInstance
@@ -1916,6 +1996,17 @@ paths:
           type: string
           maxLength: 128
       responses:
+        "200":
+          description: Existing instance returned for idempotent trigger
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TriggerResult"
         "201":
           description: Created instance
           headers:
@@ -3867,6 +3958,42 @@ components:
           type: string
         threshold:
           type: number
+    AttemptItem:
+      type: object
+      properties:
+        attempt_no:
+          type: integer
+        error_msg:
+          type: string
+          nullable: true
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        result_code:
+          type: string
+          nullable: true
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+        worker_id:
+          type: string
+          nullable: true
+      required:
+      - attempt_no
+      - status
+    AttemptListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AttemptItem"
+      required:
+      - items
     BudgetItem:
       type: object
       properties:
@@ -4539,6 +4666,8 @@ components:
     TriggerResult:
       type: object
       properties:
+        created:
+          type: boolean
         created_at:
           type: string
           format: date-time
@@ -4561,6 +4690,7 @@ components:
       - status
       - scheduled_at
       - created_at
+      - created
     UpdateJobRequest:
       type: object
       properties:

@@ -267,6 +267,42 @@ func TestHTTP_SSRF_BadScheme(t *testing.T) {
 	}
 }
 
+func TestHTTP_AllowLoopbackEnv(t *testing.T) {
+	t.Setenv(allowLoopbackEnv, "true")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	h := NewHTTP(srv.Client())
+	result := h.Execute(context.Background(), makeHTTPTask(map[string]any{
+		"url":    srv.URL,
+		"method": "GET",
+	}))
+	if !result.Success {
+		t.Fatalf("expected success with %s=true, got error: %s", allowLoopbackEnv, result.ErrorMsg)
+	}
+	if result.ResultCode != "200" {
+		t.Fatalf("expected result_code=200, got %q", result.ResultCode)
+	}
+}
+
+func TestHTTP_AllowLoopbackEnv_PrivateStillBlocked(t *testing.T) {
+	t.Setenv(allowLoopbackEnv, "true")
+
+	h := NewHTTP(nil)
+	result := h.Execute(context.Background(), makeHTTPTask(map[string]any{
+		"url": "http://10.0.0.1/",
+	}))
+	if result.Success {
+		t.Fatal("expected private IP to remain blocked when loopback override is enabled")
+	}
+	if result.ResultCode != "ssrf_blocked" {
+		t.Fatalf("expected result_code=ssrf_blocked, got %q", result.ResultCode)
+	}
+}
+
 func TestHTTP_SSRF_RedirectDisabled(t *testing.T) {
 	defer disableSSRF()()
 

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"orbitjob/internal/core/app/execute"
+	"orbitjob/internal/core/app/execute/handler"
 	"orbitjob/internal/core/app/schedule"
 	domaininstance "orbitjob/internal/core/domain/instance"
 	domainjob "orbitjob/internal/core/domain/job"
@@ -20,6 +20,8 @@ import (
 )
 
 func TestCronJob_EndToEnd(t *testing.T) {
+	t.Setenv("ORBITJOB_HTTP_HANDLER_ALLOW_LOOPBACK", "true")
+
 	ctx := context.Background()
 	db := postgrestest.Open(t)
 
@@ -33,6 +35,20 @@ func TestCronJob_EndToEnd(t *testing.T) {
 	jobNow := now.Add(-2 * time.Minute)
 	cronExpr := "* * * * *"
 
+	// Stand up a local HTTP target. The real handler.HTTP will call it once the
+	// loopback override environment variable is set.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST request, got %s", r.Method)
+		}
+		if r.Header.Get("X-Test") != "e2e" {
+			t.Errorf("expected X-Test header to be forwarded")
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer ts.Close()
+
 	createInput := domainjob.CreateInput{
 		Name:        "e2e-cron-job",
 		TenantID:    tenantID,
@@ -40,8 +56,10 @@ func TestCronJob_EndToEnd(t *testing.T) {
 		CronExpr:    &cronExpr,
 		HandlerType: domainjob.HandlerTypeHTTP,
 		HandlerPayload: map[string]any{
-			"url":    "http://example.com/webhook",
-			"method": "POST",
+			"url":     ts.URL,
+			"method":  "POST",
+			"body":    `{"ok":true}`,
+			"headers": map[string]any{"X-Test": "e2e"},
 		},
 		MisfirePolicy: domainjob.MisfireFireNow,
 	}
@@ -60,16 +78,6 @@ func TestCronJob_EndToEnd(t *testing.T) {
 		t.Fatalf("expected job status %q, got %q", domainjob.StatusActive, job.Status)
 	}
 
-	// Stand up a local HTTP target. The built-in HTTP handler blocks loopback
-	// addresses for SSRF protection, so this test uses a tiny test handler that
-	// calls the server directly while still exercising the rest of the closed
-	// loop through real repositories and use-cases.
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
-	}))
-	defer ts.Close()
-
 	// Scheduler tick: creates a pending instance from the due cron job.
 	schedRepo := postgres.NewSchedulerRepository(db)
 	scheduler := schedule.NewTickUseCase(schedRepo, postgres.ClassifyError)
@@ -83,10 +91,11 @@ func TestCronJob_EndToEnd(t *testing.T) {
 
 	var instanceID int64
 	var instanceVersion int
+	var runID string
 	err = db.QueryRowContext(ctx, `
-		SELECT id, version FROM job_instances
+		SELECT id, version, run_id::text FROM job_instances
 		WHERE tenant_id = $1 AND job_id = $2 AND status = 'pending'
-	`, tenantID, job.ID).Scan(&instanceID, &instanceVersion)
+	`, tenantID, job.ID).Scan(&instanceID, &instanceVersion, &runID)
 	if err != nil {
 		t.Fatalf("query pending instance: %v", err)
 	}
@@ -156,8 +165,7 @@ func TestCronJob_EndToEnd(t *testing.T) {
 	}
 
 	// Execute the handler against the test server.
-	testHandler := &testHTTPHandler{client: ts.Client(), baseURL: ts.URL}
-	result := testHandler.Execute(ctx, task)
+	result := handler.NewHTTP(nil).Execute(ctx, task)
 	if !result.Success {
 		t.Fatalf("expected handler success, got result_code=%q error=%q", result.ResultCode, result.ErrorMsg)
 	}
@@ -199,24 +207,69 @@ func TestCronJob_EndToEnd(t *testing.T) {
 		t.Fatalf("expected finished_at to be set")
 	}
 
-	// Verify an audit event was recorded for the completion.
-	var auditCount int
-	err = db.QueryRowContext(ctx, `
-		SELECT count(*) FROM audit_events
-		WHERE tenant_id = $1 AND resource_type = 'instance' AND resource_id = $2
-	`, tenantID, fmt.Sprintf("%d", instanceID)).Scan(&auditCount)
+	// Verify audit events include the expected lifecycle events.
+	auditTx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		t.Fatalf("count audit events: %v", err)
+		t.Fatalf("begin audit tx: %v", err)
 	}
-	if auditCount < 1 {
-		t.Fatalf("expected at least one audit event for instance, got %d", auditCount)
+	defer func() { _ = auditTx.Rollback() }()
+
+	_, err = auditTx.ExecContext(ctx, `SELECT set_config('app.tenant_id', $1, true)`, tenantID)
+	if err != nil {
+		t.Fatalf("set tenant config for audit query: %v", err)
 	}
+	rows, err := auditTx.QueryContext(ctx, `
+		SELECT event_type FROM audit_events
+		WHERE tenant_id = $1
+		  AND resource_type = 'instance'
+		  AND resource_id IN ($2, $3)
+	`, tenantID, runID, fmt.Sprintf("%d", instanceID))
+	if err != nil {
+		t.Fatalf("query audit events: %v", err)
+	}
+
+	required := map[string]bool{
+		"instance.created":          false,
+		"instance.completed":        false,
+		"instance.status_changed": false,
+	}
+	for rows.Next() {
+		var eventType string
+		if err := rows.Scan(&eventType); err != nil {
+			_ = rows.Close()
+			t.Fatalf("scan audit event type: %v", err)
+		}
+		if _, ok := required[eventType]; ok {
+			required[eventType] = true
+		}
+	}
+	_ = rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate audit events: %v", err)
+	}
+	for eventType, seen := range required {
+		if !seen {
+			t.Fatalf("expected audit event %q not found", eventType)
+		}
+	}
+	_ = auditTx.Rollback()
 }
 
 func createTenant(t *testing.T, ctx context.Context, db *sql.DB, tenantID string) {
 	t.Helper()
 
-	_, err := db.ExecContext(ctx, `
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin tenant tx: %v", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	_, err = tx.ExecContext(ctx, `SELECT set_config('app.tenant_id', $1, true)`, tenantID)
+	if err != nil {
+		t.Fatalf("set tenant config: %v", err)
+	}
+
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO tenants (id, slug, name, status)
 		VALUES ($1, $2, $3, 'active')
 		ON CONFLICT (id) DO NOTHING
@@ -224,42 +277,8 @@ func createTenant(t *testing.T, ctx context.Context, db *sql.DB, tenantID string
 	if err != nil {
 		t.Fatalf("create tenant: %v", err)
 	}
-}
 
-// testHTTPHandler is a minimal execute.Handler that calls a local httptest
-// server. It is used because the built-in handler.HTTP rejects loopback URLs
-// as part of its SSRF protection.
-type testHTTPHandler struct {
-	client  *http.Client
-	baseURL string
-}
-
-func (h *testHTTPHandler) Execute(ctx context.Context, task execute.AssignedTask) execute.Result {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, h.baseURL, nil)
-	if err != nil {
-		return execute.Result{
-			Success:    false,
-			ResultCode: "build_request_failed",
-			ErrorMsg:   err.Error(),
-		}
-	}
-
-	resp, err := h.client.Do(req)
-	if err != nil {
-		return execute.Result{
-			Success:    false,
-			ResultCode: "request_failed",
-			ErrorMsg:   err.Error(),
-		}
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	resultCode := fmt.Sprintf("%d", resp.StatusCode)
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return execute.Result{Success: true, ResultCode: resultCode}
-	}
-	return execute.Result{
-		Success:    false,
-		ResultCode: resultCode,
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit tenant tx: %v", err)
 	}
 }
