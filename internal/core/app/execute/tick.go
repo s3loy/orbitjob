@@ -162,6 +162,7 @@ func (uc *TickUseCase) executeTask(
 	}()
 	cancelTimeout()
 
+	metrics.HandlerExecutionDuration.WithLabelValues(task.HandlerType, result.ResultCode).Observe(time.Since(start).Seconds())
 	metrics.ExecutionsTotal.WithLabelValues(task.HandlerType, result.ResultCode).Inc()
 
 	completeSpec, err := domaininstance.NormalizeComplete(domaininstance.CompleteInput{

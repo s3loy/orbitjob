@@ -5,10 +5,13 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	query "orbitjob/internal/admin/app/job/query"
 	"orbitjob/internal/admin/http/middleware"
 	domaininstance "orbitjob/internal/core/domain/instance"
 	domainjob "orbitjob/internal/core/domain/job"
+	"orbitjob/internal/platform/metrics"
 )
 
 type stubJobReader struct {
@@ -290,4 +293,35 @@ func TestTriggerJobUseCase_Trigger_CreatedFlag(t *testing.T) {
 
 func strPtr(s string) *string {
 	return &s
+}
+
+func TestTriggerJobUseCase_Trigger_LatencyMetricObserved(t *testing.T) {
+	metrics.TriggerLatency.Reset()
+
+	reader := &stubJobReader{
+		item: query.GetItem{
+			ID:       1,
+			Status:   domainjob.StatusActive,
+			TenantID: "default",
+		},
+	}
+	creator := &stubInstanceCreator{
+		out: domaininstance.Snapshot{
+			RunID:    "run-metric",
+			JobID:    1,
+			TenantID: "default",
+			Status:   domaininstance.StatusPending,
+		},
+	}
+	uc := NewTriggerJobUseCase(reader, creator, &stubInstanceReaderByIdempotency{err: errors.New("not found")})
+
+	_, err := uc.Trigger(context.Background(), TriggerInput{JobID: 1, TenantID: "default"})
+	if err != nil {
+		t.Fatalf("Trigger() error = %v", err)
+	}
+
+	count := testutil.CollectAndCount(metrics.TriggerLatency, "orbitjob_trigger_latency_seconds")
+	if count != 1 {
+		t.Fatalf("expected 1 latency observation, got %d", count)
+	}
 }

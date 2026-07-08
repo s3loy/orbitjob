@@ -7,7 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	domaininstance "orbitjob/internal/core/domain/instance"
+	"orbitjob/internal/platform/metrics"
 )
 
 // ---------------------------------------------------------------------------
@@ -690,5 +693,26 @@ func TestSubmitNext_PoolFullFallback(t *testing.T) {
 	}
 	if repo.completeCalls[0].Status != domaininstance.StatusSuccess {
 		t.Fatalf("expected status=success, got %q", repo.completeCalls[0].Status)
+	}
+}
+
+func TestExecuteTask_HandlerExecutionDurationMetricObserved(t *testing.T) {
+	metrics.HandlerExecutionDuration.Reset()
+
+	repo := &stubExecutor{tasks: []AssignedTask{sampleTask()}}
+	handler := &stubHandler{result: Result{Success: true, ResultCode: "0"}}
+	uc := NewTickUseCase(repo, map[string]Handler{"test": handler})
+
+	n, err := uc.RunOnce(context.Background(), "default", "worker-1", 1, 60*time.Second, nil)
+	if err != nil {
+		t.Fatalf("RunOnce() error = %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expected n=1, got %d", n)
+	}
+
+	count := testutil.CollectAndCount(metrics.HandlerExecutionDuration, "orbitjob_handler_execution_duration_seconds")
+	if count != 1 {
+		t.Fatalf("expected 1 handler duration observation, got %d", count)
 	}
 }

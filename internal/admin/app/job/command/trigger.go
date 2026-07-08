@@ -10,6 +10,7 @@ import (
 	domainjob "orbitjob/internal/core/domain/job"
 	"orbitjob/internal/admin/http/middleware"
 	"orbitjob/internal/domain/resource"
+	"orbitjob/internal/platform/metrics"
 )
 
 type jobReader interface {
@@ -89,10 +90,12 @@ func (uc *TriggerJobUseCase) Trigger(ctx context.Context, in TriggerInput) (Trig
 		}
 	}
 
+	start := time.Now()
 	out, err := uc.instanceRepo.Create(ctx, spec)
 	if err != nil {
 		return TriggerResult{}, fmt.Errorf("create trigger instance: %w", err)
 	}
+	metrics.TriggerLatency.WithLabelValues(spec.TenantID).Observe(time.Since(start).Seconds())
 
 	return toTriggerResult(out, true), nil
 }
