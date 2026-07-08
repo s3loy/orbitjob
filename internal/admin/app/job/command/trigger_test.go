@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	query "orbitjob/internal/admin/app/job/query"
+	"orbitjob/internal/admin/http/middleware"
 	domaininstance "orbitjob/internal/core/domain/instance"
 	domainjob "orbitjob/internal/core/domain/job"
 )
@@ -39,8 +40,17 @@ func (r *captureInstanceCreator) Create(_ context.Context, spec domaininstance.C
 	return r.out, r.err
 }
 
+type stubInstanceReaderByIdempotency struct {
+	out domaininstance.Snapshot
+	err error
+}
+
+func (r *stubInstanceReaderByIdempotency) GetByIdempotencyKey(_ context.Context, _, _, _ string) (domaininstance.Snapshot, error) {
+	return r.out, r.err
+}
+
 func TestNewTriggerJobUseCase(t *testing.T) {
-	uc := NewTriggerJobUseCase(&stubJobReader{}, &stubInstanceCreator{})
+	uc := NewTriggerJobUseCase(&stubJobReader{}, &stubInstanceCreator{}, &stubInstanceReaderByIdempotency{})
 	if uc == nil {
 		t.Fatal("expected use case to be initialized")
 	}
@@ -70,7 +80,7 @@ func TestTriggerJobUseCase_Trigger(t *testing.T) {
 			TriggerSource: domaininstance.TriggerSourceManual,
 		},
 	}
-	uc := NewTriggerJobUseCase(reader, creator)
+	uc := NewTriggerJobUseCase(reader, creator, &stubInstanceReaderByIdempotency{err: errors.New("not found")})
 
 	out, err := uc.Trigger(context.Background(), TriggerInput{JobID: 1, TenantID: "default"})
 	if err != nil {
@@ -87,7 +97,7 @@ func TestTriggerJobUseCase_Trigger(t *testing.T) {
 func TestTriggerJobUseCase_Trigger_JobNotFound(t *testing.T) {
 	reader := &stubJobReader{err: errors.New("not found")}
 	creator := &stubInstanceCreator{}
-	uc := NewTriggerJobUseCase(reader, creator)
+	uc := NewTriggerJobUseCase(reader, creator, &stubInstanceReaderByIdempotency{err: errors.New("not found")})
 
 	_, err := uc.Trigger(context.Background(), TriggerInput{JobID: 999, TenantID: "default"})
 	if err == nil {
@@ -100,7 +110,7 @@ func TestTriggerJobUseCase_Trigger_JobNotActive(t *testing.T) {
 		item: query.GetItem{ID: 1, Status: domainjob.StatusPaused},
 	}
 	creator := &stubInstanceCreator{}
-	uc := NewTriggerJobUseCase(reader, creator)
+	uc := NewTriggerJobUseCase(reader, creator, &stubInstanceReaderByIdempotency{err: errors.New("not found")})
 
 	_, err := uc.Trigger(context.Background(), TriggerInput{JobID: 1, TenantID: "default"})
 	if err == nil {
@@ -117,7 +127,7 @@ func TestTriggerJobUseCase_Trigger_InstanceCreateError(t *testing.T) {
 		},
 	}
 	creator := &stubInstanceCreator{err: errors.New("duplicate idempotency key")}
-	uc := NewTriggerJobUseCase(reader, creator)
+	uc := NewTriggerJobUseCase(reader, creator, &stubInstanceReaderByIdempotency{err: errors.New("not found")})
 
 	_, err := uc.Trigger(context.Background(), TriggerInput{JobID: 1, TenantID: "default"})
 	if err == nil {
@@ -136,7 +146,7 @@ func TestTriggerJobUseCase_Trigger_NormalizeCreateError(t *testing.T) {
 		},
 	}
 	creator := &stubInstanceCreator{}
-	uc := NewTriggerJobUseCase(reader, creator)
+	uc := NewTriggerJobUseCase(reader, creator, &stubInstanceReaderByIdempotency{err: errors.New("not found")})
 
 	_, err := uc.Trigger(context.Background(), TriggerInput{JobID: 1, TenantID: longTenant})
 	if err == nil {
@@ -154,7 +164,7 @@ func TestTriggerJobUseCase_Trigger_JobIDZero(t *testing.T) {
 		},
 	}
 	creator := &stubInstanceCreator{}
-	uc := NewTriggerJobUseCase(reader, creator)
+	uc := NewTriggerJobUseCase(reader, creator, &stubInstanceReaderByIdempotency{err: errors.New("not found")})
 
 	_, err := uc.Trigger(context.Background(), TriggerInput{JobID: 0, TenantID: "default"})
 	if err == nil {
@@ -185,7 +195,7 @@ func TestTriggerJobUseCase_ManualTriggerSource(t *testing.T) {
 	captor := &captureInstanceCreator{
 		out: domaininstance.Snapshot{RunID: "run-1", Status: domaininstance.StatusPending},
 	}
-	uc := NewTriggerJobUseCase(reader, captor)
+	uc := NewTriggerJobUseCase(reader, captor, &stubInstanceReaderByIdempotency{err: errors.New("not found")})
 
 	_, err := uc.Trigger(context.Background(), TriggerInput{JobID: 1, TenantID: "default"})
 	if err != nil {
@@ -203,4 +213,81 @@ func TestTriggerJobUseCase_ManualTriggerSource(t *testing.T) {
 	if captor.captured.ScheduledAt.IsZero() {
 		t.Fatal("expected ScheduledAt to be set")
 	}
+}
+
+func TestTriggerJobUseCase_Trigger_IdempotentDuplicate(t *testing.T) {
+	partitionKey := "east"
+	reader := &stubJobReader{
+		item: query.GetItem{
+			ID:             1,
+			Name:           "daily-report",
+			TenantID:       "default",
+			Status:         domainjob.StatusActive,
+			Priority:       10,
+			PartitionKey:   &partitionKey,
+			HandlerType:    "exec",
+			HandlerPayload: map[string]any{"cmd": "echo"},
+			RetryLimit:     3,
+		},
+	}
+	existing := domaininstance.Snapshot{
+		RunID:            "run-existing",
+		JobID:            1,
+		TenantID:         "default",
+		Status:           domaininstance.StatusPending,
+		TriggerSource:    domaininstance.TriggerSourceManual,
+		IdempotencyKey:   strPtr("idem-1"),
+		IdempotencyScope: domaininstance.DefaultIdempotencyScope,
+	}
+	captor := &captureInstanceCreator{}
+	idempotency := &stubInstanceReaderByIdempotency{out: existing}
+	uc := NewTriggerJobUseCase(reader, captor, idempotency)
+
+	ctx := middleware.WithIdempotencyKey(context.Background(), "idem-1")
+	out, err := uc.Trigger(ctx, TriggerInput{JobID: 1, TenantID: "default"})
+	if err != nil {
+		t.Fatalf("Trigger() error = %v", err)
+	}
+	if captor.captured != nil {
+		t.Fatal("expected Create not to be called for duplicate idempotency key")
+	}
+	if out.RunID != "run-existing" {
+		t.Fatalf("expected RunID=%q, got %q", "run-existing", out.RunID)
+	}
+	if out.Created {
+		t.Fatal("expected Created=false for idempotent duplicate")
+	}
+}
+
+func TestTriggerJobUseCase_Trigger_CreatedFlag(t *testing.T) {
+	reader := &stubJobReader{
+		item: query.GetItem{
+			ID:       1,
+			Status:   domainjob.StatusActive,
+			TenantID: "default",
+		},
+	}
+	creator := &stubInstanceCreator{
+		out: domaininstance.Snapshot{
+			RunID:  "run-new",
+			JobID:  1,
+			Status: domaininstance.StatusPending,
+		},
+	}
+	uc := NewTriggerJobUseCase(reader, creator, &stubInstanceReaderByIdempotency{err: errors.New("not found")})
+
+	out, err := uc.Trigger(context.Background(), TriggerInput{JobID: 1, TenantID: "default"})
+	if err != nil {
+		t.Fatalf("Trigger() error = %v", err)
+	}
+	if out.RunID != "run-new" {
+		t.Fatalf("expected RunID=%q, got %q", "run-new", out.RunID)
+	}
+	if !out.Created {
+		t.Fatal("expected Created=true for newly created instance")
+	}
+}
+
+func strPtr(s string) *string {
+	return &s
 }

@@ -107,7 +107,7 @@ func main() {
 	getJobUC := query.NewGetJobUseCase(readRepo)
 
 	deleteJobUC := command.NewDeleteJobUseCase(writeRepo)
-	triggerJobUC := command.NewTriggerJobUseCase(readRepo, corepostgres.NewInstanceRepository(db))
+	triggerJobUC := command.NewTriggerJobUseCase(readRepo, corepostgres.NewInstanceRepository(db), corepostgres.NewInstanceRepository(db))
 
 	instanceReadRepo := adminpostgres.NewInstanceRepository(db)
 	instanceWriteRepo := corepostgres.NewInstanceRepository(db)

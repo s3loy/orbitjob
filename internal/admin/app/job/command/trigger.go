@@ -20,15 +20,21 @@ type instanceCreator interface {
 	Create(ctx context.Context, in domaininstance.CreateSpec) (domaininstance.Snapshot, error)
 }
 
+type instanceReaderByIdempotency interface {
+	GetByIdempotencyKey(ctx context.Context, tenantID, scope, key string) (domaininstance.Snapshot, error)
+}
+
 type TriggerJobUseCase struct {
 	jobReader      jobReader
 	instanceRepo   instanceCreator
+	idempotency    instanceReaderByIdempotency
 }
 
-func NewTriggerJobUseCase(jobReader jobReader, instanceRepo instanceCreator) *TriggerJobUseCase {
+func NewTriggerJobUseCase(jobReader jobReader, instanceRepo instanceCreator, idempotency instanceReaderByIdempotency) *TriggerJobUseCase {
 	return &TriggerJobUseCase{
 		jobReader:    jobReader,
 		instanceRepo: instanceRepo,
+		idempotency:  idempotency,
 	}
 }
 
@@ -38,12 +44,13 @@ type TriggerInput struct {
 }
 
 type TriggerResult struct {
-	RunID      string    `json:"run_id"`
-	JobID      int64     `json:"job_id"`
-	TenantID   string    `json:"tenant_id"`
-	Status     string    `json:"status"`
+	RunID       string    `json:"run_id"`
+	JobID       int64     `json:"job_id"`
+	TenantID    string    `json:"tenant_id"`
+	Status      string    `json:"status"`
 	ScheduledAt time.Time `json:"scheduled_at"`
-	CreatedAt  time.Time `json:"created_at"`
+	CreatedAt   time.Time `json:"created_at"`
+	Created     bool      `json:"created"`
 }
 
 func (uc *TriggerJobUseCase) Trigger(ctx context.Context, in TriggerInput) (TriggerResult, error) {
@@ -75,20 +82,31 @@ func (uc *TriggerJobUseCase) Trigger(ctx context.Context, in TriggerInput) (Trig
 	if err != nil {
 		return TriggerResult{}, fmt.Errorf("normalize trigger instance: %w", err)
 	}
+	if spec.IdempotencyKey != nil && spec.IdempotencyScope != "" {
+		existing, err := uc.idempotency.GetByIdempotencyKey(ctx, spec.TenantID, spec.IdempotencyScope, *spec.IdempotencyKey)
+		if err == nil {
+			return toTriggerResult(existing, false), nil
+		}
+	}
 
 	out, err := uc.instanceRepo.Create(ctx, spec)
 	if err != nil {
 		return TriggerResult{}, fmt.Errorf("create trigger instance: %w", err)
 	}
 
+	return toTriggerResult(out, true), nil
+}
+
+func toTriggerResult(snap domaininstance.Snapshot, created bool) TriggerResult {
 	return TriggerResult{
-		RunID:       out.RunID,
-		JobID:       out.JobID,
-		TenantID:    out.TenantID,
-		Status:      out.Status,
-		ScheduledAt: out.ScheduledAt,
-		CreatedAt:   out.CreatedAt,
-	}, nil
+		RunID:       snap.RunID,
+		JobID:       snap.JobID,
+		TenantID:    snap.TenantID,
+		Status:      snap.Status,
+		ScheduledAt: snap.ScheduledAt,
+		CreatedAt:   snap.CreatedAt,
+		Created:     created,
+	}
 }
 
 func idempotencyKeyPtr(key string) *string {

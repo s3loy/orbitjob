@@ -385,6 +385,7 @@ func adminAPIRoutes() []routeDefinition {
 				parameterModels: []any{jobIDURI{}, idempotencyKeyHeaderRequest{}},
 				responses: []responseDefinition{
 					{statusCode: stdhttp.StatusCreated, description: "Created instance", model: command.TriggerResult{}},
+					{statusCode: stdhttp.StatusOK, description: "Existing instance returned for idempotent trigger", model: command.TriggerResult{}},
 					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
 					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
 				},

@@ -204,6 +204,7 @@ func TestHandler_TriggerJob_WithIdempotencyKey(t *testing.T) {
 			JobID:    42,
 			TenantID: "tenant-a",
 			Status:   "pending",
+			Created:  true,
 		},
 	}
 
@@ -261,6 +262,7 @@ func TestHandler_TriggerJob_Success(t *testing.T) {
 			Status:      "pending",
 			ScheduledAt: scheduledAt,
 			CreatedAt:   createdAt,
+			Created:     true,
 		},
 	}
 
@@ -298,6 +300,51 @@ func TestHandler_TriggerJob_Success(t *testing.T) {
 	}
 	if out.Status != "pending" {
 		t.Fatalf("expected Status=pending, got %q", out.Status)
+	}
+}
+
+func TestHandler_TriggerJob_Idempotent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	uc := &stubTriggerJobUseCase{
+		out: command.TriggerResult{
+			RunID:    "run-003",
+			JobID:    42,
+			TenantID: "tenant-a",
+			Status:   "pending",
+			Created:  false,
+		},
+	}
+
+	h := NewHandler(nil, nil, nil, nil, nil)
+	h.SetTriggerJobUseCase(uc)
+
+	router := gin.New()
+	router.Use(testTenantMiddleware("tenant-a"))
+	h.Register(router)
+
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/jobs/42/trigger", nil)
+	req.Header.Set(idempotencyKeyHeader, "idem-key-xyz")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != stdhttp.StatusOK {
+		t.Fatalf("expected status=%d, got %d, body=%s",
+			stdhttp.StatusOK, resp.Code, resp.Body.String())
+	}
+	if !uc.called {
+		t.Fatal("expected trigger use case to be called")
+	}
+
+	var out command.TriggerResult
+	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if out.RunID != "run-003" {
+		t.Fatalf("expected RunID=run-003, got %q", out.RunID)
+	}
+	if out.Created {
+		t.Fatal("expected Created=false for idempotent response")
 	}
 }
 

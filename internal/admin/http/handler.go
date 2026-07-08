@@ -579,7 +579,11 @@ func (h *Handler) TriggerJob(c *gin.Context) {
 		return
 	}
 
-	c.JSON(stdhttp.StatusCreated, out)
+	if out.Created {
+		c.JSON(stdhttp.StatusCreated, out)
+		return
+	}
+	c.JSON(stdhttp.StatusOK, out)
 }
 
 // DeleteJob handles soft-delete requests.

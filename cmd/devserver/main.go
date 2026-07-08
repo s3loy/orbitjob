@@ -385,7 +385,7 @@ func setupDevAdminServer(db *sql.DB) *http.Server {
 	getJobUC := query.NewGetJobUseCase(readRepo)
 	h := adminhttp.NewHandler(createJobUC, listJobsUC, getJobUC, updateJobUC, changeStatusUC)
 	deleteJobUC := command.NewDeleteJobUseCase(writeRepo)
-	triggerJobUC := command.NewTriggerJobUseCase(readRepo, corepostgres.NewInstanceRepository(db))
+	triggerJobUC := command.NewTriggerJobUseCase(readRepo, corepostgres.NewInstanceRepository(db), corepostgres.NewInstanceRepository(db))
 	instanceReadRepo := adminpostgres.NewInstanceRepository(db)
 	instanceWriteRepo := corepostgres.NewInstanceRepository(db)
 	h.SetDeleteJobUseCase(deleteJobUC)
