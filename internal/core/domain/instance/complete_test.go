@@ -38,6 +38,46 @@ func TestNormalizeComplete_Success(t *testing.T) {
 	}
 }
 
+func TestNormalizeComplete_StartedAt(t *testing.T) {
+	now := time.Date(2026, 4, 20, 10, 0, 0, 0, time.UTC)
+	startedAt := now.Add(-30 * time.Second)
+
+	spec, err := NormalizeComplete(CompleteInput{
+		InstanceID: 1,
+		WorkerID:   "worker-a",
+		Success:    true,
+		Now:        now,
+		StartedAt:  startedAt,
+		Attempt:    1,
+		MaxAttempt: 1,
+	})
+	if err != nil {
+		t.Fatalf("NormalizeComplete() error = %v", err)
+	}
+	if !spec.StartedAt.Equal(startedAt.UTC()) {
+		t.Fatalf("expected started_at=%v, got %v", startedAt.UTC(), spec.StartedAt)
+	}
+}
+
+func TestNormalizeComplete_StartedAtDefaultsToNow(t *testing.T) {
+	now := time.Date(2026, 4, 20, 10, 0, 0, 0, time.UTC)
+
+	spec, err := NormalizeComplete(CompleteInput{
+		InstanceID: 1,
+		WorkerID:   "worker-a",
+		Success:    true,
+		Now:        now,
+		Attempt:    1,
+		MaxAttempt: 1,
+	})
+	if err != nil {
+		t.Fatalf("NormalizeComplete() error = %v", err)
+	}
+	if !spec.StartedAt.Equal(now) {
+		t.Fatalf("expected started_at to default to now=%v, got %v", now, spec.StartedAt)
+	}
+}
+
 func TestNormalizeComplete_RetryWait(t *testing.T) {
 	now := time.Date(2026, 4, 20, 10, 0, 0, 0, time.UTC)
 

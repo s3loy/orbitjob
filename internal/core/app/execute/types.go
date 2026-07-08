@@ -16,6 +16,7 @@ type AssignedTask struct {
 	Priority             int
 	EffectivePriority    int
 	DispatchedAt         time.Time
+	StartedAt            time.Time
 	Attempt              int
 	MaxAttempt           int
 	RetryBackoffSec      int

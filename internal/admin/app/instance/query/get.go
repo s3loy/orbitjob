@@ -11,7 +11,7 @@ import (
 )
 
 type instanceGetter interface {
-	GetByRunID(ctx context.Context, runID string) (domaininstance.Snapshot, error)
+	GetByRunID(ctx context.Context, tenantID, runID string) (domaininstance.Snapshot, error)
 }
 
 type GetInstanceUseCase struct {
@@ -22,8 +22,8 @@ func NewGetInstanceUseCase(repo instanceGetter) *GetInstanceUseCase {
 	return &GetInstanceUseCase{repo: repo}
 }
 
-func (uc *GetInstanceUseCase) Get(ctx context.Context, runID string) (*InstanceItem, error) {
-	s, err := uc.repo.GetByRunID(ctx, runID)
+func (uc *GetInstanceUseCase) Get(ctx context.Context, tenantID, runID string) (*InstanceItem, error) {
+	s, err := uc.repo.GetByRunID(ctx, tenantID, runID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, &resource.NotFoundError{Resource: "instance", ID: runID}

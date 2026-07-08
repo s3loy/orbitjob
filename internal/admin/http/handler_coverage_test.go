@@ -65,14 +65,16 @@ func (s *stubListInstancesUseCase) List(ctx context.Context, in instancequery.Li
 }
 
 type stubGetInstanceUseCase struct {
-	called bool
-	runID  string
-	out    *instancequery.InstanceItem
-	err    error
+	called   bool
+	tenantID string
+	runID    string
+	out      *instancequery.InstanceItem
+	err      error
 }
 
-func (s *stubGetInstanceUseCase) Get(ctx context.Context, runID string) (*instancequery.InstanceItem, error) {
+func (s *stubGetInstanceUseCase) Get(ctx context.Context, tenantID, runID string) (*instancequery.InstanceItem, error) {
 	s.called = true
+	s.tenantID = tenantID
 	s.runID = runID
 	return s.out, s.err
 }
@@ -204,6 +206,7 @@ func TestHandler_TriggerJob_WithIdempotencyKey(t *testing.T) {
 			JobID:    42,
 			TenantID: "tenant-a",
 			Status:   "pending",
+			Created:  true,
 		},
 	}
 
@@ -261,6 +264,7 @@ func TestHandler_TriggerJob_Success(t *testing.T) {
 			Status:      "pending",
 			ScheduledAt: scheduledAt,
 			CreatedAt:   createdAt,
+			Created:     true,
 		},
 	}
 
@@ -298,6 +302,51 @@ func TestHandler_TriggerJob_Success(t *testing.T) {
 	}
 	if out.Status != "pending" {
 		t.Fatalf("expected Status=pending, got %q", out.Status)
+	}
+}
+
+func TestHandler_TriggerJob_Idempotent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	uc := &stubTriggerJobUseCase{
+		out: command.TriggerResult{
+			RunID:    "run-003",
+			JobID:    42,
+			TenantID: "tenant-a",
+			Status:   "pending",
+			Created:  false,
+		},
+	}
+
+	h := NewHandler(nil, nil, nil, nil, nil)
+	h.SetTriggerJobUseCase(uc)
+
+	router := gin.New()
+	router.Use(testTenantMiddleware("tenant-a"))
+	h.Register(router)
+
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/jobs/42/trigger", nil)
+	req.Header.Set(idempotencyKeyHeader, "idem-key-xyz")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != stdhttp.StatusOK {
+		t.Fatalf("expected status=%d, got %d, body=%s",
+			stdhttp.StatusOK, resp.Code, resp.Body.String())
+	}
+	if !uc.called {
+		t.Fatal("expected trigger use case to be called")
+	}
+
+	var out command.TriggerResult
+	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if out.RunID != "run-003" {
+		t.Fatalf("expected RunID=run-003, got %q", out.RunID)
+	}
+	if out.Created {
+		t.Fatal("expected Created=false for idempotent response")
 	}
 }
 
@@ -714,6 +763,7 @@ func TestHandler_GetInstance_Success(t *testing.T) {
 	h.SetGetInstanceUseCase(uc)
 
 	router := gin.New()
+	router.Use(testTenantMiddleware("tenant-a"))
 	h.Register(router)
 
 	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/instances/run-001", nil)
@@ -729,6 +779,9 @@ func TestHandler_GetInstance_Success(t *testing.T) {
 	}
 	if uc.runID != "run-001" {
 		t.Fatalf("expected runID=run-001, got %q", uc.runID)
+	}
+	if uc.tenantID != "tenant-a" {
+		t.Fatalf("expected tenantID=tenant-a, got %q", uc.tenantID)
 	}
 
 	var out instancequery.InstanceItem
@@ -778,6 +831,7 @@ func TestHandler_GetInstance_NotFound(t *testing.T) {
 	h.SetGetInstanceUseCase(uc)
 
 	router := gin.New()
+	router.Use(testTenantMiddleware("tenant-a"))
 	h.Register(router)
 
 	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/instances/run-999", nil)
@@ -815,6 +869,7 @@ func TestHandler_GetInstance_InternalError(t *testing.T) {
 	h.SetGetInstanceUseCase(uc)
 
 	router := gin.New()
+	router.Use(testTenantMiddleware("tenant-a"))
 	h.Register(router)
 
 	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/instances/run-001", nil)
@@ -858,6 +913,7 @@ func TestHandler_CancelInstance_Success(t *testing.T) {
 	h.SetCancelInstanceUseCase(uc)
 
 	router := gin.New()
+	router.Use(testTenantMiddleware("tenant-a"))
 	h.Register(router)
 
 	body := `{"version": 1}`
@@ -880,6 +936,9 @@ func TestHandler_CancelInstance_Success(t *testing.T) {
 	}
 	if uc.in.Version != 1 {
 		t.Fatalf("expected Version=1, got %d", uc.in.Version)
+	}
+	if uc.in.TenantID != "tenant-a" {
+		t.Fatalf("expected TenantID=tenant-a, got %q", uc.in.TenantID)
 	}
 
 	var out domaininstance.Snapshot
@@ -953,6 +1012,7 @@ func TestHandler_CancelInstance_InternalError(t *testing.T) {
 	h.SetCancelInstanceUseCase(uc)
 
 	router := gin.New()
+	router.Use(testTenantMiddleware("tenant-a"))
 	h.Register(router)
 
 	body := `{"version": 1}`
@@ -1158,5 +1218,128 @@ func TestHandler_ListInstances_MapsValidationError(t *testing.T) {
 	}
 	if out.Error.Code != "VALIDATION_ERROR" {
 		t.Fatalf("expected code VALIDATION_ERROR, got %q", out.Error.Code)
+	}
+}
+
+// ===== ListAttempts =====
+
+type stubListAttemptsUseCase struct {
+	called bool
+	runID  string
+	out    []instancequery.AttemptItem
+	err    error
+}
+
+func (s *stubListAttemptsUseCase) List(ctx context.Context, tenantID, runID string) ([]instancequery.AttemptItem, error) {
+	s.called = true
+	s.runID = runID
+	return s.out, s.err
+}
+
+func TestHandler_ListAttempts_Success(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	now := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
+	workerID := "worker-1"
+	uc := &stubListAttemptsUseCase{
+		out: []instancequery.AttemptItem{
+			{
+				AttemptNo:  1,
+				WorkerID:   &workerID,
+				Status:     "success",
+				StartedAt:  &now,
+				FinishedAt: &now,
+			},
+		},
+	}
+
+	h := NewHandler(nil, nil, nil, nil, nil)
+	h.SetListAttemptsUseCase(uc)
+
+	router := gin.New()
+	router.Use(testTenantMiddleware("tenant-a"))
+	h.Register(router)
+
+	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/instances/run-001/attempts", nil)
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != stdhttp.StatusOK {
+		t.Fatalf("expected status=%d, got %d, body=%s",
+			stdhttp.StatusOK, resp.Code, resp.Body.String())
+	}
+	if !uc.called {
+		t.Fatal("expected list attempts use case to be called")
+	}
+	if uc.runID != "run-001" {
+		t.Fatalf("expected runID=run-001, got %q", uc.runID)
+	}
+
+	var out attemptListResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(out.Items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(out.Items))
+	}
+	if out.Items[0].AttemptNo != 1 {
+		t.Fatalf("expected AttemptNo=1, got %d", out.Items[0].AttemptNo)
+	}
+}
+
+func TestHandler_ListAttempts_BindError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	uc := &stubListAttemptsUseCase{}
+	h := NewHandler(nil, nil, nil, nil, nil)
+	h.SetListAttemptsUseCase(uc)
+
+	router := gin.New()
+	h.Register(router)
+
+	longRunID := strings.Repeat("a", 65)
+	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/instances/"+longRunID+"/attempts", nil)
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != stdhttp.StatusBadRequest {
+		t.Fatalf("expected status=%d, got %d", stdhttp.StatusBadRequest, resp.Code)
+	}
+	if uc.called {
+		t.Fatal("expected use case not to be called on bind error")
+	}
+}
+
+func TestHandler_ListAttempts_InternalError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	uc := &stubListAttemptsUseCase{
+		err: errors.New("list attempts: db down"),
+	}
+	h := NewHandler(nil, nil, nil, nil, nil)
+	h.SetListAttemptsUseCase(uc)
+
+	router := gin.New()
+	router.Use(testTenantMiddleware("default"))
+	h.Register(router)
+
+	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/instances/run-001/attempts", nil)
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != stdhttp.StatusInternalServerError {
+		t.Fatalf("expected status=%d, got %d", stdhttp.StatusInternalServerError, resp.Code)
+	}
+	if !uc.called {
+		t.Fatal("expected use case to be called")
+	}
+}
+
+func TestHandler_SetListAttemptsUseCase(t *testing.T) {
+	h := &Handler{}
+	uc := &stubListAttemptsUseCase{}
+	h.SetListAttemptsUseCase(uc)
+	if h.listAttemptsUC != uc {
+		t.Fatal("listAttemptsUC field not set correctly")
 	}
 }

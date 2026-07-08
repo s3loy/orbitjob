@@ -390,6 +390,7 @@ func cancelRunningInstances(ctx context.Context, tx *sql.Tx, tenantID string, jo
 	rows, err := tx.QueryContext(ctx, `
 		UPDATE job_instances
 		SET status = 'canceled',
+		    version = version + 1,
 		    finished_at = $3,
 		    error_msg = 'canceled by concurrency replace policy'
 		WHERE tenant_id = $1 AND job_id = $2
@@ -462,6 +463,7 @@ func (r *DispatchRepository) RecoverLeaseOrphans(ctx context.Context, now time.T
 	dRows, err := tx1.QueryContext(ctx, `
 			UPDATE job_instances
 			SET status = 'pending',
+			    version = version + 1,
 			    worker_id = NULL,
 			    lease_expires_at = NULL,
 			    dispatched_at = NULL,
@@ -532,19 +534,20 @@ func (r *DispatchRepository) RecoverLeaseOrphans(ctx context.Context, now time.T
 	rRows, err := tx2.QueryContext(ctx, `
 		UPDATE job_instances ji
 		SET status = CASE
-		        WHEN ji.attempt <= ji.max_attempt THEN 'retry_wait'::VARCHAR
+		        WHEN ji.attempt < ji.max_attempt THEN 'retry_wait'::VARCHAR
 		        ELSE 'failed'::VARCHAR
 		    END,
+		    version = ji.version + 1,
 		    worker_id = NULL,
 		    lease_expires_at = NULL,
 		    finished_at = $1,
 		    retry_at = CASE
-		        WHEN ji.attempt <= ji.max_attempt
+		        WHEN ji.attempt < ji.max_attempt
 		        THEN $1 + make_interval(secs => COALESCE(j.retry_backoff_sec, 0))
 		        ELSE NULL
 		    END,
 		    error_msg = CASE
-		        WHEN ji.attempt <= ji.max_attempt THEN 'orphaned: worker lease expired, retrying'
+		        WHEN ji.attempt < ji.max_attempt THEN 'orphaned: worker lease expired, retrying'
 		        ELSE 'orphaned: worker lease expired, no retries left'
 		    END
 		FROM jobs j

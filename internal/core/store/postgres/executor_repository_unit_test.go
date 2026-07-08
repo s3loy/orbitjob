@@ -32,7 +32,7 @@ var claimTaskColumns = []string{
 	"retry_backoff_sec", "retry_backoff_strategy",
 	"priority", "effective_priority",
 	"attempt", "max_attempt",
-	"trace_id", "scheduled_at", "dispatched_at", "lease_expires_at",
+	"trace_id", "scheduled_at", "dispatched_at", "lease_expires_at", "started_at",
 }
 
 func expectSetTenantContext(mock sqlmock.Sqlmock, tenantID string) {
@@ -47,9 +47,9 @@ func expectAuditInsertExecutor(mock sqlmock.Sqlmock, tenantID, resourceID, event
 		WillReturnResult(sqlmock.NewResult(0, 1))
 }
 
-func expectAttemptInsert(mock sqlmock.Sqlmock, tenantID string, instanceID int64, attempt int, workerID, status string) {
+func expectAttemptInsert(mock sqlmock.Sqlmock, tenantID string, instanceID int64, attempt int, workerID, status string, startedAt time.Time) {
 	mock.ExpectExec("INSERT INTO job_instance_attempts").
-		WithArgs(tenantID, instanceID, attempt, workerID, status, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs(tenantID, instanceID, attempt, workerID, status, startedAt, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 }
 
@@ -70,7 +70,7 @@ func TestClaimNextDispatched_ClaimsTask(t *testing.T) {
 		"exec", []byte(`{"command":"echo","args":["hello"]}`), 30,
 		10, "fixed",
 		5, 5, 1, 3,
-		nil, now, dispatchedAt, lease,
+		nil, now, dispatchedAt, lease, now,
 	)
 	mock.ExpectQuery("WITH claimed").
 		WithArgs("tenant-a", 1, "worker-1", now, lease, sqlmock.AnyArg()).
@@ -94,6 +94,9 @@ func TestClaimNextDispatched_ClaimsTask(t *testing.T) {
 	}
 	if !task.DispatchedAt.Equal(dispatchedAt) {
 		t.Fatalf("expected dispatched_at=%v, got %v", dispatchedAt, task.DispatchedAt)
+	}
+	if !task.StartedAt.Equal(now) {
+		t.Fatalf("expected started_at=%v, got %v", now, task.StartedAt)
 	}
 	assertMock(t, mock)
 }
@@ -153,7 +156,7 @@ func TestClaimNextDispatched_WithRoutingKeyLabels(t *testing.T) {
 		"exec", []byte(`{"command":"echo","args":["hello"]}`), 30,
 		10, "fixed",
 		5, 5, 1, 3,
-		nil, now, dispatchedAt, lease,
+		nil, now, dispatchedAt, lease, now,
 	)
 	mock.ExpectQuery("WITH claimed").
 		WithArgs("tenant-a", 1, "worker-1", now, lease, pq.Array([]string{"video"})).
@@ -175,14 +178,15 @@ func TestClaimNextDispatched_WithRoutingKeyLabels(t *testing.T) {
 func TestCompleteInstance_Success(t *testing.T) {
 	repo, mock := newExecutorRepoMock(t)
 	now := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
+	startedAt := now.Add(-30 * time.Second)
 	resultCode := "0"
 
 	mock.ExpectBegin()
 	expectSetTenantContext(mock, "tenant-a")
-	mock.ExpectExec("UPDATE job_instances").
+	mock.ExpectQuery("UPDATE job_instances").
 		WithArgs("success", now, &resultCode, nil, nil, "tenant-a", int64(1), "worker-1").
-		WillReturnResult(sqlmock.NewResult(0, 1))
-	expectAttemptInsert(mock, "tenant-a", 1, 1, "worker-1", "success")
+		WillReturnRows(sqlmock.NewRows([]string{"started_at"}).AddRow(startedAt))
+	expectAttemptInsert(mock, "tenant-a", 1, 1, "worker-1", "success", startedAt)
 	expectAuditInsertExecutor(mock, "tenant-a", "1", "instance.completed")
 	mock.ExpectCommit()
 
@@ -193,6 +197,7 @@ func TestCompleteInstance_Success(t *testing.T) {
 		Status:     "success",
 		Attempt:    1,
 		ResultCode: &resultCode,
+		StartedAt:  startedAt,
 		FinishedAt: now,
 	})
 	if err != nil {
@@ -204,16 +209,17 @@ func TestCompleteInstance_Success(t *testing.T) {
 func TestCompleteInstance_RetryWait(t *testing.T) {
 	repo, mock := newExecutorRepoMock(t)
 	now := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
+	startedAt := now.Add(-30 * time.Second)
 	retryAt := now.Add(10 * time.Second)
 	resultCode := "1"
 	errorMsg := "some error"
 
 	mock.ExpectBegin()
 	expectSetTenantContext(mock, "tenant-a")
-	mock.ExpectExec("UPDATE job_instances").
+	mock.ExpectQuery("UPDATE job_instances").
 		WithArgs("retry_wait", now, &resultCode, &errorMsg, &retryAt, "tenant-a", int64(1), "worker-1").
-		WillReturnResult(sqlmock.NewResult(0, 1))
-	expectAttemptInsert(mock, "tenant-a", 1, 1, "worker-1", "failed")
+		WillReturnRows(sqlmock.NewRows([]string{"started_at"}).AddRow(startedAt))
+	expectAttemptInsert(mock, "tenant-a", 1, 1, "worker-1", "failed", startedAt)
 	expectAuditInsertExecutor(mock, "tenant-a", "1", "instance.status_changed")
 	mock.ExpectCommit()
 
@@ -225,6 +231,7 @@ func TestCompleteInstance_RetryWait(t *testing.T) {
 		Attempt:    1,
 		ResultCode: &resultCode,
 		ErrorMsg:   &errorMsg,
+		StartedAt:  startedAt,
 		FinishedAt: now,
 		RetryAt:    &retryAt,
 	})
@@ -240,9 +247,9 @@ func TestCompleteInstance_NotClaimed(t *testing.T) {
 
 	mock.ExpectBegin()
 	expectSetTenantContext(mock, "tenant-a")
-	mock.ExpectExec("UPDATE job_instances").
+	mock.ExpectQuery("UPDATE job_instances").
 		WithArgs("success", now, nil, nil, nil, "tenant-a", int64(1), "worker-1").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnError(sql.ErrNoRows)
 	mock.ExpectRollback()
 
 	err := repo.CompleteInstance(context.Background(), domaininstance.CompleteSpec{
@@ -360,7 +367,7 @@ func TestClaimNextDispatched_RowsErr(t *testing.T) {
 		"exec", []byte(`{"command":"echo","args":["hello"]}`), 30,
 		10, "fixed",
 		5, 5, 1, 3,
-		nil, now, dispatchedAt, lease,
+		nil, now, dispatchedAt, lease, now,
 	).RowError(0, errors.New("rows err boom"))
 	mock.ExpectQuery("WITH claimed").
 		WithArgs("tenant-a", 1, "worker-1", now, lease, sqlmock.AnyArg()).
@@ -386,7 +393,7 @@ func TestClaimNextDispatched_AuditInsertError(t *testing.T) {
 		"exec", []byte(`{"command":"echo","args":["hello"]}`), 30,
 		10, "fixed",
 		5, 5, 1, 3,
-		nil, now, dispatchedAt, lease,
+		nil, now, dispatchedAt, lease, now,
 	)
 	mock.ExpectQuery("WITH claimed").
 		WithArgs("tenant-a", 1, "worker-1", now, lease, sqlmock.AnyArg()).
@@ -416,7 +423,7 @@ func TestClaimNextDispatched_CommitError(t *testing.T) {
 		"exec", []byte(`{"command":"echo","args":["hello"]}`), 30,
 		10, "fixed",
 		5, 5, 1, 3,
-		nil, now, dispatchedAt, lease,
+		nil, now, dispatchedAt, lease, now,
 	)
 	mock.ExpectQuery("WITH claimed").
 		WithArgs("tenant-a", 1, "worker-1", now, lease, sqlmock.AnyArg()).
@@ -477,13 +484,13 @@ func TestCompleteInstance_SetTenantContextError(t *testing.T) {
 	assertMock(t, mock)
 }
 
-func TestCompleteInstance_ExecError(t *testing.T) {
+func TestCompleteInstance_QueryError(t *testing.T) {
 	repo, mock := newExecutorRepoMock(t)
 	now := time.Now().UTC()
 
 	mock.ExpectBegin()
 	expectSetTenantContext(mock, "tenant-a")
-	mock.ExpectExec("UPDATE job_instances").
+	mock.ExpectQuery("UPDATE job_instances").
 		WithArgs("success", now, nil, nil, nil, "tenant-a", int64(1), "worker-1").
 		WillReturnError(errors.New("exec boom"))
 	mock.ExpectRollback()
@@ -501,41 +508,18 @@ func TestCompleteInstance_ExecError(t *testing.T) {
 	assertMock(t, mock)
 }
 
-func TestCompleteInstance_RowsAffectedError(t *testing.T) {
-	repo, mock := newExecutorRepoMock(t)
-	now := time.Now().UTC()
-
-	mock.ExpectBegin()
-	expectSetTenantContext(mock, "tenant-a")
-	mock.ExpectExec("UPDATE job_instances").
-		WithArgs("success", now, nil, nil, nil, "tenant-a", int64(1), "worker-1").
-		WillReturnResult(sqlmock.NewErrorResult(errors.New("rows affected boom")))
-	mock.ExpectRollback()
-
-	err := repo.CompleteInstance(context.Background(), domaininstance.CompleteSpec{
-		TenantID:   "tenant-a",
-		InstanceID: 1,
-		WorkerID:   "worker-1",
-		Status:     "success",
-		FinishedAt: now,
-	})
-	if err == nil || !strings.Contains(err.Error(), "complete instance rows affected") {
-		t.Fatalf("expected complete instance rows affected error, got %v", err)
-	}
-	assertMock(t, mock)
-}
-
 func TestCompleteInstance_AttemptInsertError(t *testing.T) {
 	repo, mock := newExecutorRepoMock(t)
 	now := time.Now().UTC()
+	startedAt := now.Add(-30 * time.Second)
 
 	mock.ExpectBegin()
 	expectSetTenantContext(mock, "tenant-a")
-	mock.ExpectExec("UPDATE job_instances").
+	mock.ExpectQuery("UPDATE job_instances").
 		WithArgs("success", now, nil, nil, nil, "tenant-a", int64(1), "worker-1").
-		WillReturnResult(sqlmock.NewResult(0, 1))
+		WillReturnRows(sqlmock.NewRows([]string{"started_at"}).AddRow(startedAt))
 	mock.ExpectExec("INSERT INTO job_instance_attempts").
-		WithArgs("tenant-a", int64(1), 1, "worker-1", "success", now, nil, nil).
+		WithArgs("tenant-a", int64(1), 1, "worker-1", "success", startedAt, now, nil, nil).
 		WillReturnError(errors.New("attempt insert boom"))
 	mock.ExpectRollback()
 
@@ -545,6 +529,7 @@ func TestCompleteInstance_AttemptInsertError(t *testing.T) {
 		WorkerID:   "worker-1",
 		Status:     "success",
 		Attempt:    1,
+		StartedAt:  startedAt,
 		FinishedAt: now,
 	})
 	if err == nil || !strings.Contains(err.Error(), "insert instance attempt") {
@@ -555,13 +540,14 @@ func TestCompleteInstance_AttemptInsertError(t *testing.T) {
 func TestCompleteInstance_AuditInsertError(t *testing.T) {
 	repo, mock := newExecutorRepoMock(t)
 	now := time.Now().UTC()
+	startedAt := now.Add(-30 * time.Second)
 
 	mock.ExpectBegin()
 	expectSetTenantContext(mock, "tenant-a")
-	mock.ExpectExec("UPDATE job_instances").
+	mock.ExpectQuery("UPDATE job_instances").
 		WithArgs("success", now, nil, nil, nil, "tenant-a", int64(1), "worker-1").
-		WillReturnResult(sqlmock.NewResult(0, 1))
-	expectAttemptInsert(mock, "tenant-a", 1, 1, "worker-1", "success")
+		WillReturnRows(sqlmock.NewRows([]string{"started_at"}).AddRow(startedAt))
+	expectAttemptInsert(mock, "tenant-a", 1, 1, "worker-1", "success", startedAt)
 	mock.ExpectExec("INSERT INTO audit_events").
 		WithArgs("tenant-a", "system", "worker", "instance.completed", "instance", "1", sqlmock.AnyArg()).
 		WillReturnError(errors.New("audit boom"))
@@ -573,6 +559,7 @@ func TestCompleteInstance_AuditInsertError(t *testing.T) {
 		WorkerID:   "worker-1",
 		Status:     "success",
 		Attempt:    1,
+		StartedAt:  startedAt,
 		FinishedAt: now,
 	})
 	if err == nil || !strings.Contains(err.Error(), "insert audit event") {
@@ -584,13 +571,14 @@ func TestCompleteInstance_AuditInsertError(t *testing.T) {
 func TestCompleteInstance_CommitError(t *testing.T) {
 	repo, mock := newExecutorRepoMock(t)
 	now := time.Now().UTC()
+	startedAt := now.Add(-30 * time.Second)
 
 	mock.ExpectBegin()
 	expectSetTenantContext(mock, "tenant-a")
-	mock.ExpectExec("UPDATE job_instances").
+	mock.ExpectQuery("UPDATE job_instances").
 		WithArgs("success", now, nil, nil, nil, "tenant-a", int64(1), "worker-1").
-		WillReturnResult(sqlmock.NewResult(0, 1))
-	expectAttemptInsert(mock, "tenant-a", 1, 1, "worker-1", "success")
+		WillReturnRows(sqlmock.NewRows([]string{"started_at"}).AddRow(startedAt))
+	expectAttemptInsert(mock, "tenant-a", 1, 1, "worker-1", "success", startedAt)
 	expectAuditInsertExecutor(mock, "tenant-a", "1", "instance.completed")
 	mock.ExpectCommit().WillReturnError(errors.New("commit boom"))
 
@@ -600,6 +588,7 @@ func TestCompleteInstance_CommitError(t *testing.T) {
 		WorkerID:   "worker-1",
 		Status:     "success",
 		Attempt:    1,
+		StartedAt:  startedAt,
 		FinishedAt: now,
 	})
 	if err == nil || !strings.Contains(err.Error(), "commit complete tx") {
@@ -704,7 +693,7 @@ func TestScanAssignedTask_UnmarshalError(t *testing.T) {
 		"exec", []byte("{bad json"), 30,
 		10, "fixed",
 		5, 5, 1, 3,
-		nil, now, nil, nil,
+		nil, now, nil, nil, now,
 	)
 	mock.ExpectQuery("SELECT").WillReturnRows(rows)
 
@@ -737,7 +726,7 @@ func TestScanAssignedTask_NullPayloadJSON(t *testing.T) {
 		"exec", []byte("null"), 30,
 		10, "fixed",
 		5, 5, 1, 3,
-		nil, now, nil, nil,
+		nil, now, nil, nil, now,
 	)
 	mock.ExpectQuery("SELECT").WillReturnRows(rows)
 
@@ -776,7 +765,7 @@ func TestScanAssignedTask_NullFields(t *testing.T) {
 		"exec", []byte{}, 30,
 		10, "fixed",
 		5, 5, 1, 3,
-		nil, now, nil, nil,
+		nil, now, nil, nil, now,
 	)
 	mock.ExpectQuery("SELECT").WillReturnRows(rows)
 

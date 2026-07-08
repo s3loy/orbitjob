@@ -2,12 +2,18 @@ package command
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"testing"
 
+	"github.com/lib/pq"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	query "orbitjob/internal/admin/app/job/query"
+	"orbitjob/internal/admin/http/middleware"
 	domaininstance "orbitjob/internal/core/domain/instance"
 	domainjob "orbitjob/internal/core/domain/job"
+	"orbitjob/internal/platform/metrics"
 )
 
 type stubJobReader struct {
@@ -39,8 +45,36 @@ func (r *captureInstanceCreator) Create(_ context.Context, spec domaininstance.C
 	return r.out, r.err
 }
 
+type stubInstanceReaderByIdempotency struct {
+	out domaininstance.Snapshot
+	err error
+}
+
+func (r *stubInstanceReaderByIdempotency) GetByIdempotencyKey(_ context.Context, _, _, _ string) (domaininstance.Snapshot, error) {
+	return r.out, r.err
+}
+
+type idempotencyResult struct {
+	out domaininstance.Snapshot
+	err error
+}
+
+type sequentialIdempotencyReader struct {
+	sequence []idempotencyResult
+	index    int
+}
+
+func (r *sequentialIdempotencyReader) GetByIdempotencyKey(_ context.Context, _, _, _ string) (domaininstance.Snapshot, error) {
+	if r.index >= len(r.sequence) {
+		return domaininstance.Snapshot{}, errors.New("unexpected idempotency lookup call")
+	}
+	res := r.sequence[r.index]
+	r.index++
+	return res.out, res.err
+}
+
 func TestNewTriggerJobUseCase(t *testing.T) {
-	uc := NewTriggerJobUseCase(&stubJobReader{}, &stubInstanceCreator{})
+	uc := NewTriggerJobUseCase(&stubJobReader{}, &stubInstanceCreator{}, &stubInstanceReaderByIdempotency{})
 	if uc == nil {
 		t.Fatal("expected use case to be initialized")
 	}
@@ -70,7 +104,7 @@ func TestTriggerJobUseCase_Trigger(t *testing.T) {
 			TriggerSource: domaininstance.TriggerSourceManual,
 		},
 	}
-	uc := NewTriggerJobUseCase(reader, creator)
+	uc := NewTriggerJobUseCase(reader, creator, &stubInstanceReaderByIdempotency{err: errors.New("not found")})
 
 	out, err := uc.Trigger(context.Background(), TriggerInput{JobID: 1, TenantID: "default"})
 	if err != nil {
@@ -87,7 +121,7 @@ func TestTriggerJobUseCase_Trigger(t *testing.T) {
 func TestTriggerJobUseCase_Trigger_JobNotFound(t *testing.T) {
 	reader := &stubJobReader{err: errors.New("not found")}
 	creator := &stubInstanceCreator{}
-	uc := NewTriggerJobUseCase(reader, creator)
+	uc := NewTriggerJobUseCase(reader, creator, &stubInstanceReaderByIdempotency{err: errors.New("not found")})
 
 	_, err := uc.Trigger(context.Background(), TriggerInput{JobID: 999, TenantID: "default"})
 	if err == nil {
@@ -100,7 +134,7 @@ func TestTriggerJobUseCase_Trigger_JobNotActive(t *testing.T) {
 		item: query.GetItem{ID: 1, Status: domainjob.StatusPaused},
 	}
 	creator := &stubInstanceCreator{}
-	uc := NewTriggerJobUseCase(reader, creator)
+	uc := NewTriggerJobUseCase(reader, creator, &stubInstanceReaderByIdempotency{err: errors.New("not found")})
 
 	_, err := uc.Trigger(context.Background(), TriggerInput{JobID: 1, TenantID: "default"})
 	if err == nil {
@@ -117,7 +151,7 @@ func TestTriggerJobUseCase_Trigger_InstanceCreateError(t *testing.T) {
 		},
 	}
 	creator := &stubInstanceCreator{err: errors.New("duplicate idempotency key")}
-	uc := NewTriggerJobUseCase(reader, creator)
+	uc := NewTriggerJobUseCase(reader, creator, &stubInstanceReaderByIdempotency{err: errors.New("not found")})
 
 	_, err := uc.Trigger(context.Background(), TriggerInput{JobID: 1, TenantID: "default"})
 	if err == nil {
@@ -136,7 +170,7 @@ func TestTriggerJobUseCase_Trigger_NormalizeCreateError(t *testing.T) {
 		},
 	}
 	creator := &stubInstanceCreator{}
-	uc := NewTriggerJobUseCase(reader, creator)
+	uc := NewTriggerJobUseCase(reader, creator, &stubInstanceReaderByIdempotency{err: errors.New("not found")})
 
 	_, err := uc.Trigger(context.Background(), TriggerInput{JobID: 1, TenantID: longTenant})
 	if err == nil {
@@ -154,7 +188,7 @@ func TestTriggerJobUseCase_Trigger_JobIDZero(t *testing.T) {
 		},
 	}
 	creator := &stubInstanceCreator{}
-	uc := NewTriggerJobUseCase(reader, creator)
+	uc := NewTriggerJobUseCase(reader, creator, &stubInstanceReaderByIdempotency{err: errors.New("not found")})
 
 	_, err := uc.Trigger(context.Background(), TriggerInput{JobID: 0, TenantID: "default"})
 	if err == nil {
@@ -185,7 +219,7 @@ func TestTriggerJobUseCase_ManualTriggerSource(t *testing.T) {
 	captor := &captureInstanceCreator{
 		out: domaininstance.Snapshot{RunID: "run-1", Status: domaininstance.StatusPending},
 	}
-	uc := NewTriggerJobUseCase(reader, captor)
+	uc := NewTriggerJobUseCase(reader, captor, &stubInstanceReaderByIdempotency{err: errors.New("not found")})
 
 	_, err := uc.Trigger(context.Background(), TriggerInput{JobID: 1, TenantID: "default"})
 	if err != nil {
@@ -202,5 +236,217 @@ func TestTriggerJobUseCase_ManualTriggerSource(t *testing.T) {
 	}
 	if captor.captured.ScheduledAt.IsZero() {
 		t.Fatal("expected ScheduledAt to be set")
+	}
+}
+
+func TestTriggerJobUseCase_Trigger_IdempotentDuplicate(t *testing.T) {
+	partitionKey := "east"
+	reader := &stubJobReader{
+		item: query.GetItem{
+			ID:             1,
+			Name:           "daily-report",
+			TenantID:       "default",
+			Status:         domainjob.StatusActive,
+			Priority:       10,
+			PartitionKey:   &partitionKey,
+			HandlerType:    "exec",
+			HandlerPayload: map[string]any{"cmd": "echo"},
+			RetryLimit:     3,
+		},
+	}
+	existing := domaininstance.Snapshot{
+		RunID:            "run-existing",
+		JobID:            1,
+		TenantID:         "default",
+		Status:           domaininstance.StatusPending,
+		TriggerSource:    domaininstance.TriggerSourceManual,
+		IdempotencyKey:   strPtr("idem-1"),
+		IdempotencyScope: domaininstance.DefaultIdempotencyScope,
+	}
+	captor := &captureInstanceCreator{}
+	idempotency := &stubInstanceReaderByIdempotency{out: existing}
+	uc := NewTriggerJobUseCase(reader, captor, idempotency)
+
+	ctx := middleware.WithIdempotencyKey(context.Background(), "idem-1")
+	out, err := uc.Trigger(ctx, TriggerInput{JobID: 1, TenantID: "default"})
+	if err != nil {
+		t.Fatalf("Trigger() error = %v", err)
+	}
+	if captor.captured != nil {
+		t.Fatal("expected Create not to be called for duplicate idempotency key")
+	}
+	if out.RunID != "run-existing" {
+		t.Fatalf("expected RunID=%q, got %q", "run-existing", out.RunID)
+	}
+	if out.Created {
+		t.Fatal("expected Created=false for idempotent duplicate")
+	}
+}
+
+func TestTriggerJobUseCase_Trigger_CreatedFlag(t *testing.T) {
+	reader := &stubJobReader{
+		item: query.GetItem{
+			ID:       1,
+			Status:   domainjob.StatusActive,
+			TenantID: "default",
+		},
+	}
+	creator := &stubInstanceCreator{
+		out: domaininstance.Snapshot{
+			RunID:  "run-new",
+			JobID:  1,
+			Status: domaininstance.StatusPending,
+		},
+	}
+	uc := NewTriggerJobUseCase(reader, creator, &stubInstanceReaderByIdempotency{err: errors.New("not found")})
+
+	out, err := uc.Trigger(context.Background(), TriggerInput{JobID: 1, TenantID: "default"})
+	if err != nil {
+		t.Fatalf("Trigger() error = %v", err)
+	}
+	if out.RunID != "run-new" {
+		t.Fatalf("expected RunID=%q, got %q", "run-new", out.RunID)
+	}
+	if !out.Created {
+		t.Fatal("expected Created=true for newly created instance")
+	}
+}
+
+func strPtr(s string) *string {
+	return &s
+}
+
+func TestTriggerJobUseCase_Trigger_LatencyMetricObserved(t *testing.T) {
+	metrics.TriggerLatency.Reset()
+
+	reader := &stubJobReader{
+		item: query.GetItem{
+			ID:       1,
+			Status:   domainjob.StatusActive,
+			TenantID: "default",
+		},
+	}
+	creator := &stubInstanceCreator{
+		out: domaininstance.Snapshot{
+			RunID:    "run-metric",
+			JobID:    1,
+			TenantID: "default",
+			Status:   domaininstance.StatusPending,
+		},
+	}
+	uc := NewTriggerJobUseCase(reader, creator, &stubInstanceReaderByIdempotency{err: errors.New("not found")})
+
+	_, err := uc.Trigger(context.Background(), TriggerInput{JobID: 1, TenantID: "default"})
+	if err != nil {
+		t.Fatalf("Trigger() error = %v", err)
+	}
+
+	count := testutil.CollectAndCount(metrics.TriggerLatency, "orbitjob_trigger_latency_seconds")
+	if count != 1 {
+		t.Fatalf("expected 1 latency observation, got %d", count)
+	}
+}
+
+func TestTriggerJobUseCase_Trigger_IdempotentRaceOnCreate(t *testing.T) {
+	metrics.TriggerLatency.Reset()
+	partitionKey := "east"
+	reader := &stubJobReader{
+		item: query.GetItem{
+			ID:             1,
+			Name:           "daily-report",
+			TenantID:       "default",
+			Status:         domainjob.StatusActive,
+			Priority:       10,
+			PartitionKey:   &partitionKey,
+			HandlerType:    "exec",
+			HandlerPayload: map[string]any{"cmd": "echo"},
+			RetryLimit:     3,
+		},
+	}
+	existing := domaininstance.Snapshot{
+		RunID:            "run-existing-race",
+		JobID:            1,
+		TenantID:         "default",
+		Status:           domaininstance.StatusPending,
+		TriggerSource:    domaininstance.TriggerSourceManual,
+		IdempotencyKey:   strPtr("idem-race"),
+		IdempotencyScope: domaininstance.DefaultIdempotencyScope,
+	}
+	creator := &captureInstanceCreator{err: &pq.Error{Code: "23505"}}
+	idempotency := &sequentialIdempotencyReader{
+		sequence: []idempotencyResult{
+			{err: sql.ErrNoRows},
+			{out: existing},
+		},
+	}
+	uc := NewTriggerJobUseCase(reader, creator, idempotency)
+
+	ctx := middleware.WithIdempotencyKey(context.Background(), "idem-race")
+	out, err := uc.Trigger(ctx, TriggerInput{JobID: 1, TenantID: "default"})
+	if err != nil {
+		t.Fatalf("Trigger() error = %v", err)
+	}
+	if creator.captured == nil {
+		t.Fatal("expected Create to be called")
+	}
+	if out.RunID != "run-existing-race" {
+		t.Fatalf("expected RunID=%q, got %q", "run-existing-race", out.RunID)
+	}
+	if out.Created {
+		t.Fatal("expected Created=false for recovered idempotent duplicate")
+	}
+	count := testutil.CollectAndCount(metrics.TriggerLatency, "orbitjob_trigger_latency_seconds")
+	if count != 0 {
+		t.Fatalf("expected 0 latency observations on retry path, got %d", count)
+	}
+}
+
+func TestTriggerJobUseCase_Trigger_UniqueViolationRequeryNoRows(t *testing.T) {
+	reader := &stubJobReader{
+		item: query.GetItem{
+			ID:       1,
+			Status:   domainjob.StatusActive,
+			TenantID: "default",
+		},
+	}
+	createErr := &pq.Error{Code: "23505"}
+	creator := &captureInstanceCreator{err: createErr}
+	idempotency := &sequentialIdempotencyReader{
+		sequence: []idempotencyResult{
+			{err: sql.ErrNoRows},
+			{err: sql.ErrNoRows},
+		},
+	}
+	uc := NewTriggerJobUseCase(reader, creator, idempotency)
+
+	ctx := middleware.WithIdempotencyKey(context.Background(), "idem-lost")
+	_, err := uc.Trigger(ctx, TriggerInput{JobID: 1, TenantID: "default"})
+	if err == nil {
+		t.Fatal("expected error when re-query after unique violation returns no rows")
+	}
+}
+
+func TestTriggerJobUseCase_Trigger_UniqueViolationRequeryError(t *testing.T) {
+	reader := &stubJobReader{
+		item: query.GetItem{
+			ID:       1,
+			Status:   domainjob.StatusActive,
+			TenantID: "default",
+		},
+	}
+	createErr := &pq.Error{Code: "23505"}
+	creator := &captureInstanceCreator{err: createErr}
+	idempotency := &sequentialIdempotencyReader{
+		sequence: []idempotencyResult{
+			{err: sql.ErrNoRows},
+			{err: errors.New("lookup failed")},
+		},
+	}
+	uc := NewTriggerJobUseCase(reader, creator, idempotency)
+
+	ctx := middleware.WithIdempotencyKey(context.Background(), "idem-lookup-error")
+	_, err := uc.Trigger(ctx, TriggerInput{JobID: 1, TenantID: "default"})
+	if err == nil {
+		t.Fatal("expected error when re-query after unique violation fails")
 	}
 }

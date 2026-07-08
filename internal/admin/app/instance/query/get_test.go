@@ -14,7 +14,7 @@ type stubGetter struct {
 	err      error
 }
 
-func (r *stubGetter) GetByRunID(_ context.Context, _ string) (domaininstance.Snapshot, error) {
+func (r *stubGetter) GetByRunID(_ context.Context, _, _ string) (domaininstance.Snapshot, error) {
 	return r.snapshot, r.err
 }
 
@@ -36,7 +36,7 @@ func TestGetInstanceUseCase_Get(t *testing.T) {
 	}
 	uc := NewGetInstanceUseCase(repo)
 
-	item, err := uc.Get(context.Background(), "run-1")
+	item, err := uc.Get(context.Background(), "tenant-a", "run-1")
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
@@ -52,7 +52,7 @@ func TestGetInstanceUseCase_Get_NotFound(t *testing.T) {
 	repo := &stubGetter{err: sql.ErrNoRows}
 	uc := NewGetInstanceUseCase(repo)
 
-	_, err := uc.Get(context.Background(), "run-missing")
+	_, err := uc.Get(context.Background(), "tenant-a", "run-missing")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -62,7 +62,7 @@ func TestGetInstanceUseCase_Get_RepoError(t *testing.T) {
 	repo := &stubGetter{err: errors.New("connection refused")}
 	uc := NewGetInstanceUseCase(repo)
 
-	_, err := uc.Get(context.Background(), "run-1")
+	_, err := uc.Get(context.Background(), "tenant-a", "run-1")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}

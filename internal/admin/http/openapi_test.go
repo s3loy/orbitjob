@@ -201,6 +201,21 @@ func TestOpenAPIDocument_AdminRoutesHaveUnauthorizedAndRateLimited(t *testing.T)
 	}
 }
 
+func TestOpenAPIDocument_ListAttempts(t *testing.T) {
+	doc := ServiceOpenAPIDocument()
+
+	attemptsPath, ok := doc.Paths["/api/v1/instances/{run_id}/attempts"]
+	if !ok {
+		t.Fatal("expected /api/v1/instances/{run_id}/attempts path to be documented")
+	}
+	if attemptsPath.Get == nil {
+		t.Fatal("expected GET /api/v1/instances/{run_id}/attempts operation")
+	}
+	if !hasParameter(attemptsPath.Get.Parameters, "run_id", "path") {
+		t.Fatalf("expected run_id path parameter, got %+v", attemptsPath.Get.Parameters)
+	}
+}
+
 func containsString(items []string, want string) bool {
 	for _, item := range items {
 		if item == want {

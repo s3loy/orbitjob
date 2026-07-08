@@ -18,6 +18,13 @@ var (
 		Help: "Number of task executions currently in progress.",
 	})
 
+	// HandlerExecutionDuration tracks how long a handler takes to execute.
+	HandlerExecutionDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "orbitjob_handler_execution_duration_seconds",
+		Help:    "Handler execution duration by handler type and result code.",
+		Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 10, 30},
+	}, []string{"handler_type", "result_code"})
+
 	// LeaseExtensionFailuresTotal counts failed lease extension attempts.
 	LeaseExtensionFailuresTotal = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "orbitjob_lease_extension_failures_total",

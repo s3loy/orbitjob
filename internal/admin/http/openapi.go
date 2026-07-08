@@ -385,6 +385,7 @@ func adminAPIRoutes() []routeDefinition {
 				parameterModels: []any{jobIDURI{}, idempotencyKeyHeaderRequest{}},
 				responses: []responseDefinition{
 					{statusCode: stdhttp.StatusCreated, description: "Created instance", model: command.TriggerResult{}},
+					{statusCode: stdhttp.StatusOK, description: "Existing instance returned for idempotent trigger", model: command.TriggerResult{}},
 					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
 					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
 				},
@@ -454,13 +455,31 @@ func adminAPIRoutes() []routeDefinition {
 			spec: operationDefinition{
 				id:                  "cancelInstance",
 				summary:             "Cancel one instance",
-				description:         "Cancel a dispatched or running instance using optimistic locking by version.",
+				description:         "Cancel a pending, dispatched, running, or retry_wait instance using optimistic locking by version.",
 				tags:                []string{"Instances"},
 				parameterModels:     []any{instanceRunIDURI{}},
 				requestBodyModel:    CancelInstanceRequest{},
 				requestBodyRequired: true,
 				responses: []responseDefinition{
 					{statusCode: stdhttp.StatusOK, description: "Canceled instance", model: domaininstance.Snapshot{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		{
+			method:   stdhttp.MethodGet,
+			path:     "/instances/:run_id/attempts",
+			enabled:  func(h *Handler) bool { return h != nil && h.listAttemptsUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.GET("/instances/:run_id/attempts", h.ListAttempts) },
+			spec: operationDefinition{
+				id:              "listAttempts",
+				summary:         "List instance attempts",
+				description:     "List the per-attempt execution trail for one instance by run_id.",
+				tags:            []string{"Instances"},
+				parameterModels: []any{instanceRunIDURI{}},
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "Attempt list", model: attemptListResponse{}},
 					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
 					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
 				},

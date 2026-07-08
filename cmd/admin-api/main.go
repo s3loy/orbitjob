@@ -107,13 +107,14 @@ func main() {
 	getJobUC := query.NewGetJobUseCase(readRepo)
 
 	deleteJobUC := command.NewDeleteJobUseCase(writeRepo)
-	triggerJobUC := command.NewTriggerJobUseCase(readRepo, corepostgres.NewInstanceRepository(db))
+	triggerJobUC := command.NewTriggerJobUseCase(readRepo, corepostgres.NewInstanceRepository(db), corepostgres.NewInstanceRepository(db))
 
 	instanceReadRepo := adminpostgres.NewInstanceRepository(db)
 	instanceWriteRepo := corepostgres.NewInstanceRepository(db)
 	listInstancesUC := instancequery.NewListInstancesUseCase(instanceReadRepo)
 	getInstanceUC := instancequery.NewGetInstanceUseCase(instanceReadRepo)
 	cancelInstanceUC := instancecommand.NewCancelInstanceUseCase(instanceReadRepo, instanceWriteRepo)
+	listAttemptsUC := instancequery.NewListAttemptsUseCase(instanceReadRepo)
 
 	// Check use cases.
 	checkWriteRepo := corepostgres.NewCheckRepository(db)
@@ -136,6 +137,7 @@ func main() {
 	handler.SetListInstancesUseCase(listInstancesUC)
 	handler.SetGetInstanceUseCase(getInstanceUC)
 	handler.SetCancelInstanceUseCase(cancelInstanceUC)
+	handler.SetListAttemptsUseCase(listAttemptsUC)
 	handler.SetCreateCheckUseCase(createCheckUC)
 	handler.SetListChecksUseCase(listChecksUC)
 	handler.SetGetCheckUseCase(getCheckUC)

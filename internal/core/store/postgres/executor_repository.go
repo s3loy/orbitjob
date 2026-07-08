@@ -72,7 +72,7 @@ func (r *ExecutorRepository) ClaimNextDispatched(
 			RETURNING ji.id, ji.run_id::text, ji.tenant_id, ji.job_id,
 			          ji.priority, ji.effective_priority, ji.attempt,
 			          ji.max_attempt, ji.trace_id, ji.scheduled_at,
-			          ji.dispatched_at, ji.lease_expires_at
+			          ji.dispatched_at, ji.lease_expires_at, ji.started_at
 		)
 		SELECT u.id, u.run_id, u.tenant_id, u.job_id,
 		       j.handler_type, j.handler_payload,
@@ -80,7 +80,7 @@ func (r *ExecutorRepository) ClaimNextDispatched(
 		       j.retry_backoff_strategy,
 		       u.priority, u.effective_priority,
 		       u.attempt, u.max_attempt, u.trace_id,
-		       u.scheduled_at, u.dispatched_at, u.lease_expires_at
+		       u.scheduled_at, u.dispatched_at, u.lease_expires_at, u.started_at
 		FROM updated u
 		JOIN jobs j ON u.tenant_id = j.tenant_id AND u.job_id = j.id
 	`, tenantID, limit, workerID, now, leaseExpiresAt, pq.Array(labelValues))
@@ -156,7 +156,8 @@ func (r *ExecutorRepository) CompleteInstance(
 		return fmt.Errorf("set tenant context: %w", err)
 	}
 
-	result, err := tx.ExecContext(ctx, `
+	var startedAt time.Time
+	err = tx.QueryRowContext(ctx, `
 		UPDATE job_instances
 		SET status = $1,
 		    finished_at = $2,
@@ -167,26 +168,14 @@ func (r *ExecutorRepository) CompleteInstance(
 		  AND id = $7
 		  AND worker_id = $8
 		  AND status = 'running'
-	`,
-		spec.Status,
-		spec.FinishedAt,
-		spec.ResultCode,
-		spec.ErrorMsg,
-		spec.RetryAt,
-		spec.TenantID,
-		spec.InstanceID,
-		spec.WorkerID,
-	)
+		RETURNING started_at
+	`, spec.Status, spec.FinishedAt, spec.ResultCode, spec.ErrorMsg, spec.RetryAt,
+		spec.TenantID, spec.InstanceID, spec.WorkerID).Scan(&startedAt)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrInstanceNotClaimed
+		}
 		return fmt.Errorf("complete instance: %w", err)
-	}
-	n, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("complete instance rows affected: %w", err)
-	}
-	if n == 0 {
-		err = ErrInstanceNotClaimed
-		return err
 	}
 
 	// Per-attempt immutable trail.
@@ -195,8 +184,8 @@ func (r *ExecutorRepository) CompleteInstance(
 		attemptStatus = domaininstance.StatusFailed
 	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO job_instance_attempts (tenant_id, instance_id, attempt_no, worker_id, status, finished_at, result_code, error_msg)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO job_instance_attempts (tenant_id, instance_id, attempt_no, worker_id, status, started_at, finished_at, result_code, error_msg)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		ON CONFLICT (tenant_id, instance_id, attempt_no) DO NOTHING
 	`,
 		spec.TenantID,
@@ -204,6 +193,7 @@ func (r *ExecutorRepository) CompleteInstance(
 		spec.Attempt,
 		spec.WorkerID,
 		attemptStatus,
+		startedAt,
 		spec.FinishedAt,
 		spec.ResultCode,
 		spec.ErrorMsg,
@@ -322,6 +312,7 @@ func scanAssignedTask(scanner rowScanner) (execute.AssignedTask, error) {
 	var traceID sql.NullString
 	var leaseExpiresAt sql.NullTime
 	var dispatchedAt sql.NullTime
+	var startedAt sql.NullTime
 
 	err := scanner.Scan(
 		&task.InstanceID,
@@ -341,6 +332,7 @@ func scanAssignedTask(scanner rowScanner) (execute.AssignedTask, error) {
 		&task.ScheduledAt,
 		&dispatchedAt,
 		&leaseExpiresAt,
+		&startedAt,
 	)
 	if err != nil {
 		return execute.AssignedTask{}, fmt.Errorf("scan assigned task: %w", err)
@@ -352,6 +344,9 @@ func scanAssignedTask(scanner rowScanner) (execute.AssignedTask, error) {
 	}
 	if dispatchedAt.Valid {
 		task.DispatchedAt = dispatchedAt.Time
+	}
+	if startedAt.Valid {
+		task.StartedAt = startedAt.Time
 	}
 
 	if len(payloadBytes) > 0 {
