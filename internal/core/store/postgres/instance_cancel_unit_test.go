@@ -14,6 +14,12 @@ import (
 	tenant "orbitjob/internal/core/domain/tenant"
 )
 
+func expectTenantContext(mock sqlmock.Sqlmock, tenantID string) {
+	mock.ExpectExec("SELECT set_config").
+		WithArgs(tenantID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+}
+
 func TestInstanceRepository_CancelUnit_Success(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -25,9 +31,14 @@ func TestInstanceRepository_CancelUnit_Success(t *testing.T) {
 	now := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
 
 	mock.ExpectBegin()
+	expectTenantContext(mock, "tenant-a")
+
+	mock.ExpectQuery("SELECT status FROM job_instances").
+		WithArgs("tenant-a", "run-cancel").
+		WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow(domaininstance.StatusDispatched))
 
 	mock.ExpectQuery("UPDATE job_instances").
-		WithArgs("run-cancel", 2).
+		WithArgs("tenant-a", "run-cancel", 2).
 		WillReturnRows(sqlmock.NewRows(instanceColumnsAll).AddRow(
 			int64(1), "run-cancel", "tenant-a", int64(42), "manual",
 			"canceled", 5, 5, nil, nil,
@@ -46,7 +57,7 @@ func TestInstanceRepository_CancelUnit_Success(t *testing.T) {
 
 	mock.ExpectCommit()
 
-	out, err := repo.Cancel(context.Background(), "run-cancel", 2)
+	out, err := repo.Cancel(context.Background(), "tenant-a", "run-cancel", 2)
 	if err != nil {
 		t.Fatalf("Cancel() error = %v", err)
 	}
@@ -75,16 +86,17 @@ func TestInstanceRepository_CancelUnit_NotFound(t *testing.T) {
 	repo := NewInstanceRepository(db)
 
 	mock.ExpectBegin()
-	mock.ExpectQuery("UPDATE job_instances").
-		WithArgs("run-missing", 1).
+	expectTenantContext(mock, "tenant-a")
+	mock.ExpectQuery("SELECT status FROM job_instances").
+		WithArgs("tenant-a", "run-missing").
 		WillReturnError(sql.ErrNoRows)
 
-	_, err = repo.Cancel(context.Background(), "run-missing", 1)
+	_, err = repo.Cancel(context.Background(), "tenant-a", "run-missing", 1)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "cancel instance") {
-		t.Fatalf("expected cancel instance error, got %v", err)
+	if !strings.Contains(err.Error(), "read instance for cancel") {
+		t.Fatalf("expected read instance for cancel error, got %v", err)
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -101,13 +113,17 @@ func TestInstanceRepository_CancelUnit_OptimisticLockFailure(t *testing.T) {
 
 	repo := NewInstanceRepository(db)
 
-	// Version mismatch means no rows updated
 	mock.ExpectBegin()
+	expectTenantContext(mock, "tenant-a")
+	mock.ExpectQuery("SELECT status FROM job_instances").
+		WithArgs("tenant-a", "run-stale").
+		WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow(domaininstance.StatusDispatched))
+
 	mock.ExpectQuery("UPDATE job_instances").
-		WithArgs("run-stale", 5).
+		WithArgs("tenant-a", "run-stale", 5).
 		WillReturnError(sql.ErrNoRows)
 
-	_, err = repo.Cancel(context.Background(), "run-stale", 5)
+	_, err = repo.Cancel(context.Background(), "tenant-a", "run-stale", 5)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -147,10 +163,15 @@ func TestInstanceRepository_CancelUnit_BySourceStatus(t *testing.T) {
 			now := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
 
 			mock.ExpectBegin()
+			expectTenantContext(mock, "tenant-a")
+
+			mock.ExpectQuery("SELECT status FROM job_instances").
+				WithArgs("tenant-a", "run-"+tt.fromStatus).
+				WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow(tt.fromStatus))
 
 			if tt.expectFound {
 				mock.ExpectQuery("UPDATE job_instances").
-					WithArgs("run-"+tt.fromStatus, 1).
+					WithArgs("tenant-a", "run-"+tt.fromStatus, 1).
 					WillReturnRows(sqlmock.NewRows(instanceColumnsAll).AddRow(
 						int64(1), "run-"+tt.fromStatus, "tenant-a", int64(42), "manual",
 						"canceled", 5, 5, nil, nil,
@@ -169,7 +190,7 @@ func TestInstanceRepository_CancelUnit_BySourceStatus(t *testing.T) {
 
 				mock.ExpectCommit()
 
-				out, err := repo.Cancel(context.Background(), "run-"+tt.fromStatus, 1)
+				out, err := repo.Cancel(context.Background(), "tenant-a", "run-"+tt.fromStatus, 1)
 				if err != nil {
 					t.Fatalf("Cancel() error = %v", err)
 				}
@@ -178,10 +199,10 @@ func TestInstanceRepository_CancelUnit_BySourceStatus(t *testing.T) {
 				}
 			} else {
 				mock.ExpectQuery("UPDATE job_instances").
-					WithArgs("run-"+tt.fromStatus, 1).
+					WithArgs("tenant-a", "run-"+tt.fromStatus, 1).
 					WillReturnError(sql.ErrNoRows)
 
-				_, err := repo.Cancel(context.Background(), "run-"+tt.fromStatus, 1)
+				_, err := repo.Cancel(context.Background(), "tenant-a", "run-"+tt.fromStatus, 1)
 				if err == nil {
 					t.Fatal("expected error, got nil")
 				}
@@ -208,7 +229,7 @@ func TestInstanceRepository_CancelUnit_BeginError(t *testing.T) {
 
 	mock.ExpectBegin().WillReturnError(errors.New("begin boom"))
 
-	_, err = repo.Cancel(context.Background(), "run-1", 1)
+	_, err = repo.Cancel(context.Background(), "tenant-a", "run-1", 1)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -232,9 +253,14 @@ func TestInstanceRepository_CancelUnit_CommitError(t *testing.T) {
 	now := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
 
 	mock.ExpectBegin()
+	expectTenantContext(mock, "tenant-a")
+
+	mock.ExpectQuery("SELECT status FROM job_instances").
+		WithArgs("tenant-a", "run-1").
+		WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow(domaininstance.StatusDispatched))
 
 	mock.ExpectQuery("UPDATE job_instances").
-		WithArgs("run-1", 1).
+		WithArgs("tenant-a", "run-1", 1).
 		WillReturnRows(sqlmock.NewRows(instanceColumnsAll).AddRow(
 			int64(1), "run-1", "tenant-a", int64(42), "manual",
 			"canceled", 5, 5, nil, nil,
@@ -253,7 +279,7 @@ func TestInstanceRepository_CancelUnit_CommitError(t *testing.T) {
 
 	mock.ExpectCommit().WillReturnError(errors.New("commit boom"))
 
-	_, err = repo.Cancel(context.Background(), "run-1", 1)
+	_, err = repo.Cancel(context.Background(), "tenant-a", "run-1", 1)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -277,9 +303,14 @@ func TestInstanceRepository_CancelUnit_AuditInsertError(t *testing.T) {
 	now := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
 
 	mock.ExpectBegin()
+	expectTenantContext(mock, "tenant-a")
+
+	mock.ExpectQuery("SELECT status FROM job_instances").
+		WithArgs("tenant-a", "run-1").
+		WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow(domaininstance.StatusDispatched))
 
 	mock.ExpectQuery("UPDATE job_instances").
-		WithArgs("run-1", 1).
+		WithArgs("tenant-a", "run-1", 1).
 		WillReturnRows(sqlmock.NewRows(instanceColumnsAll).AddRow(
 			int64(1), "run-1", "tenant-a", int64(42), "manual",
 			"canceled", 5, 5, nil, nil,
@@ -296,7 +327,7 @@ func TestInstanceRepository_CancelUnit_AuditInsertError(t *testing.T) {
 		WithArgs("tenant-a", tenant.ActorTypeAPIKey, "api_key", domaininstance.StatusCanceled, tenant.ResourceTypeInstance, "run-1", sqlmock.AnyArg()).
 		WillReturnError(errors.New("audit boom"))
 
-	_, err = repo.Cancel(context.Background(), "run-1", 1)
+	_, err = repo.Cancel(context.Background(), "tenant-a", "run-1", 1)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}

@@ -9,15 +9,7 @@ import (
 	tenant "orbitjob/internal/core/domain/tenant"
 )
 
-func (r *InstanceRepository) Cancel(ctx context.Context, runID string, version int) (domaininstance.Snapshot, error) {
-	diffBytes, err := json.Marshal(map[string]any{
-		"from_status": "dispatched_or_running",
-		"to_status":   domaininstance.StatusCanceled,
-	})
-	if err != nil {
-		return domaininstance.Snapshot{}, fmt.Errorf("marshal cancel diff: %w", err)
-	}
-
+func (r *InstanceRepository) Cancel(ctx context.Context, tenantID, runID string, version int) (domaininstance.Snapshot, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return domaininstance.Snapshot{}, fmt.Errorf("begin instance cancel tx: %w", err)
@@ -28,13 +20,28 @@ func (r *InstanceRepository) Cancel(ctx context.Context, runID string, version i
 		}
 	}()
 
+	// Set tenant context for RLS and ensure row-level tenant isolation.
+	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID); err != nil {
+		return domaininstance.Snapshot{}, fmt.Errorf("set tenant context: %w", err)
+	}
+
+	var currentStatus string
+	if err = tx.QueryRowContext(ctx, `
+		SELECT status FROM job_instances
+		WHERE tenant_id = $1 AND run_id = $2
+		FOR UPDATE
+	`, tenantID, runID).Scan(&currentStatus); err != nil {
+		return domaininstance.Snapshot{}, fmt.Errorf("read instance for cancel: %w", err)
+	}
+
 	row := tx.QueryRowContext(ctx, `
 		UPDATE job_instances
 		SET status = 'canceled',
 		    version = version + 1,
 		    finished_at = now()
-		WHERE run_id = $1
-		  AND version = $2
+		WHERE tenant_id = $1
+		  AND run_id = $2
+		  AND version = $3
 		  AND status IN ('pending', 'dispatched', 'running', 'retry_wait')
 		RETURNING
 			id,
@@ -64,11 +71,19 @@ func (r *InstanceRepository) Cancel(ctx context.Context, runID string, version i
 			created_at,
 			updated_at,
 			version
-	`, runID, version)
+	`, tenantID, runID, version)
 
 	out, scanErr := scanInstanceSnapshot(row)
 	if scanErr != nil {
 		return domaininstance.Snapshot{}, fmt.Errorf("cancel instance: %w", scanErr)
+	}
+
+	diffBytes, err := json.Marshal(map[string]any{
+		"from_status": currentStatus,
+		"to_status":   domaininstance.StatusCanceled,
+	})
+	if err != nil {
+		return domaininstance.Snapshot{}, fmt.Errorf("marshal cancel diff: %w", err)
 	}
 
 	if _, err = tx.ExecContext(ctx, `

@@ -90,7 +90,7 @@ func TestRecoverLeaseOrphans_Integration_RecoveredInstanceCanBeCanceled(t *testi
 	}
 
 	instanceRepo := postgres.NewInstanceRepository(db)
-	snap, err := instanceRepo.Cancel(ctx, runID, version)
+	snap, err := instanceRepo.Cancel(ctx, "tenant-orphan-cancel", runID, version)
 	if err != nil {
 		t.Fatalf("Cancel() after recovery error = %v", err)
 	}
