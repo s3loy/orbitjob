@@ -462,6 +462,7 @@ func (r *DispatchRepository) RecoverLeaseOrphans(ctx context.Context, now time.T
 	dRows, err := tx1.QueryContext(ctx, `
 			UPDATE job_instances
 			SET status = 'pending',
+			    version = version + 1,
 			    worker_id = NULL,
 			    lease_expires_at = NULL,
 			    dispatched_at = NULL,
@@ -535,6 +536,7 @@ func (r *DispatchRepository) RecoverLeaseOrphans(ctx context.Context, now time.T
 		        WHEN ji.attempt <= ji.max_attempt THEN 'retry_wait'::VARCHAR
 		        ELSE 'failed'::VARCHAR
 		    END,
+		    version = ji.version + 1,
 		    worker_id = NULL,
 		    lease_expires_at = NULL,
 		    finished_at = $1,

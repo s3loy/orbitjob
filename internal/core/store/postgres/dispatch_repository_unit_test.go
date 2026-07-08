@@ -40,7 +40,7 @@ var instanceColumns = []string{
 	"attempt", "max_attempt", "scheduled_at", "started_at",
 	"finished_at", "lease_expires_at", "dispatched_at", "retry_at",
 	"result_code", "error_msg", "trace_id", "created_at", "updated_at",
-		"version",
+	"version",
 }
 
 // addInstanceRow appends one instance row to the given sqlmock rows.
@@ -52,14 +52,14 @@ func addInstanceRow(
 ) {
 	rows.AddRow(
 		id, runID, tenantID, jobID, triggerSource,
-		status, priority, priority, nil, nil,         // effective_priority, partition_key, idempotency_key
-		"job_instance_create", nil, nil,              // idempotency_scope, routing_key, worker_id
-		1, 1,                                         // attempt, max_attempt
-		scheduledAt, nil, nil,                         // scheduled_at, started_at, finished_at
-		nil, nil, nil,                                 // lease_expires_at, dispatched_at, retry_at
-		nil, nil, nil,                                 // result_code, error_msg, trace_id
-		now, now,                                      // created_at, updated_at
-		1,                                             // version
+		status, priority, priority, nil, nil, // effective_priority, partition_key, idempotency_key
+		"job_instance_create", nil, nil, // idempotency_scope, routing_key, worker_id
+		1, 1, // attempt, max_attempt
+		scheduledAt, nil, nil, // scheduled_at, started_at, finished_at
+		nil, nil, nil, // lease_expires_at, dispatched_at, retry_at
+		nil, nil, nil, // result_code, error_msg, trace_id
+		now, now, // created_at, updated_at
+		1, // version
 	)
 }
 
@@ -790,6 +790,38 @@ func TestRecoverLeaseOrphans_Error(t *testing.T) {
 	_, _, err = repo.RecoverLeaseOrphans(context.Background(), now)
 	if err == nil || !strings.Contains(err.Error(), "recover dispatched") {
 		t.Fatalf("expected recover dispatched orphans error, got %v", err)
+	}
+}
+
+func TestRecoverLeaseOrphans_VersionIncrement(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := NewDispatchRepository(db)
+	now := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)UPDATE job_instances.*?SET status = 'pending',.*?version = version \+ 1.*?status = 'dispatched'`).
+		WithArgs(now).
+		WillReturnRows(sqlmock.NewRows([]string{"run_id", "tenant_id"}))
+	mock.ExpectCommit()
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)UPDATE job_instances ji.*?SET status = CASE.*?version = (?:ji\.)?version \+ 1.*?ji\.status = 'running'`).
+		WithArgs(now).
+		WillReturnRows(sqlmock.NewRows([]string{"run_id", "tenant_id"}))
+	mock.ExpectCommit()
+
+	_, _, err = repo.RecoverLeaseOrphans(context.Background(), now)
+	if err != nil {
+		t.Fatalf("RecoverLeaseOrphans() error = %v", err)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sqlmock expectations: %v", err)
 	}
 }
 
