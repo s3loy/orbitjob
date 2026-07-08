@@ -4,11 +4,14 @@ import (
 	"fmt"
 	"time"
 
+	apikeycommand "orbitjob/internal/admin/app/apikey/command"
 	checkcommand "orbitjob/internal/admin/app/check/command"
 	checkquery "orbitjob/internal/admin/app/check/query"
 	checkrunquery "orbitjob/internal/admin/app/checkrun/query"
 	command "orbitjob/internal/admin/app/job/command"
 	query "orbitjob/internal/admin/app/job/query"
+	tenantcommand "orbitjob/internal/admin/app/tenant/command"
+	tenantquery "orbitjob/internal/admin/app/tenant/query"
 	slicommand "orbitjob/internal/admin/app/sli/command"
 	sliquery "orbitjob/internal/admin/app/sli/query"
 	slocommand "orbitjob/internal/admin/app/slo/command"
@@ -512,4 +515,58 @@ func (r ListSLOAlertsRequest) ToListInput() sloalertquery.ListInput {
 		Limit:  r.Limit,
 		Offset: r.Offset,
 	}
+}
+
+// ==================== Tenant Requests ====================
+
+// CreateTenantRequest defines the HTTP payload for creating a tenant.
+type CreateTenantRequest struct {
+	Slug   string `json:"slug" binding:"required,max=64"`
+	Name   string `json:"name" binding:"required,max=128"`
+	Status string `json:"status" binding:"omitempty,oneof=active suspended"`
+}
+
+// ToCreateInput converts the HTTP request into an admin command input.
+func (r CreateTenantRequest) ToCreateInput() tenantcommand.CreateInput {
+	return tenantcommand.CreateInput{
+		Slug:   r.Slug,
+		Name:   r.Name,
+		Status: r.Status,
+	}
+}
+
+// ListTenantsRequest defines the query parameters for listing tenants.
+type ListTenantsRequest struct {
+	Limit  int `form:"limit" binding:"omitempty,min=1,max=100"`
+	Offset int `form:"offset" binding:"omitempty,min=0"`
+}
+
+// ToListInput converts the HTTP query parameters into a control-plane query input.
+func (r ListTenantsRequest) ToListInput() tenantquery.ListInput {
+	return tenantquery.ListInput{
+		Limit:  r.Limit,
+		Offset: r.Offset,
+	}
+}
+
+// TenantURI defines the route parameters for reading one tenant.
+type TenantURI struct {
+	ID string `uri:"id" binding:"required,max=26"`
+}
+
+// ==================== API Keys ====================
+
+// CreateAPIKeyRequest defines the HTTP payload for creating an API key.
+type CreateAPIKeyRequest struct{}
+
+// ToCreateInput converts the HTTP request into an admin command input.
+func (r CreateAPIKeyRequest) ToCreateInput(tenantID string) apikeycommand.CreateInput {
+	return apikeycommand.CreateInput{
+		TenantID: tenantID,
+	}
+}
+
+// APIKeyURI defines the route parameters for revoking one API key.
+type APIKeyURI struct {
+	ID string `uri:"id" binding:"required,max=26"`
 }

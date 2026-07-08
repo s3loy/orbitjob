@@ -57,6 +57,19 @@ func (s *stubGetJobUseCase) Get(ctx context.Context, in query.GetInput) (query.G
 	return s.out, s.err
 }
 
+// testRouter returns a gin engine with the handler routes registered under a
+// simulated tenant, suitable for route-level tests that bypass production auth.
+func testRouter(handler *adminhttp.Handler) *gin.Engine {
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		ctx := middleware.WithTenantID(c.Request.Context(), "tenant-a", middleware.TenantSourceHeader)
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+	})
+	handler.Register(r)
+	return r
+}
+
 func TestNewRouter_Healthz(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -87,7 +100,7 @@ func TestNewRouter_CreateJobRoute(t *testing.T) {
 	}
 
 	handler := adminhttp.NewHandler(createUC, nil, nil, nil, nil)
-	router := newRouter(handler, nil, nil)
+	router := testRouter(handler)
 
 	body := `{
                   "name":"demo-job",

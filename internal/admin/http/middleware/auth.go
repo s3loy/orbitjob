@@ -115,12 +115,11 @@ func (a *Auth) validateAPIKey(ctx context.Context, key string) (string, bool) {
 	return r.TenantID, true
 }
 
-// GetTenantID returns the tenant_id from the gin context, defaulting to "default".
+// GetTenantID returns the tenant_id from the gin context. If no tenant has been
+// set (e.g. the request is unauthenticated), it returns an empty string. Callers
+// that require a tenant must handle the empty case explicitly.
 func GetTenantID(c *gin.Context) string {
 	tid, _ := TenantID(c.Request.Context())
-	if tid == "" {
-		return "default"
-	}
 	return tid
 }
 

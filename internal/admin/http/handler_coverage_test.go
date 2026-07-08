@@ -1001,8 +1001,7 @@ func TestHandler_GetJob_QueryBindError(t *testing.T) {
 
 	useCase := &stubGetJobUseCase{}
 	handler := NewHandler(nil, nil, useCase, nil, nil)
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	// tenant_id > 64 chars triggers bind error
 	longTenant := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" // 65 chars
@@ -1026,8 +1025,7 @@ func TestHandler_UpdateJob_JSONBindError(t *testing.T) {
 	getUseCase := &stubGetJobUseCase{}
 	updateUseCase := &stubUpdateJobUseCase{}
 	handler := NewHandler(nil, nil, getUseCase, updateUseCase, nil)
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	// Valid path but bad JSON body
 	req := httptest.NewRequest(stdhttp.MethodPut, "/api/v1/jobs/42",
@@ -1055,8 +1053,7 @@ func TestHandler_ChangeJobStatus_PathBindError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	handler := NewHandler(nil, nil, nil, nil, &stubChangeStatusUseCase{})
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	// Bad ID in path
 	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/jobs/not-an-int/pause",
@@ -1077,8 +1074,7 @@ func TestHandler_ChangeJobStatus_JSONBindError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	handler := NewHandler(nil, nil, nil, nil, &stubChangeStatusUseCase{})
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/jobs/42/pause",
 		bytes.NewBufferString(`{invalid}`))
@@ -1102,8 +1098,7 @@ func TestHandler_DeleteJob_MapsValidationError(t *testing.T) {
 	}
 	handler := NewHandler(nil, nil, nil, nil, nil)
 	handler.SetDeleteJobUseCase(useCase)
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	req := httptest.NewRequest(stdhttp.MethodDelete, "/api/v1/jobs/42",
 		bytes.NewBufferString(`{"version":1}`))
@@ -1141,8 +1136,7 @@ func TestHandler_ListInstances_MapsValidationError(t *testing.T) {
 	}
 	handler := NewHandler(nil, nil, nil, nil, nil)
 	handler.SetListInstancesUseCase(useCase)
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/instances", nil)
 	resp := httptest.NewRecorder()

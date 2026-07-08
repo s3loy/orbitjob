@@ -542,6 +542,7 @@ CREATE TABLE IF NOT EXISTS tenants (
   CONSTRAINT chk_tenants_name_non_empty CHECK (name <> '')
 );
 
+DROP TRIGGER IF EXISTS trg_tenants_set_updated_at ON tenants;
 CREATE TRIGGER trg_tenants_set_updated_at
   BEFORE UPDATE ON tenants
   FOR EACH ROW
@@ -624,58 +625,75 @@ COMMIT;
 -- Stage A: Create RLS policies but leave RLS disabled.
 -- To activate (Stage C), run: ALTER TABLE <name> ENABLE ROW LEVEL SECURITY;
 -- Policies use current_setting('app.tenant_id') which is set by the application
--- via SET LOCAL app.tenant_id at the start of each transaction.
+-- via SELECT set_config('app.tenant_id', tenant_id, true) at the start of each transaction.
 
 -- ============================================================
 -- jobs table
 -- ============================================================
+DROP POLICY IF EXISTS jobs_tenant_isolation ON jobs;
 CREATE POLICY jobs_tenant_isolation ON jobs
     FOR ALL
     USING (tenant_id = current_setting('app.tenant_id'))
     WITH CHECK (tenant_id = current_setting('app.tenant_id'));
 
+ALTER TABLE jobs ENABLE ROW LEVEL SECURITY;
+
 -- ============================================================
 -- job_instances table
 -- ============================================================
+DROP POLICY IF EXISTS job_instances_tenant_isolation ON job_instances;
 CREATE POLICY job_instances_tenant_isolation ON job_instances
     FOR ALL
     USING (tenant_id = current_setting('app.tenant_id'))
     WITH CHECK (tenant_id = current_setting('app.tenant_id'));
 
 -- Policy for dispatcher: SELECT + UPDATE across tenants for claim
+DROP POLICY IF EXISTS job_instances_dispatcher_claim ON job_instances;
 CREATE POLICY job_instances_dispatcher_claim ON job_instances
     FOR SELECT
     USING (true);
 
+DROP POLICY IF EXISTS job_instances_dispatcher_update ON job_instances;
 CREATE POLICY job_instances_dispatcher_update ON job_instances
     FOR UPDATE
     USING (true)
     WITH CHECK (true);
+
+ALTER TABLE job_instances ENABLE ROW LEVEL SECURITY;
 
 -- ============================================================
 -- api_keys table
 -- ============================================================
 -- No tenant isolation policy on api_keys — the auth middleware reads this table
 -- before the tenant_id is known. Access is controlled at the application level.
+-- RLS is intentionally NOT enabled on api_keys so that authentication can look
+-- up the key and resolve the tenant before app.tenant_id is established.
 
 -- ============================================================
 -- audit_events table
 -- ============================================================
+DROP POLICY IF EXISTS audit_events_tenant_isolation ON audit_events;
 CREATE POLICY audit_events_tenant_isolation ON audit_events
     FOR INSERT
     WITH CHECK (tenant_id = current_setting('app.tenant_id'));
 
+DROP POLICY IF EXISTS audit_events_tenant_read ON audit_events;
 CREATE POLICY audit_events_tenant_read ON audit_events
     FOR SELECT
     USING (tenant_id = current_setting('app.tenant_id'));
 
+ALTER TABLE audit_events ENABLE ROW LEVEL SECURITY;
+
 -- ============================================================
 -- tenants table
 -- ============================================================
+DROP POLICY IF EXISTS tenants_isolation ON tenants;
 CREATE POLICY tenants_isolation ON tenants
     FOR ALL
     USING (id = current_setting('app.tenant_id'))
     WITH CHECK (id = current_setting('app.tenant_id'));
+
+ALTER TABLE tenants ENABLE ROW LEVEL SECURITY;
 
 -- Note: The default tenant_id 'default' must exist in the tenants table.
 
@@ -700,6 +718,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS trg_job_instance_notify ON job_instances;
 CREATE TRIGGER trg_job_instance_notify
 AFTER INSERT OR UPDATE OF status ON job_instances
 FOR EACH ROW

@@ -100,6 +100,27 @@ services:
       - backend
     restart: "no"
 
+  # ── Bootstrap: create default tenant and initial API key ───────
+  bootstrap:
+    <<: *go-defaults
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: bootstrap
+    environment:
+      APP_ENV: production
+      ADMIN_DSN: "postgres://orbitjob:${PG_PASSWORD}@pgbouncer:6432/orbitjob?sslmode=disable"
+      ADMIN_BOOTSTRAP_SECRET_BACKEND: local
+      ADMIN_BOOTSTRAP_SECRET_ROOT: /run/secrets/orbitjob
+    volumes:
+      - bootstrap_secrets:/run/secrets/orbitjob
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - backend
+    restart: "no"
+
   # ── Admin API ──────────────────────────────────────────────────
   admin-api:
     <<: *go-defaults
@@ -112,8 +133,12 @@ services:
     environment:
       APP_ENV: production
       ADMIN_DSN: "postgres://orbitjob:${PG_PASSWORD}@pgbouncer:6432/orbitjob?sslmode=disable"
+    volumes:
+      - bootstrap_secrets:/run/secrets/orbitjob:ro
     depends_on:
       migrate:
+        condition: service_completed_successfully
+      bootstrap:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "/healthcheck", "http://localhost:8080/healthz"]
@@ -319,3 +344,4 @@ volumes:
   loki_data:
   grafana_data:
   etcd_data:
+  bootstrap_secrets:
