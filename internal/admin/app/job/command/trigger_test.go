@@ -2,9 +2,11 @@ package command
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"testing"
 
+	"github.com/lib/pq"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	query "orbitjob/internal/admin/app/job/query"
@@ -50,6 +52,25 @@ type stubInstanceReaderByIdempotency struct {
 
 func (r *stubInstanceReaderByIdempotency) GetByIdempotencyKey(_ context.Context, _, _, _ string) (domaininstance.Snapshot, error) {
 	return r.out, r.err
+}
+
+type idempotencyResult struct {
+	out domaininstance.Snapshot
+	err error
+}
+
+type sequentialIdempotencyReader struct {
+	sequence []idempotencyResult
+	index    int
+}
+
+func (r *sequentialIdempotencyReader) GetByIdempotencyKey(_ context.Context, _, _, _ string) (domaininstance.Snapshot, error) {
+	if r.index >= len(r.sequence) {
+		return domaininstance.Snapshot{}, errors.New("unexpected idempotency lookup call")
+	}
+	res := r.sequence[r.index]
+	r.index++
+	return res.out, res.err
 }
 
 func TestNewTriggerJobUseCase(t *testing.T) {
@@ -323,5 +344,109 @@ func TestTriggerJobUseCase_Trigger_LatencyMetricObserved(t *testing.T) {
 	count := testutil.CollectAndCount(metrics.TriggerLatency, "orbitjob_trigger_latency_seconds")
 	if count != 1 {
 		t.Fatalf("expected 1 latency observation, got %d", count)
+	}
+}
+
+func TestTriggerJobUseCase_Trigger_IdempotentRaceOnCreate(t *testing.T) {
+	metrics.TriggerLatency.Reset()
+	partitionKey := "east"
+	reader := &stubJobReader{
+		item: query.GetItem{
+			ID:             1,
+			Name:           "daily-report",
+			TenantID:       "default",
+			Status:         domainjob.StatusActive,
+			Priority:       10,
+			PartitionKey:   &partitionKey,
+			HandlerType:    "exec",
+			HandlerPayload: map[string]any{"cmd": "echo"},
+			RetryLimit:     3,
+		},
+	}
+	existing := domaininstance.Snapshot{
+		RunID:            "run-existing-race",
+		JobID:            1,
+		TenantID:         "default",
+		Status:           domaininstance.StatusPending,
+		TriggerSource:    domaininstance.TriggerSourceManual,
+		IdempotencyKey:   strPtr("idem-race"),
+		IdempotencyScope: domaininstance.DefaultIdempotencyScope,
+	}
+	creator := &captureInstanceCreator{err: &pq.Error{Code: "23505"}}
+	idempotency := &sequentialIdempotencyReader{
+		sequence: []idempotencyResult{
+			{err: sql.ErrNoRows},
+			{out: existing},
+		},
+	}
+	uc := NewTriggerJobUseCase(reader, creator, idempotency)
+
+	ctx := middleware.WithIdempotencyKey(context.Background(), "idem-race")
+	out, err := uc.Trigger(ctx, TriggerInput{JobID: 1, TenantID: "default"})
+	if err != nil {
+		t.Fatalf("Trigger() error = %v", err)
+	}
+	if creator.captured == nil {
+		t.Fatal("expected Create to be called")
+	}
+	if out.RunID != "run-existing-race" {
+		t.Fatalf("expected RunID=%q, got %q", "run-existing-race", out.RunID)
+	}
+	if out.Created {
+		t.Fatal("expected Created=false for recovered idempotent duplicate")
+	}
+	count := testutil.CollectAndCount(metrics.TriggerLatency, "orbitjob_trigger_latency_seconds")
+	if count != 0 {
+		t.Fatalf("expected 0 latency observations on retry path, got %d", count)
+	}
+}
+
+func TestTriggerJobUseCase_Trigger_UniqueViolationRequeryNoRows(t *testing.T) {
+	reader := &stubJobReader{
+		item: query.GetItem{
+			ID:       1,
+			Status:   domainjob.StatusActive,
+			TenantID: "default",
+		},
+	}
+	createErr := &pq.Error{Code: "23505"}
+	creator := &captureInstanceCreator{err: createErr}
+	idempotency := &sequentialIdempotencyReader{
+		sequence: []idempotencyResult{
+			{err: sql.ErrNoRows},
+			{err: sql.ErrNoRows},
+		},
+	}
+	uc := NewTriggerJobUseCase(reader, creator, idempotency)
+
+	ctx := middleware.WithIdempotencyKey(context.Background(), "idem-lost")
+	_, err := uc.Trigger(ctx, TriggerInput{JobID: 1, TenantID: "default"})
+	if err == nil {
+		t.Fatal("expected error when re-query after unique violation returns no rows")
+	}
+}
+
+func TestTriggerJobUseCase_Trigger_UniqueViolationRequeryError(t *testing.T) {
+	reader := &stubJobReader{
+		item: query.GetItem{
+			ID:       1,
+			Status:   domainjob.StatusActive,
+			TenantID: "default",
+		},
+	}
+	createErr := &pq.Error{Code: "23505"}
+	creator := &captureInstanceCreator{err: createErr}
+	idempotency := &sequentialIdempotencyReader{
+		sequence: []idempotencyResult{
+			{err: sql.ErrNoRows},
+			{err: errors.New("lookup failed")},
+		},
+	}
+	uc := NewTriggerJobUseCase(reader, creator, idempotency)
+
+	ctx := middleware.WithIdempotencyKey(context.Background(), "idem-lookup-error")
+	_, err := uc.Trigger(ctx, TriggerInput{JobID: 1, TenantID: "default"})
+	if err == nil {
+		t.Fatal("expected error when re-query after unique violation fails")
 	}
 }

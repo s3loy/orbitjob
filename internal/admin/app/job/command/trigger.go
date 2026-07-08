@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/lib/pq"
+
 	query "orbitjob/internal/admin/app/job/query"
+	"orbitjob/internal/admin/http/middleware"
 	domaininstance "orbitjob/internal/core/domain/instance"
 	domainjob "orbitjob/internal/core/domain/job"
-	"orbitjob/internal/admin/http/middleware"
 	"orbitjob/internal/domain/resource"
 	"orbitjob/internal/platform/metrics"
 )
@@ -85,11 +87,9 @@ func (uc *TriggerJobUseCase) Trigger(ctx context.Context, in TriggerInput) (Trig
 	if err != nil {
 		return TriggerResult{}, fmt.Errorf("normalize trigger instance: %w", err)
 	}
-	start := time.Now()
 	if spec.IdempotencyKey != nil && spec.IdempotencyScope != "" {
 		existing, err := uc.idempotency.GetByIdempotencyKey(ctx, spec.TenantID, spec.IdempotencyScope, *spec.IdempotencyKey)
 		if err == nil {
-			metrics.TriggerLatency.WithLabelValues(spec.TenantID).Observe(time.Since(start).Seconds())
 			return toTriggerResult(existing, false), nil
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
@@ -97,8 +97,18 @@ func (uc *TriggerJobUseCase) Trigger(ctx context.Context, in TriggerInput) (Trig
 		}
 	}
 
+	start := time.Now()
 	out, err := uc.instanceRepo.Create(ctx, spec)
 	if err != nil {
+		if spec.IdempotencyKey != nil && spec.IdempotencyScope != "" {
+			var pqErr *pq.Error
+			if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+				existing, lookupErr := uc.idempotency.GetByIdempotencyKey(ctx, spec.TenantID, spec.IdempotencyScope, *spec.IdempotencyKey)
+				if lookupErr == nil {
+					return toTriggerResult(existing, false), nil
+				}
+			}
+		}
 		return TriggerResult{}, fmt.Errorf("create trigger instance: %w", err)
 	}
 	metrics.TriggerLatency.WithLabelValues(spec.TenantID).Observe(time.Since(start).Seconds())
