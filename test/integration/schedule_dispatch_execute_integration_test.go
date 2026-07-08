@@ -164,6 +164,7 @@ func TestCronJob_EndToEnd(t *testing.T) {
 
 	// Execute the handler against the test server.
 	handler.SetAllowLoopbackForTest(true)
+	t.Cleanup(func() { handler.SetAllowLoopbackForTest(false) })
 	result := handler.NewHTTP(nil).Execute(ctx, task)
 	if !result.Success {
 		t.Fatalf("expected handler success, got result_code=%q error=%q", result.ResultCode, result.ErrorMsg)
