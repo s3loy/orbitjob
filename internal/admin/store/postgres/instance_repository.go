@@ -77,7 +77,7 @@ func (r *InstanceRepository) List(ctx context.Context, tenantID, status string, 
 	return out, nil
 }
 
-func (r *InstanceRepository) GetByRunID(ctx context.Context, runID string) (domaininstance.Snapshot, error) {
+func (r *InstanceRepository) GetByRunID(ctx context.Context, tenantID, runID string) (domaininstance.Snapshot, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT
 			id,
@@ -108,8 +108,9 @@ func (r *InstanceRepository) GetByRunID(ctx context.Context, runID string) (doma
 			updated_at,
 			version
 		FROM job_instances
-		WHERE run_id = $1
-	`, runID)
+		WHERE tenant_id = $1
+		  AND run_id = $2
+	`, tenantID, runID)
 
 	return scanInstanceSnapshot(row)
 }

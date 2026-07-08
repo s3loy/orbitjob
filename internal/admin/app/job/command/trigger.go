@@ -2,6 +2,8 @@ package command
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -83,14 +85,18 @@ func (uc *TriggerJobUseCase) Trigger(ctx context.Context, in TriggerInput) (Trig
 	if err != nil {
 		return TriggerResult{}, fmt.Errorf("normalize trigger instance: %w", err)
 	}
+	start := time.Now()
 	if spec.IdempotencyKey != nil && spec.IdempotencyScope != "" {
 		existing, err := uc.idempotency.GetByIdempotencyKey(ctx, spec.TenantID, spec.IdempotencyScope, *spec.IdempotencyKey)
 		if err == nil {
+			metrics.TriggerLatency.WithLabelValues(spec.TenantID).Observe(time.Since(start).Seconds())
 			return toTriggerResult(existing, false), nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return TriggerResult{}, fmt.Errorf("lookup instance by idempotency key: %w", err)
 		}
 	}
 
-	start := time.Now()
 	out, err := uc.instanceRepo.Create(ctx, spec)
 	if err != nil {
 		return TriggerResult{}, fmt.Errorf("create trigger instance: %w", err)

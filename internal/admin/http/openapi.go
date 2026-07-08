@@ -455,7 +455,7 @@ func adminAPIRoutes() []routeDefinition {
 			spec: operationDefinition{
 				id:                  "cancelInstance",
 				summary:             "Cancel one instance",
-				description:         "Cancel a dispatched or running instance using optimistic locking by version.",
+				description:         "Cancel a pending, dispatched, running, or retry_wait instance using optimistic locking by version.",
 				tags:                []string{"Instances"},
 				parameterModels:     []any{instanceRunIDURI{}},
 				requestBodyModel:    CancelInstanceRequest{},

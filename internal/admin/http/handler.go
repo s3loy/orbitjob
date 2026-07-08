@@ -67,7 +67,7 @@ type listInstancesUseCase interface {
 }
 
 type getInstanceUseCase interface {
-	Get(ctx context.Context, runID string) (*instancequery.InstanceItem, error)
+	Get(ctx context.Context, tenantID, runID string) (*instancequery.InstanceItem, error)
 }
 
 type cancelInstanceUseCase interface {
@@ -654,7 +654,12 @@ func (h *Handler) GetInstance(c *gin.Context) {
 		return
 	}
 
-	out, err := h.getInstanceUC.Get(c.Request.Context(), pathReq.RunID)
+	tenantID, ok := requireTenantID(c, "")
+	if !ok {
+		return
+	}
+
+	out, err := h.getInstanceUC.Get(c.Request.Context(), tenantID, pathReq.RunID)
 	if err != nil {
 		writeAPIError(c, err)
 		return
@@ -663,7 +668,8 @@ func (h *Handler) GetInstance(c *gin.Context) {
 	c.JSON(stdhttp.StatusOK, out)
 }
 
-// CancelInstance handles instance cancellation requests.
+// CancelInstance handles instance cancellation requests for instances in
+// pending, dispatched, running, or retry_wait status.
 func (h *Handler) CancelInstance(c *gin.Context) {
 	var pathReq instanceRunIDURI
 	if err := c.ShouldBindUri(&pathReq); err != nil {
@@ -679,9 +685,15 @@ func (h *Handler) CancelInstance(c *gin.Context) {
 		return
 	}
 
+	tenantID, ok := requireTenantID(c, "")
+	if !ok {
+		return
+	}
+
 	out, err := h.cancelInstanceUC.Cancel(c.Request.Context(), instancecommand.CancelInstanceInput{
-		RunID:   pathReq.RunID,
-		Version: body.Version,
+		TenantID: tenantID,
+		RunID:    pathReq.RunID,
+		Version:  body.Version,
 	})
 	if err != nil {
 		writeAPIError(c, err)

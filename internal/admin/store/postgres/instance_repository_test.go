@@ -198,12 +198,13 @@ func TestInstanceRepository_GetByRunID_Success(t *testing.T) {
 		)
 
 	mock.ExpectQuery(`SELECT (.+) FROM job_instances
-			WHERE run_id = \$1`).
-		WithArgs("run-001").
+			WHERE tenant_id = \$1
+			  AND run_id = \$2`).
+		WithArgs("tenant-a", "run-001").
 		WillReturnRows(rows)
 
 	repo := NewInstanceRepository(db)
-	snap, err := repo.GetByRunID(context.Background(), "run-001")
+	snap, err := repo.GetByRunID(context.Background(), "tenant-a", "run-001")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -223,12 +224,13 @@ func TestInstanceRepository_GetByRunID_NotFound(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	mock.ExpectQuery(`SELECT (.+) FROM job_instances
-			WHERE run_id = \$1`).
-		WithArgs("run-missing").
+			WHERE tenant_id = \$1
+			  AND run_id = \$2`).
+		WithArgs("tenant-a", "run-missing").
 		WillReturnError(sql.ErrNoRows)
 
 	repo := NewInstanceRepository(db)
-	_, err = repo.GetByRunID(context.Background(), "run-missing")
+	_, err = repo.GetByRunID(context.Background(), "tenant-a", "run-missing")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -312,12 +314,13 @@ func TestInstanceRepository_GetByRunID_DBError(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	mock.ExpectQuery(`SELECT (.+) FROM job_instances
-			WHERE run_id = \$1`).
-		WithArgs("run-001").
+			WHERE tenant_id = \$1
+			  AND run_id = \$2`).
+		WithArgs("tenant-a", "run-001").
 		WillReturnError(errors.New("connection refused"))
 
 	repo := NewInstanceRepository(db)
-	_, err = repo.GetByRunID(context.Background(), "run-001")
+	_, err = repo.GetByRunID(context.Background(), "tenant-a", "run-001")
 	if err == nil {
 		t.Fatal("expected error")
 	}

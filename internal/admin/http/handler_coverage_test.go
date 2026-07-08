@@ -65,14 +65,16 @@ func (s *stubListInstancesUseCase) List(ctx context.Context, in instancequery.Li
 }
 
 type stubGetInstanceUseCase struct {
-	called bool
-	runID  string
-	out    *instancequery.InstanceItem
-	err    error
+	called   bool
+	tenantID string
+	runID    string
+	out      *instancequery.InstanceItem
+	err      error
 }
 
-func (s *stubGetInstanceUseCase) Get(ctx context.Context, runID string) (*instancequery.InstanceItem, error) {
+func (s *stubGetInstanceUseCase) Get(ctx context.Context, tenantID, runID string) (*instancequery.InstanceItem, error) {
 	s.called = true
+	s.tenantID = tenantID
 	s.runID = runID
 	return s.out, s.err
 }
@@ -761,6 +763,7 @@ func TestHandler_GetInstance_Success(t *testing.T) {
 	h.SetGetInstanceUseCase(uc)
 
 	router := gin.New()
+	router.Use(testTenantMiddleware("tenant-a"))
 	h.Register(router)
 
 	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/instances/run-001", nil)
@@ -776,6 +779,9 @@ func TestHandler_GetInstance_Success(t *testing.T) {
 	}
 	if uc.runID != "run-001" {
 		t.Fatalf("expected runID=run-001, got %q", uc.runID)
+	}
+	if uc.tenantID != "tenant-a" {
+		t.Fatalf("expected tenantID=tenant-a, got %q", uc.tenantID)
 	}
 
 	var out instancequery.InstanceItem
@@ -825,6 +831,7 @@ func TestHandler_GetInstance_NotFound(t *testing.T) {
 	h.SetGetInstanceUseCase(uc)
 
 	router := gin.New()
+	router.Use(testTenantMiddleware("tenant-a"))
 	h.Register(router)
 
 	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/instances/run-999", nil)
@@ -862,6 +869,7 @@ func TestHandler_GetInstance_InternalError(t *testing.T) {
 	h.SetGetInstanceUseCase(uc)
 
 	router := gin.New()
+	router.Use(testTenantMiddleware("tenant-a"))
 	h.Register(router)
 
 	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/instances/run-001", nil)
@@ -905,6 +913,7 @@ func TestHandler_CancelInstance_Success(t *testing.T) {
 	h.SetCancelInstanceUseCase(uc)
 
 	router := gin.New()
+	router.Use(testTenantMiddleware("tenant-a"))
 	h.Register(router)
 
 	body := `{"version": 1}`
@@ -927,6 +936,9 @@ func TestHandler_CancelInstance_Success(t *testing.T) {
 	}
 	if uc.in.Version != 1 {
 		t.Fatalf("expected Version=1, got %d", uc.in.Version)
+	}
+	if uc.in.TenantID != "tenant-a" {
+		t.Fatalf("expected TenantID=tenant-a, got %q", uc.in.TenantID)
 	}
 
 	var out domaininstance.Snapshot
@@ -1000,6 +1012,7 @@ func TestHandler_CancelInstance_InternalError(t *testing.T) {
 	h.SetCancelInstanceUseCase(uc)
 
 	router := gin.New()
+	router.Use(testTenantMiddleware("tenant-a"))
 	h.Register(router)
 
 	body := `{"version": 1}`

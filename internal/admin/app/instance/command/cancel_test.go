@@ -13,7 +13,7 @@ type stubCancelReader struct {
 	err      error
 }
 
-func (r *stubCancelReader) GetByRunID(_ context.Context, _ string) (domaininstance.Snapshot, error) {
+func (r *stubCancelReader) GetByRunID(_ context.Context, _, _ string) (domaininstance.Snapshot, error) {
 	return r.snapshot, r.err
 }
 
@@ -22,7 +22,7 @@ type stubCancelRepo struct {
 	err error
 }
 
-func (r *stubCancelRepo) Cancel(_ context.Context, _ string, _ int) (domaininstance.Snapshot, error) {
+func (r *stubCancelRepo) Cancel(_ context.Context, _, _ string, _ int) (domaininstance.Snapshot, error) {
 	return r.out, r.err
 }
 
@@ -50,7 +50,7 @@ func TestCancelInstanceUseCase_Cancel_Dispatched(t *testing.T) {
 	}
 	uc := NewCancelInstanceUseCase(reader, repo)
 
-	out, err := uc.Cancel(context.Background(), CancelInstanceInput{RunID: "run-1", Version: 1})
+	out, err := uc.Cancel(context.Background(), CancelInstanceInput{TenantID: "tenant-a", RunID: "run-1", Version: 1})
 	if err != nil {
 		t.Fatalf("Cancel() error = %v", err)
 	}
@@ -72,7 +72,7 @@ func TestCancelInstanceUseCase_Cancel_Running(t *testing.T) {
 	}
 	uc := NewCancelInstanceUseCase(reader, repo)
 
-	out, err := uc.Cancel(context.Background(), CancelInstanceInput{RunID: "run-1", Version: 1})
+	out, err := uc.Cancel(context.Background(), CancelInstanceInput{TenantID: "tenant-a", RunID: "run-1", Version: 1})
 	if err != nil {
 		t.Fatalf("Cancel() error = %v", err)
 	}
@@ -94,7 +94,7 @@ func TestCancelInstanceUseCase_Cancel_Pending(t *testing.T) {
 	}
 	uc := NewCancelInstanceUseCase(reader, repo)
 
-	out, err := uc.Cancel(context.Background(), CancelInstanceInput{RunID: "run-1", Version: 1})
+	out, err := uc.Cancel(context.Background(), CancelInstanceInput{TenantID: "tenant-a", RunID: "run-1", Version: 1})
 	if err != nil {
 		t.Fatalf("Cancel() error = %v", err)
 	}
@@ -116,7 +116,7 @@ func TestCancelInstanceUseCase_Cancel_RetryWait(t *testing.T) {
 	}
 	uc := NewCancelInstanceUseCase(reader, repo)
 
-	out, err := uc.Cancel(context.Background(), CancelInstanceInput{RunID: "run-1", Version: 1})
+	out, err := uc.Cancel(context.Background(), CancelInstanceInput{TenantID: "tenant-a", RunID: "run-1", Version: 1})
 	if err != nil {
 		t.Fatalf("Cancel() error = %v", err)
 	}
@@ -130,7 +130,7 @@ func TestCancelInstanceUseCase_Cancel_ReaderError(t *testing.T) {
 	repo := &stubCancelRepo{}
 	uc := NewCancelInstanceUseCase(reader, repo)
 
-	_, err := uc.Cancel(context.Background(), CancelInstanceInput{RunID: "run-1", Version: 1})
+	_, err := uc.Cancel(context.Background(), CancelInstanceInput{TenantID: "tenant-a", RunID: "run-1", Version: 1})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -154,7 +154,7 @@ func TestCancelInstanceUseCase_Cancel_InvalidStatus(t *testing.T) {
 			repo := &stubCancelRepo{}
 			uc := NewCancelInstanceUseCase(reader, repo)
 
-			_, err := uc.Cancel(context.Background(), CancelInstanceInput{RunID: "run-1", Version: 1})
+			_, err := uc.Cancel(context.Background(), CancelInstanceInput{TenantID: "tenant-a", RunID: "run-1", Version: 1})
 			if err == nil {
 				t.Fatalf("expected error for status %q, got nil", tt.status)
 			}
@@ -169,7 +169,7 @@ func TestCancelInstanceUseCase_Cancel_RepoError(t *testing.T) {
 	repo := &stubCancelRepo{err: errors.New("cancel failed")}
 	uc := NewCancelInstanceUseCase(reader, repo)
 
-	_, err := uc.Cancel(context.Background(), CancelInstanceInput{RunID: "run-1", Version: 1})
+	_, err := uc.Cancel(context.Background(), CancelInstanceInput{TenantID: "tenant-a", RunID: "run-1", Version: 1})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
