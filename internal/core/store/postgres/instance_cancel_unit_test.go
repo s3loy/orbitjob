@@ -52,7 +52,7 @@ func TestInstanceRepository_CancelUnit_Success(t *testing.T) {
 		))
 
 	mock.ExpectExec("INSERT INTO audit_events").
-		WithArgs("tenant-a", tenant.ActorTypeAPIKey, "api_key", domaininstance.StatusCanceled, tenant.ResourceTypeInstance, "run-cancel", sqlmock.AnyArg()).
+		WithArgs("tenant-a", tenant.ActorTypeAPIKey, "api_key", tenant.EventTypeInstanceStatusChanged, tenant.ResourceTypeInstance, "run-cancel", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	mock.ExpectCommit()
@@ -185,7 +185,7 @@ func TestInstanceRepository_CancelUnit_BySourceStatus(t *testing.T) {
 					))
 
 				mock.ExpectExec("INSERT INTO audit_events").
-					WithArgs("tenant-a", tenant.ActorTypeAPIKey, "api_key", domaininstance.StatusCanceled, tenant.ResourceTypeInstance, "run-"+tt.fromStatus, sqlmock.AnyArg()).
+					WithArgs("tenant-a", tenant.ActorTypeAPIKey, "api_key", tenant.EventTypeInstanceStatusChanged, tenant.ResourceTypeInstance, "run-"+tt.fromStatus, sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 
 				mock.ExpectCommit()
@@ -274,7 +274,7 @@ func TestInstanceRepository_CancelUnit_CommitError(t *testing.T) {
 		))
 
 	mock.ExpectExec("INSERT INTO audit_events").
-		WithArgs("tenant-a", tenant.ActorTypeAPIKey, "api_key", domaininstance.StatusCanceled, tenant.ResourceTypeInstance, "run-1", sqlmock.AnyArg()).
+		WithArgs("tenant-a", tenant.ActorTypeAPIKey, "api_key", tenant.EventTypeInstanceStatusChanged, tenant.ResourceTypeInstance, "run-1", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	mock.ExpectCommit().WillReturnError(errors.New("commit boom"))
@@ -324,7 +324,7 @@ func TestInstanceRepository_CancelUnit_AuditInsertError(t *testing.T) {
 		))
 
 	mock.ExpectExec("INSERT INTO audit_events").
-		WithArgs("tenant-a", tenant.ActorTypeAPIKey, "api_key", domaininstance.StatusCanceled, tenant.ResourceTypeInstance, "run-1", sqlmock.AnyArg()).
+		WithArgs("tenant-a", tenant.ActorTypeAPIKey, "api_key", tenant.EventTypeInstanceStatusChanged, tenant.ResourceTypeInstance, "run-1", sqlmock.AnyArg()).
 		WillReturnError(errors.New("audit boom"))
 
 	_, err = repo.Cancel(context.Background(), "tenant-a", "run-1", 1)
