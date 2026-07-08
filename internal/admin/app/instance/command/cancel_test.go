@@ -81,6 +81,50 @@ func TestCancelInstanceUseCase_Cancel_Running(t *testing.T) {
 	}
 }
 
+func TestCancelInstanceUseCase_Cancel_Pending(t *testing.T) {
+	reader := &stubCancelReader{
+		snapshot: domaininstance.Snapshot{
+			RunID:   "run-1",
+			Status:  domaininstance.StatusPending,
+			Version: 1,
+		},
+	}
+	repo := &stubCancelRepo{
+		out: domaininstance.Snapshot{RunID: "run-1", Status: domaininstance.StatusCanceled, Version: 2},
+	}
+	uc := NewCancelInstanceUseCase(reader, repo)
+
+	out, err := uc.Cancel(context.Background(), CancelInstanceInput{RunID: "run-1", Version: 1})
+	if err != nil {
+		t.Fatalf("Cancel() error = %v", err)
+	}
+	if out.Status != domaininstance.StatusCanceled {
+		t.Fatalf("expected status=canceled, got %q", out.Status)
+	}
+}
+
+func TestCancelInstanceUseCase_Cancel_RetryWait(t *testing.T) {
+	reader := &stubCancelReader{
+		snapshot: domaininstance.Snapshot{
+			RunID:   "run-1",
+			Status:  domaininstance.StatusRetryWait,
+			Version: 1,
+		},
+	}
+	repo := &stubCancelRepo{
+		out: domaininstance.Snapshot{RunID: "run-1", Status: domaininstance.StatusCanceled, Version: 2},
+	}
+	uc := NewCancelInstanceUseCase(reader, repo)
+
+	out, err := uc.Cancel(context.Background(), CancelInstanceInput{RunID: "run-1", Version: 1})
+	if err != nil {
+		t.Fatalf("Cancel() error = %v", err)
+	}
+	if out.Status != domaininstance.StatusCanceled {
+		t.Fatalf("expected status=canceled, got %q", out.Status)
+	}
+}
+
 func TestCancelInstanceUseCase_Cancel_ReaderError(t *testing.T) {
 	reader := &stubCancelReader{err: errors.New("db down")}
 	repo := &stubCancelRepo{}
@@ -97,8 +141,6 @@ func TestCancelInstanceUseCase_Cancel_InvalidStatus(t *testing.T) {
 		name   string
 		status string
 	}{
-		{"pending", domaininstance.StatusPending},
-		{"retry_wait", domaininstance.StatusRetryWait},
 		{"success", domaininstance.StatusSuccess},
 		{"failed", domaininstance.StatusFailed},
 		{"canceled", domaininstance.StatusCanceled},

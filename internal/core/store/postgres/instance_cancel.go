@@ -35,7 +35,7 @@ func (r *InstanceRepository) Cancel(ctx context.Context, runID string, version i
 		    finished_at = now()
 		WHERE run_id = $1
 		  AND version = $2
-		  AND status IN ('dispatched', 'running')
+		  AND status IN ('pending', 'dispatched', 'running', 'retry_wait')
 		RETURNING
 			id,
 			run_id::text,

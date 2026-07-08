@@ -35,7 +35,11 @@ func (uc *CancelInstanceUseCase) Cancel(ctx context.Context, in CancelInstanceIn
 	if err != nil {
 		return domaininstance.Snapshot{}, fmt.Errorf("read instance for cancel: %w", err)
 	}
-	if current.Status != domaininstance.StatusDispatched && current.Status != domaininstance.StatusRunning {
+	switch current.Status {
+	case domaininstance.StatusPending, domaininstance.StatusDispatched,
+		domaininstance.StatusRunning, domaininstance.StatusRetryWait:
+		// allowed
+	default:
 		return domaininstance.Snapshot{}, &resource.ConflictError{
 			Resource: "instance",
 			Field:    "status",
