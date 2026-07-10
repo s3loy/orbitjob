@@ -40,6 +40,8 @@ go.work.sum
 bin/
 docs/superpowers/
 
+CLAUDE.md
+
 # Benchmark temporary output files
 bench-*.txt
 bench-*.err
