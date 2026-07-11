@@ -3,7 +3,10 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+
+	"github.com/lib/pq"
 
 	"orbitjob/internal/core/domain/tenant"
 	"orbitjob/internal/domain/resource"
@@ -33,6 +36,14 @@ func (r *TenantRepository) Create(ctx context.Context, t *tenant.Tenant) error {
 		VALUES ($1, $2, $3, COALESCE($4, 'active'), now(), now())
 	`, t.ID, t.Slug, t.Name, t.Status)
 	if err != nil {
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+			return &resource.ConflictError{
+				Resource: "tenant",
+				Field:    "slug",
+				Message:  fmt.Sprintf("tenant with slug %q already exists", t.Slug),
+			}
+		}
 		return fmt.Errorf("insert tenant: %w", err)
 	}
 	return tx.Commit()
