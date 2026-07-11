@@ -85,9 +85,10 @@ func TestLoadDevSchedulerConfig_CustomEnv(t *testing.T) {
 func TestLoadDevSchedulerConfig_InvalidFallback(t *testing.T) {
 	t.Setenv("SCHEDULER_BATCH_SIZE_MAX", "not-a-number")
 	cfg := loadDevSchedulerConfig()
-	// Invalid values fall back to 0 (loadDevPositiveInt returns 0 on error)
-	if cfg.BatchSize != 0 {
-		t.Fatalf("expected BatchSize=0 (fallback on parse error), got %d", cfg.BatchSize)
+	// Invalid values fall back to the default (100), not 0, so a zero tick
+	// interval never reaches time.NewTicker (which panics on 0).
+	if cfg.BatchSize != 100 {
+		t.Fatalf("expected BatchSize=100 (default on parse error), got %d", cfg.BatchSize)
 	}
 }
 
@@ -158,8 +159,8 @@ func TestLoadDevWorkerConfig_Defaults(t *testing.T) {
 	if cfg.LeaseDuration != 60*1_000_000_000 {
 		t.Fatalf("expected LeaseDuration=60s, got %v", cfg.LeaseDuration)
 	}
-	if cfg.Capacity != 1 {
-		t.Fatalf("expected Capacity=1, got %d", cfg.Capacity)
+	if cfg.Capacity != 5 {
+		t.Fatalf("expected Capacity=5, got %d", cfg.Capacity)
 	}
 }
 
