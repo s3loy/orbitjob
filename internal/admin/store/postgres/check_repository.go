@@ -3,10 +3,12 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 
 	checkquery "orbitjob/internal/admin/app/check/query"
 	domaincheck "orbitjob/internal/core/domain/check"
+	"orbitjob/internal/domain/resource"
 )
 
 type CheckRepository struct {
@@ -19,6 +21,7 @@ func NewCheckRepository(db *sql.DB) *CheckRepository {
 
 func (r *CheckRepository) Get(ctx context.Context, tenantID string, id int64) (domaincheck.Snapshot, error) {
 	var snap domaincheck.Snapshot
+	var checkConfigBytes, assertionBytes, labelsBytes []byte
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, name, description, tenant_id, status, check_type, check_config, assertion_rules,
 		       schedule_type, cron_expr, interval_sec, timezone, timeout_sec, retry_limit,
@@ -27,16 +30,36 @@ func (r *CheckRepository) Get(ctx context.Context, tenantID string, id int64) (d
 		WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
 	`, tenantID, id).Scan(
 		&snap.ID, &snap.Name, &snap.Description, &snap.TenantID, &snap.Status, &snap.CheckType,
-		&snap.CheckConfig, &snap.AssertionRules, &snap.ScheduleType, &snap.CronExpr, &snap.IntervalSec,
-		&snap.Timezone, &snap.TimeoutSec, &snap.RetryLimit, &snap.Priority, &snap.Labels,
+		&checkConfigBytes, &assertionBytes, &snap.ScheduleType, &snap.CronExpr, &snap.IntervalSec,
+		&snap.Timezone, &snap.TimeoutSec, &snap.RetryLimit, &snap.Priority, &labelsBytes,
 		&snap.NextRunAt, &snap.Version, &snap.CreatedAt, &snap.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
-		return domaincheck.Snapshot{}, fmt.Errorf("check not found: %d", id)
+		return domaincheck.Snapshot{}, &resource.NotFoundError{
+			Resource: "check",
+			ID:       id,
+		}
 	}
 	if err != nil {
 		return domaincheck.Snapshot{}, fmt.Errorf("get check: %w", err)
 	}
+
+	if checkConfigBytes != nil {
+		if err := json.Unmarshal(checkConfigBytes, &snap.CheckConfig); err != nil {
+			return domaincheck.Snapshot{}, fmt.Errorf("unmarshal check_config: %w", err)
+		}
+	}
+	if assertionBytes != nil {
+		if err := json.Unmarshal(assertionBytes, &snap.AssertionRules); err != nil {
+			return domaincheck.Snapshot{}, fmt.Errorf("unmarshal assertion_rules: %w", err)
+		}
+	}
+	if labelsBytes != nil {
+		if err := json.Unmarshal(labelsBytes, &snap.Labels); err != nil {
+			return domaincheck.Snapshot{}, fmt.Errorf("unmarshal labels: %w", err)
+		}
+	}
+
 	return snap, nil
 }
 
