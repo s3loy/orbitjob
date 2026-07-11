@@ -81,7 +81,7 @@ func (r *APIKeyRepository) FindKeyTenant(ctx context.Context, id string) (string
 	var tenantID string
 	err := r.db.QueryRowContext(ctx, `
 		SELECT tenant_id FROM api_keys
-		WHERE id = $1
+		WHERE id = $1 AND revoked_at IS NULL
 	`, id).Scan(&tenantID)
 	if err == sql.ErrNoRows {
 		return "", &resource.NotFoundError{Resource: "api_key", ID: id}
