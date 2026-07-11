@@ -45,15 +45,24 @@ func (s *stubListAPIKeysUseCase) List(ctx context.Context, in apikeyquery.ListIn
 }
 
 type stubRevokeAPIKeyUseCase struct {
-	called bool
-	in     apikeycommand.RevokeInput
-	err    error
+	called         bool
+	in             apikeycommand.RevokeInput
+	err            error
+	adminCalled    bool
+	adminID        string
+	adminErr       error
 }
 
 func (s *stubRevokeAPIKeyUseCase) Revoke(ctx context.Context, in apikeycommand.RevokeInput) error {
 	s.called = true
 	s.in = in
 	return s.err
+}
+
+func (s *stubRevokeAPIKeyUseCase) RevokeAsAdmin(ctx context.Context, id string) error {
+	s.adminCalled = true
+	s.adminID = id
+	return s.adminErr
 }
 
 func newAPIKeyTestRouter(t *testing.T, h *Handler) *gin.Engine {
@@ -303,6 +312,38 @@ func TestHandler_RevokeAPIKey_BindError(t *testing.T) {
 	}
 	if uc.called {
 		t.Fatal("expected use case not to be called on bind error")
+	}
+}
+
+func TestHandler_RevokeAPIKey_AdminCrossTenant(t *testing.T) {
+	uc := &stubRevokeAPIKeyUseCase{}
+	handler := NewHandler(nil, nil, nil, nil, nil)
+	handler.SetRevokeAPIKeyUseCase(uc)
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Request = c.Request.WithContext(middleware.WithTenantID(c.Request.Context(), "00000000000000000000000001", middleware.TenantSourceAPIKey))
+		c.Next()
+	})
+	handler.Register(r)
+
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/api_keys/01HZX/revoke", nil)
+	resp := httptest.NewRecorder()
+
+	r.ServeHTTP(resp, req)
+
+	if resp.Code != stdhttp.StatusOK {
+		t.Fatalf("expected status=%d, got %d, body=%s", stdhttp.StatusOK, resp.Code, resp.Body.String())
+	}
+	if !uc.adminCalled {
+		t.Fatal("expected RevokeAsAdmin to be called for bootstrap tenant")
+	}
+	if uc.adminID != "01HZX" {
+		t.Fatalf("expected id=%q, got %q", "01HZX", uc.adminID)
+	}
+	if uc.called {
+		t.Fatal("expected Revoke not to be called for bootstrap tenant")
 	}
 }
 

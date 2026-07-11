@@ -15,6 +15,7 @@ type RevokeInput struct {
 
 type apiKeyRevoker interface {
 	Revoke(ctx context.Context, tenantID, id string) error
+	RevokeCrossTenant(ctx context.Context, id string) error
 }
 
 // Revoker revokes API keys.
@@ -27,12 +28,18 @@ func NewRevoker(repo apiKeyRevoker) *Revoker {
 	return &Revoker{repo: repo}
 }
 
-// Revoke marks an API key as revoked.
+// Revoke marks an API key as revoked within a tenant.
 func (r *Revoker) Revoke(ctx context.Context, in RevokeInput) error {
 	if err := r.repo.Revoke(ctx, in.TenantID, in.ID); err != nil {
 		return err
 	}
 	return nil
+}
+
+// RevokeAsAdmin revokes an API key globally without tenant filtering.
+// Only for use by platform administrators (bootstrap tenant).
+func (r *Revoker) RevokeAsAdmin(ctx context.Context, id string) error {
+	return r.repo.RevokeCrossTenant(ctx, id)
 }
 
 // APIKeyRevokeResult is the control-plane response model for a revoked API key.

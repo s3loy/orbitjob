@@ -75,6 +75,33 @@ func (r *APIKeyRepository) ListByTenant(ctx context.Context, tenantID string) ([
 	return out, nil
 }
 
+// FindKeyTenant returns the tenant that owns the given API key.
+// This query bypasses RLS — only call for admin cross-tenant operations.
+func (r *APIKeyRepository) FindKeyTenant(ctx context.Context, id string) (string, error) {
+	var tenantID string
+	err := r.db.QueryRowContext(ctx, `
+		SELECT tenant_id FROM api_keys
+		WHERE id = $1 AND deleted_at IS NULL
+	`, id).Scan(&tenantID)
+	if err == sql.ErrNoRows {
+		return "", &resource.NotFoundError{Resource: "api_key", ID: id}
+	}
+	if err != nil {
+		return "", fmt.Errorf("find key tenant: %w", err)
+	}
+	return tenantID, nil
+}
+
+// RevokeCrossTenant finds the key's owning tenant and revokes it in that context.
+// Used by admin operations where the auth tenant differs from the key's tenant.
+func (r *APIKeyRepository) RevokeCrossTenant(ctx context.Context, id string) error {
+	tenantID, err := r.FindKeyTenant(ctx, id)
+	if err != nil {
+		return err
+	}
+	return r.Revoke(ctx, tenantID, id)
+}
+
 // Revoke marks an API key as revoked if it belongs to the tenant and is not already revoked.
 func (r *APIKeyRepository) Revoke(ctx context.Context, tenantID, id string) error {
 	tx, err := WithTenant(ctx, r.db, tenantID)

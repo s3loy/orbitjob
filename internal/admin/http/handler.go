@@ -24,6 +24,7 @@ import (
 	sloquery "orbitjob/internal/admin/app/slo/query"
 	sloalertquery "orbitjob/internal/admin/app/sloalert/query"
 	slobudgetquery "orbitjob/internal/admin/app/slobudget/query"
+	"orbitjob/internal/admin/bootstrap"
 	"orbitjob/internal/admin/http/apperror"
 	"orbitjob/internal/admin/http/middleware"
 	domaincheck "orbitjob/internal/core/domain/check"
@@ -185,6 +186,7 @@ type listAPIKeysUseCase interface {
 
 type revokeAPIKeyUseCase interface {
 	Revoke(ctx context.Context, in apikeycommand.RevokeInput) error
+	RevokeAsAdmin(ctx context.Context, id string) error
 }
 
 type checkListResponse struct {
@@ -1389,7 +1391,14 @@ func (h *Handler) RevokeAPIKey(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.revokeAPIKeyUC.Revoke(c.Request.Context(), apikeycommand.RevokeInput{ID: pathReq.ID, TenantID: tenantID}); err != nil {
+
+	var err error
+	if tenantID == bootstrap.DefaultTenantID {
+		err = h.revokeAPIKeyUC.RevokeAsAdmin(c.Request.Context(), pathReq.ID)
+	} else {
+		err = h.revokeAPIKeyUC.Revoke(c.Request.Context(), apikeycommand.RevokeInput{ID: pathReq.ID, TenantID: tenantID})
+	}
+	if err != nil {
 		writeAPIError(c, err)
 		return
 	}
