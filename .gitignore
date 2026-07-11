@@ -45,3 +45,8 @@ CLAUDE.md
 # Benchmark temporary output files
 bench-*.txt
 bench-*.err
+# Stray build binaries (go build in repo root)
+/dispatcher
+/scheduler
+/worker
+/devserver
