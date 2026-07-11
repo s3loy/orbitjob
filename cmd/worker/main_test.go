@@ -22,18 +22,20 @@ import (
 // ---------------------------------------------------------------------------
 
 type stubTickRunner struct {
-	mu      sync.Mutex
-	calls   int
-	err     error
-	handled int
-	onCall  func(int)
-	callCh  chan struct{}
+	mu        sync.Mutex
+	calls     int
+	tenantIDs []string
+	err       error
+	handled   int
+	onCall    func(int)
+	callCh    chan struct{}
 }
 
-func (s *stubTickRunner) SubmitNext(_ context.Context, _ *execute.WorkerPool, _, _ string, _ int, _ time.Duration, _ map[string]any) (int, error) {
+func (s *stubTickRunner) SubmitNext(_ context.Context, _ *execute.WorkerPool, tenantID, _ string, _ int, _ time.Duration, _ map[string]any) (int, error) {
 	s.mu.Lock()
 	s.calls++
 	callNo := s.calls
+	s.tenantIDs = append(s.tenantIDs, tenantID)
 	err := s.err
 	handled := s.handled
 	callCh := s.callCh
@@ -41,10 +43,7 @@ func (s *stubTickRunner) SubmitNext(_ context.Context, _ *execute.WorkerPool, _,
 	s.mu.Unlock()
 
 	if callCh != nil {
-		select {
-		case callCh <- struct{}{}:
-		default:
-		}
+		callCh <- struct{}{}
 	}
 	if onCall != nil {
 		onCall(callNo)
@@ -56,6 +55,12 @@ func (s *stubTickRunner) callCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.calls
+}
+
+func (s *stubTickRunner) seenTenantIDs() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.tenantIDs
 }
 
 type stubHeartbeater struct {
@@ -147,6 +152,12 @@ func TestLoadWorkerRuntimeConfig_Defaults(t *testing.T) {
 	if cfg.WorkerID == "" {
 		t.Fatalf("expected auto-generated worker ID")
 	}
+	if cfg.TenantID != "" {
+		t.Fatalf("expected empty tenantID when WORKER_TENANT_ID not set, got %q", cfg.TenantID)
+	}
+	if !cfg.MultiTenant {
+		t.Fatalf("expected MultiTenant=true when WORKER_TENANT_ID not set")
+	}
 }
 
 func TestLoadWorkerRuntimeConfig_Custom(t *testing.T) {
@@ -168,17 +179,20 @@ func TestLoadWorkerRuntimeConfig_Custom(t *testing.T) {
 	if cfg.TenantID != "tenant-42" {
 		t.Fatalf("expected tenantID=tenant-42, got %q", cfg.TenantID)
 	}
-	if cfg.PollInterval != 5*time.Second {
-		t.Fatalf("expected poll interval=5s, got %s", cfg.PollInterval)
+	if cfg.MultiTenant {
+		t.Fatalf("expected MultiTenant=false when WORKER_TENANT_ID is set")
 	}
-	if cfg.HeartbeatInterval != 15*time.Second {
-		t.Fatalf("expected heartbeat interval=15s, got %s", cfg.HeartbeatInterval)
+	if cfg.PollInterval() != 5*time.Second {
+		t.Fatalf("expected poll interval=5s, got %s", cfg.PollInterval())
 	}
-	if cfg.LeaseDuration != 120*time.Second {
-		t.Fatalf("expected lease duration=120s, got %s", cfg.LeaseDuration)
+	if cfg.HeartbeatInterval() != 15*time.Second {
+		t.Fatalf("expected heartbeat interval=15s, got %s", cfg.HeartbeatInterval())
 	}
-	if cfg.Capacity != 4 {
-		t.Fatalf("expected capacity=4, got %d", cfg.Capacity)
+	if cfg.LeaseDuration() != 120*time.Second {
+		t.Fatalf("expected lease duration=120s, got %s", cfg.LeaseDuration())
+	}
+	if cfg.Capacity() != 4 {
+		t.Fatalf("expected capacity=4, got %d", cfg.Capacity())
 	}
 	if cfg.Labels["gpu"] != "a100" {
 		t.Fatalf("expected labels[gpu]=a100, got %v", cfg.Labels)
@@ -224,10 +238,6 @@ func TestRunLoop_DrainMode(t *testing.T) {
 		runLoop(ctx, runner, hb, &runtimeConfig{
 			TenantID:          "t1",
 			WorkerID:          "w1",
-			PollInterval:      time.Second,
-			HeartbeatInterval: time.Second,
-			LeaseDuration:     60 * time.Second,
-			Capacity:          1,
 			Labels:            map[string]any{},
 		}, func(time.Duration) workerTicker {
 			return ticker
@@ -267,10 +277,6 @@ func TestRunLoop_WaitsTickerWhenIdle(t *testing.T) {
 		runLoop(ctx, runner, hb, &runtimeConfig{
 			TenantID:          "t1",
 			WorkerID:          "w1",
-			PollInterval:      time.Second,
-			HeartbeatInterval: time.Second,
-			LeaseDuration:     60 * time.Second,
-			Capacity:          1,
 			Labels:            map[string]any{},
 		}, func(time.Duration) workerTicker {
 			return ticker
@@ -303,15 +309,16 @@ func TestRunLoop_HeartbeatSendsOfflineOnShutdown(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		runLoop(ctx, runner, hb, &runtimeConfig{
+		cfg := runtimeConfig{
 			TenantID:          "t1",
 			WorkerID:          "w1",
-			PollInterval:      time.Second,
-			HeartbeatInterval: time.Second,
-			LeaseDuration:     60 * time.Second,
-			Capacity:          1,
 			Labels:            map[string]any{},
-		}, func(time.Duration) workerTicker {
+		}
+		cfg.SetPollInterval(time.Second)
+		cfg.SetHeartbeatInterval(time.Second)
+		cfg.SetLeaseDuration(60 * time.Second)
+		cfg.SetCapacity(1)
+		runLoop(ctx, runner, hb, &cfg, func(time.Duration) workerTicker {
 			return ticker
 		}, func() time.Time { return time.Now().UTC() })
 		close(done)
@@ -447,14 +454,14 @@ func TestRun_SuccessInvokesRunLoop(t *testing.T) {
 		if cfg.WorkerID != "worker-1" {
 			t.Fatalf("expected workerID=worker-1, got %q", cfg.WorkerID)
 		}
-		if cfg.PollInterval != 3*time.Second {
-			t.Fatalf("expected poll interval=3s, got %s", cfg.PollInterval)
+		if cfg.PollInterval() != 3*time.Second {
+			t.Fatalf("expected poll interval=3s, got %s", cfg.PollInterval())
 		}
-		if cfg.LeaseDuration != 120*time.Second {
-			t.Fatalf("expected lease duration=120s, got %s", cfg.LeaseDuration)
+		if cfg.LeaseDuration() != 120*time.Second {
+			t.Fatalf("expected lease duration=120s, got %s", cfg.LeaseDuration())
 		}
-		if cfg.Capacity != 4 {
-			t.Fatalf("expected capacity=4, got %d", cfg.Capacity)
+		if cfg.Capacity() != 4 {
+			t.Fatalf("expected capacity=4, got %d", cfg.Capacity())
 		}
 	}
 
@@ -612,5 +619,125 @@ func TestAdaptiveTickRunner_DBProbeError(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("sqlmock expectations: %v", err)
+	}
+}
+
+type mockTenantLister struct {
+	ids []string
+	err error
+}
+
+func (m *mockTenantLister) ListActiveTenantIDs(_ context.Context) ([]string, error) {
+	return m.ids, m.err
+}
+
+func TestRunLoop_MultiTenantDiscoversAndSubmits(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ticker := newFakeTicker()
+	runner := &stubTickRunner{
+		handled: 1,
+		onCall: func(callNo int) {
+			if callNo == 2 {
+				cancel()
+			}
+		},
+	}
+	hb := &stubHeartbeater{}
+
+	done := make(chan struct{})
+	go func() {
+		runLoop(ctx, runner, hb, &runtimeConfig{
+			MultiTenant:       true,
+			WorkerID:          "w1",
+			tenantLister:      &mockTenantLister{ids: []string{"tenant-a", "tenant-b"}},
+		}, func(time.Duration) workerTicker {
+			return ticker
+		}, func() time.Time { return time.Now() })
+		close(done)
+	}()
+
+	ticker.ch <- time.Now()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatalf("runLoop did not stop")
+	}
+
+	seen := runner.seenTenantIDs()
+	if len(seen) != 2 || seen[0] != "tenant-a" || seen[1] != "tenant-b" {
+		t.Fatalf("expected [tenant-a tenant-b], got %v", seen)
+	}
+}
+
+func TestRunLoop_MultiTenantListErrorNoFallback(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ticker := newFakeTicker()
+	runner := &stubTickRunner{}
+	hb := &stubHeartbeater{}
+
+	done := make(chan struct{})
+	go func() {
+		runLoop(ctx, runner, hb, &runtimeConfig{
+			MultiTenant:       true,
+			WorkerID:          "w1",
+			tenantLister:      &mockTenantLister{err: errors.New("db down")},
+		}, func(time.Duration) workerTicker {
+			return ticker
+		}, func() time.Time { return time.Now() })
+		close(done)
+	}()
+
+	ticker.ch <- time.Now()
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatalf("runLoop did not stop")
+	}
+
+	if runner.callCount() != 0 {
+		t.Fatalf("expected 0 SubmitNext calls when tenant discovery fails, got %d", runner.callCount())
+	}
+}
+
+func TestRunLoop_MultiTenantEmptyListNoFallback(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ticker := newFakeTicker()
+	runner := &stubTickRunner{}
+	hb := &stubHeartbeater{}
+
+	done := make(chan struct{})
+	go func() {
+		runLoop(ctx, runner, hb, &runtimeConfig{
+			MultiTenant:       true,
+			WorkerID:          "w1",
+			tenantLister:      &mockTenantLister{ids: []string{}},
+		}, func(time.Duration) workerTicker {
+			return ticker
+		}, func() time.Time { return time.Now() })
+		close(done)
+	}()
+
+	ticker.ch <- time.Now()
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatalf("runLoop did not stop")
+	}
+
+	if runner.callCount() != 0 {
+		t.Fatalf("expected 0 SubmitNext calls when tenant list is empty, got %d", runner.callCount())
 	}
 }

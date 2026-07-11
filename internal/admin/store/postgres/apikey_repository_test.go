@@ -1,0 +1,379 @@
+package postgres
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/DATA-DOG/go-sqlmock"
+
+	"orbitjob/internal/domain/resource"
+)
+
+func TestAPIKeyRepository_Create(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("open mock: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	repo := NewAPIKeyRepository(db)
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
+		WithArgs("tenant1").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`INSERT INTO api_keys`).
+		WithArgs("01HZX", "tenant1", "hash", "otj_abc123").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	if err := repo.Create(context.Background(), "tenant1", "01HZX", "hash", "otj_abc123"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestAPIKeyRepository_Create_DBError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("open mock: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	repo := NewAPIKeyRepository(db)
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
+		WithArgs("tenant1").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`INSERT INTO api_keys`).
+		WithArgs("01HZX", "tenant1", "hash", "otj_abc123").
+		WillReturnError(errors.New("db down"))
+	mock.ExpectRollback()
+
+	if err := repo.Create(context.Background(), "tenant1", "01HZX", "hash", "otj_abc123"); err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestAPIKeyRepository_ListByTenant(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("open mock: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	repo := NewAPIKeyRepository(db)
+	createdAt := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
+		WithArgs("tenant1").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT id, key_prefix, created_at, revoked_at FROM api_keys`).
+		WithArgs("tenant1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "key_prefix", "created_at", "revoked_at"}).
+			AddRow("01HZX", "otj_abc123", createdAt, nil))
+	mock.ExpectCommit()
+
+	out, err := repo.ListByTenant(context.Background(), "tenant1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(out))
+	}
+	if out[0].ID != "01HZX" {
+		t.Fatalf("expected id=%q, got %q", "01HZX", out[0].ID)
+	}
+	if out[0].KeyPrefix != "otj_abc123" {
+		t.Fatalf("expected prefix=%q, got %q", "otj_abc123", out[0].KeyPrefix)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestAPIKeyRepository_ListByTenant_EmptyResult(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("open mock: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	repo := NewAPIKeyRepository(db)
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
+		WithArgs("tenant1").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT id, key_prefix, created_at, revoked_at FROM api_keys`).
+		WithArgs("tenant1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "key_prefix", "created_at", "revoked_at"}))
+	mock.ExpectCommit()
+
+	out, err := repo.ListByTenant(context.Background(), "tenant1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out == nil {
+		t.Fatal("expected non-nil empty slice")
+	}
+	if len(out) != 0 {
+		t.Fatalf("expected 0 items, got %d", len(out))
+	}
+}
+
+func TestAPIKeyRepository_ListByTenant_DBError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("open mock: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	repo := NewAPIKeyRepository(db)
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
+		WithArgs("tenant1").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT id, key_prefix, created_at, revoked_at FROM api_keys`).
+		WillReturnError(errors.New("db down"))
+	mock.ExpectRollback()
+
+	if _, err := repo.ListByTenant(context.Background(), "tenant1"); err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestAPIKeyRepository_ListByTenant_RowsError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("open mock: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	repo := NewAPIKeyRepository(db)
+	createdAt := time.Now().UTC()
+	rows := sqlmock.NewRows([]string{"id", "key_prefix", "created_at", "revoked_at"}).
+		AddRow("01HZX", "otj_abc123", createdAt, nil).
+		RowError(0, errors.New("iteration failure"))
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
+		WithArgs("tenant1").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT id, key_prefix, created_at, revoked_at FROM api_keys`).
+		WithArgs("tenant1").
+		WillReturnRows(rows)
+	mock.ExpectRollback()
+
+	if _, err := repo.ListByTenant(context.Background(), "tenant1"); err == nil {
+		t.Fatal("expected rows iteration error")
+	}
+}
+
+func TestAPIKeyRepository_ListByTenant_ScanError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("open mock: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	repo := NewAPIKeyRepository(db)
+	rows := sqlmock.NewRows([]string{"id", "key_prefix", "created_at", "revoked_at"}).
+		AddRow("01HZX", "otj_abc123", "not-a-time", nil)
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
+		WithArgs("tenant1").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT id, key_prefix, created_at, revoked_at FROM api_keys`).
+		WithArgs("tenant1").
+		WillReturnRows(rows)
+	mock.ExpectRollback()
+
+	if _, err := repo.ListByTenant(context.Background(), "tenant1"); err == nil {
+		t.Fatal("expected scan error")
+	}
+}
+
+func TestAPIKeyRepository_Revoke(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("open mock: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	repo := NewAPIKeyRepository(db)
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
+		WithArgs("tenant1").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`UPDATE api_keys SET revoked_at = \$1`).
+		WithArgs(sqlmock.AnyArg(), "01HZX", "tenant1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	if err := repo.Revoke(context.Background(), "tenant1", "01HZX"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestAPIKeyRepository_Revoke_NotFound(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("open mock: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	repo := NewAPIKeyRepository(db)
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
+		WithArgs("tenant1").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`UPDATE api_keys SET revoked_at = \$1`).
+		WithArgs(sqlmock.AnyArg(), "01HZX", "tenant1").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectRollback()
+
+	err = repo.Revoke(context.Background(), "tenant1", "01HZX")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	var notFound *resource.NotFoundError
+	if !errors.As(err, &notFound) {
+		t.Fatalf("expected *resource.NotFoundError, got %T", err)
+	}
+	if notFound.Resource != "api_key" {
+		t.Fatalf("expected resource=%q, got %q", "api_key", notFound.Resource)
+	}
+	if notFound.ID != "01HZX" {
+		t.Fatalf("expected id=%q, got %q", "01HZX", notFound.ID)
+	}
+}
+
+func TestAPIKeyRepository_Revoke_DBError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("open mock: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	repo := NewAPIKeyRepository(db)
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
+		WithArgs("tenant1").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`UPDATE api_keys SET revoked_at = \$1`).
+		WithArgs(sqlmock.AnyArg(), "01HZX", "tenant1").
+		WillReturnError(errors.New("db down"))
+	mock.ExpectRollback()
+
+	if err := repo.Revoke(context.Background(), "tenant1", "01HZX"); err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestAPIKeyRepository_Revoke_RowsAffectedError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("open mock: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	repo := NewAPIKeyRepository(db)
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
+		WithArgs("tenant1").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`UPDATE api_keys SET revoked_at = \$1`).
+		WithArgs(sqlmock.AnyArg(), "01HZX", "tenant1").
+		WillReturnResult(sqlmock.NewErrorResult(errors.New("rows affected failed")))
+	mock.ExpectRollback()
+
+	if err := repo.Revoke(context.Background(), "tenant1", "01HZX"); err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestAPIKeyRepository_FindKeyTenant(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("open mock: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	repo := NewAPIKeyRepository(db)
+	rows := sqlmock.NewRows([]string{"tenant_id"}).AddRow("test-team")
+	mock.ExpectQuery(`SELECT tenant_id FROM api_keys`).
+		WithArgs("01HZX").
+		WillReturnRows(rows)
+
+	tenantID, err := repo.FindKeyTenant(context.Background(), "01HZX")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tenantID != "test-team" {
+		t.Errorf("expected tenant_id 'test-team', got %q", tenantID)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet expectations: %v", err)
+	}
+}
+
+func TestAPIKeyRepository_FindKeyTenant_NotFound(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("open mock: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	repo := NewAPIKeyRepository(db)
+	mock.ExpectQuery(`SELECT tenant_id FROM api_keys`).
+		WithArgs("01HZX").
+		WillReturnError(sql.ErrNoRows)
+
+	_, err = repo.FindKeyTenant(context.Background(), "01HZX")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	var nf *resource.NotFoundError
+	if !errors.As(err, &nf) {
+		t.Fatalf("expected *resource.NotFoundError, got %T: %v", err, err)
+	}
+	if nf.Resource != "api_key" {
+		t.Errorf("expected resource 'api_key', got %q", nf.Resource)
+	}
+}
+
+func TestAPIKeyRepository_RevokeCrossTenant(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("open mock: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	repo := NewAPIKeyRepository(db)
+	// Step 1: FindKeyTenant
+	mock.ExpectQuery(`SELECT tenant_id FROM api_keys`).
+		WithArgs("01HZX").
+		WillReturnRows(sqlmock.NewRows([]string{"tenant_id"}).AddRow("test-team"))
+	// Step 2: Revoke in test-team context
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
+		WithArgs("test-team").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`UPDATE api_keys SET revoked_at = \$1`).
+		WithArgs(sqlmock.AnyArg(), "01HZX", "test-team").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	if err := repo.RevokeCrossTenant(context.Background(), "01HZX"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet expectations: %v", err)
+	}
+}

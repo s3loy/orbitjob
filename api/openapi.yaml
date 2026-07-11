@@ -4,6 +4,96 @@ info:
   version: 0.1.0
   description: Code-first OpenAPI document generated from OrbitJob HTTP route metadata and DTOs.
 paths:
+  /api/v1/api_keys/{id}/revoke:
+    post:
+      operationId: revokeAPIKey
+      summary: Revoke one API key
+      description: Revoke an API key. The key must belong to the caller's tenant and not already be revoked.
+      tags:
+      - API Keys
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          maxLength: 26
+      responses:
+        "200":
+          description: Revoked API key
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIKeyRevokeResult"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: API key not found
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/check-runs:
     get:
       operationId: listCheckRuns
@@ -74,6 +164,32 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal error
           headers:
@@ -128,9 +244,35 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Check run not found
           headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
               schema:
@@ -212,6 +354,32 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal error
           headers:
@@ -256,6 +424,32 @@ paths:
         "400":
           description: Invalid request
           headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
               schema:
@@ -324,9 +518,35 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Check not found
           headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
               schema:
@@ -390,9 +610,35 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Check not found
           headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
               schema:
@@ -467,6 +713,17 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Check not found
           headers:
@@ -481,6 +738,21 @@ paths:
         "409":
           description: Version conflict
           headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
               schema:
@@ -555,6 +827,17 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Check not found
           headers:
@@ -569,6 +852,21 @@ paths:
         "409":
           description: Version conflict
           headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
               schema:
@@ -649,6 +947,32 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal error
           headers:
@@ -703,9 +1027,115 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Instance not found
           headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/instances/{run_id}/attempts:
+    get:
+      operationId: listAttempts
+      summary: List instance attempts
+      description: List the per-attempt execution trail for one instance by run_id.
+      tags:
+      - Instances
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 64
+      responses:
+        "200":
+          description: Attempt list
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttemptListResponse"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
               schema:
@@ -729,7 +1159,7 @@ paths:
     post:
       operationId: cancelInstance
       summary: Cancel one instance
-      description: Cancel a dispatched or running instance using optimistic locking by version.
+      description: Cancel a pending, dispatched, running, or retry_wait instance using optimistic locking by version.
       tags:
       - Instances
       parameters:
@@ -766,6 +1196,32 @@ paths:
         "400":
           description: Invalid request
           headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
               schema:
@@ -847,6 +1303,32 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal error
           headers:
@@ -891,6 +1373,32 @@ paths:
         "400":
           description: Invalid request
           headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
               schema:
@@ -959,9 +1467,35 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Job not found
           headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
               schema:
@@ -1041,6 +1575,17 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Job not found
           headers:
@@ -1055,6 +1600,21 @@ paths:
         "409":
           description: Version conflict
           headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
               schema:
@@ -1122,9 +1682,35 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Job not found
           headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
               schema:
@@ -1205,6 +1791,17 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Job not found
           headers:
@@ -1219,6 +1816,21 @@ paths:
         "409":
           description: Version conflict
           headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
               schema:
@@ -1299,6 +1911,17 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Job not found
           headers:
@@ -1313,6 +1936,21 @@ paths:
         "409":
           description: Version conflict
           headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
               schema:
@@ -1358,6 +1996,17 @@ paths:
           type: string
           maxLength: 128
       responses:
+        "200":
+          description: Existing instance returned for idempotent trigger
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TriggerResult"
         "201":
           description: Created instance
           headers:
@@ -1372,6 +2021,32 @@ paths:
         "400":
           description: Invalid request
           headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
               schema:
@@ -1445,6 +2120,32 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal error
           headers:
@@ -1489,6 +2190,32 @@ paths:
         "400":
           description: Invalid request
           headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
               schema:
@@ -1551,9 +2278,35 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: SLI not found
           headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
               schema:
@@ -1617,9 +2370,35 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: SLI not found
           headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
               schema:
@@ -1702,6 +2481,32 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal error
           headers:
@@ -1756,9 +2561,35 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: SLO alert not found
           headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
               schema:
@@ -1832,6 +2663,32 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal error
           headers:
@@ -1876,6 +2733,32 @@ paths:
         "400":
           description: Invalid request
           headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
               schema:
@@ -1938,9 +2821,35 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: SLO not found
           headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
               schema:
@@ -2004,9 +2913,35 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: SLO not found
           headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
               schema:
@@ -2069,9 +3004,35 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: SLO not found
           headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
               schema:
@@ -2137,6 +3098,32 @@ paths:
         "400":
           description: Invalid request
           headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
               schema:
@@ -2211,6 +3198,17 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: SLO not found
           headers:
@@ -2225,6 +3223,21 @@ paths:
         "409":
           description: Version conflict
           headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
               schema:
@@ -2299,6 +3312,17 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: SLO not found
           headers:
@@ -2313,6 +3337,437 @@ paths:
         "409":
           description: Version conflict
           headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/tenants:
+    get:
+      operationId: listTenants
+      summary: List tenants
+      description: List tenants. Limit defaults to 50 when omitted.
+      tags:
+      - Tenants
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          default: 50
+          minimum: 1
+          maximum: 100
+      - name: offset
+        in: query
+        schema:
+          type: integer
+          default: 0
+          minimum: 0
+      responses:
+        "200":
+          description: Tenant list
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantListResponse"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: createTenant
+      summary: Create one tenant
+      description: Create a new tenant. Status defaults to active when omitted.
+      tags:
+      - Tenants
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTenantRequest"
+      responses:
+        "201":
+          description: Created tenant
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantCreateResult"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/tenants/{id}:
+    get:
+      operationId: getTenant
+      summary: Get one tenant
+      description: Get one tenant by id.
+      tags:
+      - Tenants
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          maxLength: 26
+      responses:
+        "200":
+          description: Tenant detail
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantGetResult"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Tenant not found
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/tenants/{id}/api_keys:
+    get:
+      operationId: listAPIKeys
+      summary: List API keys
+      description: List API keys for a tenant. Full keys and hashes are never exposed.
+      tags:
+      - API Keys
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          maxLength: 26
+      responses:
+        "200":
+          description: API key list
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiKeyListResponse"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: createAPIKey
+      summary: Create one API key
+      description: Create a new API key for a tenant. The full key is returned only once.
+      tags:
+      - API Keys
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          maxLength: 26
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAPIKeyRequest"
+      responses:
+        "201":
+          description: Created API key
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIKeyCreateResult"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
               schema:
@@ -2415,6 +3870,17 @@ components:
       properties:
         code:
           type: string
+          enum:
+          - MALFORMED_REQUEST
+          - VALIDATION_ERROR
+          - UNAUTHORIZED
+          - FORBIDDEN
+          - NOT_FOUND
+          - CONFLICT
+          - RATE_LIMITED
+          - QUOTA_EXHAUSTED
+          - INTERNAL_ERROR
+          - SERVICE_UNAVAILABLE
         field:
           type: string
         message:
@@ -2422,6 +3888,47 @@ components:
       required:
       - code
       - message
+    APIKeyCreateResult:
+      type: object
+      properties:
+        created_at:
+          type: string
+        id:
+          type: string
+        key:
+          type: string
+        key_prefix:
+          type: string
+      required:
+      - id
+      - key
+      - key_prefix
+      - created_at
+    APIKeyListItem:
+      type: object
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        id:
+          type: string
+        key_prefix:
+          type: string
+        revoked_at:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+      - id
+      - key_prefix
+      - created_at
+    APIKeyRevokeResult:
+      type: object
+      properties:
+        revoked:
+          type: boolean
+      required:
+      - revoked
     AlertListResponse:
       type: object
       properties:
@@ -2429,6 +3936,15 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ListItem"
+      required:
+      - items
+    ApiKeyListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/APIKeyListItem"
       required:
       - items
     AssertionRule:
@@ -2442,6 +3958,42 @@ components:
           type: string
         threshold:
           type: number
+    AttemptItem:
+      type: object
+      properties:
+        attempt_no:
+          type: integer
+        error_msg:
+          type: string
+          nullable: true
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        result_code:
+          type: string
+          nullable: true
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+        worker_id:
+          type: string
+          nullable: true
+      required:
+      - attempt_no
+      - status
+    AttemptListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AttemptItem"
+      required:
+      - items
     BudgetItem:
       type: object
       properties:
@@ -2537,6 +4089,8 @@ components:
             $ref: "#/components/schemas/ListItem"
       required:
       - items
+    CreateAPIKeyRequest:
+      type: object
     CreateCheckRequest:
       type: object
       properties:
@@ -2774,6 +4328,23 @@ components:
       - sli_id
       - target
       - window_duration
+    CreateTenantRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 128
+        slug:
+          type: string
+          maxLength: 64
+        status:
+          type: string
+          enum:
+          - active
+          - suspended
+      required:
+      - slug
+      - name
     DeleteResult:
       type: object
       properties:
@@ -3035,9 +4606,68 @@ components:
       - items
     Snapshot:
       type: object
+    TenantCreateResult:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        slug:
+          type: string
+        status:
+          type: string
+      required:
+      - id
+      - slug
+      - name
+      - status
+    TenantGetResult:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        slug:
+          type: string
+        status:
+          type: string
+      required:
+      - id
+      - slug
+      - name
+      - status
+    TenantListItem:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        slug:
+          type: string
+        status:
+          type: string
+      required:
+      - id
+      - slug
+      - name
+      - status
+    TenantListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TenantListItem"
+      required:
+      - items
     TriggerResult:
       type: object
       properties:
+        created:
+          type: boolean
         created_at:
           type: string
           format: date-time
@@ -3060,6 +4690,7 @@ components:
       - status
       - scheduled_at
       - created_at
+      - created
     UpdateJobRequest:
       type: object
       properties:

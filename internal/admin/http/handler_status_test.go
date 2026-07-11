@@ -136,8 +136,7 @@ func TestHandler_ChangeJobStatus_MissingActor(t *testing.T) {
 
 	useCase := &stubChangeStatusUseCase{}
 	handler := NewHandler(nil, nil, nil, nil, useCase)
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/jobs/42/pause",
 		bytes.NewBufferString(`{"version":4}`))
@@ -165,8 +164,7 @@ func TestHandler_ChangeJobStatus_Conflict(t *testing.T) {
 		},
 	}
 	handler := NewHandler(nil, nil, nil, nil, useCase)
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/jobs/42/pause",
 		bytes.NewBufferString(`{"version":4}`))
@@ -191,8 +189,7 @@ func TestHandler_ChangeJobStatus_ValidationError(t *testing.T) {
 		},
 	}
 	handler := NewHandler(nil, nil, nil, nil, useCase)
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/jobs/42/pause",
 		bytes.NewBufferString(`{"version":4}`))
@@ -214,8 +211,7 @@ func TestHandler_ChangeJobStatus_InternalError(t *testing.T) {
 		err: errors.New("change job status: db down"),
 	}
 	handler := NewHandler(nil, nil, nil, nil, useCase)
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/jobs/42/pause",
 		bytes.NewBufferString(`{"version":4}`))

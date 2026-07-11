@@ -162,6 +162,7 @@ func (uc *TickUseCase) executeTask(
 	}()
 	cancelTimeout()
 
+	metrics.HandlerExecutionDuration.WithLabelValues(task.HandlerType, result.ResultCode).Observe(time.Since(start).Seconds())
 	metrics.ExecutionsTotal.WithLabelValues(task.HandlerType, result.ResultCode).Inc()
 
 	completeSpec, err := domaininstance.NormalizeComplete(domaininstance.CompleteInput{
@@ -172,6 +173,7 @@ func (uc *TickUseCase) executeTask(
 		ResultCode:           result.ResultCode,
 		ErrorMsg:             result.ErrorMsg,
 		Now:                  time.Now(),
+		StartedAt:            task.StartedAt,
 		Attempt:              task.Attempt,
 		MaxAttempt:           task.MaxAttempt,
 		RetryBackoffSec:      task.RetryBackoffSec,
@@ -208,6 +210,7 @@ func (uc *TickUseCase) completeAsFailure(
 		ResultCode:           resultCode,
 		ErrorMsg:             errorMsg,
 		Now:                  time.Now(),
+		StartedAt:            task.StartedAt,
 		Attempt:              task.Attempt,
 		MaxAttempt:           task.MaxAttempt,
 		RetryBackoffSec:      task.RetryBackoffSec,

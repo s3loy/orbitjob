@@ -121,8 +121,8 @@ func open(dsn string) (*sql.DB, error) {
 		return nil, err
 	}
 
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(5)
+	db.SetMaxOpenConns(50)
+	db.SetMaxIdleConns(50)
 	db.SetConnMaxLifetime(5 * time.Minute)
 
 	return db, nil
@@ -150,7 +150,7 @@ func applySchemaWithDB(dsn string, db *sql.DB) error {
 		return err
 	}
 
-	path, err := findMigrationFile("db", "migrations", "0001_init.sql")
+	path, err := findMigrationFile("db", "migrations", "0001_init.up.sql")
 	if err != nil {
 		return err
 	}

@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 
@@ -15,6 +16,31 @@ type InstanceRepository struct {
 
 func NewInstanceRepository(db *sql.DB) *InstanceRepository {
 	return &InstanceRepository{db: db}
+}
+
+func (r *InstanceRepository) GetByIdempotencyKey(
+	ctx context.Context,
+	tenantID, scope, key string,
+) (domaininstance.Snapshot, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT
+			id, run_id::text, tenant_id, job_id, trigger_source, status,
+			priority, effective_priority, partition_key, idempotency_key,
+			idempotency_scope, routing_key, worker_id, attempt, max_attempt,
+			scheduled_at, started_at, finished_at, lease_expires_at,
+			dispatched_at, retry_at, result_code, error_msg, trace_id,
+			created_at, updated_at, version
+		FROM job_instances
+		WHERE tenant_id = $1
+		  AND idempotency_scope = $2
+		  AND idempotency_key = $3
+	`, tenantID, scope, key)
+
+	out, err := scanInstanceSnapshot(row)
+	if err != nil {
+		return domaininstance.Snapshot{}, fmt.Errorf("get instance by idempotency key: %w", err)
+	}
+	return out, nil
 }
 
 func scanInstanceSnapshot(scanner rowScanner) (domaininstance.Snapshot, error) {

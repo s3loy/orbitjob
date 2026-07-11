@@ -3,10 +3,12 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 
 	checkrunquery "orbitjob/internal/admin/app/checkrun/query"
 	"orbitjob/internal/core/domain/checkrun"
+	"orbitjob/internal/domain/resource"
 )
 
 type CheckRunRepository struct {
@@ -19,6 +21,7 @@ func NewCheckRunRepository(db *sql.DB) *CheckRunRepository {
 
 func (r *CheckRunRepository) Get(ctx context.Context, tenantID string, id int64) (checkrunquery.GetResult, error) {
 	var snap checkrun.Snapshot
+	var outputBytes, evalResultBytes []byte
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, run_id::text, tenant_id, check_id, status, severity, output, evaluation_result,
 		       scheduled_at, started_at, finished_at, duration_ms, version, created_at
@@ -26,15 +29,30 @@ func (r *CheckRunRepository) Get(ctx context.Context, tenantID string, id int64)
 		WHERE tenant_id = $1 AND id = $2
 	`, tenantID, id).Scan(
 		&snap.ID, &snap.RunID, &snap.TenantID, &snap.CheckID, &snap.Status, &snap.Severity,
-		&snap.Output, &snap.EvaluationResult, &snap.ScheduledAt, &snap.StartedAt, &snap.FinishedAt,
+		&outputBytes, &evalResultBytes, &snap.ScheduledAt, &snap.StartedAt, &snap.FinishedAt,
 		&snap.DurationMs, &snap.Version, &snap.CreatedAt,
 	)
 	if err == sql.ErrNoRows {
-		return checkrunquery.GetResult{}, fmt.Errorf("check_run not found: %d", id)
+		return checkrunquery.GetResult{}, &resource.NotFoundError{
+			Resource: "check_run",
+			ID:       id,
+		}
 	}
 	if err != nil {
 		return checkrunquery.GetResult{}, fmt.Errorf("get check_run: %w", err)
 	}
+
+	if outputBytes != nil {
+		if err := json.Unmarshal(outputBytes, &snap.Output); err != nil {
+			return checkrunquery.GetResult{}, fmt.Errorf("unmarshal output: %w", err)
+		}
+	}
+	if evalResultBytes != nil {
+		if err := json.Unmarshal(evalResultBytes, &snap.EvaluationResult); err != nil {
+			return checkrunquery.GetResult{}, fmt.Errorf("unmarshal evaluation_result: %w", err)
+		}
+	}
+
 	return toGetResult(snap), nil
 }
 

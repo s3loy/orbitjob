@@ -9,11 +9,11 @@ import (
 )
 
 type instanceCanceler interface {
-	Cancel(ctx context.Context, runID string, version int) (domaininstance.Snapshot, error)
+	Cancel(ctx context.Context, tenantID, runID string, version int) (domaininstance.Snapshot, error)
 }
 
 type instanceVersionReader interface {
-	GetByRunID(ctx context.Context, runID string) (domaininstance.Snapshot, error)
+	GetByRunID(ctx context.Context, tenantID, runID string) (domaininstance.Snapshot, error)
 }
 
 type CancelInstanceUseCase struct {
@@ -26,16 +26,21 @@ func NewCancelInstanceUseCase(reader instanceVersionReader, repo instanceCancele
 }
 
 type CancelInstanceInput struct {
-	RunID   string
-	Version int
+	TenantID string
+	RunID    string
+	Version  int
 }
 
 func (uc *CancelInstanceUseCase) Cancel(ctx context.Context, in CancelInstanceInput) (domaininstance.Snapshot, error) {
-	current, err := uc.reader.GetByRunID(ctx, in.RunID)
+	current, err := uc.reader.GetByRunID(ctx, in.TenantID, in.RunID)
 	if err != nil {
 		return domaininstance.Snapshot{}, fmt.Errorf("read instance for cancel: %w", err)
 	}
-	if current.Status != domaininstance.StatusDispatched && current.Status != domaininstance.StatusRunning {
+	switch current.Status {
+	case domaininstance.StatusPending, domaininstance.StatusDispatched,
+		domaininstance.StatusRunning, domaininstance.StatusRetryWait:
+		// allowed
+	default:
 		return domaininstance.Snapshot{}, &resource.ConflictError{
 			Resource: "instance",
 			Field:    "status",
@@ -43,7 +48,7 @@ func (uc *CancelInstanceUseCase) Cancel(ctx context.Context, in CancelInstanceIn
 		}
 	}
 
-	out, err := uc.repo.Cancel(ctx, in.RunID, in.Version)
+	out, err := uc.repo.Cancel(ctx, in.TenantID, in.RunID, in.Version)
 	if err != nil {
 		return domaininstance.Snapshot{}, fmt.Errorf("cancel instance: %w", err)
 	}

@@ -8,18 +8,22 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	apikeycommand "orbitjob/internal/admin/app/apikey/command"
 	checkcommand "orbitjob/internal/admin/app/check/command"
 	checkquery "orbitjob/internal/admin/app/check/query"
 	checkrunquery "orbitjob/internal/admin/app/checkrun/query"
-	command "orbitjob/internal/admin/app/job/command"
 	instancequery "orbitjob/internal/admin/app/instance/query"
+	command "orbitjob/internal/admin/app/job/command"
 	query "orbitjob/internal/admin/app/job/query"
+	tenantcommand "orbitjob/internal/admin/app/tenant/command"
+	tenantquery "orbitjob/internal/admin/app/tenant/query"
 	slicommand "orbitjob/internal/admin/app/sli/command"
 	sliquery "orbitjob/internal/admin/app/sli/query"
 	slocommand "orbitjob/internal/admin/app/slo/command"
 	sloquery "orbitjob/internal/admin/app/slo/query"
-	slobudgetquery "orbitjob/internal/admin/app/slobudget/query"
 	sloalertquery "orbitjob/internal/admin/app/sloalert/query"
+	slobudgetquery "orbitjob/internal/admin/app/slobudget/query"
+	"orbitjob/internal/admin/http/apperror"
 	domaininstance "orbitjob/internal/core/domain/instance"
 )
 
@@ -51,6 +55,7 @@ type responseDefinition struct {
 	description string
 	model       any
 	contentType string
+	headers     map[string]Header
 }
 
 type OpenAPIDocument struct {
@@ -71,9 +76,9 @@ type OpenAPIComponents struct {
 }
 
 type PathItem struct {
-	Get  *Operation `json:"get,omitempty"`
-	Post *Operation `json:"post,omitempty"`
-	Put  *Operation `json:"put,omitempty"`
+	Get    *Operation `json:"get,omitempty"`
+	Post   *Operation `json:"post,omitempty"`
+	Put    *Operation `json:"put,omitempty"`
 	Delete *Operation `json:"delete,omitempty"`
 }
 
@@ -201,9 +206,26 @@ func serviceAPIRoutes() []routeDefinition {
 }
 
 func adminAPIRoutes() []routeDefinition {
-	errorModel := errorResponse{}
+	errorModel := apperror.ErrorResponse{}
 
-	return []routeDefinition{
+	unauthorizedResponse := responseDefinition{
+		statusCode:  stdhttp.StatusUnauthorized,
+		description: "Unauthorized",
+		model:       errorModel,
+	}
+	rateLimitedResponse := responseDefinition{
+		statusCode:  stdhttp.StatusTooManyRequests,
+		description: "Rate limit exceeded",
+		model:       errorModel,
+		headers: map[string]Header{
+			"Retry-After": {
+				Description: "Minimum seconds until the request may be retried (default 1)",
+				Schema:      Schema{Type: "string"},
+			},
+		},
+	}
+
+	routes := []routeDefinition{
 		{
 			method: stdhttp.MethodGet,
 			path:   "/jobs",
@@ -346,14 +368,14 @@ func adminAPIRoutes() []routeDefinition {
 				responses: []responseDefinition{
 					{statusCode: stdhttp.StatusCreated, description: "Created job", model: command.CreateResult{}},
 					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
-{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
 				},
 			},
 		},
 		{
-			method: stdhttp.MethodPost,
-			path:   "/jobs/:id/trigger",
-			enabled: func(h *Handler) bool { return h != nil && h.triggerJobUC != nil },
+			method:   stdhttp.MethodPost,
+			path:     "/jobs/:id/trigger",
+			enabled:  func(h *Handler) bool { return h != nil && h.triggerJobUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.POST("/jobs/:id/trigger", h.TriggerJob) },
 			spec: operationDefinition{
 				id:              "triggerJob",
@@ -363,15 +385,16 @@ func adminAPIRoutes() []routeDefinition {
 				parameterModels: []any{jobIDURI{}, idempotencyKeyHeaderRequest{}},
 				responses: []responseDefinition{
 					{statusCode: stdhttp.StatusCreated, description: "Created instance", model: command.TriggerResult{}},
+					{statusCode: stdhttp.StatusOK, description: "Existing instance returned for idempotent trigger", model: command.TriggerResult{}},
 					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
 					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
 				},
 			},
 		},
 		{
-			method: stdhttp.MethodDelete,
-			path:   "/jobs/:id",
-			enabled: func(h *Handler) bool { return h != nil && h.deleteJobUC != nil },
+			method:   stdhttp.MethodDelete,
+			path:     "/jobs/:id",
+			enabled:  func(h *Handler) bool { return h != nil && h.deleteJobUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.DELETE("/jobs/:id", h.DeleteJob) },
 			spec: operationDefinition{
 				id:              "deleteJob",
@@ -388,9 +411,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodGet,
-			path:   "/instances",
-			enabled: func(h *Handler) bool { return h != nil && h.listInstancesUC != nil },
+			method:   stdhttp.MethodGet,
+			path:     "/instances",
+			enabled:  func(h *Handler) bool { return h != nil && h.listInstancesUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.GET("/instances", h.ListInstances) },
 			spec: operationDefinition{
 				id:              "listInstances",
@@ -406,9 +429,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodGet,
-			path:   "/instances/:run_id",
-			enabled: func(h *Handler) bool { return h != nil && h.getInstanceUC != nil },
+			method:   stdhttp.MethodGet,
+			path:     "/instances/:run_id",
+			enabled:  func(h *Handler) bool { return h != nil && h.getInstanceUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.GET("/instances/:run_id", h.GetInstance) },
 			spec: operationDefinition{
 				id:              "getInstance",
@@ -425,14 +448,14 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodPost,
-			path:   "/instances/:run_id/cancel",
-			enabled: func(h *Handler) bool { return h != nil && h.cancelInstanceUC != nil },
+			method:   stdhttp.MethodPost,
+			path:     "/instances/:run_id/cancel",
+			enabled:  func(h *Handler) bool { return h != nil && h.cancelInstanceUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.POST("/instances/:run_id/cancel", h.CancelInstance) },
 			spec: operationDefinition{
 				id:                  "cancelInstance",
 				summary:             "Cancel one instance",
-				description:         "Cancel a dispatched or running instance using optimistic locking by version.",
+				description:         "Cancel a pending, dispatched, running, or retry_wait instance using optimistic locking by version.",
 				tags:                []string{"Instances"},
 				parameterModels:     []any{instanceRunIDURI{}},
 				requestBodyModel:    CancelInstanceRequest{},
@@ -444,11 +467,29 @@ func adminAPIRoutes() []routeDefinition {
 				},
 			},
 		},
+		{
+			method:   stdhttp.MethodGet,
+			path:     "/instances/:run_id/attempts",
+			enabled:  func(h *Handler) bool { return h != nil && h.listAttemptsUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.GET("/instances/:run_id/attempts", h.ListAttempts) },
+			spec: operationDefinition{
+				id:              "listAttempts",
+				summary:         "List instance attempts",
+				description:     "List the per-attempt execution trail for one instance by run_id.",
+				tags:            []string{"Instances"},
+				parameterModels: []any{instanceRunIDURI{}},
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "Attempt list", model: attemptListResponse{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
 		// ==================== Checks ====================
 		{
-			method: stdhttp.MethodPost,
-			path:   "/checks",
-			enabled: func(h *Handler) bool { return h != nil && h.createCheckUC != nil },
+			method:   stdhttp.MethodPost,
+			path:     "/checks",
+			enabled:  func(h *Handler) bool { return h != nil && h.createCheckUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.POST("/checks", h.CreateCheck) },
 			spec: operationDefinition{
 				id:                  "createCheck",
@@ -465,9 +506,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodGet,
-			path:   "/checks",
-			enabled: func(h *Handler) bool { return h != nil && h.listChecksUC != nil },
+			method:   stdhttp.MethodGet,
+			path:     "/checks",
+			enabled:  func(h *Handler) bool { return h != nil && h.listChecksUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.GET("/checks", h.ListChecks) },
 			spec: operationDefinition{
 				id:              "listChecks",
@@ -483,9 +524,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodGet,
-			path:   "/checks/:id",
-			enabled: func(h *Handler) bool { return h != nil && h.getCheckUC != nil },
+			method:   stdhttp.MethodGet,
+			path:     "/checks/:id",
+			enabled:  func(h *Handler) bool { return h != nil && h.getCheckUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.GET("/checks/:id", h.GetCheck) },
 			spec: operationDefinition{
 				id:              "getCheck",
@@ -502,9 +543,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodPost,
-			path:   "/checks/:id/pause",
-			enabled: func(h *Handler) bool { return h != nil && h.pauseCheckUC != nil },
+			method:   stdhttp.MethodPost,
+			path:     "/checks/:id/pause",
+			enabled:  func(h *Handler) bool { return h != nil && h.pauseCheckUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.POST("/checks/:id/pause", h.PauseCheck) },
 			spec: operationDefinition{
 				id:                  "pauseCheck",
@@ -524,9 +565,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodPost,
-			path:   "/checks/:id/resume",
-			enabled: func(h *Handler) bool { return h != nil && h.resumeCheckUC != nil },
+			method:   stdhttp.MethodPost,
+			path:     "/checks/:id/resume",
+			enabled:  func(h *Handler) bool { return h != nil && h.resumeCheckUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.POST("/checks/:id/resume", h.ResumeCheck) },
 			spec: operationDefinition{
 				id:                  "resumeCheck",
@@ -546,16 +587,16 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodDelete,
-			path:   "/checks/:id",
-			enabled: func(h *Handler) bool { return h != nil && h.deleteCheckUC != nil },
+			method:   stdhttp.MethodDelete,
+			path:     "/checks/:id",
+			enabled:  func(h *Handler) bool { return h != nil && h.deleteCheckUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.DELETE("/checks/:id", h.DeleteCheck) },
 			spec: operationDefinition{
-				id:              "deleteCheck",
-				summary:         "Delete one check",
-				description:     "Soft-delete a check definition by setting deleted_at.",
-				tags:            []string{"Checks"},
-				parameterModels: []any{checkIDURI{}, tenantQueryRequest{}},
+				id:                  "deleteCheck",
+				summary:             "Delete one check",
+				description:         "Soft-delete a check definition by setting deleted_at.",
+				tags:                []string{"Checks"},
+				parameterModels:     []any{checkIDURI{}, tenantQueryRequest{}},
 				requestBodyRequired: true,
 				responses: []responseDefinition{
 					{statusCode: stdhttp.StatusOK, description: "Deleted check"},
@@ -567,9 +608,9 @@ func adminAPIRoutes() []routeDefinition {
 		},
 		// ==================== Check Runs ====================
 		{
-			method: stdhttp.MethodGet,
-			path:   "/check-runs",
-			enabled: func(h *Handler) bool { return h != nil && h.listCheckRunsUC != nil },
+			method:   stdhttp.MethodGet,
+			path:     "/check-runs",
+			enabled:  func(h *Handler) bool { return h != nil && h.listCheckRunsUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.GET("/check-runs", h.ListCheckRuns) },
 			spec: operationDefinition{
 				id:              "listCheckRuns",
@@ -585,9 +626,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodGet,
-			path:   "/check-runs/:id",
-			enabled: func(h *Handler) bool { return h != nil && h.getCheckRunUC != nil },
+			method:   stdhttp.MethodGet,
+			path:     "/check-runs/:id",
+			enabled:  func(h *Handler) bool { return h != nil && h.getCheckRunUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.GET("/check-runs/:id", h.GetCheckRun) },
 			spec: operationDefinition{
 				id:              "getCheckRun",
@@ -605,9 +646,9 @@ func adminAPIRoutes() []routeDefinition {
 		},
 		// ==================== SLIs ====================
 		{
-			method: stdhttp.MethodPost,
-			path:   "/slis",
-			enabled: func(h *Handler) bool { return h != nil && h.createSLIUC != nil },
+			method:   stdhttp.MethodPost,
+			path:     "/slis",
+			enabled:  func(h *Handler) bool { return h != nil && h.createSLIUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.POST("/slis", h.CreateSLI) },
 			spec: operationDefinition{
 				id:                  "createSLI",
@@ -624,9 +665,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodGet,
-			path:   "/slis",
-			enabled: func(h *Handler) bool { return h != nil && h.listSLIsUC != nil },
+			method:   stdhttp.MethodGet,
+			path:     "/slis",
+			enabled:  func(h *Handler) bool { return h != nil && h.listSLIsUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.GET("/slis", h.ListSLIs) },
 			spec: operationDefinition{
 				id:              "listSLIs",
@@ -642,9 +683,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodGet,
-			path:   "/slis/:id",
-			enabled: func(h *Handler) bool { return h != nil && h.getSLIUC != nil },
+			method:   stdhttp.MethodGet,
+			path:     "/slis/:id",
+			enabled:  func(h *Handler) bool { return h != nil && h.getSLIUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.GET("/slis/:id", h.GetSLI) },
 			spec: operationDefinition{
 				id:              "getSLI",
@@ -661,9 +702,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodDelete,
-			path:   "/slis/:id",
-			enabled: func(h *Handler) bool { return h != nil && h.deleteSLIUC != nil },
+			method:   stdhttp.MethodDelete,
+			path:     "/slis/:id",
+			enabled:  func(h *Handler) bool { return h != nil && h.deleteSLIUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.DELETE("/slis/:id", h.DeleteSLI) },
 			spec: operationDefinition{
 				id:              "deleteSLI",
@@ -681,9 +722,9 @@ func adminAPIRoutes() []routeDefinition {
 		},
 		// ==================== SLOs ====================
 		{
-			method: stdhttp.MethodPost,
-			path:   "/slos",
-			enabled: func(h *Handler) bool { return h != nil && h.createSLOUC != nil },
+			method:   stdhttp.MethodPost,
+			path:     "/slos",
+			enabled:  func(h *Handler) bool { return h != nil && h.createSLOUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.POST("/slos", h.CreateSLO) },
 			spec: operationDefinition{
 				id:                  "createSLO",
@@ -700,9 +741,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodGet,
-			path:   "/slos",
-			enabled: func(h *Handler) bool { return h != nil && h.listSLOsUC != nil },
+			method:   stdhttp.MethodGet,
+			path:     "/slos",
+			enabled:  func(h *Handler) bool { return h != nil && h.listSLOsUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.GET("/slos", h.ListSLOs) },
 			spec: operationDefinition{
 				id:              "listSLOs",
@@ -718,9 +759,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodGet,
-			path:   "/slos/:id",
-			enabled: func(h *Handler) bool { return h != nil && h.getSLOUC != nil },
+			method:   stdhttp.MethodGet,
+			path:     "/slos/:id",
+			enabled:  func(h *Handler) bool { return h != nil && h.getSLOUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.GET("/slos/:id", h.GetSLO) },
 			spec: operationDefinition{
 				id:              "getSLO",
@@ -737,9 +778,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodPost,
-			path:   "/slos/:id/pause",
-			enabled: func(h *Handler) bool { return h != nil && h.statusSLOUC != nil },
+			method:   stdhttp.MethodPost,
+			path:     "/slos/:id/pause",
+			enabled:  func(h *Handler) bool { return h != nil && h.statusSLOUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.POST("/slos/:id/pause", h.PauseSLO) },
 			spec: operationDefinition{
 				id:                  "pauseSLO",
@@ -759,9 +800,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodPost,
-			path:   "/slos/:id/resume",
-			enabled: func(h *Handler) bool { return h != nil && h.statusSLOUC != nil },
+			method:   stdhttp.MethodPost,
+			path:     "/slos/:id/resume",
+			enabled:  func(h *Handler) bool { return h != nil && h.statusSLOUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.POST("/slos/:id/resume", h.ResumeSLO) },
 			spec: operationDefinition{
 				id:                  "resumeSLO",
@@ -781,9 +822,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodDelete,
-			path:   "/slos/:id",
-			enabled: func(h *Handler) bool { return h != nil && h.deleteSLOUC != nil },
+			method:   stdhttp.MethodDelete,
+			path:     "/slos/:id",
+			enabled:  func(h *Handler) bool { return h != nil && h.deleteSLOUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.DELETE("/slos/:id", h.DeleteSLO) },
 			spec: operationDefinition{
 				id:              "deleteSLO",
@@ -800,9 +841,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodGet,
-			path:   "/slos/:id/budget",
-			enabled: func(h *Handler) bool { return h != nil && h.getBudgetUC != nil },
+			method:   stdhttp.MethodGet,
+			path:     "/slos/:id/budget",
+			enabled:  func(h *Handler) bool { return h != nil && h.getBudgetUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.GET("/slos/:id/budget", h.GetSLOBudget) },
 			spec: operationDefinition{
 				id:              "getSLOBudget",
@@ -819,9 +860,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodGet,
-			path:   "/slos/:id/budgets",
-			enabled: func(h *Handler) bool { return h != nil && h.listBudgetHistoryUC != nil },
+			method:   stdhttp.MethodGet,
+			path:     "/slos/:id/budgets",
+			enabled:  func(h *Handler) bool { return h != nil && h.listBudgetHistoryUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.GET("/slos/:id/budgets", h.ListSLOBudgets) },
 			spec: operationDefinition{
 				id:              "listSLOBudgets",
@@ -838,9 +879,9 @@ func adminAPIRoutes() []routeDefinition {
 		},
 		// ==================== SLO Alerts ====================
 		{
-			method: stdhttp.MethodGet,
-			path:   "/slo-alerts",
-			enabled: func(h *Handler) bool { return h != nil && h.listAlertsUC != nil },
+			method:   stdhttp.MethodGet,
+			path:     "/slo-alerts",
+			enabled:  func(h *Handler) bool { return h != nil && h.listAlertsUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.GET("/slo-alerts", h.ListSLOAlerts) },
 			spec: operationDefinition{
 				id:              "listSLOAlerts",
@@ -856,9 +897,9 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method: stdhttp.MethodGet,
-			path:   "/slo-alerts/:id",
-			enabled: func(h *Handler) bool { return h != nil && h.getAlertUC != nil },
+			method:   stdhttp.MethodGet,
+			path:     "/slo-alerts/:id",
+			enabled:  func(h *Handler) bool { return h != nil && h.getAlertUC != nil },
 			register: func(r gin.IRouter, h *Handler) { r.GET("/slo-alerts/:id", h.GetSLOAlert) },
 			spec: operationDefinition{
 				id:              "getSLOAlert",
@@ -874,7 +915,128 @@ func adminAPIRoutes() []routeDefinition {
 				},
 			},
 		},
+		// ==================== Tenants ====================
+		{
+			method:   stdhttp.MethodPost,
+			path:     "/tenants",
+			enabled:  func(h *Handler) bool { return h != nil && h.createTenantUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.POST("/tenants", h.CreateTenant) },
+			spec: operationDefinition{
+				id:                  "createTenant",
+				summary:             "Create one tenant",
+				description:         "Create a new tenant. Status defaults to active when omitted.",
+				tags:                []string{"Tenants"},
+				requestBodyModel:    CreateTenantRequest{},
+				requestBodyRequired: true,
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusCreated, description: "Created tenant", model: tenantcommand.TenantCreateResult{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		{
+			method:   stdhttp.MethodGet,
+			path:     "/tenants",
+			enabled:  func(h *Handler) bool { return h != nil && h.listTenantsUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.GET("/tenants", h.ListTenants) },
+			spec: operationDefinition{
+				id:              "listTenants",
+				summary:         "List tenants",
+				description:     "List tenants. Limit defaults to 50 when omitted.",
+				tags:            []string{"Tenants"},
+				parameterModels: []any{ListTenantsRequest{}},
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "Tenant list", model: tenantListResponse{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		{
+			method:   stdhttp.MethodGet,
+			path:     "/tenants/:id",
+			enabled:  func(h *Handler) bool { return h != nil && h.getTenantUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.GET("/tenants/:id", h.GetTenant) },
+			spec: operationDefinition{
+				id:              "getTenant",
+				summary:         "Get one tenant",
+				description:     "Get one tenant by id.",
+				tags:            []string{"Tenants"},
+				parameterModels: []any{TenantURI{}},
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "Tenant detail", model: tenantquery.TenantGetResult{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusNotFound, description: "Tenant not found", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		// ==================== API Keys ====================
+		{
+			method:   stdhttp.MethodPost,
+			path:     "/tenants/:id/api_keys",
+			enabled:  func(h *Handler) bool { return h != nil && h.createAPIKeyUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.POST("/tenants/:id/api_keys", h.CreateAPIKey) },
+			spec: operationDefinition{
+				id:                  "createAPIKey",
+				summary:             "Create one API key",
+				description:         "Create a new API key for a tenant. The full key is returned only once.",
+				tags:                []string{"API Keys"},
+				parameterModels:     []any{TenantURI{}},
+				requestBodyModel:    CreateAPIKeyRequest{},
+				requestBodyRequired: false,
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusCreated, description: "Created API key", model: apikeycommand.APIKeyCreateResult{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		{
+			method:   stdhttp.MethodGet,
+			path:     "/tenants/:id/api_keys",
+			enabled:  func(h *Handler) bool { return h != nil && h.listAPIKeysUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.GET("/tenants/:id/api_keys", h.ListAPIKeys) },
+			spec: operationDefinition{
+				id:              "listAPIKeys",
+				summary:         "List API keys",
+				description:     "List API keys for a tenant. Full keys and hashes are never exposed.",
+				tags:            []string{"API Keys"},
+				parameterModels: []any{TenantURI{}},
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "API key list", model: apiKeyListResponse{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
+		{
+			method:   stdhttp.MethodPost,
+			path:     "/api_keys/:id/revoke",
+			enabled:  func(h *Handler) bool { return h != nil && h.revokeAPIKeyUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.POST("/api_keys/:id/revoke", h.RevokeAPIKey) },
+			spec: operationDefinition{
+				id:              "revokeAPIKey",
+				summary:         "Revoke one API key",
+				description:     "Revoke an API key. The key must belong to the caller's tenant and not already be revoked.",
+				tags:            []string{"API Keys"},
+				parameterModels: []any{APIKeyURI{}},
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "Revoked API key", model: apikeycommand.APIKeyRevokeResult{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusNotFound, description: "API key not found", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
 	}
+
+	for i := range routes {
+		routes[i].spec.responses = append(routes[i].spec.responses, unauthorizedResponse, rateLimitedResponse)
+	}
+
+	return routes
 }
 
 // ServiceOpenAPIDocument builds the full service-level OpenAPI document.
@@ -978,6 +1140,14 @@ func (d operationDefinition) build(registry *schemaRegistry) Operation {
 				contentType: {
 					Schema: registry.schemaForModel(response.model, schemaModeResponse),
 				},
+			}
+		}
+		if len(response.headers) > 0 {
+			if item.Headers == nil {
+				item.Headers = map[string]Header{}
+			}
+			for name, header := range response.headers {
+				item.Headers[name] = header
 			}
 		}
 		applyStandardResponseHeaders(&item)
@@ -1135,6 +1305,25 @@ func (r *schemaRegistry) schemaForType(t reflect.Type, mode schemaMode) Schema {
 }
 
 func (r *schemaRegistry) applySchemaDefaults(name string, schema *Schema) {
+	if name == "APIError" {
+		if property, ok := schema.Properties["code"]; ok {
+			property.Enum = []string{
+				string(apperror.CodeMalformedRequest),
+				string(apperror.CodeValidation),
+				string(apperror.CodeUnauthorized),
+				string(apperror.CodeForbidden),
+				string(apperror.CodeNotFound),
+				string(apperror.CodeConflict),
+				string(apperror.CodeRateLimited),
+				string(apperror.CodeQuotaExhausted),
+				string(apperror.CodeInternal),
+				string(apperror.CodeServiceUnavailable),
+			}
+			schema.Properties["code"] = property
+		}
+		return
+	}
+
 	if name != "CreateJobRequest" {
 		return
 	}

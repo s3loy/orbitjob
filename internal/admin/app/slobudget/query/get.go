@@ -2,8 +2,10 @@ package query
 
 import (
 	"context"
+	"errors"
 
 	"orbitjob/internal/core/domain/slo"
+	"orbitjob/internal/domain/resource"
 	"orbitjob/internal/domain/validation"
 )
 
@@ -47,6 +49,17 @@ func (uc *GetBudgetUseCase) Get(ctx context.Context, tenantID string, sloID int6
 
 	budget, err := uc.repo.GetCurrent(ctx, tenantID, sloID)
 	if err != nil {
+		// Newly created SLOs may have no budget rows yet (evaluation cycle not run).
+		// Return an empty budget instead of 404 — "no consumption yet" is a valid state.
+		var notFound *resource.NotFoundError
+		if errors.As(err, &notFound) && notFound.Resource == "budget" {
+			return GetItem{
+				BudgetTotal:     0,
+				BudgetConsumed:  0,
+				BudgetRemaining: 0,
+				Status:          "no_data",
+			}, nil
+		}
 		return GetItem{}, err
 	}
 

@@ -30,6 +30,15 @@ func testTenantMiddleware(tenantID string) gin.HandlerFunc {
 	}
 }
 
+// testRouter returns a gin engine with a simulated tenant already injected,
+// suitable for handler-level tests that bypass production auth middleware.
+func testRouter(handler *Handler) *gin.Engine {
+	r := gin.New()
+	r.Use(testTenantMiddleware("tenant-a"))
+	handler.Register(r)
+	return r
+}
+
 type stubCreateJobUseCase struct {
 	called bool
 	in     command.CreateInput
@@ -85,8 +94,7 @@ func TestHandler_RegisterAndCreateJob(t *testing.T) {
 	}
 
 	handler := NewHandler(useCase, nil, nil, nil, nil)
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	body := `{
                 "name":"demo-job",
@@ -306,8 +314,7 @@ func TestHandler_CreateJob_BindError(t *testing.T) {
 
 	useCase := &stubCreateJobUseCase{}
 	handler := NewHandler(useCase, nil, nil, nil, nil)
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/jobs",
 		bytes.NewBufferString(`{"trigger_type":"manual"}`))
@@ -345,13 +352,52 @@ func TestHandler_CreateJob_BindError(t *testing.T) {
 	}
 }
 
+func TestHandler_CreateJob_MalformedJSON(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	useCase := &stubCreateJobUseCase{}
+	handler := NewHandler(useCase, nil, nil, nil, nil)
+	router := testRouter(handler)
+
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/jobs",
+		bytes.NewBufferString(`{"trigger_type":"manual",`))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != stdhttp.StatusBadRequest {
+		t.Fatalf("expected status=%d, got %d", stdhttp.StatusBadRequest, resp.Code)
+	}
+	if useCase.called {
+		t.Fatalf("expected use case not to be called on bind error")
+	}
+
+	var out struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+			Field   string `json:"field"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+
+	if out.Error.Code != "MALFORMED_REQUEST" {
+		t.Fatalf("expected code MALFORMED_REQUEST, got %q", out.Error.Code)
+	}
+	if out.Error.Message == "" {
+		t.Fatal("expected malformed request message to be non-empty")
+	}
+}
+
 func TestHandler_ListJobs_BindError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	useCase := &stubListJobsUseCase{}
 	handler := NewHandler(nil, useCase, nil, nil, nil)
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/jobs?limit=bad", nil)
 	resp := httptest.NewRecorder()
@@ -376,11 +422,11 @@ func TestHandler_ListJobs_BindError(t *testing.T) {
 		t.Fatalf("unmarshal response: %v", err)
 	}
 
-	if out.Error.Code != "VALIDATION_ERROR" {
-		t.Fatalf("expected code VALIDATION_ERROR, got %q", out.Error.Code)
+	if out.Error.Code != "MALFORMED_REQUEST" {
+		t.Fatalf("expected code MALFORMED_REQUEST, got %q", out.Error.Code)
 	}
 	if out.Error.Message == "" {
-		t.Fatal("expected validation error message to be non-empty")
+		t.Fatal("expected malformed request error message to be non-empty")
 	}
 	if out.Error.Code == "INTERNAL_ERROR" {
 		t.Fatal("bind error must not be mapped to INTERNAL_ERROR")
@@ -392,8 +438,7 @@ func TestHandler_GetJob_BindError(t *testing.T) {
 
 	useCase := &stubGetJobUseCase{}
 	handler := NewHandler(nil, nil, useCase, nil, nil)
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/jobs/bad", nil)
 	resp := httptest.NewRecorder()
@@ -418,8 +463,7 @@ func TestHandler_CreateJob_UseCaseError(t *testing.T) {
 		},
 	}
 	handler := NewHandler(useCase, nil, nil, nil, nil)
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	body := `{
                 "name":"demo-job",
@@ -452,8 +496,7 @@ func TestHandler_ListJobs_UseCaseError(t *testing.T) {
 		},
 	}
 	handler := NewHandler(nil, useCase, nil, nil, nil)
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/jobs", nil)
 	resp := httptest.NewRecorder()
@@ -478,8 +521,7 @@ func TestHandler_GetJob_ValidationError(t *testing.T) {
 		},
 	}
 	handler := NewHandler(nil, nil, useCase, nil, nil)
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/jobs/1", nil)
 	resp := httptest.NewRecorder()
@@ -501,8 +543,7 @@ func TestHandler_CreateJob_InternalError(t *testing.T) {
 		err: errors.New("insert job: db down"),
 	}
 	handler := NewHandler(useCase, nil, nil, nil, nil)
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	body := `{
                 "name":"demo-job",
@@ -532,8 +573,7 @@ func TestHandler_ListJobs_InternalError(t *testing.T) {
 		err: errors.New("query job list: db down"),
 	}
 	handler := NewHandler(nil, useCase, nil, nil, nil)
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/jobs", nil)
 	resp := httptest.NewRecorder()
@@ -558,8 +598,7 @@ func TestHandler_GetJob_NotFound(t *testing.T) {
 		},
 	}
 	handler := NewHandler(nil, nil, useCase, nil, nil)
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/jobs/42", nil)
 	resp := httptest.NewRecorder()
@@ -578,8 +617,7 @@ func TestHandler_GetJob_InternalError(t *testing.T) {
 		err: errors.New("query job detail: db down"),
 	}
 	handler := NewHandler(nil, nil, useCase, nil, nil)
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/jobs/1", nil)
 	resp := httptest.NewRecorder()
@@ -604,8 +642,7 @@ func TestHandler_CreateJob_ValidationErrorResponseFormat(t *testing.T) {
 		},
 	}
 	handler := NewHandler(uc, nil, nil, nil, nil)
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	body := `{
                 "name":"demo",
@@ -650,8 +687,7 @@ func TestHandler_CreateJob_InternalErrorResponseFormat(t *testing.T) {
 		err: errors.New("insert job: db down"),
 	}
 	handler := NewHandler(uc, nil, nil, nil, nil)
-	router := gin.New()
-	handler.Register(router)
+	router := testRouter(handler)
 
 	body := `{
                 "name":"demo",

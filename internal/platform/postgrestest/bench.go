@@ -25,8 +25,8 @@ func BenchDB(b *testing.B) *sql.DB {
 	}
 	b.Cleanup(func() { _ = db.Close() })
 
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(5)
+	db.SetMaxOpenConns(50)
+	db.SetMaxIdleConns(50)
 	db.SetConnMaxLifetime(5 * time.Minute)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

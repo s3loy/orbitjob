@@ -51,7 +51,7 @@ func TestNewRouter_PauseJobRoute(t *testing.T) {
 	}
 
 	handler := adminhttp.NewHandler(nil, nil, nil, nil, statusUC)
-	router := newRouter(handler, nil, nil)
+	router := testRouter(handler)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs/42/pause",
 		bytes.NewBufferString(`{"version":4}`))
@@ -81,7 +81,7 @@ func TestNewRouter_ResumeJobRoute(t *testing.T) {
 	}
 
 	handler := adminhttp.NewHandler(nil, nil, nil, nil, statusUC)
-	router := newRouter(handler, nil, nil)
+	router := testRouter(handler)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs/42/resume",
 		bytes.NewBufferString(`{"version":5}`))

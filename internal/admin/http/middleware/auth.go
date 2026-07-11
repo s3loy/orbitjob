@@ -8,6 +8,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
+
+	"orbitjob/internal/admin/http/apperror"
 )
 
 type apiKeyRow struct {
@@ -19,7 +21,6 @@ type apiKeyRow struct {
 }
 
 // Auth extracts tenant_id from a Bearer token validated against api_keys.
-// Falls back to X-OrbitJob-Tenant-Id header if no Bearer token is present.
 type Auth struct {
 	DB *sql.DB
 }
@@ -44,9 +45,9 @@ func (a *Auth) Middleware() gin.HandlerFunc {
 			return
 		}
 		// Auth required but failed → abort.
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-			"code":    "UNAUTHORIZED",
-			"message": "valid Bearer token required",
+		apperror.Write(c, http.StatusUnauthorized, apperror.APIError{
+			Code:    apperror.CodeUnauthorized,
+			Message: "valid Bearer token required",
 		})
 	}
 }
@@ -114,12 +115,11 @@ func (a *Auth) validateAPIKey(ctx context.Context, key string) (string, bool) {
 	return r.TenantID, true
 }
 
-// GetTenantID returns the tenant_id from the gin context, defaulting to "default".
+// GetTenantID returns the tenant_id from the gin context. If no tenant has been
+// set (e.g. the request is unauthenticated), it returns an empty string. Callers
+// that require a tenant must handle the empty case explicitly.
 func GetTenantID(c *gin.Context) string {
 	tid, _ := TenantID(c.Request.Context())
-	if tid == "" {
-		return "default"
-	}
 	return tid
 }
 

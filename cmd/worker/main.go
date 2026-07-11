@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -37,17 +38,43 @@ import (
 
 type runtimeConfig struct {
 	TenantID          string
+	MultiTenant       bool
 	WorkerID          string
 	HealthPort        string
-	PollInterval      time.Duration
-	HeartbeatInterval time.Duration
-	LeaseDuration     time.Duration
-	Capacity          int
+	pollInterval      atomic.Int64
+	heartbeatInterval atomic.Int64
+	leaseDuration     atomic.Int64
+	capacity          atomic.Int64
 	CapacityMax       int
 	LeaseMin          time.Duration
 	LeaseMax          time.Duration
 	LeaseDecay        float64
 	Labels            map[string]any
+
+	tenantLister tenantLister
+}
+
+// Hot-reloaded fields (pollInterval/heartbeatInterval/leaseDuration/capacity)
+// are atomic: the etcd config watcher writes them from a goroutine while
+// runLoop, heartbeatLoop, the check worker, and sendHeartbeat read them.
+// The remaining fields are set once at load and never mutated.
+func (c *runtimeConfig) PollInterval() time.Duration {
+	return time.Duration(c.pollInterval.Load())
+}
+func (c *runtimeConfig) HeartbeatInterval() time.Duration {
+	return time.Duration(c.heartbeatInterval.Load())
+}
+func (c *runtimeConfig) LeaseDuration() time.Duration {
+	return time.Duration(c.leaseDuration.Load())
+}
+func (c *runtimeConfig) Capacity() int { return int(c.capacity.Load()) }
+func (c *runtimeConfig) SetPollInterval(d time.Duration)      { c.pollInterval.Store(int64(d)) }
+func (c *runtimeConfig) SetHeartbeatInterval(d time.Duration) { c.heartbeatInterval.Store(int64(d)) }
+func (c *runtimeConfig) SetLeaseDuration(d time.Duration)     { c.leaseDuration.Store(int64(d)) }
+func (c *runtimeConfig) SetCapacity(n int)                    { c.capacity.Store(int64(n)) }
+
+type tenantLister interface {
+	ListActiveTenantIDs(ctx context.Context) ([]string, error)
 }
 
 type tickRunner interface {
@@ -155,7 +182,7 @@ func (r *adaptiveTickRunner) SubmitNext(
 	return r.inner.SubmitNext(ctx, pool, tenantID, workerID, currentLimit, currentLease, labels)
 }
 
-func loadWorkerRuntimeConfig() (runtimeConfig, error) {
+func loadWorkerRuntimeConfig() (*runtimeConfig, error) {
 	workerID := strings.TrimSpace(os.Getenv("WORKER_ID"))
 	if workerID == "" {
 		hostname, _ := os.Hostname()
@@ -163,33 +190,34 @@ func loadWorkerRuntimeConfig() (runtimeConfig, error) {
 	}
 
 	tenantID := os.Getenv("WORKER_TENANT_ID")
+	multiTenant := tenantID == ""
 	if tenantID == "" {
-		tenantID = "default"
+		tenantID = ""
 	}
 
 	pollIntervalSec, err := loadPositiveIntEnv("WORKER_POLL_INTERVAL_SEC", 2)
 	if err != nil {
-		return runtimeConfig{}, err
+		return nil, err
 	}
 
 	heartbeatIntervalSec, err := loadPositiveIntEnv("WORKER_HEARTBEAT_INTERVAL_SEC", 10)
 	if err != nil {
-		return runtimeConfig{}, err
+		return nil, err
 	}
 
 	leaseDurationSec, err := loadPositiveIntEnv("WORKER_LEASE_DURATION_SEC", 60)
 	if err != nil {
-		return runtimeConfig{}, err
+		return nil, err
 	}
 
-	capacity, err := loadPositiveIntEnv("WORKER_CAPACITY", 1)
+	capacity, err := loadPositiveIntEnv("WORKER_CAPACITY", 5)
 	if err != nil {
-		return runtimeConfig{}, err
+		return nil, err
 	}
 
-	capacityMax, err := loadPositiveIntEnv("WORKER_CAPACITY_MAX", 10)
+	capacityMax, err := loadPositiveIntEnv("WORKER_CAPACITY_MAX", 20)
 	if err != nil {
-		return runtimeConfig{}, err
+		return nil, err
 	}
 	if capacityMax < capacity {
 		capacityMax = capacity
@@ -197,22 +225,22 @@ func loadWorkerRuntimeConfig() (runtimeConfig, error) {
 
 	leaseMinSec, err := loadPositiveIntEnv("WORKER_LEASE_MIN_SEC", 10)
 	if err != nil {
-		return runtimeConfig{}, err
+		return nil, err
 	}
 
 	leaseMaxSec, err := loadPositiveIntEnv("WORKER_LEASE_DURATION_MAX", 300)
 	if err != nil {
-		return runtimeConfig{}, err
+		return nil, err
 	}
 
 	leaseDecay, err := loadFloatEnv("WORKER_LEASE_EMA_DECAY", 0.1)
 	if err != nil {
-		return runtimeConfig{}, err
+		return nil, err
 	}
 
 	labels, err := loadJSONMapEnv("WORKER_LABELS")
 	if err != nil {
-		return runtimeConfig{}, err
+		return nil, err
 	}
 
 	healthPort := os.Getenv("WORKER_HEALTH_PORT")
@@ -220,20 +248,22 @@ func loadWorkerRuntimeConfig() (runtimeConfig, error) {
 		healthPort = "6062"
 	}
 
-	return runtimeConfig{
-		TenantID:          tenantID,
-		WorkerID:          workerID,
-		HealthPort:        healthPort,
-		PollInterval:      time.Duration(pollIntervalSec) * time.Second,
-		HeartbeatInterval: time.Duration(heartbeatIntervalSec) * time.Second,
-		LeaseDuration:     time.Duration(leaseDurationSec) * time.Second,
-		Capacity:          capacity,
-		CapacityMax:       capacityMax,
-		LeaseMin:          time.Duration(leaseMinSec) * time.Second,
-		LeaseMax:          time.Duration(leaseMaxSec) * time.Second,
-		LeaseDecay:        leaseDecay,
-		Labels:            labels,
-	}, nil
+	cfg := &runtimeConfig{
+		TenantID:    tenantID,
+		MultiTenant: multiTenant,
+		WorkerID:    workerID,
+		HealthPort:  healthPort,
+		CapacityMax: capacityMax,
+		LeaseMin:    time.Duration(leaseMinSec) * time.Second,
+		LeaseMax:    time.Duration(leaseMaxSec) * time.Second,
+		LeaseDecay:  leaseDecay,
+		Labels:      labels,
+	}
+	cfg.SetPollInterval(time.Duration(pollIntervalSec) * time.Second)
+	cfg.SetHeartbeatInterval(time.Duration(heartbeatIntervalSec) * time.Second)
+	cfg.SetLeaseDuration(time.Duration(leaseDurationSec) * time.Second)
+	cfg.SetCapacity(capacity)
+	return cfg, nil
 }
 
 func loadPositiveIntEnv(key string, defaultValue int) (int, error) {
@@ -283,6 +313,21 @@ func loadJSONMapEnv(key string) (map[string]any, error) {
 	return m, nil
 }
 
+func tenantIDsForWorker(ctx context.Context, cfg *runtimeConfig) []string {
+	if !cfg.MultiTenant {
+		return []string{cfg.TenantID}
+	}
+	if cfg.tenantLister == nil {
+		return nil
+	}
+	ids, err := cfg.tenantLister.ListActiveTenantIDs(ctx)
+	if err != nil {
+		slog.Error("list active tenant ids failed", "error", err.Error())
+		return nil
+	}
+	return ids
+}
+
 func runLoop(
 	ctx context.Context,
 	runner tickRunner,
@@ -291,12 +336,12 @@ func runLoop(
 	newTicker func(time.Duration) workerTicker,
 	nowFn func() time.Time,
 ) {
-	pool := execute.NewWorkerPool(cfg.Capacity)
+	pool := execute.NewWorkerPool(cfg.Capacity())
 
 	loopDone := make(chan struct{})
 	go heartbeatLoop(ctx, loopDone, hb, cfg, newTicker, nowFn)
 
-	ticker := newTicker(cfg.PollInterval)
+	ticker := newTicker(cfg.PollInterval())
 	defer ticker.Stop()
 
 	idleCount := 0
@@ -307,31 +352,38 @@ func runLoop(
 	resetToShortInterval := func() {
 		if isLongInterval {
 			ticker.Stop()
-			ticker = newTicker(cfg.PollInterval)
+			ticker = newTicker(cfg.PollInterval())
 			isLongInterval = false
 			metrics.WorkerIntervalMode.WithLabelValues(cfg.WorkerID, cfg.TenantID).Set(0)
-			slog.Info("worker switching back to short interval", "interval_sec", cfg.PollInterval.Seconds())
+			slog.Info("worker switching back to short interval", "interval_sec", cfg.PollInterval().Seconds())
 		}
 	}
 
-	currentPollInterval := cfg.PollInterval
+	currentPollInterval := cfg.PollInterval()
 
 	for {
 		// Hot reload: recreate ticker if poll interval changed.
-		if cfg.PollInterval != currentPollInterval {
+		if cfg.PollInterval() != currentPollInterval {
 			ticker.Stop()
-			ticker = newTicker(cfg.PollInterval)
-			currentPollInterval = cfg.PollInterval
+			ticker = newTicker(cfg.PollInterval())
+			currentPollInterval = cfg.PollInterval()
 			isLongInterval = false
-			slog.Info("worker poll interval reloaded", "interval_sec", cfg.PollInterval.Seconds())
+			slog.Info("worker poll interval reloaded", "interval_sec", cfg.PollInterval().Seconds())
 		}
 
-		n, err := runner.SubmitNext(ctx, pool, cfg.TenantID, cfg.WorkerID, cfg.Capacity, cfg.LeaseDuration, cfg.Labels)
-		if err != nil {
-			slog.Error("worker tick failed", "error", err.Error())
-		} else if n > 0 {
-			slog.Info("worker submitted tasks", "handled", n)
-			metrics.WorkerPoolSubmittedTotal.WithLabelValues(cfg.WorkerID, cfg.TenantID).Add(float64(n))
+		ids := tenantIDsForWorker(ctx, cfg)
+		handled := 0
+		for _, tenantID := range ids {
+			n, err := runner.SubmitNext(ctx, pool, tenantID, cfg.WorkerID, cfg.Capacity(), cfg.LeaseDuration(), cfg.Labels)
+			if err != nil {
+				slog.Error("worker tick failed", "tenant_id", tenantID, "error", err.Error())
+			} else {
+				handled += n
+			}
+		}
+		if handled > 0 {
+			slog.Info("worker submitted tasks", "handled", handled)
+			metrics.WorkerPoolSubmittedTotal.WithLabelValues(cfg.WorkerID, cfg.TenantID).Add(float64(handled))
 			idleCount = 0
 			resetToShortInterval()
 			select {
@@ -377,16 +429,16 @@ func heartbeatLoop(
 	newTicker func(time.Duration) workerTicker,
 	nowFn func() time.Time,
 ) {
-	sendHeartbeat(ctx, hb, cfg, nowFn, domainworker.StatusOnline)
+	sendHeartbeats(ctx, hb, cfg, nowFn, domainworker.StatusOnline)
 
-	ticker := newTicker(cfg.HeartbeatInterval)
+	ticker := newTicker(cfg.HeartbeatInterval())
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			drainCtx, drainCancel := context.WithTimeout(context.Background(), 3*time.Second)
-			sendHeartbeat(drainCtx, hb, cfg, nowFn, domainworker.StatusDraining)
+			sendHeartbeats(drainCtx, hb, cfg, nowFn, domainworker.StatusDraining)
 			drainCancel()
 
 			select {
@@ -396,12 +448,24 @@ func heartbeatLoop(
 			}
 
 			offCtx, offCancel := context.WithTimeout(context.Background(), 3*time.Second)
-			sendHeartbeat(offCtx, hb, cfg, nowFn, domainworker.StatusOffline)
+			sendHeartbeats(offCtx, hb, cfg, nowFn, domainworker.StatusOffline)
 			offCancel()
 			return
 		case <-ticker.Chan():
-			sendHeartbeat(ctx, hb, cfg, nowFn, domainworker.StatusOnline)
+			sendHeartbeats(ctx, hb, cfg, nowFn, domainworker.StatusOnline)
 		}
+	}
+}
+
+func sendHeartbeats(
+	ctx context.Context,
+	hb heartbeater,
+	cfg *runtimeConfig,
+	nowFn func() time.Time,
+	status string,
+) {
+	for _, tenantID := range tenantIDsForWorker(ctx, cfg) {
+		sendHeartbeat(ctx, hb, cfg, nowFn, tenantID, status)
 	}
 }
 
@@ -410,15 +474,16 @@ func sendHeartbeat(
 	hb heartbeater,
 	cfg *runtimeConfig,
 	nowFn func() time.Time,
+	tenantID string,
 	status string,
 ) {
 	now := nowFn()
 	spec, err := domainworker.NormalizeHeartbeat(now, domainworker.HeartbeatInput{
-		TenantID:       cfg.TenantID,
+		TenantID:       tenantID,
 		WorkerID:       cfg.WorkerID,
 		Status:         status,
-		LeaseExpiresAt: now.Add(cfg.LeaseDuration),
-		Capacity:       cfg.Capacity,
+		LeaseExpiresAt: now.Add(cfg.LeaseDuration()),
+		Capacity:       cfg.Capacity(),
 		Labels:         cfg.Labels,
 	})
 	if err != nil {
@@ -465,6 +530,7 @@ func run(ctx context.Context) error {
 	httpClient := buildHTTPClientFn()
 	inner := buildRunnerFn(db, httpClient)
 	hb := buildHeartbeaterFn(db)
+	cfg.tenantLister = corepostgres.NewExecutorRepository(db)
 
 	// Attach dynamic lease to the inner runner so execution durations are recorded.
 	dynamicLease := execute.NewDynamicLease(cfg.LeaseMin, cfg.LeaseMax, cfg.LeaseDecay)
@@ -479,7 +545,7 @@ func run(ctx context.Context) error {
 		db:           db,
 		adaptiveCap:  adaptiveCap,
 		dynamicLease: dynamicLease,
-		cfg:          &cfg,
+		cfg:          cfg,
 	}
 
 	healthCtx, healthCancel := context.WithCancel(context.Background())
@@ -490,9 +556,9 @@ func run(ctx context.Context) error {
 		"worker_id", cfg.WorkerID,
 		"tenant_id", cfg.TenantID,
 		"health_port", cfg.HealthPort,
-		"poll_interval", cfg.PollInterval,
-		"lease_duration", cfg.LeaseDuration,
-		"capacity", cfg.Capacity,
+		"poll_interval", cfg.PollInterval(),
+		"lease_duration", cfg.LeaseDuration(),
+		"capacity", cfg.Capacity(),
 		"capacity_max", cfg.CapacityMax,
 	)
 
@@ -505,15 +571,17 @@ func run(ctx context.Context) error {
 	sliRecorder := sloevaluate.NewCheckRunRecorder(sliRepo, snapshotRepo)
 	checkWorker := checkexecute.NewTickUseCase(checkRepo, checkRunRepo, evaluate.NewEvaluator(), sliRecorder)
 	go func() {
-		ticker := time.NewTicker(cfg.PollInterval)
+		ticker := time.NewTicker(cfg.PollInterval())
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if _, err := checkWorker.RunBatch(ctx, cfg.TenantID, cfg.Capacity); err != nil {
-					slog.Error("check worker tick failed", "error", err.Error())
+				for _, tenantID := range tenantIDsForWorker(ctx, cfg) {
+					if _, err := checkWorker.RunBatch(ctx, tenantID, cfg.Capacity()); err != nil {
+						slog.Error("check worker tick failed", "tenant_id", tenantID, "error", err.Error())
+					}
 				}
 			}
 		}
@@ -533,7 +601,7 @@ func run(ctx context.Context) error {
 		reg = r
 		defer func() { _ = reg.Close() }()
 
-		keepAlive, err := reg.Register(ctx, "worker", cfg.WorkerID, cfg.LeaseDuration)
+		keepAlive, err := reg.Register(ctx, "worker", cfg.WorkerID, cfg.LeaseDuration())
 		if err != nil {
 			return fmt.Errorf("register worker: %w", err)
 		}
@@ -545,7 +613,7 @@ func run(ctx context.Context) error {
 
 		// Start background keepalive goroutine.
 		go func() {
-			ticker := time.NewTicker(cfg.HeartbeatInterval)
+			ticker := time.NewTicker(cfg.HeartbeatInterval())
 			defer ticker.Stop()
 			for {
 				select {
@@ -565,13 +633,13 @@ func run(ctx context.Context) error {
 			slog.Warn("worker config watcher failed to start", "error", err.Error())
 		} else {
 			defer func() { _ = watcher.Close() }()
-			go watchWorkerConfig(ctx, watcher, &cfg)
+			go watchWorkerConfig(ctx, watcher, cfg)
 		}
 
 		slog.Info("worker etcd registration enabled", "worker_id", cfg.WorkerID)
 	}
 
-	runLoopFn(ctx, runner, hb, &cfg, newWallClockTicker, time.Now)
+	runLoopFn(ctx, runner, hb, cfg, newWallClockTicker, time.Now)
 
 	return nil
 }
@@ -580,7 +648,7 @@ func watchWorkerConfig(ctx context.Context, watcher config.Watcher, cfg *runtime
 	go func() {
 		_ = watcher.Watch(ctx, "/orbitjob/config/worker/poll_interval_sec", func(v string) {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
-				cfg.PollInterval = time.Duration(n) * time.Second
+				cfg.SetPollInterval(time.Duration(n) * time.Second)
 				slog.Info("worker config updated", "key", "poll_interval_sec", "value", n)
 			}
 		})
@@ -588,7 +656,7 @@ func watchWorkerConfig(ctx context.Context, watcher config.Watcher, cfg *runtime
 	go func() {
 		_ = watcher.Watch(ctx, "/orbitjob/config/worker/heartbeat_interval_sec", func(v string) {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
-				cfg.HeartbeatInterval = time.Duration(n) * time.Second
+				cfg.SetHeartbeatInterval(time.Duration(n) * time.Second)
 				slog.Info("worker config updated", "key", "heartbeat_interval_sec", "value", n)
 			}
 		})
@@ -596,7 +664,7 @@ func watchWorkerConfig(ctx context.Context, watcher config.Watcher, cfg *runtime
 	go func() {
 		_ = watcher.Watch(ctx, "/orbitjob/config/worker/lease_duration_sec", func(v string) {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
-				cfg.LeaseDuration = time.Duration(n) * time.Second
+				cfg.SetLeaseDuration(time.Duration(n) * time.Second)
 				slog.Info("worker config updated", "key", "lease_duration_sec", "value", n)
 			}
 		})
@@ -604,15 +672,15 @@ func watchWorkerConfig(ctx context.Context, watcher config.Watcher, cfg *runtime
 	go func() {
 		_ = watcher.Watch(ctx, "/orbitjob/config/worker/capacity", func(v string) {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
-				cfg.Capacity = n
+				cfg.SetCapacity(n)
 				slog.Info("worker config updated", "key", "capacity", "value", n)
 			}
 		})
 	}()
 }
 
-// startComponentHealthServer runs a minimal HTTP server with /healthz and /readyz.
-// Shared pattern with scheduler and dispatcher.
+// shortUUID returns an 8-character hex prefix used for default worker IDs
+// when WORKER_ID is unset. It is not a security primitive.
 func shortUUID() string {
 	return uuid.New().String()[:8]
 }

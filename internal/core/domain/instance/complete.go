@@ -14,6 +14,7 @@ type CompleteInput struct {
 	ResultCode           string
 	ErrorMsg             string
 	Now                  time.Time
+	StartedAt            time.Time
 	Attempt              int
 	MaxAttempt           int
 	RetryBackoffSec      int
@@ -28,6 +29,7 @@ type CompleteSpec struct {
 	Attempt    int
 	ResultCode *string
 	ErrorMsg   *string
+	StartedAt  time.Time
 	FinishedAt time.Time
 	RetryAt    *time.Time
 }
@@ -61,6 +63,10 @@ func NormalizeComplete(in CompleteInput) (CompleteSpec, error) {
 	errorMsg := normalizeErrorMsg(in.ErrorMsg)
 
 	now := in.Now.UTC()
+	startedAt := in.StartedAt.UTC()
+	if startedAt.IsZero() {
+		startedAt = now
+	}
 
 	var status string
 	var retryAt *time.Time
@@ -85,6 +91,7 @@ func NormalizeComplete(in CompleteInput) (CompleteSpec, error) {
 		Attempt:    in.Attempt,
 		ResultCode: resultCode,
 		ErrorMsg:   errorMsg,
+		StartedAt:  startedAt,
 		FinishedAt: now,
 		RetryAt:    retryAt,
 	}, nil
