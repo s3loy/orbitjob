@@ -119,11 +119,9 @@ type devSchedulerConfig struct {
 }
 
 func loadDevSchedulerConfig() devSchedulerConfig {
-	batch, _ := loadDevPositiveInt("SCHEDULER_BATCH_SIZE_MAX", 100)
-	sec, _ := loadDevPositiveInt("SCHEDULER_TICK_INTERVAL_SEC", 5)
 	return devSchedulerConfig{
-		BatchSize:    batch,
-		TickInterval: time.Duration(sec) * time.Second,
+		BatchSize:    devPositiveInt("SCHEDULER_BATCH_SIZE_MAX", 100),
+		TickInterval: time.Duration(devPositiveInt("SCHEDULER_TICK_INTERVAL_SEC", 5)) * time.Second,
 	}
 }
 
@@ -174,15 +172,12 @@ type devDispatcherConfig struct {
 func loadDevDispatcherConfig() devDispatcherConfig {
 	tenant := os.Getenv("DISPATCHER_TENANT_ID")
 	multiTenant := tenant == ""
-	batch, _ := loadDevPositiveInt("DISPATCHER_BATCH_SIZE", 50)
-	tick, _ := loadDevPositiveInt("DISPATCHER_TICK_INTERVAL_SEC", 2)
-	lease, _ := loadDevPositiveInt("DISPATCHER_LEASE_DURATION_SEC", 30)
 	return devDispatcherConfig{
 		TenantID:      tenant,
 		MultiTenant:   multiTenant,
-		BatchSize:     batch,
-		TickInterval:  time.Duration(tick) * time.Second,
-		LeaseDuration: time.Duration(lease) * time.Second,
+		BatchSize:     devPositiveInt("DISPATCHER_BATCH_SIZE", 50),
+		TickInterval:  time.Duration(devPositiveInt("DISPATCHER_TICK_INTERVAL_SEC", 2)) * time.Second,
+		LeaseDuration: time.Duration(devPositiveInt("DISPATCHER_LEASE_DURATION_SEC", 30)) * time.Second,
 	}
 }
 
@@ -267,10 +262,10 @@ func loadDevWorkerConfig() devWorkerConfig {
 	}
 	tenant := os.Getenv("WORKER_TENANT_ID")
 	multiTenant := tenant == ""
-	poll, _ := loadDevPositiveInt("WORKER_POLL_INTERVAL_SEC", 2)
-	hb, _ := loadDevPositiveInt("WORKER_HEARTBEAT_INTERVAL_SEC", 10)
-	lease, _ := loadDevPositiveInt("WORKER_LEASE_DURATION_SEC", 60)
-	capacity, _ := loadDevPositiveInt("WORKER_CAPACITY", 1)
+	poll := devPositiveInt("WORKER_POLL_INTERVAL_SEC", 2)
+	hb := devPositiveInt("WORKER_HEARTBEAT_INTERVAL_SEC", 10)
+	lease := devPositiveInt("WORKER_LEASE_DURATION_SEC", 60)
+	capacity := devPositiveInt("WORKER_CAPACITY", 5)
 	labels := loadDevJSONMapEnv("WORKER_LABELS")
 	return devWorkerConfig{
 		TenantID:          tenant,
@@ -444,12 +439,23 @@ func loadDevPositiveInt(key string, defaultValue int) (int, error) {
 	}
 	value, err := strconv.Atoi(raw)
 	if err != nil {
-		return 0, fmt.Errorf("%s must be an integer: %w", key, err)
+		return defaultValue, fmt.Errorf("%s must be an integer: %w", key, err)
 	}
 	if value < 1 {
-		return 0, fmt.Errorf("%s must be >= 1", key)
+		return defaultValue, fmt.Errorf("%s must be >= 1", key)
 	}
 	return value, nil
+}
+
+// devPositiveInt loads a positive int env var for the devserver, falling back
+// to defaultValue (with a warning) on parse error. The devserver keeps running
+// with defaults instead of aborting, and never returns 0 so tickers stay valid.
+func devPositiveInt(key string, defaultValue int) int {
+	v, err := loadDevPositiveInt(key, defaultValue)
+	if err != nil {
+		slog.Warn("invalid env, using default", "key", key, "default", defaultValue, "error", err)
+	}
+	return v
 }
 
 func loadDevJSONMapEnv(key string) map[string]any {

@@ -182,17 +182,17 @@ func TestLoadWorkerRuntimeConfig_Custom(t *testing.T) {
 	if cfg.MultiTenant {
 		t.Fatalf("expected MultiTenant=false when WORKER_TENANT_ID is set")
 	}
-	if cfg.PollInterval != 5*time.Second {
-		t.Fatalf("expected poll interval=5s, got %s", cfg.PollInterval)
+	if cfg.PollInterval() != 5*time.Second {
+		t.Fatalf("expected poll interval=5s, got %s", cfg.PollInterval())
 	}
-	if cfg.HeartbeatInterval != 15*time.Second {
-		t.Fatalf("expected heartbeat interval=15s, got %s", cfg.HeartbeatInterval)
+	if cfg.HeartbeatInterval() != 15*time.Second {
+		t.Fatalf("expected heartbeat interval=15s, got %s", cfg.HeartbeatInterval())
 	}
-	if cfg.LeaseDuration != 120*time.Second {
-		t.Fatalf("expected lease duration=120s, got %s", cfg.LeaseDuration)
+	if cfg.LeaseDuration() != 120*time.Second {
+		t.Fatalf("expected lease duration=120s, got %s", cfg.LeaseDuration())
 	}
-	if cfg.Capacity != 4 {
-		t.Fatalf("expected capacity=4, got %d", cfg.Capacity)
+	if cfg.Capacity() != 4 {
+		t.Fatalf("expected capacity=4, got %d", cfg.Capacity())
 	}
 	if cfg.Labels["gpu"] != "a100" {
 		t.Fatalf("expected labels[gpu]=a100, got %v", cfg.Labels)
@@ -238,10 +238,6 @@ func TestRunLoop_DrainMode(t *testing.T) {
 		runLoop(ctx, runner, hb, &runtimeConfig{
 			TenantID:          "t1",
 			WorkerID:          "w1",
-			PollInterval:      time.Second,
-			HeartbeatInterval: time.Second,
-			LeaseDuration:     60 * time.Second,
-			Capacity:          1,
 			Labels:            map[string]any{},
 		}, func(time.Duration) workerTicker {
 			return ticker
@@ -281,10 +277,6 @@ func TestRunLoop_WaitsTickerWhenIdle(t *testing.T) {
 		runLoop(ctx, runner, hb, &runtimeConfig{
 			TenantID:          "t1",
 			WorkerID:          "w1",
-			PollInterval:      time.Second,
-			HeartbeatInterval: time.Second,
-			LeaseDuration:     60 * time.Second,
-			Capacity:          1,
 			Labels:            map[string]any{},
 		}, func(time.Duration) workerTicker {
 			return ticker
@@ -317,15 +309,16 @@ func TestRunLoop_HeartbeatSendsOfflineOnShutdown(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		runLoop(ctx, runner, hb, &runtimeConfig{
+		cfg := runtimeConfig{
 			TenantID:          "t1",
 			WorkerID:          "w1",
-			PollInterval:      time.Second,
-			HeartbeatInterval: time.Second,
-			LeaseDuration:     60 * time.Second,
-			Capacity:          1,
 			Labels:            map[string]any{},
-		}, func(time.Duration) workerTicker {
+		}
+		cfg.SetPollInterval(time.Second)
+		cfg.SetHeartbeatInterval(time.Second)
+		cfg.SetLeaseDuration(60 * time.Second)
+		cfg.SetCapacity(1)
+		runLoop(ctx, runner, hb, &cfg, func(time.Duration) workerTicker {
 			return ticker
 		}, func() time.Time { return time.Now().UTC() })
 		close(done)
@@ -461,14 +454,14 @@ func TestRun_SuccessInvokesRunLoop(t *testing.T) {
 		if cfg.WorkerID != "worker-1" {
 			t.Fatalf("expected workerID=worker-1, got %q", cfg.WorkerID)
 		}
-		if cfg.PollInterval != 3*time.Second {
-			t.Fatalf("expected poll interval=3s, got %s", cfg.PollInterval)
+		if cfg.PollInterval() != 3*time.Second {
+			t.Fatalf("expected poll interval=3s, got %s", cfg.PollInterval())
 		}
-		if cfg.LeaseDuration != 120*time.Second {
-			t.Fatalf("expected lease duration=120s, got %s", cfg.LeaseDuration)
+		if cfg.LeaseDuration() != 120*time.Second {
+			t.Fatalf("expected lease duration=120s, got %s", cfg.LeaseDuration())
 		}
-		if cfg.Capacity != 4 {
-			t.Fatalf("expected capacity=4, got %d", cfg.Capacity)
+		if cfg.Capacity() != 4 {
+			t.Fatalf("expected capacity=4, got %d", cfg.Capacity())
 		}
 	}
 
@@ -658,10 +651,6 @@ func TestRunLoop_MultiTenantDiscoversAndSubmits(t *testing.T) {
 		runLoop(ctx, runner, hb, &runtimeConfig{
 			MultiTenant:       true,
 			WorkerID:          "w1",
-			PollInterval:      time.Second,
-			HeartbeatInterval: time.Second,
-			LeaseDuration:     60 * time.Second,
-			Capacity:          1,
 			tenantLister:      &mockTenantLister{ids: []string{"tenant-a", "tenant-b"}},
 		}, func(time.Duration) workerTicker {
 			return ticker
@@ -696,10 +685,6 @@ func TestRunLoop_MultiTenantListErrorNoFallback(t *testing.T) {
 		runLoop(ctx, runner, hb, &runtimeConfig{
 			MultiTenant:       true,
 			WorkerID:          "w1",
-			PollInterval:      time.Second,
-			HeartbeatInterval: time.Second,
-			LeaseDuration:     60 * time.Second,
-			Capacity:          1,
 			tenantLister:      &mockTenantLister{err: errors.New("db down")},
 		}, func(time.Duration) workerTicker {
 			return ticker
@@ -735,10 +720,6 @@ func TestRunLoop_MultiTenantEmptyListNoFallback(t *testing.T) {
 		runLoop(ctx, runner, hb, &runtimeConfig{
 			MultiTenant:       true,
 			WorkerID:          "w1",
-			PollInterval:      time.Second,
-			HeartbeatInterval: time.Second,
-			LeaseDuration:     60 * time.Second,
-			Capacity:          1,
 			tenantLister:      &mockTenantLister{ids: []string{}},
 		}, func(time.Duration) workerTicker {
 			return ticker

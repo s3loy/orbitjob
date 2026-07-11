@@ -1,0 +1,947 @@
+[
+  {
+    "name": "etl-daily-user-sync",
+    "trigger_type": "cron",
+    "cron_expr": "0 3 * * *",
+    "handler_type": "exec",
+    "handler_payload": {
+      "command": "psql",
+      "args": [
+        "-h",
+        "db-primary.internal",
+        "-U",
+        "etl",
+        "-c",
+        "CALL sync_users()"
+      ]
+    },
+    "timeout_sec": 120,
+    "retry_limit": 3,
+    "concurrency_policy": "forbid",
+    "misfire_policy": "fire_now"
+  },
+  {
+    "name": "etl-hourly-metrics-rollup",
+    "trigger_type": "cron",
+    "cron_expr": "0 * * * *",
+    "handler_type": "exec",
+    "handler_payload": {
+      "command": "python3",
+      "args": [
+        "-m",
+        "etl.rollup_metrics",
+        "--window",
+        "1h"
+      ]
+    },
+    "timeout_sec": 60,
+    "retry_limit": 2,
+    "concurrency_policy": "allow",
+    "misfire_policy": "skip"
+  },
+  {
+    "name": "etl-warehouse-export",
+    "trigger_type": "cron",
+    "cron_expr": "0 6 * * 1-5",
+    "handler_type": "webhook",
+    "handler_payload": {
+      "url": "https://warehouse.internal/api/v1/export",
+      "method": "POST",
+      "body": "{\"source\":\"prod\",\"tables\":[\"orders\",\"users\",\"sessions\"]}",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Export-Key": "{{secret:warehouse}}"
+      }
+    },
+    "timeout_sec": 300,
+    "retry_limit": 1,
+    "concurrency_policy": "forbid",
+    "misfire_policy": "fire_now"
+  },
+  {
+    "name": "data-retention-cleanup",
+    "trigger_type": "cron",
+    "cron_expr": "0 2 * * 0",
+    "handler_type": "exec",
+    "handler_payload": {
+      "command": "find",
+      "args": [
+        "/data/logs",
+        "-name",
+        "*.log",
+        "-mtime",
+        "+90",
+        "-delete"
+      ]
+    },
+    "timeout_sec": 600,
+    "retry_limit": 0,
+    "concurrency_policy": "allow",
+    "misfire_policy": "skip"
+  },
+  {
+    "name": "data-partition-create",
+    "trigger_type": "cron",
+    "cron_expr": "0 0 1 * *",
+    "handler_type": "exec",
+    "handler_payload": {
+      "command": "psql",
+      "args": [
+        "-h",
+        "db-primary.internal",
+        "-c",
+        "SELECT create_monthly_partitions()"
+      ]
+    },
+    "timeout_sec": 180,
+    "retry_limit": 2,
+    "concurrency_policy": "forbid",
+    "misfire_policy": "fire_now"
+  },
+  {
+    "name": "log-archive-compress",
+    "trigger_type": "cron",
+    "cron_expr": "0 4 * * 0",
+    "handler_type": "exec",
+    "handler_payload": {
+      "command": "tar",
+      "args": [
+        "-czf",
+        "/archive/logs-$(date +%Y%W).tar.gz",
+        "/var/log/app/"
+      ]
+    },
+    "timeout_sec": 900,
+    "retry_limit": 0,
+    "concurrency_policy": "allow",
+    "misfire_policy": "skip"
+  },
+  {
+    "name": "cache-warmup-daily",
+    "trigger_type": "cron",
+    "cron_expr": "30 7 * * 1-5",
+    "handler_type": "exec",
+    "handler_payload": {
+      "command": "redis-cli",
+      "args": [
+        "-h",
+        "cache.internal",
+        "--eval",
+        "/scripts/warmup.lua"
+      ]
+    },
+    "timeout_sec": 120,
+    "retry_limit": 1,
+    "concurrency_policy": "forbid",
+    "misfire_policy": "fire_now"
+  },
+  {
+    "name": "search-index-rebuild",
+    "trigger_type": "cron",
+    "cron_expr": "0 1 * * 0",
+    "handler_type": "exec",
+    "handler_payload": {
+      "command": "curl",
+      "args": [
+        "-X",
+        "POST",
+        "http://elasticsearch.internal:9200/_reindex",
+        "-H",
+        "Content-Type: application/json",
+        "-d",
+        "{\"source\":{\"index\":\"prod\"},\"dest\":{\"index\":\"prod-v2\"}}"
+      ]
+    },
+    "timeout_sec": 1800,
+    "retry_limit": 1,
+    "concurrency_policy": "forbid",
+    "misfire_policy": "skip"
+  },
+  {
+    "name": "audit-log-export",
+    "trigger_type": "cron",
+    "cron_expr": "0 8 * * 1-5",
+    "handler_type": "webhook",
+    "handler_payload": {
+      "url": "https://compliance.internal/api/v1/audit/export",
+      "method": "POST",
+      "body": "{\"period\":\"previous_day\",\"format\":\"csv\"}",
+      "headers": {
+        "Content-Type": "application/json"
+      }
+    },
+    "timeout_sec": 300,
+    "retry_limit": 2,
+    "concurrency_policy": "forbid",
+    "misfire_policy": "fire_now"
+  },
+  {
+    "name": "replica-lag-check",
+    "trigger_type": "cron",
+    "cron_expr": "*/10 * * * *",
+    "handler_type": "exec",
+    "handler_payload": {
+      "command": "psql",
+      "args": [
+        "-h",
+        "db-replica.internal",
+        "-U",
+        "readonly",
+        "-c",
+        "SELECT extract(epoch FROM now() - pg_last_xact_replay_timestamp()) AS lag_sec"
+      ]
+    },
+    "timeout_sec": 30,
+    "retry_limit": 0,
+    "concurrency_policy": "allow",
+    "misfire_policy": "skip"
+  },
+  {
+    "name": "health-api-gateway",
+    "trigger_type": "cron",
+    "cron_expr": "*/5 * * * *",
+    "handler_type": "http",
+    "handler_payload": {
+      "url": "https://httpbin.org/get",
+      "method": "GET",
+      "timeout_sec": 15
+    },
+    "timeout_sec": 30,
+    "retry_limit": 0,
+    "concurrency_policy": "allow",
+    "misfire_policy": "skip"
+  },
+  {
+    "name": "health-db-primary",
+    "trigger_type": "cron",
+    "cron_expr": "*/2 * * * *",
+    "handler_type": "http",
+    "handler_payload": {
+      "url": "https://httpbin.org/status/200",
+      "method": "GET",
+      "timeout_sec": 10
+    },
+    "timeout_sec": 30,
+    "retry_limit": 0,
+    "concurrency_policy": "allow",
+    "misfire_policy": "skip"
+  },
+  {
+    "name": "health-redis-cluster",
+    "trigger_type": "cron",
+    "cron_expr": "*/5 * * * *",
+    "handler_type": "http",
+    "handler_payload": {
+      "url": "https://httpbin.org/delay/1",
+      "method": "GET",
+      "timeout_sec": 10
+    },
+    "timeout_sec": 30,
+    "retry_limit": 1,
+    "concurrency_policy": "allow",
+    "misfire_policy": "skip"
+  },
+  {
+    "name": "health-kafka-brokers",
+    "trigger_type": "cron",
+    "cron_expr": "*/5 * * * *",
+    "handler_type": "http",
+    "handler_payload": {
+      "url": "https://httpbin.org/get",
+      "method": "GET",
+      "timeout_sec": 15
+    },
+    "timeout_sec": 30,
+    "retry_limit": 0,
+    "concurrency_policy": "allow",
+    "misfire_policy": "skip"
+  },
+  {
+    "name": "health-cdn-endpoints",
+    "trigger_type": "cron",
+    "cron_expr": "*/10 * * * *",
+    "handler_type": "http",
+    "handler_payload": {
+      "url": "https://httpbin.org/get",
+      "method": "GET",
+      "timeout_sec": 30
+    },
+    "timeout_sec": 60,
+    "retry_limit": 0,
+    "concurrency_policy": "allow",
+    "misfire_policy": "skip"
+  },
+  {
+    "name": "health-s3-bucket-access",
+    "trigger_type": "cron",
+    "cron_expr": "0 */2 * * *",
+    "handler_type": "http",
+    "handler_payload": {
+      "url": "https://httpbin.org/status/200",
+      "method": "HEAD",
+      "timeout_sec": 15
+    },
+    "timeout_sec": 30,
+    "retry_limit": 0,
+    "concurrency_policy": "allow",
+    "misfire_policy": "skip"
+  },
+  {
+    "name": "health-smtp-relay",
+    "trigger_type": "cron",
+    "cron_expr": "*/15 * * * *",
+    "handler_type": "http",
+    "handler_payload": {
+      "url": "https://httpbin.org/get",
+      "method": "GET",
+      "timeout_sec": 20
+    },
+    "timeout_sec": 30,
+    "retry_limit": 0,
+    "concurrency_policy": "allow",
+    "misfire_policy": "skip"
+  },
+  {
+    "name": "health-elasticsearch",
+    "trigger_type": "cron",
+    "cron_expr": "*/5 * * * *",
+    "handler_type": "http",
+    "handler_payload": {
+      "url": "https://httpbin.org/get",
+      "method": "GET",
+      "timeout_sec": 15
+    },
+    "timeout_sec": 30,
+    "retry_limit": 1,
+    "concurrency_policy": "allow",
+    "misfire_policy": "skip"
+  },
+  {
+    "name": "monitor-error-budget-burn",
+    "trigger_type": "cron",
+    "cron_expr": "*/5 * * * *",
+    "handler_type": "exec",
+    "handler_payload": {
+      "command": "curl",
+      "args": [
+        "-sf",
+        "https://httpbin.org/get"
+      ]
+    },
+    "timeout_sec": 30,
+    "retry_limit": 0,
+    "concurrency_policy": "allow",
+    "misfire_policy": "skip"
+  },
+  {
+    "name": "monitor-ssl-cert-expiry",
+    "trigger_type": "cron",
+    "cron_expr": "0 9 * * 1",
+    "handler_type": "exec",
+    "handler_payload": {
+      "command": "openssl",
+      "args": [
+        "s_client",
+        "-connect",
+        "httpbin.org:443",
+        "-servername",
+        "httpbin.org"
+      ]
+    },
+    "timeout_sec": 60,
+    "retry_limit": 0,
+    "concurrency_policy": "forbid",
+    "misfire_policy": "fire_now"
+  },
+  {
+    "name": "monitor-disk-usage-alert",
+    "trigger_type": "cron",
+    "cron_expr": "0 */4 * * *",
+    "handler_type": "exec",
+    "handler_payload": {
+      "command": "df",
+      "args": [
+        "-h",
+        "/data"
+      ]
+    },
+    "timeout_sec": 30,
+    "retry_limit": 0,
+    "concurrency_policy": "allow",
+    "misfire_policy": "skip"
+  },
+  {
+    "name": "monitor-quota-exceeded",
+    "trigger_type": "cron",
+    "cron_expr": "*/10 * * * *",
+    "handler_type": "exec",
+    "handler_payload": {
+      "command": "find",
+      "args": [
+        "/tmp",
+        "-type",
+        "f",
+        "-size",
+        "+100M",
+        "-ls"
+      ]
+    },
+    "timeout_sec": 20,
+    "retry_limit": 0,
+    "concurrency_policy": "allow",
+    "misfire_policy": "skip"
+  },
+  {
+    "name": "monitor-slo-window-check",
+    "trigger_type": "cron",
+    "cron_expr": "0 */6 * * *",
+    "handler_type": "exec",
+    "handler_payload": {
+      "command": "curl",
+      "args": [
+        "-sf",
+        "https://httpbin.org/json"
+      ]
+    },
+    "timeout_sec": 45,
+    "retry_limit": 0,
+    "concurrency_policy": "forbid",
+    "misfire_policy": "fire_now"
+  },
+  {
+    "name": "monitor-cost-anomaly-daily",
+    "trigger_type": "cron",
+    "cron_expr": "0 10 * * *",
+    "handler_type": "http",
+    "handler_payload": {
+      "url": "https://httpbin.org/post",
+      "method": "POST",
+      "body": "{\"check\":\"cost-anomaly\",\"provider\":\"aws\"}",
+      "headers": {
+        "Content-Type": "application/json"
+      }
+    },
+    "timeout_sec": 120,
+    "retry_limit": 1,
+    "concurrency_policy": "forbid",
+    "misfire_policy": "fire_now"
+  },
+  {
+    "name": "backup-db-full-daily",
+    "trigger_type": "cron",
+    "cron_expr": "0 1 * * *",
+    "handler_type": "exec",
+    "handler_payload": {
+      "command": "pg_dump",
+      "args": [
+        "-h",
+        "db-primary.internal",
+        "-U",
+        "backup",
+        "-Fc",
+        "-f",
+        "/backup/daily/db_$(date +%Y%m%d).dump",
+        "--verbose"
+      ]
+    },
+    "timeout_sec": 3600,
+    "retry_limit": 1,
+    "concurrency_policy": "forbid",
+    "misfire_policy": "fire_now"
+  },
+  {
+    "name": "backup-db-incremental",
+    "trigger_type": "cron",
+    "cron_expr": "0 */4 * * *",
+    "handler_type": "exec",
+    "handler_payload": {
+      "command": "pg_dump",
+      "args": [
+        "-h",
+        "db-replica.internal",
+        "-U",
+        "backup",
+        "-Fc",
+        "-f",
+        "/backup/incr/db_$(date +%Y%m%d_%H%M).dump"
+      ]
+    },
+    "timeout_sec": 600,
+    "retry_limit": 1,
+    "concurrency_policy": "forbid",
+    "misfire_policy": "fire_now"
+  },
+  {
+    "name": "backup-config-snapshot",
+    "trigger_type": "cron",
+    "cron_expr": "0 2 * * 0",
+    "handler_type": "exec",
+    "handler_payload": {
+      "command": "tar",
+      "args": [
+        "-czf",
+        "/backup/config-$(date +%Y%W).tar.gz",
+        "/etc/app/"
+      ]
+    },
+    "timeout_sec": 300,
+    "retry_limit": 0,
+    "concurrency_policy": "forbid",
+    "misfire_policy": "skip"
+  },
+  {
+    "name": "disaster-recovery-drill",
+    "trigger_type": "cron",
+    "cron_expr": "0 10 1 */3 *",
+    "handler_type": "webhook",
+    "handler_payload": {
+      "url": "https://dr-runbook.internal/api/v1/drill/start",
+      "method": "POST",
+      "body": "{\"scenario\":\"db-failover\",\"duration_min\":30}",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Drill-Key": "{{secret:dr}}"
+      }
+    },
+    "timeout_sec": 1800,
+    "retry_limit": 0,
+    "concurrency_policy": "forbid",
+    "misfire_policy": "skip"
+  },
+  {
+    "name": "backup-verify-restore",
+    "trigger_type": "cron",
+    "cron_expr": "0 5 * * 0",
+    "handler_type": "exec",
+    "handler_payload": {
+      "command": "pg_restore",
+      "args": [
+        "-l",
+        "/backup/daily/db_$(date +%Y%m%d).dump",
+        ">/dev/null"
+      ]
+    },
+    "timeout_sec": 1200,
+    "retry_limit": 1,
+    "concurrency_policy": "forbid",
+    "misfire_policy": "fire_now"
+  },
+  {
+    "name": "report-daily-business-kpi",
+    "trigger_type": "cron",
+    "cron_expr": "0 8 * * 1-5",
+    "handler_type": "webhook",
+    "handler_payload": {
+      "url": "https://analytics.internal/api/v1/reports/kpi",
+      "method": "POST",
+      "body": "{\"report\":\"daily-kpi\",\"format\":\"pdf\",\"notify\":[\"ceo@example.com\",\"cto@example.com\"]}",
+      "headers": {
+        "Content-Type": "application/json"
+      }
+    },
+    "timeout_sec": 300,
+    "retry_limit": 2,
+    "concurrency_policy": "forbid",
+    "misfire_policy": "fire_now"
+  },
+  {
+    "name": "report-weekly-sre-summary",
+    "trigger_type": "cron",
+    "cron_expr": "0 9 * * 1",
+    "handler_type": "webhook",
+    "handler_payload": {
+      "url": "https://analytics.internal/api/v1/reports/sre",
+      "method": "POST",
+      "body": "{\"report\":\"weekly-sre\",\"include\":[\"incidents\",\"alerts\",\"slo-status\",\"deploys\"]}",
+      "headers": {
+        "Content-Type": "application/json"
+      }
+    },
+    "timeout_sec": 600,
+    "retry_limit": 1,
+    "concurrency_policy": "forbid",
+    "misfire_policy": "fire_now"
+  },
+  {
+    "name": "report-monthly-billing",
+    "trigger_type": "cron",
+    "cron_expr": "0 7 1 * *",
+    "handler_type": "webhook",
+    "handler_payload": {
+      "url": "https://finance.internal/api/v1/billing/generate",
+      "method": "POST",
+      "body": "{\"month\":\"previous\",\"format\":\"csv\",\"line_items\":\"detailed\"}",
+      "headers": {
+        "Content-Type": "application/json"
+      }
+    },
+    "timeout_sec": 1200,
+    "retry_limit": 2,
+    "concurrency_policy": "forbid",
+    "misfire_policy": "fire_now"
+  },
+  {
+    "name": "report-user-growth-analysis",
+    "trigger_type": "cron",
+    "cron_expr": "0 6 * * 1",
+    "handler_type": "exec",
+    "handler_payload": {
+      "command": "python3",
+      "args": [
+        "-m",
+        "analytics.user_growth",
+        "--output",
+        "/reports/user_growth_weekly.csv"
+      ]
+    },
+    "timeout_sec": 900,
+    "retry_limit": 1,
+    "concurrency_policy": "forbid",
+    "misfire_policy": "fire_now"
+  },
+  {
+    "name": "report-sla-compliance",
+    "trigger_type": "cron",
+    "cron_expr": "0 10 1 * *",
+    "handler_type": "webhook",
+    "handler_payload": {
+      "url": "https://compliance.internal/api/v1/sla/export",
+      "method": "POST",
+      "body": "{\"period\":\"previous_month\",\"services\":[\"api\",\"db\",\"cdn\"]}",
+      "headers": {
+        "Content-Type": "application/json"
+      }
+    },
+    "timeout_sec": 1800,
+    "retry_limit": 1,
+    "concurrency_policy": "forbid",
+    "misfire_policy": "fire_now"
+  },
+  {
+    "name": "report-cost-attribution",
+    "trigger_type": "cron",
+    "cron_expr": "0 5 2 * *",
+    "handler_type": "webhook",
+    "handler_payload": {
+      "url": "https://finance.internal/api/v1/cost/attribution",
+      "method": "POST",
+      "body": "{\"by\":[\"team\",\"service\",\"environment\"],\"month\":\"previous\"}",
+      "headers": {
+        "Content-Type": "application/json"
+      }
+    },
+    "timeout_sec": 600,
+    "retry_limit": 2,
+    "concurrency_policy": "forbid",
+    "misfire_policy": "fire_now"
+  },
+  {
+    "name": "notify-deploy-success",
+    "trigger_type": "cron",
+    "cron_expr": "0 * * * *",
+    "handler_type": "webhook",
+    "handler_payload": {
+      "url": "https://slack.internal/api/chat.postMessage",
+      "method": "POST",
+      "body": "{\"channel\":\"#deployments\",\"text\":\"Deploy completed successfully\"}",
+      "headers": {
+        "Content-Type": "application/json"
+      }
+    },
+    "timeout_sec": 30,
+    "retry_limit": 0,
+    "concurrency_policy": "allow",
+    "misfire_policy": "skip"
+  },
+  {
+    "name": "notify-incident-escalation",
+    "trigger_type": "cron",
+    "cron_expr": "*/5 * * * *",
+    "handler_type": "webhook",
+    "handler_payload": {
+      "url": "https://pagerduty.internal/api/v1/events",
+      "method": "POST",
+      "body": "{\"event_type\":\"trigger\",\"severity\":\"critical\"}",
+      "headers": {
+        "Content-Type": "application/json"
+      }
+    },
+    "timeout_sec": 30,
+    "retry_limit": 0,
+    "concurrency_policy": "allow",
+    "misfire_policy": "skip"
+  },
+  {
+    "name": "notify-sprint-reminder",
+    "trigger_type": "cron",
+    "cron_expr": "0 9 * * 1",
+    "handler_type": "webhook",
+    "handler_payload": {
+      "url": "https://slack.internal/api/chat.postMessage",
+      "method": "POST",
+      "body": "{\"channel\":\"#engineering\",\"text\":\"Sprint planning in 1 hour\"}",
+      "headers": {
+        "Content-Type": "application/json"
+      }
+    },
+    "timeout_sec": 30,
+    "retry_limit": 0,
+    "concurrency_policy": "forbid",
+    "misfire_policy": "skip"
+  },
+  {
+    "name": "notify-oncall-handoff",
+    "trigger_type": "cron",
+    "cron_expr": "0 8,20 * * *",
+    "handler_type": "webhook",
+    "handler_payload": {
+      "url": "https://pagerduty.internal/api/v1/oncall/handoff",
+      "method": "POST",
+      "body": "{\"shift\":\"next\"}",
+      "headers": {
+        "Content-Type": "application/json"
+      }
+    },
+    "timeout_sec": 30,
+    "retry_limit": 0,
+    "concurrency_policy": "forbid",
+    "misfire_policy": "fire_now"
+  },
+  {
+    "name": "notify-release-notes",
+    "trigger_type": "cron",
+    "cron_expr": "0 17 * * 5",
+    "handler_type": "webhook",
+    "handler_payload": {
+      "url": "https://wiki.internal/api/v1/release-notes/generate",
+      "method": "POST",
+      "body": "{\"since\":\"last_friday\",\"repos\":[\"api\",\"web\",\"worker\"]}",
+      "headers": {
+        "Content-Type": "application/json"
+      }
+    },
+    "timeout_sec": 60,
+    "retry_limit": 0,
+    "concurrency_policy": "forbid",
+    "misfire_policy": "skip"
+  },
+  {
+    "name": "notify-uptime-daily",
+    "trigger_type": "cron",
+    "cron_expr": "0 9 * * *",
+    "handler_type": "webhook",
+    "handler_payload": {
+      "url": "https://statuspage.internal/api/v1/uptime/report",
+      "method": "POST",
+      "body": "{\"period\":\"yesterday\",\"services\":[\"api\",\"dashboard\",\"scheduler\"]}",
+      "headers": {
+        "Content-Type": "application/json"
+      }
+    },
+    "timeout_sec": 30,
+    "retry_limit": 0,
+    "concurrency_policy": "allow",
+    "misfire_policy": "skip"
+  },
+  {
+    "name": "notify-cert-expiry-alert",
+    "trigger_type": "cron",
+    "cron_expr": "0 9 * * 1",
+    "handler_type": "webhook",
+    "handler_payload": {
+      "url": "https://slack.internal/api/chat.postMessage",
+      "method": "POST",
+      "body": "{\"channel\":\"#infra\",\"text\":\"SSL certificates expiring in < 30 days — action required\"}",
+      "headers": {
+        "Content-Type": "application/json"
+      }
+    },
+    "timeout_sec": 30,
+    "retry_limit": 0,
+    "concurrency_policy": "forbid",
+    "misfire_policy": "fire_now"
+  },
+  {
+    "name": "notify-budget-threshold",
+    "trigger_type": "cron",
+    "cron_expr": "*/10 * * * *",
+    "handler_type": "webhook",
+    "handler_payload": {
+      "url": "https://slack.internal/api/chat.postMessage",
+      "method": "POST",
+      "body": "{\"channel\":\"#finops\",\"text\":\"AWS budget > 80% consumed this month\"}",
+      "headers": {
+        "Content-Type": "application/json"
+      }
+    },
+    "timeout_sec": 30,
+    "retry_limit": 0,
+    "concurrency_policy": "allow",
+    "misfire_policy": "skip"
+  },
+  {
+    "name": "db-vacuum-analyze",
+    "trigger_type": "cron",
+    "cron_expr": "0 3 * * 0",
+    "handler_type": "exec",
+    "handler_payload": {
+      "command": "psql",
+      "args": [
+        "-h",
+        "db-primary.internal",
+        "-U",
+        "admin",
+        "-c",
+        "VACUUM ANALYZE"
+      ]
+    },
+    "timeout_sec": 1800,
+    "retry_limit": 0,
+    "concurrency_policy": "forbid",
+    "misfire_policy": "skip"
+  },
+  {
+    "name": "db-reindex-weekly",
+    "trigger_type": "cron",
+    "cron_expr": "0 4 * * 0",
+    "handler_type": "exec",
+    "handler_payload": {
+      "command": "psql",
+      "args": [
+        "-h",
+        "db-primary.internal",
+        "-U",
+        "admin",
+        "-c",
+        "REINDEX DATABASE current"
+      ]
+    },
+    "timeout_sec": 3600,
+    "retry_limit": 0,
+    "concurrency_policy": "forbid",
+    "misfire_policy": "skip"
+  },
+  {
+    "name": "db-connection-pool-reset",
+    "trigger_type": "cron",
+    "cron_expr": "0 */6 * * *",
+    "handler_type": "exec",
+    "handler_payload": {
+      "command": "pg_ctl",
+      "args": [
+        "reload",
+        "-D",
+        "/var/lib/postgresql/data"
+      ]
+    },
+    "timeout_sec": 60,
+    "retry_limit": 1,
+    "concurrency_policy": "allow",
+    "misfire_policy": "skip"
+  },
+  {
+    "name": "db-slow-query-log-rotate",
+    "trigger_type": "cron",
+    "cron_expr": "0 1 * * *",
+    "handler_type": "exec",
+    "handler_payload": {
+      "command": "mv",
+      "args": [
+        "/var/log/pg/slow.log",
+        "/var/log/pg/slow.log.1"
+      ]
+    },
+    "timeout_sec": 120,
+    "retry_limit": 0,
+    "concurrency_policy": "allow",
+    "misfire_policy": "skip"
+  },
+  {
+    "name": "cicd-nightly-build",
+    "trigger_type": "cron",
+    "cron_expr": "0 3 * * *",
+    "handler_type": "http",
+    "handler_payload": {
+      "url": "https://ci.internal/api/v1/pipelines/nightly/trigger",
+      "method": "POST",
+      "body": "{\"branch\":\"main\",\"suite\":\"full\",\"notify\":[\"#builds\"]}",
+      "headers": {
+        "Content-Type": "application/json"
+      }
+    },
+    "timeout_sec": 1800,
+    "retry_limit": 2,
+    "concurrency_policy": "forbid",
+    "misfire_policy": "fire_now"
+  },
+  {
+    "name": "cicd-security-scan",
+    "trigger_type": "cron",
+    "cron_expr": "0 4 * * 0",
+    "handler_type": "http",
+    "handler_payload": {
+      "url": "https://ci.internal/api/v1/security/scan",
+      "method": "POST",
+      "body": "{\"scope\":\"all_dependencies\",\"fail_on\":\"critical\"}",
+      "headers": {
+        "Content-Type": "application/json"
+      }
+    },
+    "timeout_sec": 900,
+    "retry_limit": 1,
+    "concurrency_policy": "forbid",
+    "misfire_policy": "fire_now"
+  },
+  {
+    "name": "cicd-dependency-update",
+    "trigger_type": "cron",
+    "cron_expr": "0 2 * * 1",
+    "handler_type": "exec",
+    "handler_payload": {
+      "command": "pip",
+      "args": [
+        "install",
+        "--upgrade",
+        "-r",
+        "/app/requirements.txt",
+        "--dry-run"
+      ]
+    },
+    "timeout_sec": 1200,
+    "retry_limit": 1,
+    "concurrency_policy": "forbid",
+    "misfire_policy": "skip"
+  },
+  {
+    "name": "manual-emergency-rollback",
+    "trigger_type": "manual",
+    "handler_type": "exec",
+    "handler_payload": {
+      "command": "helm",
+      "args": [
+        "rollback",
+        "prod-api",
+        "--wait",
+        "--timeout",
+        "5m"
+      ]
+    },
+    "timeout_sec": 600,
+    "retry_limit": 0
+  },
+  {
+    "name": "manual-data-fix",
+    "trigger_type": "manual",
+    "handler_type": "http",
+    "handler_payload": {
+      "url": "https://admin.internal/api/v1/data/fix-orphan-records",
+      "method": "POST",
+      "body": "{\"dry_run\":true,\"batch_size\":1000}",
+      "headers": {
+        "Content-Type": "application/json"
+      }
+    },
+    "timeout_sec": 300,
+    "retry_limit": 0
+  }
+]

@@ -55,10 +55,10 @@ func TestSendHeartbeat_UpsertError(t *testing.T) {
 	cfg := runtimeConfig{
 		TenantID:      "t1",
 		WorkerID:      "w1",
-		LeaseDuration: 60 * time.Second,
-		Capacity:      1,
 		Labels:        map[string]any{},
 	}
+	cfg.SetLeaseDuration(60 * time.Second)
+	cfg.SetCapacity(1)
 
 	// This should not panic — error is logged, not returned
 	sendHeartbeat(context.Background(), hb, &cfg, func() time.Time { return now }, "t1", domainworker.StatusOnline)
@@ -70,10 +70,10 @@ func TestSendHeartbeat_NormalizeError(t *testing.T) {
 	cfg := runtimeConfig{
 		TenantID:      "t1",
 		WorkerID:      "", // empty workerID triggers normalize error
-		LeaseDuration: 60 * time.Second,
-		Capacity:      1,
 		Labels:        map[string]any{},
 	}
+	cfg.SetLeaseDuration(60 * time.Second)
+	cfg.SetCapacity(1)
 
 	// This should not panic — normalize error is logged, not returned
 	sendHeartbeat(context.Background(), hb, &cfg, func() time.Time { return now }, "t1", domainworker.StatusOnline)
@@ -158,11 +158,11 @@ func TestHeartbeatLoop_ShutdownGraceful(t *testing.T) {
 	cfg := runtimeConfig{
 		TenantID:          "t1",
 		WorkerID:          "w1",
-		HeartbeatInterval: time.Second,
-		LeaseDuration:     60 * time.Second,
-		Capacity:          1,
 		Labels:            map[string]any{},
 	}
+	cfg.SetHeartbeatInterval(time.Second)
+	cfg.SetLeaseDuration(60 * time.Second)
+	cfg.SetCapacity(1)
 
 	ticker := newFakeTicker()
 
@@ -223,10 +223,6 @@ func TestRunLoop_SubmitNextError(t *testing.T) {
 		runLoop(ctx, runner, hb, &runtimeConfig{
 			TenantID:          "t1",
 			WorkerID:          "w1",
-			PollInterval:      time.Second,
-			HeartbeatInterval: time.Second,
-			LeaseDuration:     60 * time.Second,
-			Capacity:          1,
 			Labels:            map[string]any{},
 		}, func(time.Duration) workerTicker {
 			return ticker

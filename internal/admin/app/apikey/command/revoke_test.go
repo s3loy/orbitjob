@@ -9,10 +9,13 @@ import (
 )
 
 type stubAPIKeyRevoker struct {
-	called   bool
-	tenantID string
-	id       string
-	err      error
+	called             bool
+	tenantID           string
+	id                 string
+	err                error
+	crossTenantCalled  bool
+	crossTenantID      string
+	crossTenantErr     error
 }
 
 func (s *stubAPIKeyRevoker) Revoke(ctx context.Context, tenantID, id string) error {
@@ -20,6 +23,12 @@ func (s *stubAPIKeyRevoker) Revoke(ctx context.Context, tenantID, id string) err
 	s.tenantID = tenantID
 	s.id = id
 	return s.err
+}
+
+func (s *stubAPIKeyRevoker) RevokeCrossTenant(ctx context.Context, id string) error {
+	s.crossTenantCalled = true
+	s.crossTenantID = id
+	return s.crossTenantErr
 }
 
 func TestRevoker_Revoke_Success(t *testing.T) {
@@ -59,6 +68,34 @@ func TestRevoker_Revoke_RepoError(t *testing.T) {
 
 	if err := uc.Revoke(context.Background(), RevokeInput{ID: "01HZX", TenantID: "tenant1"}); err == nil {
 		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestRevoker_RevokeAsAdmin_Success(t *testing.T) {
+	repo := &stubAPIKeyRevoker{}
+	uc := NewRevoker(repo)
+
+	if err := uc.RevokeAsAdmin(context.Background(), "01HZX"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !repo.crossTenantCalled {
+		t.Fatal("expected repo.RevokeCrossTenant to be called")
+	}
+	if repo.crossTenantID != "01HZX" {
+		t.Fatalf("expected id=%q, got %q", "01HZX", repo.crossTenantID)
+	}
+}
+
+func TestRevoker_RevokeAsAdmin_Error(t *testing.T) {
+	repo := &stubAPIKeyRevoker{crossTenantErr: &resource.NotFoundError{Resource: "api_key", ID: "01HZX"}}
+	uc := NewRevoker(repo)
+
+	err := uc.RevokeAsAdmin(context.Background(), "01HZX")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !IsNotFound(err) {
+		t.Fatalf("expected not-found error, got %T", err)
 	}
 }
 
