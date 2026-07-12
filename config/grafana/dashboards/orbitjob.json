@@ -1,249 +1,41 @@
 {
-  "annotations": {
-    "list": [
-      {
-        "builtIn": 1,
-        "datasource": { "type": "datasource", "uid": "grafana" },
-        "enable": true,
-        "hide": true,
-        "iconColor": "rgba(0, 211, 255, 1)",
-        "name": "Annotations & Alerts",
-        "target": { "limit": 100, "matchAny": false, "tags": [], "type": "dashboard" },
-        "type": "dashboard"
-      }
-    ]
-  },
-  "description": "OrbitJob runtime observability — scheduler, dispatcher, worker, queue depth, and failure rate.",
-  "editable": true,
-  "fiscalYearStartMonth": 0,
-  "graphTooltip": 1,
-  "id": null,
-  "links": [],
-  "panels": [
-    {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisPlacement": "auto", "fillOpacity": 10, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "lineWidth": 2, "scaleDistribution": { "type": "linear" }, "thresholdsStyle": { "mode": "off" } },
-          "mappings": [],
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
-      "id": 1,
-      "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "editorMode": "code",
-          "expr": "histogram_quantile(0.50, rate(orbitjob_scheduler_tick_duration_seconds_bucket[5m]))",
-          "legendFormat": "P50",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "editorMode": "code",
-          "expr": "histogram_quantile(0.95, rate(orbitjob_scheduler_tick_duration_seconds_bucket[5m]))",
-          "legendFormat": "P95",
-          "range": true,
-          "refId": "B"
-        },
-        {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "editorMode": "code",
-          "expr": "histogram_quantile(0.99, rate(orbitjob_scheduler_tick_duration_seconds_bucket[5m]))",
-          "legendFormat": "P99",
-          "range": true,
-          "refId": "C"
-        }
-      ],
-      "title": "Scheduler Tick Duration",
-      "type": "timeseries"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisPlacement": "auto", "fillOpacity": 10, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "lineWidth": 2, "scaleDistribution": { "type": "linear" }, "thresholdsStyle": { "mode": "off" } },
-          "mappings": [],
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
-          "unit": "cps"
-        },
-        "overrides": []
-      },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
-      "id": 2,
-      "options": { "legend": { "calcs": ["mean"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "editorMode": "code",
-          "expr": "sum by (action) (rate(orbitjob_dispatcher_dispatch_total[5m]))",
-          "legendFormat": "{{action}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Dispatcher Rate",
-      "type": "timeseries"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "thresholds" },
-          "mappings": [],
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 1 }, { "color": "green", "value": 3 }] },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 8 },
-      "id": 3,
-      "options": { "colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "percentChangeColorMode": "standard", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "showPercentChange": false, "textMode": "auto", "wideSort": false },
-      "pluginVersion": "11.7.0",
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "editorMode": "code",
-          "expr": "orbitjob_executions_active",
-          "legendFormat": "Active",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Active Executions",
-      "type": "stat"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisPlacement": "auto", "fillOpacity": 10, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "lineWidth": 2, "scaleDistribution": { "type": "linear" }, "thresholdsStyle": { "mode": "off" } },
-          "mappings": [],
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": { "h": 6, "w": 18, "x": 6, "y": 8 },
-      "id": 4,
-      "options": { "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "editorMode": "code",
-          "expr": "sum by (tenant_id) (orbitjob_dispatcher_queue_depth)",
-          "legendFormat": "{{tenant_id}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Queue Depth by Tenant",
-      "type": "timeseries"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisPlacement": "auto", "fillOpacity": 10, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "lineWidth": 2, "scaleDistribution": { "type": "linear" }, "thresholdsStyle": { "mode": "off" } },
-          "mappings": [],
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
-          "unit": "percentunit"
-        },
-        "overrides": []
-      },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
-      "id": 5,
-      "options": { "legend": { "calcs": ["mean"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "editorMode": "code",
-          "expr": "sum(rate(orbitjob_executions_total{result=\"failed\"}[5m])) / sum(rate(orbitjob_executions_total[5m]))",
-          "legendFormat": "Failure Rate",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Failure Rate",
-      "type": "timeseries"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "thresholds" },
-          "mappings": [],
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 14 },
-      "id": 6,
-      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "percentChangeColorMode": "standard", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "showPercentChange": false, "textMode": "auto", "wideSort": false },
-      "pluginVersion": "11.7.0",
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "editorMode": "code",
-          "expr": "rate(orbitjob_scheduler_cron_errors_total[5m])",
-          "legendFormat": "Cron Errors/s",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Cron Error Rate",
-      "type": "stat"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisPlacement": "auto", "fillOpacity": 10, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "lineWidth": 2, "scaleDistribution": { "type": "linear" }, "thresholdsStyle": { "mode": "off" } },
-          "mappings": [],
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 14 },
-      "id": 7,
-      "options": { "legend": { "calcs": ["mean"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "editorMode": "code",
-          "expr": "rate(orbitjob_dispatcher_orphan_recovery_total[5m])",
-          "legendFormat": "{{type}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Orphan Recovery Rate",
-      "type": "timeseries"
-    }
+  "annotations":{"list":[]},
+  "description":"OrbitJob local runtime health, scheduling, execution, and worker capacity.",
+  "editable":true,
+  "fiscalYearStartMonth":0,
+  "graphTooltip":1,
+  "id":null,
+  "links":[],
+  "panels":[
+    {"id":1,"type":"row","title":"Overview","collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":0},"panels":[]},
+    {"id":2,"type":"stat","title":"Runtime Targets","description":"Healthy OrbitJob scrape targets. Expected: 4.","datasource":{"type":"prometheus","uid":"prometheus"},"gridPos":{"h":5,"w":4,"x":0,"y":1},"fieldConfig":{"defaults":{"unit":"short","color":{"mode":"thresholds"},"thresholds":{"mode":"absolute","steps":[{"color":"red","value":null},{"color":"orange","value":3},{"color":"green","value":4}]},"mappings":[]},"overrides":[]},"options":{"colorMode":"background","graphMode":"none","justifyMode":"center","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"value_and_name"},"targets":[{"refId":"A","expr":"sum(up{job=~\"admin-api|scheduler|dispatcher|worker\"})","legendFormat":"Targets Up","instant":true}]},
+    {"id":3,"type":"stat","title":"Active Executions","datasource":{"type":"prometheus","uid":"prometheus"},"gridPos":{"h":5,"w":4,"x":4,"y":1},"fieldConfig":{"defaults":{"unit":"short","color":{"mode":"thresholds"},"thresholds":{"mode":"absolute","steps":[{"color":"green","value":null},{"color":"blue","value":1},{"color":"orange","value":10}]},"mappings":[]},"overrides":[]},"options":{"colorMode":"background","graphMode":"area","justifyMode":"center","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false}},"targets":[{"refId":"A","expr":"sum(orbitjob_executions_active{job=\"worker\"}) or vector(0)","legendFormat":"Active","instant":true}]},
+    {"id":4,"type":"stat","title":"Queued Instances","datasource":{"type":"prometheus","uid":"prometheus"},"gridPos":{"h":5,"w":4,"x":8,"y":1},"fieldConfig":{"defaults":{"unit":"short","color":{"mode":"thresholds"},"thresholds":{"mode":"absolute","steps":[{"color":"green","value":null},{"color":"orange","value":1},{"color":"red","value":20}]},"mappings":[]},"overrides":[]},"options":{"colorMode":"background","graphMode":"area","justifyMode":"center","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false}},"targets":[{"refId":"A","expr":"sum(orbitjob_dispatcher_queue_depth{job=\"dispatcher\"}) or vector(0)","legendFormat":"Queued","instant":true}]},
+    {"id":5,"type":"stat","title":"Worker Capacity","datasource":{"type":"prometheus","uid":"prometheus"},"gridPos":{"h":5,"w":4,"x":12,"y":1},"fieldConfig":{"defaults":{"unit":"short","color":{"mode":"thresholds"},"thresholds":{"mode":"absolute","steps":[{"color":"orange","value":null},{"color":"green","value":1}]},"mappings":[]},"overrides":[]},"options":{"colorMode":"background","graphMode":"area","justifyMode":"center","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false}},"targets":[{"refId":"A","expr":"max(orbitjob_worker_capacity{job=\"worker\"}) or vector(0)","legendFormat":"Capacity","instant":true}]},
+    {"id":6,"type":"stat","title":"Execution Success","datasource":{"type":"prometheus","uid":"prometheus"},"gridPos":{"h":5,"w":4,"x":16,"y":1},"fieldConfig":{"defaults":{"unit":"percentunit","decimals":1,"min":0,"max":1,"color":{"mode":"thresholds"},"thresholds":{"mode":"absolute","steps":[{"color":"red","value":null},{"color":"orange","value":0.9},{"color":"green","value":0.99}]},"mappings":[]},"overrides":[]},"options":{"colorMode":"background","graphMode":"none","justifyMode":"center","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false}},"targets":[{"refId":"A","expr":"(sum(rate(orbitjob_executions_total{job=\"worker\",result=\"success\"}[5m])) / clamp_min(sum(rate(orbitjob_executions_total{job=\"worker\"}[5m])), 1e-9)) or vector(1)","legendFormat":"Success","instant":true}]},
+    {"id":7,"type":"stat","title":"Runtime Errors / s","datasource":{"type":"prometheus","uid":"prometheus"},"gridPos":{"h":5,"w":4,"x":20,"y":1},"fieldConfig":{"defaults":{"unit":"ops","decimals":3,"color":{"mode":"thresholds"},"thresholds":{"mode":"absolute","steps":[{"color":"green","value":null},{"color":"orange","value":0.001},{"color":"red","value":0.1}]},"mappings":[]},"overrides":[]},"options":{"colorMode":"background","graphMode":"area","justifyMode":"center","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false}},"targets":[{"refId":"A","expr":"sum(rate(orbitjob_executions_total{job=\"worker\",result=\"failed\"}[5m])) + sum(rate(orbitjob_scheduler_cron_errors_total{job=\"scheduler\"}[5m])) + sum(rate(orbitjob_lease_extension_failures_total{job=\"worker\"}[5m])) or vector(0)","legendFormat":"Errors","instant":true}]},
+    {"id":8,"type":"row","title":"Scheduling & Execution","collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":6},"panels":[]},
+    {"id":9,"type":"timeseries","title":"Scheduler Tick Latency","datasource":{"type":"prometheus","uid":"prometheus"},"gridPos":{"h":8,"w":8,"x":0,"y":7},"fieldConfig":{"defaults":{"unit":"s","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"showPoints":"never"}},"overrides":[]},"options":{"legend":{"displayMode":"table","placement":"bottom","calcs":["mean","max"]},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"refId":"A","expr":"histogram_quantile(0.50, sum by (le) (rate(orbitjob_scheduler_tick_duration_seconds_bucket{job=\"scheduler\"}[5m])))","legendFormat":"P50"},{"refId":"B","expr":"histogram_quantile(0.95, sum by (le) (rate(orbitjob_scheduler_tick_duration_seconds_bucket{job=\"scheduler\"}[5m])))","legendFormat":"P95"},{"refId":"C","expr":"histogram_quantile(0.99, sum by (le) (rate(orbitjob_scheduler_tick_duration_seconds_bucket{job=\"scheduler\"}[5m])))","legendFormat":"P99"}]},
+    {"id":10,"type":"timeseries","title":"Dispatcher Tick Latency","datasource":{"type":"prometheus","uid":"prometheus"},"gridPos":{"h":8,"w":8,"x":8,"y":7},"fieldConfig":{"defaults":{"unit":"s","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"showPoints":"never"}},"overrides":[]},"options":{"legend":{"displayMode":"table","placement":"bottom","calcs":["mean","max"]},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"refId":"A","expr":"histogram_quantile(0.50, sum by (le) (rate(orbitjob_dispatcher_tick_duration_seconds_bucket{job=\"dispatcher\"}[5m])))","legendFormat":"P50"},{"refId":"B","expr":"histogram_quantile(0.95, sum by (le) (rate(orbitjob_dispatcher_tick_duration_seconds_bucket{job=\"dispatcher\"}[5m])))","legendFormat":"P95"},{"refId":"C","expr":"histogram_quantile(0.99, sum by (le) (rate(orbitjob_dispatcher_tick_duration_seconds_bucket{job=\"dispatcher\"}[5m])))","legendFormat":"P99"}]},
+    {"id":11,"type":"timeseries","title":"Execution Throughput","datasource":{"type":"prometheus","uid":"prometheus"},"gridPos":{"h":8,"w":8,"x":16,"y":7},"fieldConfig":{"defaults":{"unit":"ops","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":12,"showPoints":"never"}},"overrides":[]},"options":{"legend":{"displayMode":"table","placement":"bottom","calcs":["mean","max"]},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"refId":"A","expr":"sum by (handler_type, result) (rate(orbitjob_executions_total{job=\"worker\"}[5m]))","legendFormat":"{{handler_type}} · {{result}}"}]},
+    {"id":12,"type":"timeseries","title":"Queue Depth by Tenant","datasource":{"type":"prometheus","uid":"prometheus"},"gridPos":{"h":8,"w":8,"x":0,"y":15},"fieldConfig":{"defaults":{"unit":"short","min":0,"color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":15,"showPoints":"never"}},"overrides":[]},"options":{"legend":{"displayMode":"table","placement":"bottom","calcs":["lastNotNull","max"]},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"refId":"A","expr":"max by (tenant_id) (orbitjob_dispatcher_queue_depth{job=\"dispatcher\"})","legendFormat":"{{tenant_id}}"}]},
+    {"id":13,"type":"timeseries","title":"Schedule & Trigger Latency","datasource":{"type":"prometheus","uid":"prometheus"},"gridPos":{"h":8,"w":8,"x":8,"y":15},"fieldConfig":{"defaults":{"unit":"s","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"showPoints":"never"}},"overrides":[]},"options":{"legend":{"displayMode":"table","placement":"bottom","calcs":["mean","max"]},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"refId":"A","expr":"histogram_quantile(0.95, sum by (le) (rate(orbitjob_schedule_lag_seconds_bucket{job=\"scheduler\"}[5m])))","legendFormat":"Schedule lag P95"},{"refId":"B","expr":"histogram_quantile(0.95, sum by (le) (rate(orbitjob_trigger_latency_seconds_bucket{job=\"admin-api\"}[5m])))","legendFormat":"Trigger latency P95"}]},
+    {"id":14,"type":"timeseries","title":"Handler Duration P95","datasource":{"type":"prometheus","uid":"prometheus"},"gridPos":{"h":8,"w":8,"x":16,"y":15},"fieldConfig":{"defaults":{"unit":"s","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"showPoints":"never"}},"overrides":[]},"options":{"legend":{"displayMode":"table","placement":"bottom","calcs":["mean","max"]},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"refId":"A","expr":"histogram_quantile(0.95, sum by (le, handler_type) (rate(orbitjob_handler_execution_duration_seconds_bucket{job=\"worker\"}[5m])))","legendFormat":"{{handler_type}} P95"}]},
+    {"id":15,"type":"row","title":"Runtime Health","collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":23},"panels":[]},
+    {"id":16,"type":"timeseries","title":"Worker Pool Utilization","datasource":{"type":"prometheus","uid":"prometheus"},"gridPos":{"h":8,"w":8,"x":0,"y":24},"fieldConfig":{"defaults":{"unit":"short","min":0,"color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":10,"showPoints":"never"}},"overrides":[]},"options":{"legend":{"displayMode":"table","placement":"bottom","calcs":["lastNotNull","max"]},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"refId":"A","expr":"sum(orbitjob_worker_pool_active_tasks{job=\"worker\"})","legendFormat":"Active tasks"},{"refId":"B","expr":"max(orbitjob_worker_capacity{job=\"worker\"})","legendFormat":"Capacity"}]},
+    {"id":17,"type":"timeseries","title":"Worker Pool Activity","datasource":{"type":"prometheus","uid":"prometheus"},"gridPos":{"h":8,"w":8,"x":8,"y":24},"fieldConfig":{"defaults":{"unit":"ops","min":0,"color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":10,"showPoints":"never"}},"overrides":[]},"options":{"legend":{"displayMode":"table","placement":"bottom","calcs":["mean","max"]},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"refId":"A","expr":"sum(rate(orbitjob_worker_pool_submitted_total{job=\"worker\"}[5m]))","legendFormat":"Submitted/s"},{"refId":"B","expr":"sum(rate(orbitjob_worker_pool_rejected_total{job=\"worker\"}[5m]))","legendFormat":"Rejected/s"}]},
+    {"id":18,"type":"timeseries","title":"Recovery & Error Signals","datasource":{"type":"prometheus","uid":"prometheus"},"gridPos":{"h":8,"w":8,"x":16,"y":24},"fieldConfig":{"defaults":{"unit":"ops","min":0,"color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":10,"showPoints":"never"}},"overrides":[]},"options":{"legend":{"displayMode":"table","placement":"bottom","calcs":["mean","max"]},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"refId":"A","expr":"sum by (type) (rate(orbitjob_dispatcher_orphan_recovery_total{job=\"dispatcher\"}[5m]))","legendFormat":"Recovered {{type}}/s"},{"refId":"B","expr":"sum(rate(orbitjob_scheduler_cron_errors_total{job=\"scheduler\"}[5m])) or vector(0)","legendFormat":"Cron errors/s"},{"refId":"C","expr":"sum(rate(orbitjob_lease_extension_failures_total{job=\"worker\"}[5m])) or vector(0)","legendFormat":"Lease failures/s"}]},
+    {"id":19,"type":"timeseries","title":"Scrape Availability","datasource":{"type":"prometheus","uid":"prometheus"},"gridPos":{"h":7,"w":24,"x":0,"y":32},"fieldConfig":{"defaults":{"unit":"short","min":0,"max":1,"color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":12,"showPoints":"never"}},"overrides":[]},"options":{"legend":{"displayMode":"table","placement":"bottom","calcs":["lastNotNull","min"]},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"refId":"A","expr":"up{job=~\"admin-api|scheduler|dispatcher|worker\"}","legendFormat":"{{job}}"}]}
   ],
-  "refresh": "10s",
-  "schemaVersion": 40,
-  "tags": ["orbitjob", "scheduler", "worker"],
-  "templating": {
-    "list": []
-  },
-  "time": { "from": "now-1h", "to": "now" },
-  "timepicker": { "refresh_intervals": ["5s", "10s", "30s", "1m", "5m"] },
-  "timezone": "browser",
-  "title": "OrbitJob",
-  "uid": "orbitjob",
-  "version": 1,
-  "weekStart": ""
+  "refresh":"10s",
+  "schemaVersion":40,
+  "tags":["orbitjob","scheduler","dispatcher","worker"],
+  "templating":{"list":[]},
+  "time":{"from":"now-15m","to":"now"},
+  "timepicker":{"refresh_intervals":["5s","10s","30s","1m","5m"]},
+  "timezone":"browser",
+  "title":"OrbitJob Runtime",
+  "uid":"orbitjob",
+  "version":2,
+  "weekStart":""
 }

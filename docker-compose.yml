@@ -64,6 +64,7 @@ services:
       DB_PASSWORD: ${PG_PASSWORD}
       DB_NAME: orbitjob
       POOL_MODE: transaction
+      AUTH_TYPE: scram-sha-256
       DEFAULT_POOL_SIZE: "20"
       MAX_CLIENT_CONN: "200"
       MAX_DB_CONNECTIONS: "50"
@@ -79,23 +80,41 @@ services:
   # Runs exactly once, mounting migrations read-only, applying each
   # .sql file in sorted order directly against PG.
   migrate:
-    image: postgres:17-alpine
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: migrate
     env_file: .env
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        set -e
-        echo "=== Running database migrations ==="
-        for f in $$(ls -1 /migrations/*.sql 2>/dev/null | sort); do
-          echo "--- Applying $$(basename $$f) ---"
-          psql "postgres://orbitjob:$${PG_PASSWORD}@pg:5432/orbitjob?sslmode=disable" -f "$$f"
-        done
-        echo "=== Migrations complete ==="
+    environment:
+      MIGRATOR_DSN: "postgres://orbitjob:${PG_PASSWORD}@pg:5432/orbitjob?sslmode=disable"
+      MIGRATIONS_DIR: /migrations
+      # Existing development databases predate schema_migrations. Baseline only
+      # the versions that were already applied before the unified runner.
+      MIGRATIONS_BASELINE_VERSION: "6"
+      MIGRATOR_PASSWORD: ${MIGRATOR_PASSWORD}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      RUNTIME_PASSWORD: ${RUNTIME_PASSWORD}
+      OPERATOR_PASSWORD: ${OPERATOR_PASSWORD}
     volumes:
       - ./db/migrations:/migrations:ro
     depends_on:
       pg:
         condition: service_healthy
+    networks:
+      - backend
+    restart: "no"
+
+  # ── Secret volume permissions ───────────────────────────────────
+  # Docker named volumes start as root-owned. Prepare the local SecretWriter
+  # directory once, then keep bootstrap and all runtime components non-root.
+  secret-init:
+    image: alpine:3.22
+    command:
+      - /bin/sh
+      - -c
+      - install -d -m 0700 -o 65534 -g 65534 /run/secrets/orbitjob
+    volumes:
+      - bootstrap_secrets:/run/secrets/orbitjob
     networks:
       - backend
     restart: "no"
@@ -109,12 +128,17 @@ services:
       target: bootstrap
     environment:
       APP_ENV: production
-      ADMIN_DSN: "postgres://orbitjob:${PG_PASSWORD}@pgbouncer:6432/orbitjob?sslmode=disable"
+      # env_file may contain a host-side DATABASE_DSN. Bootstrap must use the
+      # container-network ADMIN_DSN instead of resolving localhost in-container.
+      DATABASE_DSN: ""
+      ADMIN_DSN: "postgres://orbitjob_admin:${ADMIN_PASSWORD}@pg:5432/orbitjob?sslmode=disable"
       ADMIN_BOOTSTRAP_SECRET_BACKEND: local
       ADMIN_BOOTSTRAP_SECRET_ROOT: /run/secrets/orbitjob
     volumes:
       - bootstrap_secrets:/run/secrets/orbitjob
     depends_on:
+      secret-init:
+        condition: service_completed_successfully
       migrate:
         condition: service_completed_successfully
     networks:
@@ -132,9 +156,12 @@ services:
       - "8080:8080"
     environment:
       APP_ENV: production
-      ADMIN_DSN: "postgres://orbitjob:${PG_PASSWORD}@pgbouncer:6432/orbitjob?sslmode=disable"
+      ADMIN_DSN: "postgres://orbitjob_admin:${ADMIN_PASSWORD}@pg:5432/orbitjob?sslmode=disable"
     volumes:
       - bootstrap_secrets:/run/secrets/orbitjob:ro
+    networks:
+      - frontend
+      - backend
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -163,7 +190,7 @@ services:
     environment:
       APP_ENV: production
       SCHEDULER_HEALTH_PORT: "6060"
-      SCHEDULER_DSN: "postgres://orbitjob:${PG_PASSWORD}@pgbouncer:6432/orbitjob?sslmode=disable"
+      SCHEDULER_DSN: "postgres://orbitjob_runtime:${RUNTIME_PASSWORD}@pg:5432/orbitjob?sslmode=disable"
       GOMAXPROCS: "1"
       GOMEMLIMIT: 100MiB
     depends_on:
@@ -192,7 +219,7 @@ services:
     environment:
       APP_ENV: production
       DISPATCHER_HEALTH_PORT: "6061"
-      DISPATCHER_DSN: "postgres://orbitjob:${PG_PASSWORD}@pgbouncer:6432/orbitjob?sslmode=disable"
+      DISPATCHER_DSN: "postgres://orbitjob_runtime:${RUNTIME_PASSWORD}@pg:5432/orbitjob?sslmode=disable"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -219,7 +246,7 @@ services:
     environment:
       APP_ENV: production
       WORKER_HEALTH_PORT: "6062"
-      WORKER_DSN: "postgres://orbitjob:${PG_PASSWORD}@pgbouncer:6432/orbitjob?sslmode=disable"
+      WORKER_DSN: "postgres://orbitjob_runtime:${RUNTIME_PASSWORD}@pg:5432/orbitjob?sslmode=disable"
       WORKER_CAPACITY: "5"
       GOMEMLIMIT: 400MiB
     depends_on:
@@ -233,9 +260,17 @@ services:
           cpus: "2.0"
           memory: 512MB
     stop_grace_period: 45s
+    healthcheck:
+      test: ["CMD", "/healthcheck", "http://localhost:6062/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
 
   # ── etcd (optional distributed coordination) ────────────────────
   etcd:
+    profiles:
+      - coordination-etcd
     image: quay.io/coreos/etcd:v3.5.21
     ports:
       - "2379:2379"
@@ -272,6 +307,8 @@ services:
   # ── Prometheus ─────────────────────────────────────────────────
   prometheus:
     image: prom/prometheus:v3.3.1
+    ports:
+      - "9090:9090"
     env_file: .env
     volumes:
       - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
@@ -283,6 +320,7 @@ services:
       - --storage.tsdb.retention.time=15d
       - --web.enable-lifecycle
     networks:
+      - frontend
       - backend
     restart: unless-stopped
 
@@ -308,6 +346,8 @@ services:
 
   # ── Loki ───────────────────────────────────────────────────────
   loki:
+    profiles:
+      - logs
     image: grafana/loki:3.6.10
     volumes:
       - ./config/loki.yml:/etc/loki/local-config.yaml:ro
@@ -319,6 +359,8 @@ services:
 
   # ── Promtail ───────────────────────────────────────────────────
   promtail:
+    profiles:
+      - logs
     image: grafana/promtail:3.6.10
     volumes:
       - ./config/promtail.yml:/etc/promtail/config.yml:ro

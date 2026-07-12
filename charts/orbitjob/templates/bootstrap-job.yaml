@@ -1,0 +1,43 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-bootstrap-{{ .Release.Revision }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: orbitjob-bootstrap
+      securityContext:
+{{ include "orbitjob.podSecurityContext" . | indent 8 }}
+      containers:
+        - name: bootstrap
+          image: "{{ .Values.images.bootstrap.repository }}:{{ .Values.images.bootstrap.tag }}"
+          imagePullPolicy: {{ .Values.images.bootstrap.pullPolicy }}
+          env:
+            - name: APP_ENV
+              value: production
+            - name: ADMIN_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.database.secretName }}
+                  key: {{ .Values.database.keys.admin }}
+            - name: ADMIN_BOOTSTRAP_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.database.secretName }}
+                  key: {{ .Values.database.bootstrapAPIKey }}
+            - name: ADMIN_BOOTSTRAP_SECRET_BACKEND
+              value: kubernetes
+            - name: ADMIN_BOOTSTRAP_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          securityContext:
+{{ include "orbitjob.securityContext" . | indent 12 }}

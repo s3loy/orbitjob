@@ -2,14 +2,16 @@
 # Automatically merged with docker-compose.yml by `docker compose`.
 #
 # Usage:
-#   docker compose up -d          # production mode
-#   docker compose -f docker-compose.yml -f docker-compose.override.yml up -d  # dev mode
+#   docker compose up -d  # automatically merged for local development
 
 services:
   # ── PostgreSQL: expose port for local tooling ───────────────
   pg:
     ports:
       - "5432:5432"
+    networks:
+      - frontend
+      - backend
     deploy:
       resources:
         limits:

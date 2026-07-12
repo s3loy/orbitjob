@@ -1,6 +1,9 @@
 .PHONY: dev build build-all test test-cover test-race bench integration
 .PHONY: lint vet check openapi-check openapi-gen tidy-check
-.PHONY: docker-build docker-up docker-down
+.PHONY: docker-build docker-up docker-down docker-status observability-status
+.PHONY: kind-up kind-status kind-down kind-v020-verify
+.PHONY: helm-migrations-sync helm-migrations-check helm-check
+.PHONY: env-init env-check env-clean bootstrap-key grafana-password docker-reset
 .PHONY: migrate-up migrate-down migrate-version
 .PHONY: clean
 
@@ -69,6 +72,19 @@ openapi-gen:
 tidy-check:
 	go mod tidy && git diff --exit-code go.sum
 
+# ---- Local environment ----
+env-init:
+	@go run ./scripts/env-init.go
+	@echo "Local environment is initialized and validated."
+
+env-check:
+	@go run ./scripts/env-init.go -check
+
+env-clean:
+	@printf "Type 'delete-env' to remove .env: "; read answer; \
+	[ "$$answer" = "delete-env" ] || { echo "Cancelled."; exit 1; }; \
+	rm -f .env
+
 # ---- Docker ----
 docker-build:
 	docker build --target admin      -t orbitjob-admin:latest      .
@@ -76,11 +92,68 @@ docker-build:
 	docker build --target dispatcher -t orbitjob-dispatcher:latest .
 	docker build --target worker     -t orbitjob-worker:latest     .
 
-docker-up:
-	docker compose up -d
+docker-up: env-init
+	docker compose config >/dev/null
+	docker compose up -d --build
+	@bash scripts/docker-wait.sh
+	@set -a; . ./.env; set +a; bash scripts/observability-status.sh
+	@printf "\nOrbitJob is ready.\n\nAdmin API:  http://localhost:8080\nPrometheus: http://localhost:9090\nGrafana:    http://localhost:3000\n\nExport the bootstrap key:\n  export ORBITJOB_API_KEY=\"$$(make --no-print-directory bootstrap-key)\"\n\n"
+
+docker-status:
+	docker compose ps -a
+	@curl -fsS http://localhost:8080/healthz >/dev/null && echo "Admin API: healthy"
+	@set -a; . ./.env; set +a; bash scripts/observability-status.sh
+
+observability-status: env-check
+	@set -a; . ./.env; set +a; bash scripts/observability-status.sh
+
+bootstrap-key:
+	@docker compose run --rm --no-deps secret-init cat /run/secrets/orbitjob/bootstrap-api-key/api-key
+
+grafana-password: env-check
+	@set -a; . ./.env; set +a; printf '%s\n' "$$GRAFANA_PASSWORD"
 
 docker-down:
 	docker compose down
+
+docker-reset:
+	@printf "Type 'delete-volumes' to remove OrbitJob containers and volumes: "; read answer; \
+	[ "$$answer" = "delete-volumes" ] || { echo "Cancelled."; exit 1; }; \
+	docker compose down -v
+
+# ---- Local Kubernetes ----
+helm-migrations-sync:
+	bash scripts/helm-migrations.sh sync
+
+helm-migrations-check:
+	bash scripts/helm-migrations.sh check
+
+helm-check: helm-migrations-check
+	helm lint charts/orbitjob
+	helm template orbitjob charts/orbitjob >/dev/null
+
+kind-up:
+	@if kind get clusters | grep -qx orbitjob-dev; then \
+		echo "kind cluster orbitjob-dev already exists."; \
+	else \
+		kind create cluster --config deploy/kind/orbitjob-dev.yaml --wait 5m; \
+	fi
+	@kubectl config use-context kind-orbitjob-dev >/dev/null
+	@$(MAKE) --no-print-directory kind-status
+
+kind-status:
+	@test "$$(kubectl config current-context)" = "kind-orbitjob-dev"
+	@kubectl wait --for=condition=Ready node/orbitjob-dev-control-plane --timeout=60s
+	@kubectl get nodes -o wide
+	@kubectl get pods -A
+
+kind-v020-verify: helm-check
+	bash deploy/kind/verify-v020.sh
+
+kind-down:
+	@printf "Type 'delete-kind' to remove the orbitjob-dev cluster: "; read answer; \
+	[ "$$answer" = "delete-kind" ] || { echo "Cancelled."; exit 1; }; \
+	kind delete cluster --name orbitjob-dev
 
 # ---- Database Migrations ----
 migrate-up:

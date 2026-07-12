@@ -1,0 +1,13 @@
+images:
+  admin: {repository: orbitjob-admin-api, tag: v020, pullPolicy: IfNotPresent}
+  scheduler: {repository: orbitjob-scheduler, tag: v020, pullPolicy: IfNotPresent}
+  dispatcher: {repository: orbitjob-dispatcher, tag: v020, pullPolicy: IfNotPresent}
+  bootstrap: {repository: orbitjob-bootstrap, tag: v020, pullPolicy: IfNotPresent}
+  migrate: {repository: orbitjob-migrate, tag: v020, pullPolicy: IfNotPresent}
+worker:
+  image: {repository: orbitjob-worker, tag: v020, pullPolicy: IfNotPresent}
+  containerExecution:
+    namespace: orbitjob-tasks
+    requireDigest: false
+    ttlSecondsAfterFinished: 600
+    serviceAccountName: orbitjob-task

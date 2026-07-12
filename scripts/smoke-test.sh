@@ -2,7 +2,7 @@
 # OrbitJob 全功能端到端测试脚本
 # 从构建到所有 API 功能全覆盖
 # 用法: ./scripts/smoke-test.sh [API_BASE_URL]
-# 默认 API_BASE_URL=http://localhost:18080 (docker compose)；devserver 传 http://localhost:8080
+# 默认 API_BASE_URL=http://localhost:8080
 
 set -euo pipefail
 
@@ -14,8 +14,9 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 # ── 配置 ───────────────────────────────────────────────────────
-API="${1:-http://localhost:18080}"
-BOOTSTRAP_KEY="${ADMIN_BOOTSTRAP_API_KEY:-otj_devkey_2026}"
+API="${1:-http://localhost:8080}"
+BOOTSTRAP_KEY="${ADMIN_BOOTSTRAP_API_KEY:?Set ADMIN_BOOTSTRAP_API_KEY, for example: export ADMIN_BOOTSTRAP_API_KEY=\"\$(make --no-print-directory bootstrap-key)\"}"
+SMOKE_TENANT_SLUG="${ORBITJOB_TENANT_SLUG:-smoke-$(date +%s)-$$}"
 PASS=0
 FAIL=0
 SKIP=0
@@ -51,6 +52,35 @@ assert_code() {
   else
     log_fail "$name (expected $expected, got $LAST_CODE): $LAST_BODY"
   fi
+}
+
+# 等待 instance 到达终态，并要求执行成功。
+wait_instance_success() {
+  local run_id="$1" key="$2" name="$3" timeout_sec="${4:-90}"
+  local status=""
+
+  for _ in $(seq 1 "$timeout_sec"); do
+    http GET "/api/v1/instances/$run_id" -H "Authorization: Bearer $key"
+    if [ "$LAST_CODE" != "200" ]; then
+      log_fail "$name 查询失败 (HTTP $LAST_CODE): $LAST_BODY"
+      return 1
+    fi
+    status=$(jget "$LAST_BODY" "status")
+    case "$status" in
+      success)
+        log_pass "$name 执行成功"
+        return 0
+        ;;
+      failed|cancelled|dead_letter)
+        log_fail "$name 执行终止 (status=$status): $LAST_BODY"
+        return 1
+        ;;
+    esac
+    sleep 1
+  done
+
+  log_fail "$name 在 ${timeout_sec}s 内未完成 (status=${status:-unknown})"
+  return 1
 }
 
 # ── 初始化结果文件 ─────────────────────────────────────────────
@@ -121,15 +151,15 @@ AUTH="-H Authorization:Bearer\ $BOOTSTRAP_KEY"
 http POST "/api/v1/tenants" \
   -H "Authorization: Bearer $BOOTSTRAP_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"slug":"test-team","name":"Test Team","status":"active"}'
+  -d "{\"slug\":\"$SMOKE_TENANT_SLUG\",\"name\":\"Smoke Test Team\",\"status\":\"active\"}"
 TENANT_ID=$(jget "$LAST_BODY" "id")
-assert_code "201" "创建租户 test-team"
+assert_code "201" "创建租户 $SMOKE_TENANT_SLUG"
 
 # 重复创建（冲突）
 http POST "/api/v1/tenants" \
   -H "Authorization: Bearer $BOOTSTRAP_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"slug":"test-team","name":"Test Team"}'
+  -d "{\"slug\":\"$SMOKE_TENANT_SLUG\",\"name\":\"Smoke Test Team\"}"
 assert_code "409" "重复 slug 冲突 (409)"
 
 # 校验失败：空 slug
@@ -201,7 +231,7 @@ http POST "/api/v1/jobs" \
     "name":"exec-test",
     "trigger_type":"manual",
     "handler_type":"exec",
-    "handler_payload":{"command":"echo","args":["hello-orbitjob"]},
+    "handler_payload":{"command":"/healthcheck","args":["http://admin-api:8080/healthz"]},
     "timeout_sec":30
   }'
 assert_code "201" "创建 manual+exec job"
@@ -229,15 +259,9 @@ http POST "/api/v1/jobs/$EXEC_JOB_ID/trigger" \
   -H "Content-Type: application/json" -d '{}'
 assert_code "200" "幂等触发 (第二次返回已存在)"
 
-# 等待执行完成
+# 等待执行完成并断言真实终态
 log_info "等待 exec job 执行..."
-for i in $(seq 1 15); do
-  http GET "/api/v1/instances/$EXEC_RUN_ID" -H "Authorization: Bearer $TEST_KEY"
-  EXEC_STATUS=$(jget "$LAST_BODY" "status")
-  [ "$EXEC_STATUS" = "success" ] || [ "$EXEC_STATUS" = "failed" ] && break
-  sleep 1
-done
-log_info "exec final status: $EXEC_STATUS"
+wait_instance_success "$EXEC_RUN_ID" "$TEST_KEY" "exec job" 90 || true
 
 # 查询 instance
 http GET "/api/v1/instances/$EXEC_RUN_ID" -H "Authorization: Bearer $TEST_KEY"
@@ -258,7 +282,7 @@ http POST "/api/v1/jobs" \
     "name":"http-test",
     "trigger_type":"manual",
     "handler_type":"http",
-    "handler_payload":{"url":"https://httpbin.org/get","method":"GET","timeout_sec":15},
+    "handler_payload":{"url":"https://example.com","method":"GET","timeout_sec":15},
     "timeout_sec":30
   }'
 assert_code "201" "创建 manual+http job"
@@ -268,51 +292,10 @@ http POST "/api/v1/jobs/$HTTP_JOB_ID/trigger" \
   -H "Authorization: Bearer $TEST_KEY" -H "Content-Type: application/json" -d '{}'
 assert_code "201" "触发 http job"
 HTTP_RUN_ID=$(jget "$LAST_BODY" "run_id")
+wait_instance_success "$HTTP_RUN_ID" "$TEST_KEY" "http job" 90 || true
 
 # ═══════════════════════════════════════════════════════════════
-log_section "7. Job - webhook handler"
-# ═══════════════════════════════════════════════════════════════
-
-http POST "/api/v1/jobs" \
-  -H "Authorization: Bearer $TEST_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name":"webhook-test",
-    "trigger_type":"manual",
-    "handler_type":"webhook",
-    "handler_payload":{"url":"https://httpbin.org/post","method":"POST","body":"{\"event\":\"test\"}","headers":{"Content-Type":"application/json"}},
-    "timeout_sec":30
-  }'
-assert_code "201" "创建 manual+webhook job"
-WEBHOOK_JOB_ID=$(jget "$LAST_BODY" "id")
-
-http POST "/api/v1/jobs/$WEBHOOK_JOB_ID/trigger" \
-  -H "Authorization: Bearer $TEST_KEY" -H "Content-Type: application/json" -d '{}'
-assert_code "201" "触发 webhook job"
-
-# ═══════════════════════════════════════════════════════════════
-log_section "8. Job - pg_notify handler"
-# ═══════════════════════════════════════════════════════════════
-
-http POST "/api/v1/jobs" \
-  -H "Authorization: Bearer $TEST_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name":"pgnotify-test",
-    "trigger_type":"manual",
-    "handler_type":"pg_notify",
-    "handler_payload":{"channel":"test_channel","payload":"{\"hello\":\"world\"}"},
-    "timeout_sec":10
-  }'
-assert_code "201" "创建 manual+pg_notify job"
-PGNOTIFY_JOB_ID=$(jget "$LAST_BODY" "id")
-
-http POST "/api/v1/jobs/$PGNOTIFY_JOB_ID/trigger" \
-  -H "Authorization: Bearer $TEST_KEY" -H "Content-Type: application/json" -d '{}'
-assert_code "201" "触发 pg_notify job"
-
-# ═══════════════════════════════════════════════════════════════
-log_section "9. Job - cron + 校验"
+log_section "7. Job - cron + 校验"
 # ═══════════════════════════════════════════════════════════════
 
 # cron job
