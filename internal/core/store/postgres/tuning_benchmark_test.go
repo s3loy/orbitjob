@@ -278,9 +278,9 @@ func BenchmarkTuning_IdleConns(b *testing.B) {
 	db := postgrestest.BenchDB(b)
 
 	tests := []struct {
-		name        string
-		maxOpen     int
-		maxIdle     int
+		name    string
+		maxOpen int
+		maxIdle int
 	}{
 		{"open=50_idle=5", 50, 5},
 		{"open=50_idle=25", 50, 25},

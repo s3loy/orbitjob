@@ -9,8 +9,8 @@ import (
 	"log/slog"
 
 	domainjob "orbitjob/internal/core/domain/job"
-	"orbitjob/internal/domain/resource"
 	tenant "orbitjob/internal/core/domain/tenant"
+	"orbitjob/internal/domain/resource"
 )
 
 // Update persists mutable job fields with optimistic concurrency and writes an audit row.

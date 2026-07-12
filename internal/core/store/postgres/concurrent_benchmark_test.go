@@ -27,7 +27,7 @@ func BenchmarkConcurrentCreateJob(b *testing.B) {
 	db := postgrestest.BenchDB(b)
 
 	scales := []struct {
-		name      string
+		name       string
 		goroutines int
 		opsPerG    int
 	}{
@@ -317,11 +317,11 @@ func BenchmarkPipelineConcurrent(b *testing.B) {
 	db := postgrestest.BenchDB(b)
 
 	scales := []struct {
-		name       string
-		cronJobs   int
-		schedulers int
+		name        string
+		cronJobs    int
+		schedulers  int
 		dispatchers int
-		workers    int
+		workers     int
 	}{
 		{"small=20j_2s_2d_2w", 20, 2, 2, 2},
 		{"medium=200j_4s_4d_8w", 200, 4, 4, 8},

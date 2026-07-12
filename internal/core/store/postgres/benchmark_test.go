@@ -185,7 +185,6 @@ func BenchmarkClaimNextDispatched_RoutingKey(b *testing.B) {
 	}
 }
 
-
 // ---------------------------------------------------------------------------
 // ClaimNextDispatched — concurrent (SKIP LOCKED contention)
 // ---------------------------------------------------------------------------
@@ -220,11 +219,11 @@ func BenchmarkClaimNextDispatched_Concurrent(b *testing.B) {
 			b.ReportAllocs()
 			b.StartTimer()
 			// SetParallelism multiplies GOMAXPROCS — compensate to get target worker count.
-				if sz.workers < runtime.GOMAXPROCS(0) {
-					b.SetParallelism(1)
-				} else {
-					b.SetParallelism(sz.workers / runtime.GOMAXPROCS(0))
-				}
+			if sz.workers < runtime.GOMAXPROCS(0) {
+				b.SetParallelism(1)
+			} else {
+				b.SetParallelism(sz.workers / runtime.GOMAXPROCS(0))
+			}
 			b.RunParallel(func(pb *testing.PB) {
 				workerID := fmt.Sprintf("worker-%d", atomic.AddInt64(&total, 1)%int64(sz.workers))
 				for pb.Next() {
@@ -257,7 +256,7 @@ func BenchmarkCreateJob(b *testing.B) {
 			Name: "bench-job", TenantID: "tenant-a", Priority: 5, TriggerType: "manual",
 			HandlerType: "http", TimeoutSec: 120, RetryLimit: 3, RetryBackoffSec: 10,
 			RetryBackoffStrategy: "exponential", ConcurrencyPolicy: "forbid",
-			MisfirePolicy: "skip",
+			MisfirePolicy:  "skip",
 			HandlerPayload: map[string]any{"url": "https://example.com/hook", "method": "POST"},
 		}},
 	}
@@ -394,7 +393,7 @@ func BenchmarkDispatchOne(b *testing.B) {
 	}
 
 	tests := []struct {
-		name             string
+		name              string
 		concurrencyPolicy string
 	}{
 		{"allow_policy", "allow"},
@@ -465,8 +464,8 @@ func BenchmarkRecoverExpiredWorkers(b *testing.B) {
 	expired := now.Add(-time.Second)
 
 	scales := []struct {
-		name    string
-		online  int
+		name     string
+		online   int
 		draining int
 	}{
 		{"workers=10", 10, 0},
@@ -498,7 +497,7 @@ func BenchmarkListActiveTenantIDs(b *testing.B) {
 	repo := NewDispatchRepository(db)
 
 	scales := []struct {
-		name   string
+		name    string
 		tenants int
 	}{
 		{"tenants=10", 10},
