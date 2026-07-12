@@ -34,10 +34,12 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go build -trimpath -ldflags="-s -w" -o /out/dispatcher ./cmd/dispatcher/
 
 FROM base AS build-worker
+ARG TARGETOS=linux
+ARG TARGETARCH
 COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w" -o /out/worker ./cmd/worker/
 
 FROM base AS build-healthcheck
@@ -54,9 +56,25 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -trimpath -ldflags="-s -w" -o /out/bootstrap ./cmd/bootstrap/
 
+FROM base AS build-migrate
+ARG TARGETOS=linux
+ARG TARGETARCH
+COPY . .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o /out/migrate ./cmd/migrate/
+
 # ============================================================
 # Final images (FROM scratch)
 # ============================================================
+FROM scratch AS migrate
+COPY --from=build-migrate /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=build-migrate /etc/passwd /etc/passwd
+COPY --from=build-migrate /out/migrate /migrate
+USER 65534:65534
+ENTRYPOINT ["/migrate"]
+
 FROM scratch AS admin
 COPY --from=build-admin /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=build-admin /usr/share/zoneinfo /usr/share/zoneinfo
