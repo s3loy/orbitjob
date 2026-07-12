@@ -39,7 +39,7 @@ func TestClaimNextDispatched_Integration_ClaimsDispatched(t *testing.T) {
 	tasks, err := repo.ClaimNextDispatched(context.Background(),
 		"tenant-exec-claim", "worker-1", 10,
 		now.Add(30*time.Second), now, nil,
-		)
+	)
 	if err != nil {
 		t.Fatalf("ClaimNextDispatched() error = %v", err)
 	}
@@ -79,7 +79,7 @@ func TestClaimNextDispatched_Integration_OnlyClaimsDispatchedStatus(t *testing.T
 	tasks, err := repo.ClaimNextDispatched(context.Background(),
 		"tenant-exec-status", "worker-1", 10,
 		now.Add(30*time.Second), now, nil,
-		)
+	)
 	if err != nil {
 		t.Fatalf("ClaimNextDispatched() error = %v", err)
 	}
@@ -109,7 +109,7 @@ func TestClaimNextDispatched_Integration_TransitionsToRunning(t *testing.T) {
 	_, err := repo.ClaimNextDispatched(context.Background(),
 		"tenant-exec-trans", "worker-1", 10,
 		now.Add(30*time.Second), now, nil,
-		)
+	)
 	if err != nil {
 		t.Fatalf("ClaimNextDispatched() error = %v", err)
 	}
@@ -139,7 +139,7 @@ func TestClaimNextDispatched_Integration_AlreadyClaimedReturnsEmpty(t *testing.T
 	tasks, err := repo.ClaimNextDispatched(context.Background(),
 		"tenant-exec-empty", "worker-1", 10,
 		now.Add(30*time.Second), now, nil,
-		)
+	)
 	if err != nil {
 		t.Fatalf("first ClaimNextDispatched() error = %v", err)
 	}
@@ -150,7 +150,7 @@ func TestClaimNextDispatched_Integration_AlreadyClaimedReturnsEmpty(t *testing.T
 	tasks, err = repo.ClaimNextDispatched(context.Background(),
 		"tenant-exec-empty", "worker-2", 10,
 		now.Add(60*time.Second), now, nil,
-		)
+	)
 	if err != nil {
 		t.Fatalf("second ClaimNextDispatched() error = %v", err)
 	}
@@ -191,7 +191,7 @@ func TestCompleteInstance_Integration_Success(t *testing.T) {
 		Status:     "success",
 		ResultCode: &resultCode,
 		FinishedAt: now,
-			Attempt:    1,
+		Attempt:    1,
 	})
 	if err != nil {
 		t.Fatalf("CompleteInstance() error = %v", err)
@@ -232,7 +232,7 @@ func TestCompleteInstance_Integration_RetryWait(t *testing.T) {
 		ResultCode: &resultCode,
 		ErrorMsg:   &errorMsg,
 		FinishedAt: now,
-			Attempt:    1,
+		Attempt:    1,
 		RetryAt:    &retryAt,
 	})
 	if err != nil {
@@ -268,7 +268,7 @@ func TestCompleteInstance_Integration_AlreadyCompleted(t *testing.T) {
 		WorkerID:   "worker-1",
 		Status:     "success",
 		FinishedAt: now,
-			Attempt:    1,
+		Attempt:    1,
 	}
 
 	if err := repo.CompleteInstance(context.Background(), spec); err != nil {

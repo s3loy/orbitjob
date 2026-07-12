@@ -86,33 +86,28 @@ func (a *Auth) validateAPIKey(ctx context.Context, key string) (string, bool) {
 	}
 	prefix := key[:12] // "otj_" + first 8 chars
 
-	row := a.DB.QueryRowContext(ctx, `
-		SELECT ak.id, ak.tenant_id, ak.key_hash,
-		       CASE WHEN ak.revoked_at IS NOT NULL THEN 'revoked' ELSE NULL END,
-		       CASE WHEN ak.expires_at IS NOT NULL AND ak.expires_at < now() THEN 'expired' ELSE NULL END
-		FROM api_keys ak
-		JOIN tenants t ON t.id = ak.tenant_id
-		WHERE ak.key_prefix = $1
-		  AND ak.revoked_at IS NULL
-		  AND t.status = 'active'
-		ORDER BY ak.created_at DESC
-		LIMIT 1
+	rows, err := a.DB.QueryContext(ctx, `
+		SELECT id, tenant_id, key_hash, revoked, expired
+		FROM orbitjob_auth_api_key($1)
 	`, prefix)
-
-	var r apiKeyRow
-	err := row.Scan(&r.ID, &r.TenantID, &r.KeyHash, &r.RevokedAt, &r.ExpiresAt)
 	if err != nil {
 		return "", false
 	}
-	if r.RevokedAt != nil || r.ExpiresAt != nil {
-		return "", false
-	}
+	defer func() { _ = rows.Close() }()
 
-	if err := bcrypt.CompareHashAndPassword([]byte(r.KeyHash), []byte(key)); err != nil {
-		return "", false
+	for rows.Next() {
+		var r apiKeyRow
+		if err := rows.Scan(&r.ID, &r.TenantID, &r.KeyHash, &r.RevokedAt, &r.ExpiresAt); err != nil {
+			return "", false
+		}
+		if r.RevokedAt != nil || r.ExpiresAt != nil {
+			continue
+		}
+		if bcrypt.CompareHashAndPassword([]byte(r.KeyHash), []byte(key)) == nil {
+			return r.TenantID, true
+		}
 	}
-
-	return r.TenantID, true
+	return "", false
 }
 
 // GetTenantID returns the tenant_id from the gin context. If no tenant has been

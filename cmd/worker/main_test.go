@@ -13,6 +13,8 @@ import (
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
 
+	"k8s.io/client-go/kubernetes"
+
 	"orbitjob/internal/core/app/execute"
 	domainworker "orbitjob/internal/core/domain/worker"
 )
@@ -168,6 +170,8 @@ func TestLoadWorkerRuntimeConfig_Custom(t *testing.T) {
 	t.Setenv("WORKER_LEASE_DURATION_SEC", "120")
 	t.Setenv("WORKER_CAPACITY", "4")
 	t.Setenv("WORKER_LABELS", `{"gpu":"a100"}`)
+	t.Setenv("WORKER_CONTAINER_ENABLED", "true")
+	t.Setenv("WORKER_CONTAINER_NAMESPACE", "orbitjob-tasks")
 
 	cfg, err := loadWorkerRuntimeConfig()
 	if err != nil {
@@ -196,6 +200,12 @@ func TestLoadWorkerRuntimeConfig_Custom(t *testing.T) {
 	}
 	if cfg.Labels["gpu"] != "a100" {
 		t.Fatalf("expected labels[gpu]=a100, got %v", cfg.Labels)
+	}
+	if !cfg.ContainerEnabled || cfg.ContainerNamespace != "orbitjob-tasks" {
+		t.Fatalf("unexpected container config: enabled=%v namespace=%q", cfg.ContainerEnabled, cfg.ContainerNamespace)
+	}
+	if cfg.Labels["handler:container"] != "container" {
+		t.Fatalf("expected container capability label, got %v", cfg.Labels)
 	}
 }
 
@@ -236,9 +246,9 @@ func TestRunLoop_DrainMode(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		runLoop(ctx, runner, hb, &runtimeConfig{
-			TenantID:          "t1",
-			WorkerID:          "w1",
-			Labels:            map[string]any{},
+			TenantID: "t1",
+			WorkerID: "w1",
+			Labels:   map[string]any{},
 		}, func(time.Duration) workerTicker {
 			return ticker
 		}, func() time.Time { return time.Now().UTC() })
@@ -275,9 +285,9 @@ func TestRunLoop_WaitsTickerWhenIdle(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		runLoop(ctx, runner, hb, &runtimeConfig{
-			TenantID:          "t1",
-			WorkerID:          "w1",
-			Labels:            map[string]any{},
+			TenantID: "t1",
+			WorkerID: "w1",
+			Labels:   map[string]any{},
 		}, func(time.Duration) workerTicker {
 			return ticker
 		}, func() time.Time { return time.Now().UTC() })
@@ -310,9 +320,9 @@ func TestRunLoop_HeartbeatSendsOfflineOnShutdown(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		cfg := runtimeConfig{
-			TenantID:          "t1",
-			WorkerID:          "w1",
-			Labels:            map[string]any{},
+			TenantID: "t1",
+			WorkerID: "w1",
+			Labels:   map[string]any{},
 		}
 		cfg.SetPollInterval(time.Second)
 		cfg.SetHeartbeatInterval(time.Second)
@@ -435,7 +445,7 @@ func TestRun_SuccessInvokesRunLoop(t *testing.T) {
 	newLoggerFn = func(string) *slog.Logger { return slog.Default() }
 	openDBFn = func(string) (*sql.DB, error) { return db, nil }
 	pingDBFn = func(context.Context, *sql.DB) error { return nil }
-	buildRunnerFn = func(*sql.DB, *http.Client) tickRunner { return &stubTickRunner{} }
+	buildRunnerFn = func(*sql.DB, *http.Client, *runtimeConfig, kubernetes.Interface) tickRunner { return &stubTickRunner{} }
 	buildHeartbeaterFn = func(*sql.DB) heartbeater { return &stubHeartbeater{} }
 
 	runLoopCalled := false
@@ -521,8 +531,8 @@ func TestAdaptiveTickRunner_ProbeAndQuery(t *testing.T) {
 
 type capturingTickRunner struct {
 	stubTickRunner
-	lastLimit        int
-	lastLease        time.Duration
+	lastLimit int
+	lastLease time.Duration
 }
 
 func (c *capturingTickRunner) SubmitNext(ctx context.Context, pool *execute.WorkerPool, tenantID, workerID string, limit int, leaseDuration time.Duration, labels map[string]any) (int, error) {
@@ -649,9 +659,9 @@ func TestRunLoop_MultiTenantDiscoversAndSubmits(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		runLoop(ctx, runner, hb, &runtimeConfig{
-			MultiTenant:       true,
-			WorkerID:          "w1",
-			tenantLister:      &mockTenantLister{ids: []string{"tenant-a", "tenant-b"}},
+			MultiTenant:  true,
+			WorkerID:     "w1",
+			tenantLister: &mockTenantLister{ids: []string{"tenant-a", "tenant-b"}},
 		}, func(time.Duration) workerTicker {
 			return ticker
 		}, func() time.Time { return time.Now() })
@@ -683,9 +693,9 @@ func TestRunLoop_MultiTenantListErrorNoFallback(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		runLoop(ctx, runner, hb, &runtimeConfig{
-			MultiTenant:       true,
-			WorkerID:          "w1",
-			tenantLister:      &mockTenantLister{err: errors.New("db down")},
+			MultiTenant:  true,
+			WorkerID:     "w1",
+			tenantLister: &mockTenantLister{err: errors.New("db down")},
 		}, func(time.Duration) workerTicker {
 			return ticker
 		}, func() time.Time { return time.Now() })
@@ -718,9 +728,9 @@ func TestRunLoop_MultiTenantEmptyListNoFallback(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		runLoop(ctx, runner, hb, &runtimeConfig{
-			MultiTenant:       true,
-			WorkerID:          "w1",
-			tenantLister:      &mockTenantLister{ids: []string{}},
+			MultiTenant:  true,
+			WorkerID:     "w1",
+			tenantLister: &mockTenantLister{ids: []string{}},
 		}, func(time.Duration) workerTicker {
 			return ticker
 		}, func() time.Time { return time.Now() })

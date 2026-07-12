@@ -3,8 +3,8 @@ package job
 const (
 	DefaultTenantID   = "default"
 	DefaultTimezone   = "UTC"
-	DefaultTimeoutSec  = 60
-	DefaultRetryLimit  = 2
+	DefaultTimeoutSec = 60
+	DefaultRetryLimit = 2
 
 	TriggerTypeCron   = "cron"
 	TriggerTypeManual = "manual"
@@ -12,8 +12,11 @@ const (
 	RetryBackoffFixed       = "fixed"
 	RetryBackoffExponential = "exponential"
 
-	HandlerTypeExec = "exec"
-	HandlerTypeHTTP = "http"
+	HandlerTypeExec      = "exec"
+	HandlerTypeHTTP      = "http"
+	HandlerTypeWebhook   = "webhook"
+	HandlerTypePGNotify  = "pg_notify"
+	HandlerTypeContainer = "container"
 
 	ConcurrencyAllow   = "allow"
 	ConcurrencyForbid  = "forbid"

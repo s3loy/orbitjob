@@ -1,0 +1,65 @@
+images:
+  admin:
+    repository: orbitjob-admin-api
+    tag: dev
+    pullPolicy: IfNotPresent
+  scheduler:
+    repository: orbitjob-scheduler
+    tag: dev
+    pullPolicy: IfNotPresent
+  dispatcher:
+    repository: orbitjob-dispatcher
+    tag: dev
+    pullPolicy: IfNotPresent
+  bootstrap:
+    repository: orbitjob-bootstrap
+    tag: dev
+    pullPolicy: IfNotPresent
+  migrate:
+    repository: orbitjob-migrate
+    tag: dev
+    pullPolicy: IfNotPresent
+
+worker:
+  image:
+    repository: orbitjob-worker
+    tag: dev
+    pullPolicy: IfNotPresent
+  containerExecution:
+    namespace: orbitjob-tasks
+    requireDigest: false
+    ttlSecondsAfterFinished: 600
+    serviceAccountName: orbitjob-task
+  resources: &runtimeResources
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+runtimeResources: *runtimeResources
+
+database:
+  secretName: orbitjob-database
+  keys:
+    bootstrapOwner: bootstrap-owner-dsn
+    migrator: migrator-dsn
+    admin: admin-dsn
+    runtime: runtime-dsn
+  passwords:
+    migrator: migrator-password
+    admin: admin-password
+    runtime: runtime-password
+    operator: operator-password
+  bootstrapAPIKey: bootstrap-api-key
+
+bootstrap:
+  secretName: orbitjob-bootstrap
+
+migrations:
+  baselineVersion: 0
+
+taskNamespace:
+  create: true
+  name: orbitjob-tasks

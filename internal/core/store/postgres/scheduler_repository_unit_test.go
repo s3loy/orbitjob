@@ -11,8 +11,8 @@ import (
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
 
-	domain "orbitjob/internal/core/domain"
 	"orbitjob/internal/core/app/schedule"
+	domain "orbitjob/internal/core/domain"
 )
 
 func TestSchedulerRepository_ScheduleOneDueCron_DecideRequired(t *testing.T) {
@@ -132,7 +132,7 @@ func TestSchedulerRepository_ScheduleOneDueCron_InsertError(t *testing.T) {
 	mock.ExpectBegin()
 	expectClaimOneRow(mock, now, "tenant-a", 101, &partition)
 	expectSchedulerSetTenantContext(mock, "tenant-a")
-		mock.ExpectQuery("SELECT quotas FROM tenants").WithArgs("tenant-a").WillReturnRows(sqlmock.NewRows([]string{"quotas"}).AddRow(nil))
+	mock.ExpectQuery("SELECT quotas FROM tenants").WithArgs("tenant-a").WillReturnRows(sqlmock.NewRows([]string{"quotas"}).AddRow(nil))
 	mock.ExpectQuery("INSERT INTO job_instances").
 		WithArgs("tenant-a", int64(101), scheduledAt, 7, sqlmock.AnyArg(), 4, sqlmock.AnyArg()).
 		WillReturnError(errors.New("insert boom"))
@@ -265,7 +265,7 @@ func TestSchedulerRepository_ScheduleOneDueCron_SuccessWithInstance(t *testing.T
 	mock.ExpectBegin()
 	expectClaimOneRow(mock, now, "tenant-a", 101, &partition)
 	expectSchedulerSetTenantContext(mock, "tenant-a")
-		mock.ExpectQuery("SELECT quotas FROM tenants").WithArgs("tenant-a").WillReturnRows(sqlmock.NewRows([]string{"quotas"}).AddRow(nil))
+	mock.ExpectQuery("SELECT quotas FROM tenants").WithArgs("tenant-a").WillReturnRows(sqlmock.NewRows([]string{"quotas"}).AddRow(nil))
 	mock.ExpectQuery("INSERT INTO job_instances").
 		WithArgs("tenant-a", int64(101), scheduledAt, 7, sqlmock.AnyArg(), 4, sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"run_id"}).AddRow("run-1"))
@@ -1130,7 +1130,7 @@ func TestSchedulerRepository_ListActiveTenantIDs_Success(t *testing.T) {
 	repo, mock := newSchedulerRepoMock(t)
 
 	rows := sqlmock.NewRows([]string{"id"}).AddRow("tenant-a").AddRow("tenant-b")
-	mock.ExpectQuery("SELECT id FROM tenants WHERE status = 'active' ORDER BY id").
+	mock.ExpectQuery("SELECT id FROM orbitjob_list_active_tenant_ids").
 		WillReturnRows(rows)
 
 	ids, err := repo.ListActiveTenantIDs(context.Background())
@@ -1147,7 +1147,7 @@ func TestSchedulerRepository_ListActiveTenantIDs_Empty(t *testing.T) {
 	repo, mock := newSchedulerRepoMock(t)
 
 	rows := sqlmock.NewRows([]string{"id"})
-	mock.ExpectQuery("SELECT id FROM tenants WHERE status = 'active' ORDER BY id").
+	mock.ExpectQuery("SELECT id FROM orbitjob_list_active_tenant_ids").
 		WillReturnRows(rows)
 
 	ids, err := repo.ListActiveTenantIDs(context.Background())
@@ -1163,7 +1163,7 @@ func TestSchedulerRepository_ListActiveTenantIDs_Empty(t *testing.T) {
 func TestSchedulerRepository_ListActiveTenantIDs_QueryError(t *testing.T) {
 	repo, mock := newSchedulerRepoMock(t)
 
-	mock.ExpectQuery("SELECT id FROM tenants WHERE status = 'active' ORDER BY id").
+	mock.ExpectQuery("SELECT id FROM orbitjob_list_active_tenant_ids").
 		WillReturnError(errors.New("db down"))
 
 	_, err := repo.ListActiveTenantIDs(context.Background())
@@ -1177,7 +1177,7 @@ func TestSchedulerRepository_ListActiveTenantIDs_ScanError(t *testing.T) {
 	repo, mock := newSchedulerRepoMock(t)
 
 	rows := sqlmock.NewRows([]string{"id"}).AddRow(nil)
-	mock.ExpectQuery("SELECT id FROM tenants WHERE status = 'active' ORDER BY id").
+	mock.ExpectQuery("SELECT id FROM orbitjob_list_active_tenant_ids").
 		WillReturnRows(rows)
 
 	_, err := repo.ListActiveTenantIDs(context.Background())

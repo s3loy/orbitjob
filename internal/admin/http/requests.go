@@ -10,14 +10,14 @@ import (
 	checkrunquery "orbitjob/internal/admin/app/checkrun/query"
 	command "orbitjob/internal/admin/app/job/command"
 	query "orbitjob/internal/admin/app/job/query"
-	tenantcommand "orbitjob/internal/admin/app/tenant/command"
-	tenantquery "orbitjob/internal/admin/app/tenant/query"
 	slicommand "orbitjob/internal/admin/app/sli/command"
 	sliquery "orbitjob/internal/admin/app/sli/query"
 	slocommand "orbitjob/internal/admin/app/slo/command"
 	sloquery "orbitjob/internal/admin/app/slo/query"
-	slobudgetquery "orbitjob/internal/admin/app/slobudget/query"
 	sloalertquery "orbitjob/internal/admin/app/sloalert/query"
+	slobudgetquery "orbitjob/internal/admin/app/slobudget/query"
+	tenantcommand "orbitjob/internal/admin/app/tenant/command"
+	tenantquery "orbitjob/internal/admin/app/tenant/query"
 	domaincheck "orbitjob/internal/core/domain/check"
 	domainjob "orbitjob/internal/core/domain/job"
 )
@@ -32,7 +32,7 @@ type CreateJobRequest struct {
 	CronExpr     *string `json:"cron_expr"`
 	Timezone     string  `json:"timezone" binding:"omitempty,max=64"`
 
-	HandlerType    string         `json:"handler_type" binding:"required,oneof=exec http,max=32"`
+	HandlerType    string         `json:"handler_type" binding:"required,oneof=exec http webhook pg_notify container,max=32"`
 	HandlerPayload map[string]any `json:"handler_payload"`
 
 	TimeoutSec           int    `json:"timeout_sec" binding:"omitempty,min=1"`
@@ -121,7 +121,7 @@ type UpdateJobRequest struct {
 	CronExpr     *string `json:"cron_expr"`
 	Timezone     *string `json:"timezone" binding:"omitempty,max=64"`
 
-	HandlerType    *string        `json:"handler_type" binding:"omitempty,oneof=exec http,max=32"`
+	HandlerType    *string        `json:"handler_type" binding:"omitempty,oneof=exec http webhook pg_notify container,max=32"`
 	HandlerPayload map[string]any `json:"handler_payload"`
 
 	TimeoutSec           *int    `json:"timeout_sec" binding:"omitempty,min=1"`
@@ -256,20 +256,20 @@ type ListInstancesRequest struct {
 
 // CreateCheckRequest defines the HTTP payload for creating a check.
 type CreateCheckRequest struct {
-	Name           string                  `json:"name" binding:"required,max=128"`
-	Description    *string                 `json:"description" binding:"omitempty,max=512"`
-	TenantID       string                  `json:"tenant_id" binding:"omitempty,max=64"`
-	CheckType      string                  `json:"check_type" binding:"required,oneof=http_health,max=32"`
-	CheckConfig    map[string]any          `json:"check_config"`
+	Name           string                      `json:"name" binding:"required,max=128"`
+	Description    *string                     `json:"description" binding:"omitempty,max=512"`
+	TenantID       string                      `json:"tenant_id" binding:"omitempty,max=64"`
+	CheckType      string                      `json:"check_type" binding:"required,oneof=http_health,max=32"`
+	CheckConfig    map[string]any              `json:"check_config"`
 	AssertionRules []domaincheck.AssertionRule `json:"assertion_rules"`
-	ScheduleType   string                  `json:"schedule_type" binding:"omitempty,oneof=cron interval"`
-	CronExpr       *string                 `json:"cron_expr"`
-	IntervalSec    *int                    `json:"interval_sec" binding:"omitempty,min=1"`
-	Timezone       string                  `json:"timezone" binding:"omitempty,max=64"`
-	TimeoutSec     int                     `json:"timeout_sec" binding:"omitempty,min=1"`
-	RetryLimit     int                     `json:"retry_limit" binding:"omitempty,min=0"`
-	Priority       int                     `json:"priority" binding:"omitempty,min=0"`
-	Labels         map[string]any          `json:"labels"`
+	ScheduleType   string                      `json:"schedule_type" binding:"omitempty,oneof=cron interval"`
+	CronExpr       *string                     `json:"cron_expr"`
+	IntervalSec    *int                        `json:"interval_sec" binding:"omitempty,min=1"`
+	Timezone       string                      `json:"timezone" binding:"omitempty,max=64"`
+	TimeoutSec     int                         `json:"timeout_sec" binding:"omitempty,min=1"`
+	RetryLimit     int                         `json:"retry_limit" binding:"omitempty,min=0"`
+	Priority       int                         `json:"priority" binding:"omitempty,min=0"`
+	Labels         map[string]any              `json:"labels"`
 }
 
 func (r CreateCheckRequest) ToCreateInput() checkcommand.CreateInput {
@@ -501,11 +501,11 @@ type GetSLOAlertRequest struct {
 }
 
 type ListSLOAlertsRequest struct {
-	TenantID string `form:"tenant_id"`
-	SLOID    *int64 `form:"slo_id,omitempty"`
+	TenantID string  `form:"tenant_id"`
+	SLOID    *int64  `form:"slo_id,omitempty"`
 	Status   *string `form:"status,omitempty"`
-	Limit    int    `form:"limit,default=50" binding:"min=1,max=100"`
-	Offset   int    `form:"offset,default=0" binding:"min=0"`
+	Limit    int     `form:"limit,default=50" binding:"min=1,max=100"`
+	Offset   int     `form:"offset,default=0" binding:"min=0"`
 }
 
 func (r ListSLOAlertsRequest) ToListInput() sloalertquery.ListInput {

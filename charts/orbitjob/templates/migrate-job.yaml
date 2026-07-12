@@ -1,0 +1,43 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-migrate-{{ .Release.Revision }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-20"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+{{ include "orbitjob.podSecurityContext" . | indent 8 }}
+      containers:
+        - name: migrate
+          image: "{{ .Values.images.migrate.repository }}:{{ .Values.images.migrate.tag }}"
+          imagePullPolicy: {{ .Values.images.migrate.pullPolicy }}
+          env:
+            - name: MIGRATION_MODE
+              value: migrate
+            - name: MIGRATOR_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.database.secretName }}
+                  key: {{ .Values.database.keys.migrator }}
+            - name: MIGRATIONS_DIR
+              value: /migrations
+            - name: MIGRATIONS_BASELINE_VERSION
+              value: {{ .Values.migrations.baselineVersion | quote }}
+          volumeMounts:
+            - name: migrations
+              mountPath: /migrations
+              readOnly: true
+          securityContext:
+{{ include "orbitjob.securityContext" . | indent 12 }}
+      volumes:
+        - name: migrations
+          configMap:
+            name: {{ .Release.Name }}-migrations

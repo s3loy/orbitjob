@@ -6,11 +6,11 @@
 #   ./scripts/import-jobs.sh [API_BASE_URL] [DATASET_FILE]
 #
 # 默认:
-#   API_BASE_URL  = http://localhost:18080
+#   API_BASE_URL  = http://localhost:8080
 #   DATASET_FILE  = ./scripts/job-dataset.json
 #
 # 环境变量:
-#   ADMIN_BOOTSTRAP_API_KEY  — bootstrap key（默认 otj_devkey_2026）
+#   ADMIN_BOOTSTRAP_API_KEY  — bootstrap key（必填，可由 make bootstrap-key 读取）
 #   ORBITJOB_TENANT_SLUG     — 目标租户 slug（默认 devops-team）
 #   ORBITJOB_TENANT_NAME     — 目标租户名称（默认 "DevOps Team (Load Test)"）
 #
@@ -18,9 +18,9 @@
 
 set -euo pipefail
 
-API="${1:-http://localhost:18080}"
+API="${1:-http://localhost:8080}"
 DATASET="${2:-$(dirname "$0")/job-dataset.json}"
-BOOTSTRAP_KEY="${ADMIN_BOOTSTRAP_API_KEY:-otj_devkey_2026}"
+BOOTSTRAP_KEY="${ADMIN_BOOTSTRAP_API_KEY:?Set ADMIN_BOOTSTRAP_API_KEY, for example: export ADMIN_BOOTSTRAP_API_KEY=\"\$(make --no-print-directory bootstrap-key)\"}"
 TENANT_SLUG="${ORBITJOB_TENANT_SLUG:-devops-team}"
 TENANT_NAME="${ORBITJOB_TENANT_NAME:-DevOps Team (Load Test)}"
 

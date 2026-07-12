@@ -47,12 +47,12 @@ func TestInstanceRepository_CreateUnit_Success(t *testing.T) {
 			int64(1), "run-1", "tenant-a", int64(42), "schedule",
 			"pending", 5, 5, nil, nil, // effective_priority, partition_key, idempotency_key
 			"job_instance_create", nil, nil, // idempotency_scope, routing_key, worker_id
-			1, 3,                          // attempt, max_attempt
-			now, nil, nil,                 // scheduled_at, started_at, finished_at
-			nil, nil, nil,                 // lease_expires_at, dispatched_at, retry_at
-			nil, nil, nil,                 // result_code, error_msg, trace_id
-			now, now,                      // created_at, updated_at
-			1,                             // version
+			1, 3, // attempt, max_attempt
+			now, nil, nil, // scheduled_at, started_at, finished_at
+			nil, nil, nil, // lease_expires_at, dispatched_at, retry_at
+			nil, nil, nil, // result_code, error_msg, trace_id
+			now, now, // created_at, updated_at
+			1, // version
 		))
 
 	mock.ExpectExec("INSERT INTO audit_events").

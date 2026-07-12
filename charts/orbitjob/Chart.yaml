@@ -1,0 +1,6 @@
+apiVersion: v2
+name: orbitjob
+version: 0.2.0
+appVersion: "0.2.0"
+description: OrbitJob Kubernetes runtime with isolated container Job execution
+type: application

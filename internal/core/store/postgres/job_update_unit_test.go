@@ -11,8 +11,8 @@ import (
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
 
 	domainjob "orbitjob/internal/core/domain/job"
-	"orbitjob/internal/domain/resource"
 	tenant "orbitjob/internal/core/domain/tenant"
+	"orbitjob/internal/domain/resource"
 )
 
 func TestJobRepository_UpdateUnit_Success(t *testing.T) {

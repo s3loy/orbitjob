@@ -1,0 +1,76 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: orbitjob
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: orbitjob-postgres
+  namespace: orbitjob
+type: Opaque
+stringData:
+  POSTGRES_DB: orbitjob
+  POSTGRES_USER: postgres
+  POSTGRES_PASSWORD: orbitjob-owner
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: orbitjob-postgres
+  namespace: orbitjob
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orbitjob-postgres
+  namespace: orbitjob
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: orbitjob-postgres
+  template:
+    metadata:
+      labels:
+        app: orbitjob-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          envFrom:
+            - secretRef:
+                name: orbitjob-postgres
+          ports:
+            - name: postgres
+              containerPort: 5432
+          readinessProbe:
+            exec:
+              command: [pg_isready, -U, postgres, -d, orbitjob]
+            initialDelaySeconds: 3
+            periodSeconds: 2
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: orbitjob-postgres
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orbitjob-postgres
+  namespace: orbitjob
+spec:
+  selector:
+    app: orbitjob-postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres

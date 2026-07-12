@@ -108,8 +108,8 @@ func (r *CheckRepository) Create(ctx context.Context, spec check.CreateSpec) (ch
 
 	// Audit
 	diff := map[string]any{
-		"name":        spec.Name,
-		"check_type":  spec.CheckType,
+		"name":          spec.Name,
+		"check_type":    spec.CheckType,
 		"schedule_type": spec.ScheduleType,
 	}
 	diffBytes, _ := json.Marshal(diff)
@@ -209,10 +209,10 @@ func (r *CheckRepository) ChangeStatus(ctx context.Context, tenantID string, id 
 
 	// Audit
 	diff := map[string]any{
-		"from_status": currentStatus,
-		"to_status":   nextStatus,
+		"from_status":  currentStatus,
+		"to_status":    nextStatus,
 		"from_version": version,
-		"to_version":  snap.Version,
+		"to_version":   snap.Version,
 	}
 	diffBytes, _ := json.Marshal(diff)
 	if _, err = tx.ExecContext(ctx, `
@@ -376,4 +376,3 @@ func (r *CheckRepository) GetByID(ctx context.Context, tenantID string, id int64
 	}
 	return snap, nil
 }
-

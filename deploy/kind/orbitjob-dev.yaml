@@ -1,0 +1,9 @@
+# OrbitJob local single-node Kubernetes cluster.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: orbitjob-dev
+nodes:
+  - role: control-plane
+    labels:
+      orbitjob.io/runtime: "true"
+      orbitjob.io/tasks: "true"

@@ -2,7 +2,6 @@ package bootstrap
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"testing"
 
@@ -36,12 +35,9 @@ func TestEnsureDefault_FirstRun(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	mock.ExpectBegin()
-	mock.ExpectQuery("INSERT INTO tenants").
-		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(DefaultTenantID))
-	mock.ExpectQuery("INSERT INTO api_keys").
-		WithArgs(DefaultAPIKeyID, DefaultTenantID, sqlmock.AnyArg(), DefaultAPIKey[:12], defaultAPIKeyPermissions).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(DefaultAPIKeyID))
+	mock.ExpectQuery("orbitjob_bootstrap_default").
+		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus, DefaultAPIKeyID, sqlmock.AnyArg(), DefaultAPIKey[:12], defaultAPIKeyPermissions).
+		WillReturnRows(sqlmock.NewRows([]string{"tenant_created", "key_created"}).AddRow(true, true))
 	mock.ExpectCommit()
 
 	res, err := EnsureDefault(t.Context(), db, Options{})
@@ -70,12 +66,9 @@ func TestEnsureDefault_TenantExistsKeyNew(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	mock.ExpectBegin()
-	mock.ExpectQuery("INSERT INTO tenants").
-		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus).
-		WillReturnError(sql.ErrNoRows)
-	mock.ExpectQuery("INSERT INTO api_keys").
-		WithArgs(DefaultAPIKeyID, DefaultTenantID, sqlmock.AnyArg(), DefaultAPIKey[:12], defaultAPIKeyPermissions).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(DefaultAPIKeyID))
+	mock.ExpectQuery("orbitjob_bootstrap_default").
+		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus, DefaultAPIKeyID, sqlmock.AnyArg(), DefaultAPIKey[:12], defaultAPIKeyPermissions).
+		WillReturnRows(sqlmock.NewRows([]string{"tenant_created", "key_created"}).AddRow(false, true))
 	mock.ExpectCommit()
 
 	res, err := EnsureDefault(t.Context(), db, Options{})
@@ -101,12 +94,9 @@ func TestEnsureDefault_BothExist(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	mock.ExpectBegin()
-	mock.ExpectQuery("INSERT INTO tenants").
-		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus).
-		WillReturnError(sql.ErrNoRows)
-	mock.ExpectQuery("INSERT INTO api_keys").
-		WithArgs(DefaultAPIKeyID, DefaultTenantID, sqlmock.AnyArg(), DefaultAPIKey[:12], defaultAPIKeyPermissions).
-		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery("orbitjob_bootstrap_default").
+		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus, DefaultAPIKeyID, sqlmock.AnyArg(), DefaultAPIKey[:12], defaultAPIKeyPermissions).
+		WillReturnRows(sqlmock.NewRows([]string{"tenant_created", "key_created"}).AddRow(false, false))
 	mock.ExpectCommit()
 
 	res, err := EnsureDefault(t.Context(), db, Options{})
@@ -130,12 +120,9 @@ func TestEnsureDefault_CustomKey(t *testing.T) {
 
 	customKey := "otj_customkey_42"
 	mock.ExpectBegin()
-	mock.ExpectQuery("INSERT INTO tenants").
-		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(DefaultTenantID))
-	mock.ExpectQuery("INSERT INTO api_keys").
-		WithArgs(DefaultAPIKeyID, DefaultTenantID, sqlmock.AnyArg(), customKey[:12], defaultAPIKeyPermissions).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(DefaultAPIKeyID))
+	mock.ExpectQuery("orbitjob_bootstrap_default").
+		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus, DefaultAPIKeyID, sqlmock.AnyArg(), customKey[:12], defaultAPIKeyPermissions).
+		WillReturnRows(sqlmock.NewRows([]string{"tenant_created", "key_created"}).AddRow(true, true))
 	mock.ExpectCommit()
 
 	res, err := EnsureDefault(t.Context(), db, Options{APIKey: customKey})
@@ -213,7 +200,7 @@ func TestEnsureDefault_BeginError(t *testing.T) {
 	}
 }
 
-func TestEnsureDefault_TenantQueryError(t *testing.T) {
+func TestEnsureDefault_QueryError(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("new mock: %v", err)
@@ -221,39 +208,14 @@ func TestEnsureDefault_TenantQueryError(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	mock.ExpectBegin()
-	mock.ExpectQuery("INSERT INTO tenants").
-		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus).
-		WillReturnError(errors.New("tenant insert failed"))
+	mock.ExpectQuery("orbitjob_bootstrap_default").
+		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus, DefaultAPIKeyID, sqlmock.AnyArg(), DefaultAPIKey[:12], defaultAPIKeyPermissions).
+		WillReturnError(errors.New("bootstrap function failed"))
 	mock.ExpectRollback()
 
 	_, err = EnsureDefault(t.Context(), db, Options{})
 	if err == nil {
-		t.Fatal("expected error from tenant insert, got nil")
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("unmet expectations: %v", err)
-	}
-}
-
-func TestEnsureDefault_KeyQueryError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatalf("new mock: %v", err)
-	}
-	defer func() { _ = db.Close() }()
-
-	mock.ExpectBegin()
-	mock.ExpectQuery("INSERT INTO tenants").
-		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(DefaultTenantID))
-	mock.ExpectQuery("INSERT INTO api_keys").
-		WithArgs(DefaultAPIKeyID, DefaultTenantID, sqlmock.AnyArg(), DefaultAPIKey[:12], defaultAPIKeyPermissions).
-		WillReturnError(errors.New("key insert failed"))
-	mock.ExpectRollback()
-
-	_, err = EnsureDefault(t.Context(), db, Options{})
-	if err == nil {
-		t.Fatal("expected error from api key insert, got nil")
+		t.Fatal("expected error from bootstrap function, got nil")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet expectations: %v", err)
@@ -268,12 +230,9 @@ func TestEnsureDefault_CommitError(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	mock.ExpectBegin()
-	mock.ExpectQuery("INSERT INTO tenants").
-		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(DefaultTenantID))
-	mock.ExpectQuery("INSERT INTO api_keys").
-		WithArgs(DefaultAPIKeyID, DefaultTenantID, sqlmock.AnyArg(), DefaultAPIKey[:12], defaultAPIKeyPermissions).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(DefaultAPIKeyID))
+	mock.ExpectQuery("orbitjob_bootstrap_default").
+		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus, DefaultAPIKeyID, sqlmock.AnyArg(), DefaultAPIKey[:12], defaultAPIKeyPermissions).
+		WillReturnRows(sqlmock.NewRows([]string{"tenant_created", "key_created"}).AddRow(true, true))
 	mock.ExpectCommit().WillReturnError(errors.New("commit failed"))
 
 	_, err = EnsureDefault(t.Context(), db, Options{})
@@ -324,12 +283,9 @@ func TestEnsureDefault_WritesSecretWhenKeyCreated(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	mock.ExpectBegin()
-	mock.ExpectQuery("INSERT INTO tenants").
-		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(DefaultTenantID))
-	mock.ExpectQuery("INSERT INTO api_keys").
-		WithArgs(DefaultAPIKeyID, DefaultTenantID, sqlmock.AnyArg(), DefaultAPIKey[:12], defaultAPIKeyPermissions).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(DefaultAPIKeyID))
+	mock.ExpectQuery("orbitjob_bootstrap_default").
+		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus, DefaultAPIKeyID, sqlmock.AnyArg(), DefaultAPIKey[:12], defaultAPIKeyPermissions).
+		WillReturnRows(sqlmock.NewRows([]string{"tenant_created", "key_created"}).AddRow(true, true))
 	mock.ExpectCommit()
 
 	writer := &fakeSecretWriter{}
@@ -362,12 +318,9 @@ func TestEnsureDefault_SkipsSecretWhenKeyExists(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	mock.ExpectBegin()
-	mock.ExpectQuery("INSERT INTO tenants").
-		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(DefaultTenantID))
-	mock.ExpectQuery("INSERT INTO api_keys").
-		WithArgs(DefaultAPIKeyID, DefaultTenantID, sqlmock.AnyArg(), DefaultAPIKey[:12], defaultAPIKeyPermissions).
-		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery("orbitjob_bootstrap_default").
+		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus, DefaultAPIKeyID, sqlmock.AnyArg(), DefaultAPIKey[:12], defaultAPIKeyPermissions).
+		WillReturnRows(sqlmock.NewRows([]string{"tenant_created", "key_created"}).AddRow(true, false))
 	mock.ExpectCommit()
 
 	writer := &fakeSecretWriter{}
@@ -394,12 +347,9 @@ func TestEnsureDefault_WriterError(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	mock.ExpectBegin()
-	mock.ExpectQuery("INSERT INTO tenants").
-		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(DefaultTenantID))
-	mock.ExpectQuery("INSERT INTO api_keys").
-		WithArgs(DefaultAPIKeyID, DefaultTenantID, sqlmock.AnyArg(), DefaultAPIKey[:12], defaultAPIKeyPermissions).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(DefaultAPIKeyID))
+	mock.ExpectQuery("orbitjob_bootstrap_default").
+		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus, DefaultAPIKeyID, sqlmock.AnyArg(), DefaultAPIKey[:12], defaultAPIKeyPermissions).
+		WillReturnRows(sqlmock.NewRows([]string{"tenant_created", "key_created"}).AddRow(true, true))
 	mock.ExpectCommit()
 
 	writer := &fakeSecretWriter{err: errors.New("write failed")}

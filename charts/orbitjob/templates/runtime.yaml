@@ -1,0 +1,61 @@
+{{- $components := dict "admin-api" .Values.images.admin "scheduler" .Values.images.scheduler "dispatcher" .Values.images.dispatcher -}}
+{{- range $name, $image := $components }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orbitjob-{{ $name }}
+  namespace: {{ $.Release.Namespace }}
+  labels: {app.kubernetes.io/name: orbitjob-{{ $name }}}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: orbitjob-{{ $name }}}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: orbitjob-{{ $name }}}
+    spec:
+      securityContext:
+{{ include "orbitjob.podSecurityContext" $ | indent 8 }}
+      containers:
+        - name: {{ $name }}
+          image: "{{ $image.repository }}:{{ $image.tag }}"
+          imagePullPolicy: {{ $image.pullPolicy }}
+          env:
+            - name: APP_ENV
+              value: production
+            - name: {{ if eq $name "admin-api" }}ADMIN_DSN{{ else if eq $name "scheduler" }}SCHEDULER_DSN{{ else }}DISPATCHER_DSN{{ end }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.database.secretName }}
+                  key: {{ if eq $name "admin-api" }}{{ $.Values.database.keys.admin }}{{ else }}{{ $.Values.database.keys.runtime }}{{ end }}
+          {{- if eq $name "scheduler" }}
+            - name: SCHEDULER_HEALTH_PORT
+              value: "6060"
+          {{- else if eq $name "dispatcher" }}
+            - name: DISPATCHER_HEALTH_PORT
+              value: "6061"
+          {{- end }}
+          ports:
+            - name: health
+              containerPort: {{ if eq $name "admin-api" }}8080{{ else if eq $name "scheduler" }}6060{{ else }}6061{{ end }}
+          readinessProbe:
+            httpGet: {path: /healthz, port: health}
+          livenessProbe:
+            httpGet: {path: /healthz, port: health}
+          resources:
+{{ toYaml $.Values.runtimeResources | indent 12 }}
+          securityContext:
+{{ include "orbitjob.securityContext" $ | indent 12 }}
+---
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: orbitjob-admin-api
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector: {app.kubernetes.io/name: orbitjob-admin-api}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: health
