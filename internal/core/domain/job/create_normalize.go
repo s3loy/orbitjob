@@ -125,8 +125,16 @@ func normalizeHandlerType(in string) (string, error) {
 	if len(value) > 32 {
 		return "", validationError("handler_type", "must be <= 32 characters")
 	}
-	if !isOneOf(value, HandlerTypeExec, HandlerTypeHTTP) {
-		return "", validationErrorf("handler_type", "must be one of: %s, %s", HandlerTypeExec, HandlerTypeHTTP)
+	if !isOneOf(value, HandlerTypeExec, HandlerTypeHTTP, HandlerTypeWebhook, HandlerTypePGNotify, HandlerTypeContainer) {
+		return "", validationErrorf(
+			"handler_type",
+			"must be one of: %s, %s, %s, %s, %s",
+			HandlerTypeExec,
+			HandlerTypeHTTP,
+			HandlerTypeWebhook,
+			HandlerTypePGNotify,
+			HandlerTypeContainer,
+		)
 	}
 	return value, nil
 }

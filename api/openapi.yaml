@@ -4168,6 +4168,9 @@ components:
           enum:
           - exec
           - http
+          - webhook
+          - pg_notify
+          - container
           maxLength: 32
         misfire_policy:
           type: string
@@ -4712,6 +4715,9 @@ components:
           enum:
           - exec
           - http
+          - webhook
+          - pg_notify
+          - container
           nullable: true
           maxLength: 32
         misfire_policy:

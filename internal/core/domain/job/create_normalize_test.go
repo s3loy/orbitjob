@@ -58,6 +58,32 @@ func TestNormalizeCreate_ManualDefaults(t *testing.T) {
 	}
 }
 
+func TestNormalizeCreate_AcceptsBuiltInHandlerTypes(t *testing.T) {
+	now := time.Date(2026, 3, 18, 0, 0, 0, 0, time.UTC)
+
+	for _, handlerType := range []string{
+		HandlerTypeExec,
+		HandlerTypeHTTP,
+		HandlerTypeWebhook,
+		HandlerTypePGNotify,
+		"container",
+	} {
+		t.Run(handlerType, func(t *testing.T) {
+			out, err := NormalizeCreate(now, CreateInput{
+				Name:        "demo-job",
+				TriggerType: TriggerTypeManual,
+				HandlerType: handlerType,
+			})
+			if err != nil {
+				t.Fatalf("NormalizeCreate() error = %v", err)
+			}
+			if out.HandlerType != handlerType {
+				t.Fatalf("expected handler_type=%q, got %q", handlerType, out.HandlerType)
+			}
+		})
+	}
+}
+
 func TestNormalizeCreate_CronSetsNextRunAt(t *testing.T) {
 	now := time.Date(2026, 3, 18, 0, 58, 0, 0, time.UTC)
 	cronExpr := "0 9 * * *"

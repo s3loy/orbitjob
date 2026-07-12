@@ -5,9 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"maps"
 	"log"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"os"
@@ -19,12 +19,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 
 	adminpostgres "orbitjob/internal/admin/store/postgres"
 	"orbitjob/internal/core/app/checkexecute"
 	"orbitjob/internal/core/app/evaluate"
 	"orbitjob/internal/core/app/execute"
 	"orbitjob/internal/core/app/execute/handler"
+	containerhandler "orbitjob/internal/core/app/execute/handler/container"
 	"orbitjob/internal/core/app/sloevaluate"
 	domainworker "orbitjob/internal/core/domain/worker"
 	corepostgres "orbitjob/internal/core/store/postgres"
@@ -37,19 +40,21 @@ import (
 )
 
 type runtimeConfig struct {
-	TenantID          string
-	MultiTenant       bool
-	WorkerID          string
-	HealthPort        string
-	pollInterval      atomic.Int64
-	heartbeatInterval atomic.Int64
-	leaseDuration     atomic.Int64
-	capacity          atomic.Int64
-	CapacityMax       int
-	LeaseMin          time.Duration
-	LeaseMax          time.Duration
-	LeaseDecay        float64
-	Labels            map[string]any
+	TenantID           string
+	MultiTenant        bool
+	WorkerID           string
+	HealthPort         string
+	pollInterval       atomic.Int64
+	heartbeatInterval  atomic.Int64
+	leaseDuration      atomic.Int64
+	capacity           atomic.Int64
+	CapacityMax        int
+	LeaseMin           time.Duration
+	LeaseMax           time.Duration
+	LeaseDecay         float64
+	Labels             map[string]any
+	ContainerEnabled   bool
+	ContainerNamespace string
 
 	tenantLister tenantLister
 }
@@ -67,7 +72,7 @@ func (c *runtimeConfig) HeartbeatInterval() time.Duration {
 func (c *runtimeConfig) LeaseDuration() time.Duration {
 	return time.Duration(c.leaseDuration.Load())
 }
-func (c *runtimeConfig) Capacity() int { return int(c.capacity.Load()) }
+func (c *runtimeConfig) Capacity() int                        { return int(c.capacity.Load()) }
 func (c *runtimeConfig) SetPollInterval(d time.Duration)      { c.pollInterval.Store(int64(d)) }
 func (c *runtimeConfig) SetHeartbeatInterval(d time.Duration) { c.heartbeatInterval.Store(int64(d)) }
 func (c *runtimeConfig) SetLeaseDuration(d time.Duration)     { c.leaseDuration.Store(int64(d)) }
@@ -94,10 +99,10 @@ type workerTicker interface {
 const startupDBPingTimeout = 5 * time.Second
 
 var (
-	loadDotenvFn  = config.LoadDotenv
-	newLoggerFn   = platformlogger.New
-	openDBFn      = adminpostgres.Open
-	pingDBFn      = func(ctx context.Context, db *sql.DB) error { return db.PingContext(ctx) }
+	loadDotenvFn      = config.LoadDotenv
+	newLoggerFn       = platformlogger.New
+	openDBFn          = adminpostgres.Open
+	pingDBFn          = func(ctx context.Context, db *sql.DB) error { return db.PingContext(ctx) }
 	buildHTTPClientFn = func() *http.Client {
 		return &http.Client{
 			Transport: &http.Transport{
@@ -112,7 +117,7 @@ var (
 			Timeout: 30 * time.Second,
 		}
 	}
-	buildRunnerFn = func(db *sql.DB, httpClient *http.Client) tickRunner {
+	buildRunnerFn = func(db *sql.DB, httpClient *http.Client, cfg *runtimeConfig, k8sClient kubernetes.Interface) tickRunner {
 		repo := corepostgres.NewExecutorRepository(db)
 		handlers := map[string]execute.Handler{
 			"exec":      &handler.Exec{},
@@ -120,8 +125,20 @@ var (
 			"webhook":   handler.NewWebhook(httpClient),
 			"pg_notify": handler.NewPGNotify(db),
 		}
+		if cfg.ContainerEnabled {
+			handlers["container"] = containerhandler.New(containerhandler.Config{
+				Client:           k8sClient,
+				Namespace:        cfg.ContainerNamespace,
+				RequireDigest:    os.Getenv("APP_ENV") == "production",
+				TTLAfterFinished: 10 * time.Minute,
+			})
+		}
 		maps.Copy(handlers, handler.GetRegistered())
 		return execute.NewTickUseCase(repo, handlers)
+	}
+	inClusterConfigFn     = rest.InClusterConfig
+	newKubernetesClientFn = func(cfg *rest.Config) (kubernetes.Interface, error) {
+		return kubernetes.NewForConfig(cfg)
 	}
 	buildHeartbeaterFn = func(db *sql.DB) heartbeater {
 		return corepostgres.NewWorkerRepository(db)
@@ -243,21 +260,39 @@ func loadWorkerRuntimeConfig() (*runtimeConfig, error) {
 		return nil, err
 	}
 
+	containerEnabledRaw := os.Getenv("WORKER_CONTAINER_ENABLED")
+	if containerEnabledRaw == "" {
+		containerEnabledRaw = "false"
+	}
+	containerEnabled, err := strconv.ParseBool(containerEnabledRaw)
+	if err != nil {
+		return nil, fmt.Errorf("WORKER_CONTAINER_ENABLED must be a boolean: %w", err)
+	}
+	containerNamespace := strings.TrimSpace(os.Getenv("WORKER_CONTAINER_NAMESPACE"))
+	if containerEnabled {
+		if containerNamespace == "" {
+			return nil, fmt.Errorf("WORKER_CONTAINER_NAMESPACE is required when container execution is enabled")
+		}
+		labels["handler:container"] = "container"
+	}
+
 	healthPort := os.Getenv("WORKER_HEALTH_PORT")
 	if healthPort == "" {
 		healthPort = "6062"
 	}
 
 	cfg := &runtimeConfig{
-		TenantID:    tenantID,
-		MultiTenant: multiTenant,
-		WorkerID:    workerID,
-		HealthPort:  healthPort,
-		CapacityMax: capacityMax,
-		LeaseMin:    time.Duration(leaseMinSec) * time.Second,
-		LeaseMax:    time.Duration(leaseMaxSec) * time.Second,
-		LeaseDecay:  leaseDecay,
-		Labels:      labels,
+		TenantID:           tenantID,
+		MultiTenant:        multiTenant,
+		WorkerID:           workerID,
+		HealthPort:         healthPort,
+		CapacityMax:        capacityMax,
+		LeaseMin:           time.Duration(leaseMinSec) * time.Second,
+		LeaseMax:           time.Duration(leaseMaxSec) * time.Second,
+		LeaseDecay:         leaseDecay,
+		Labels:             labels,
+		ContainerEnabled:   containerEnabled,
+		ContainerNamespace: containerNamespace,
 	}
 	cfg.SetPollInterval(time.Duration(pollIntervalSec) * time.Second)
 	cfg.SetHeartbeatInterval(time.Duration(heartbeatIntervalSec) * time.Second)
@@ -528,7 +563,18 @@ func run(ctx context.Context) error {
 	}
 
 	httpClient := buildHTTPClientFn()
-	inner := buildRunnerFn(db, httpClient)
+	var k8sClient kubernetes.Interface
+	if cfg.ContainerEnabled {
+		kubeConfig, err := inClusterConfigFn()
+		if err != nil {
+			return fmt.Errorf("load in-cluster Kubernetes config: %w", err)
+		}
+		k8sClient, err = newKubernetesClientFn(kubeConfig)
+		if err != nil {
+			return fmt.Errorf("create Kubernetes client: %w", err)
+		}
+	}
+	inner := buildRunnerFn(db, httpClient, cfg, k8sClient)
 	hb := buildHeartbeaterFn(db)
 	cfg.tenantLister = corepostgres.NewExecutorRepository(db)
 
