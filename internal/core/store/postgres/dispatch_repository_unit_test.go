@@ -1006,7 +1006,7 @@ func TestListActiveTenantIDs_Success(t *testing.T) {
 
 	repo := NewDispatchRepository(db)
 
-	mock.ExpectQuery("SELECT id FROM tenants").
+	mock.ExpectQuery("SELECT id FROM orbitjob_list_active_tenant_ids").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).
 			AddRow("tenant-a").
 			AddRow("tenant-b").
@@ -1037,7 +1037,7 @@ func TestListActiveTenantIDs_Empty(t *testing.T) {
 
 	repo := NewDispatchRepository(db)
 
-	mock.ExpectQuery("SELECT id FROM tenants").
+	mock.ExpectQuery("SELECT id FROM orbitjob_list_active_tenant_ids").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 
 	ids, err := repo.ListActiveTenantIDs(context.Background())
@@ -1065,7 +1065,7 @@ func TestListActiveTenantIDs_QueryError(t *testing.T) {
 
 	repo := NewDispatchRepository(db)
 
-	mock.ExpectQuery("SELECT id FROM tenants").
+	mock.ExpectQuery("SELECT id FROM orbitjob_list_active_tenant_ids").
 		WillReturnError(errors.New("query boom"))
 
 	_, err = repo.ListActiveTenantIDs(context.Background())
@@ -1091,7 +1091,7 @@ func TestListActiveTenantIDs_ScanError(t *testing.T) {
 	rows := sqlmock.NewRows([]string{"id"}).
 		AddRow("tenant-a").
 		RowError(0, errors.New("scan boom"))
-	mock.ExpectQuery("SELECT id FROM tenants").
+	mock.ExpectQuery("SELECT id FROM orbitjob_list_active_tenant_ids").
 		WillReturnRows(rows)
 
 	_, err = repo.ListActiveTenantIDs(context.Background())

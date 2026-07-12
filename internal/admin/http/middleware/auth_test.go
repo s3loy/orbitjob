@@ -24,7 +24,7 @@ func TestAuth_BearerToken_Valid(t *testing.T) {
 	key := "otj_a1b2c3d4e5f6g7h8"
 	hash, _ := bcrypt.GenerateFromPassword([]byte(key), bcrypt.MinCost)
 
-	mock.ExpectQuery("SELECT ak.id, ak.tenant_id, ak.key_hash").
+	mock.ExpectQuery("SELECT id, tenant_id, key_hash, revoked, expired").
 		WithArgs("otj_a1b2c3d4").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "key_hash", "revoked", "expired"}).
 			AddRow("ak_001", "tenant-42", string(hash), nil, nil))
@@ -58,7 +58,7 @@ func TestAuth_BearerToken_Invalid(t *testing.T) {
 
 	key := "otj_badkey0000000000"
 
-	mock.ExpectQuery("SELECT ak.id, ak.tenant_id, ak.key_hash").
+	mock.ExpectQuery("SELECT id, tenant_id, key_hash, revoked, expired").
 		WithArgs("otj_badkey00").
 		WillReturnError(sqlmock.ErrCancelled)
 
@@ -183,6 +183,29 @@ func TestValidateAPIKey_TooShort(t *testing.T) {
 	}
 }
 
+func TestValidateAPIKey_MultipleCandidatesMatchCorrectHash(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	key := "otj_a1b2c3d4e5f6g7h8"
+	wrongHash, _ := bcrypt.GenerateFromPassword([]byte("otj_a1b2c3d4wrong-key"), bcrypt.MinCost)
+	matchingHash, _ := bcrypt.GenerateFromPassword([]byte(key), bcrypt.MinCost)
+	mock.ExpectQuery("SELECT id, tenant_id, key_hash, revoked, expired").
+		WithArgs("otj_a1b2c3d4").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "key_hash", "revoked", "expired"}).
+			AddRow("ak_newer", "tenant-wrong", string(wrongHash), nil, nil).
+			AddRow("ak_matching", "tenant-42", string(matchingHash), nil, nil))
+
+	auth := NewAuth(db)
+	tenantID, ok := auth.validateAPIKey(context.Background(), key)
+	if !ok || tenantID != "tenant-42" {
+		t.Fatalf("validateAPIKey() = %q, %v", tenantID, ok)
+	}
+}
+
 func TestValidateAPIKey_BcryptMismatch(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -194,7 +217,7 @@ func TestValidateAPIKey_BcryptMismatch(t *testing.T) {
 	otherKey := "otj_0000000000000000"
 	hash, _ := bcrypt.GenerateFromPassword([]byte(otherKey), bcrypt.MinCost)
 
-	mock.ExpectQuery("SELECT ak.id, ak.tenant_id, ak.key_hash").
+	mock.ExpectQuery("SELECT id, tenant_id, key_hash, revoked, expired").
 		WithArgs("otj_a1b2c3d4").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "key_hash", "revoked", "expired"}).
 			AddRow("ak_001", "tenant-42", string(hash), nil, nil))
@@ -217,7 +240,7 @@ func TestValidateAPIKey_Revoked(t *testing.T) {
 	hash, _ := bcrypt.GenerateFromPassword([]byte(key), bcrypt.MinCost)
 	revoked := "2026-01-01"
 
-	mock.ExpectQuery("SELECT ak.id, ak.tenant_id, ak.key_hash").
+	mock.ExpectQuery("SELECT id, tenant_id, key_hash, revoked, expired").
 		WithArgs("otj_a1b2c3d4").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "key_hash", "revoked", "expired"}).
 			AddRow("ak_001", "tenant-42", string(hash), &revoked, nil))
@@ -240,7 +263,7 @@ func TestValidateAPIKey_Expired(t *testing.T) {
 	hash, _ := bcrypt.GenerateFromPassword([]byte(key), bcrypt.MinCost)
 	expired := "2020-01-01"
 
-	mock.ExpectQuery("SELECT ak.id, ak.tenant_id, ak.key_hash").
+	mock.ExpectQuery("SELECT id, tenant_id, key_hash, revoked, expired").
 		WithArgs("otj_a1b2c3d4").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "key_hash", "revoked", "expired"}).
 			AddRow("ak_001", "tenant-42", string(hash), nil, &expired))

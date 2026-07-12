@@ -97,28 +97,14 @@ func EnsureDefault(ctx context.Context, db *sql.DB, opts Options) (Result, error
 	}()
 
 	res := Result{MaskedKey: maskKey(key)}
-
-	var tenantID string
 	if err = tx.QueryRowContext(ctx, `
-		INSERT INTO tenants (id, slug, name, status, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, now(), now())
-		ON CONFLICT (id) DO NOTHING
-		RETURNING id
-	`, DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus).Scan(&tenantID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return Result{}, fmt.Errorf("ensure default tenant: %w", err)
+		SELECT tenant_created, key_created
+		FROM orbitjob_bootstrap_default($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+	`, DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus,
+		DefaultAPIKeyID, string(hash), prefix, defaultAPIKeyPermissions,
+	).Scan(&res.TenantCreated, &res.KeyCreated); err != nil {
+		return Result{}, fmt.Errorf("ensure bootstrap defaults: %w", err)
 	}
-	res.TenantCreated = err == nil
-
-	var keyID string
-	if err = tx.QueryRowContext(ctx, `
-		INSERT INTO api_keys (id, tenant_id, key_hash, key_prefix, permissions, created_at)
-		VALUES ($1, $2, $3, $4, $5, now())
-		ON CONFLICT (id) DO NOTHING
-		RETURNING id
-	`, DefaultAPIKeyID, DefaultTenantID, string(hash), prefix, defaultAPIKeyPermissions).Scan(&keyID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return Result{}, fmt.Errorf("ensure default api key: %w", err)
-	}
-	res.KeyCreated = err == nil
 
 	if err = tx.Commit(); err != nil {
 		return Result{}, fmt.Errorf("commit bootstrap tx: %w", err)

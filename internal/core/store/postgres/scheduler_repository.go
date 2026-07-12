@@ -430,7 +430,7 @@ func insertScheduledInstance(ctx context.Context, tx *sql.Tx, job dueCronJobReco
 		job.Priority,
 		job.PartitionKey,
 		maxAttempt,
-			traceID,
+		traceID,
 	).Scan(&runID)
 	if err != nil {
 		return "", "", fmt.Errorf("insert scheduled instance: %w", err)
@@ -520,7 +520,7 @@ func (r *SchedulerRepository) CountActiveInstances(ctx context.Context) (int64, 
 
 // ListActiveTenantIDs returns IDs of tenants with status = 'active'.
 func (r *SchedulerRepository) ListActiveTenantIDs(ctx context.Context) ([]string, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id FROM tenants WHERE status = 'active' ORDER BY id`)
+	rows, err := r.db.QueryContext(ctx, `SELECT id FROM orbitjob_list_active_tenant_ids()`)
 	if err != nil {
 		return nil, fmt.Errorf("list active tenant ids: %w", err)
 	}

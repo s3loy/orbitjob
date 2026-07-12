@@ -53,13 +53,17 @@ func (r *ExecutorRepository) ClaimNextDispatched(
 
 	rows, err := tx.QueryContext(ctx, `
 		WITH claimed AS (
-			SELECT id FROM job_instances
-			WHERE tenant_id = $1
-			  AND status = 'dispatched'
-				  AND (routing_key IS NULL OR routing_key = ANY($6::text[]))
-			ORDER BY effective_priority DESC, scheduled_at ASC, id ASC
+			SELECT ji.id FROM job_instances ji
+			JOIN jobs j ON ji.tenant_id = j.tenant_id AND ji.job_id = j.id
+			WHERE ji.tenant_id = $1
+			  AND ji.status = 'dispatched'
+			  AND (
+				(j.handler_type = 'container' AND 'container' = ANY($6::text[]))
+				OR (j.handler_type <> 'container' AND (ji.routing_key IS NULL OR ji.routing_key = ANY($6::text[])))
+			  )
+			ORDER BY ji.effective_priority DESC, ji.scheduled_at ASC, ji.id ASC
 			LIMIT $2
-			FOR UPDATE SKIP LOCKED
+			FOR UPDATE OF ji SKIP LOCKED
 		),
 		updated AS (
 			UPDATE job_instances ji
@@ -406,7 +410,7 @@ func (r *ExecutorRepository) CountActiveWorkers(ctx context.Context, tenantID st
 
 // ListActiveTenantIDs returns IDs of tenants with status = 'active'.
 func (r *ExecutorRepository) ListActiveTenantIDs(ctx context.Context) ([]string, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id FROM tenants WHERE status = 'active' ORDER BY id`)
+	rows, err := r.db.QueryContext(ctx, `SELECT id FROM orbitjob_list_active_tenant_ids()`)
 	if err != nil {
 		return nil, fmt.Errorf("list active tenant ids: %w", err)
 	}

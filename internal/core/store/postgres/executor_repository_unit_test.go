@@ -174,7 +174,6 @@ func TestClaimNextDispatched_WithRoutingKeyLabels(t *testing.T) {
 	assertMock(t, mock)
 }
 
-
 func TestCompleteInstance_Success(t *testing.T) {
 	repo, mock := newExecutorRepoMock(t)
 	now := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
@@ -803,7 +802,7 @@ func TestExecutorRepository_ListActiveTenantIDs_Success(t *testing.T) {
 	repo, mock := newExecutorRepoMock(t)
 
 	rows := sqlmock.NewRows([]string{"id"}).AddRow("tenant-a").AddRow("tenant-b")
-	mock.ExpectQuery("SELECT id FROM tenants WHERE status = 'active' ORDER BY id").
+	mock.ExpectQuery("SELECT id FROM orbitjob_list_active_tenant_ids").
 		WillReturnRows(rows)
 
 	ids, err := repo.ListActiveTenantIDs(context.Background())
@@ -820,7 +819,7 @@ func TestExecutorRepository_ListActiveTenantIDs_Empty(t *testing.T) {
 	repo, mock := newExecutorRepoMock(t)
 
 	rows := sqlmock.NewRows([]string{"id"})
-	mock.ExpectQuery("SELECT id FROM tenants WHERE status = 'active' ORDER BY id").
+	mock.ExpectQuery("SELECT id FROM orbitjob_list_active_tenant_ids").
 		WillReturnRows(rows)
 
 	ids, err := repo.ListActiveTenantIDs(context.Background())
@@ -836,7 +835,7 @@ func TestExecutorRepository_ListActiveTenantIDs_Empty(t *testing.T) {
 func TestExecutorRepository_ListActiveTenantIDs_QueryError(t *testing.T) {
 	repo, mock := newExecutorRepoMock(t)
 
-	mock.ExpectQuery("SELECT id FROM tenants WHERE status = 'active' ORDER BY id").
+	mock.ExpectQuery("SELECT id FROM orbitjob_list_active_tenant_ids").
 		WillReturnError(errors.New("db down"))
 
 	_, err := repo.ListActiveTenantIDs(context.Background())
@@ -850,7 +849,7 @@ func TestExecutorRepository_ListActiveTenantIDs_ScanError(t *testing.T) {
 	repo, mock := newExecutorRepoMock(t)
 
 	rows := sqlmock.NewRows([]string{"id"}).AddRow(nil)
-	mock.ExpectQuery("SELECT id FROM tenants WHERE status = 'active' ORDER BY id").
+	mock.ExpectQuery("SELECT id FROM orbitjob_list_active_tenant_ids").
 		WillReturnRows(rows)
 
 	_, err := repo.ListActiveTenantIDs(context.Background())
