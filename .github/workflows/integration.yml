@@ -52,6 +52,9 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Run v0.2.0 migration baseline qualification
+        run: go test -count=1 -tags integration ./db/migrations
+
       - name: Run postgres integration test helpers
         run: go test -count=1 -tags integration ./internal/platform/postgrestest
 
