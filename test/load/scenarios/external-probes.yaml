@@ -1,0 +1,9 @@
+schema_version: v020-scenarios/v1
+category: external-probes
+families:
+  - {id: dns, count: 20, image: busybox}
+  - {id: tls, count: 20, image: curl}
+  - {id: https, count: 20, image: curl}
+  - {id: small-download, count: 15, image: curl}
+  - {id: public-json, count: 15, image: curl}
+  - {id: ipv4-ipv6, count: 10, image: busybox}

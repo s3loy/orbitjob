@@ -1,0 +1,11 @@
+schema_version: v020-scenarios/v1
+category: failure
+families:
+  - {id: validation-failure, count: 40, image: python, terminal_state: failed}
+  - {id: checksum-mismatch, count: 30, image: alpine, terminal_state: failed}
+  - {id: constraint-failure, count: 25, image: postgres, terminal_state: failed}
+  - {id: http-retry-success, count: 30, image: curl}
+  - {id: http-retry-exhausted, count: 25, image: curl, terminal_state: failed}
+  - {id: execution-timeout, count: 25, image: python, terminal_state: failed}
+  - {id: admin-cancel, count: 25, image: python, terminal_state: canceled}
+  - {id: worker-orphan-recovery, count: 20, image: python}

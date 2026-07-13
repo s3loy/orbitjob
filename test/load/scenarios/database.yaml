@@ -1,0 +1,10 @@
+schema_version: v020-scenarios/v1
+category: database
+families:
+  - {id: query-aggregate, count: 60, image: postgres}
+  - {id: batch-insert, count: 40, image: postgres}
+  - {id: upsert, count: 35, image: postgres}
+  - {id: keyset-pagination, count: 30, image: postgres}
+  - {id: transaction-rollback, count: 20, image: postgres, terminal_state: failed}
+  - {id: optimistic-version-race, count: 20, image: postgres}
+  - {id: statement-timeout, count: 15, image: postgres, terminal_state: failed}

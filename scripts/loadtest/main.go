@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -18,7 +20,9 @@ func main() {
 	switch os.Args[1] {
 	case "preflight":
 		err = runPreflight(os.Args[2:])
-	case "generate", "prepare", "run", "verify", "report", "clean", "smoke", "calibrate", "inject-fault":
+	case "generate":
+		err = runGenerate(os.Args[2:])
+	case "prepare", "run", "verify", "report", "clean", "smoke", "calibrate", "inject-fault":
 		err = fmt.Errorf("%s is not implemented yet", os.Args[1])
 	default:
 		usage()
@@ -79,6 +83,57 @@ func runPreflight(args []string) error {
 		return nil
 	}
 	return nil
+}
+
+func runGenerate(args []string) error {
+	flags := flag.NewFlagSet("generate", flag.ContinueOnError)
+	configPath := flags.String("config", "test/load/config/standard.yaml", "load config")
+	imagesPath := flags.String("images", "test/load/config/images.lock.yaml", "image lock")
+	scenariosPath := flags.String("scenarios", "test/load/scenarios", "scenario directory")
+	runID := flags.String("run-id", "generation-check", "run ID")
+	runRoot := flags.String("run-root", "test/load/runs", "run root")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	cfg, err := LoadConfig(*configPath)
+	if err != nil {
+		return err
+	}
+	lock, err := LoadImageLock(*imagesPath)
+	if err != nil {
+		return err
+	}
+	scenarios, err := LoadScenarios(*scenariosPath)
+	if err != nil {
+		return err
+	}
+	manifest, err := Generate(cfg, scenarios, lock)
+	if err != nil {
+		return err
+	}
+	dir := filepath.Join(*runRoot, *runID, "generated")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	if err := writeStableJSON(filepath.Join(dir, "definitions.json"), manifest.Definitions); err != nil {
+		return err
+	}
+	counts := map[string]int{}
+	for _, definition := range manifest.Definitions {
+		counts[definition.Category]++
+	}
+	return writeStableJSON(filepath.Join(dir, "summary.json"), map[string]any{
+		"definitions": len(manifest.Definitions), "categories": counts, "seed": cfg.Seed,
+	})
+}
+
+func writeStableJSON(path string, value any) error {
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	return os.WriteFile(path, data, 0o600)
 }
 
 func usage() {

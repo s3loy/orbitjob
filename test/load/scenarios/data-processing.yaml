@@ -1,0 +1,10 @@
+schema_version: v020-scenarios/v1
+category: data-processing
+families:
+  - {id: json-group-sum, count: 60, image: python}
+  - {id: json-schema-validation, count: 30, image: python}
+  - {id: csv-aggregate, count: 50, image: python}
+  - {id: csv-to-json, count: 30, image: python}
+  - {id: log-statistics, count: 40, image: python}
+  - {id: archive-roundtrip-checksum, count: 30, image: alpine}
+  - {id: hash-sort-deduplicate, count: 40, image: alpine}
