@@ -4,7 +4,7 @@
 .PHONY: kind-up kind-status kind-down kind-v020-verify
 .PHONY: helm-migrations-sync helm-migrations-check helm-check
 .PHONY: env-init env-check env-clean bootstrap-key grafana-password docker-reset
-.PHONY: migrate-up migrate-down migrate-version
+.PHONY: migrate-up migrate-version
 .PHONY: clean
 
 DEV_DSN      ?= postgres://postgres:postgres@localhost:5432/orbitjob?sslmode=disable
@@ -117,7 +117,7 @@ docker-down:
 	docker compose down
 
 docker-reset:
-	@printf "Type 'delete-volumes' to remove OrbitJob containers and volumes: "; read answer; \
+	@printf "v0.2.0 does not upgrade pre-release development databases in place.\nType 'delete-volumes' to remove OrbitJob containers and volumes: "; read answer; \
 	[ "$$answer" = "delete-volumes" ] || { echo "Cancelled."; exit 1; }; \
 	docker compose down -v
 
@@ -157,13 +157,10 @@ kind-down:
 
 # ---- Database Migrations ----
 migrate-up:
-	golang-migrate -path db/migrations -database "$(DATABASE_URL)" up
-
-migrate-down:
-	golang-migrate -path db/migrations -database "$(DATABASE_URL)" down 1
+	MIGRATION_MODE=migrate MIGRATOR_DSN="$(DATABASE_URL)" MIGRATIONS_DIR=db/migrations go run ./cmd/migrate
 
 migrate-version:
-	golang-migrate -path db/migrations -database "$(DATABASE_URL)" version
+	psql "$(DATABASE_URL)" -Atqc 'SELECT COALESCE(max(version), 0) FROM schema_migrations'
 
 # ---- Clean ----
 clean:

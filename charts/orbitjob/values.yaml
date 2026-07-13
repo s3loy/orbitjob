@@ -57,9 +57,6 @@ database:
 bootstrap:
   secretName: orbitjob-bootstrap
 
-migrations:
-  baselineVersion: 0
-
 taskNamespace:
   create: true
   name: orbitjob-tasks

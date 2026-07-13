@@ -76,9 +76,28 @@ services:
       - backend
     restart: unless-stopped
 
+  # ── Database role initialization ───────────────────────────────
+  owner-init:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: migrate
+    env_file: .env
+    environment:
+      MIGRATION_MODE: owner-init
+      BOOTSTRAP_OWNER_DSN: "postgres://orbitjob:${PG_PASSWORD}@pg:5432/orbitjob?sslmode=disable"
+      MIGRATOR_PASSWORD: ${MIGRATOR_PASSWORD}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      RUNTIME_PASSWORD: ${RUNTIME_PASSWORD}
+      OPERATOR_PASSWORD: ${OPERATOR_PASSWORD}
+    depends_on:
+      pg:
+        condition: service_healthy
+    networks:
+      - backend
+    restart: "no"
+
   # ── Database migration ─────────────────────────────────────────
-  # Runs exactly once, mounting migrations read-only, applying each
-  # .sql file in sorted order directly against PG.
   migrate:
     build:
       context: .
@@ -86,20 +105,14 @@ services:
       target: migrate
     env_file: .env
     environment:
-      MIGRATOR_DSN: "postgres://orbitjob:${PG_PASSWORD}@pg:5432/orbitjob?sslmode=disable"
+      MIGRATION_MODE: migrate
+      MIGRATOR_DSN: "postgres://orbitjob_migrator:${MIGRATOR_PASSWORD}@pg:5432/orbitjob?sslmode=disable"
       MIGRATIONS_DIR: /migrations
-      # Existing development databases predate schema_migrations. Baseline only
-      # the versions that were already applied before the unified runner.
-      MIGRATIONS_BASELINE_VERSION: "6"
-      MIGRATOR_PASSWORD: ${MIGRATOR_PASSWORD}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
-      RUNTIME_PASSWORD: ${RUNTIME_PASSWORD}
-      OPERATOR_PASSWORD: ${OPERATOR_PASSWORD}
     volumes:
       - ./db/migrations:/migrations:ro
     depends_on:
-      pg:
-        condition: service_healthy
+      owner-init:
+        condition: service_completed_successfully
     networks:
       - backend
     restart: "no"

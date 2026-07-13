@@ -85,9 +85,11 @@ psql_exec() {
     psql -U postgres -d orbitjob -Atqc "$1"
 }
 
-[[ $(psql_exec 'SELECT max(version) FROM schema_migrations') == 11 ]]
+[[ $(psql_exec 'SELECT count(*) FROM schema_migrations') == 1 ]]
+[[ $(psql_exec 'SELECT max(version) FROM schema_migrations') == 1 ]]
+[[ $(psql_exec "SELECT name FROM schema_migrations WHERE version=1") == v020_baseline ]]
 [[ $(psql_exec "SELECT count(*) FROM pg_roles WHERE rolname IN ('orbitjob_migrator','orbitjob_admin','orbitjob_runtime','orbitjob_operator') AND NOT rolsuper AND NOT rolbypassrls AND NOT rolcreaterole") == 4 ]]
-[[ $(psql_exec "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname IN ('checks','check_runs') AND c.relrowsecurity") == 2 ]]
+[[ $(psql_exec "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname IN ('tenants','api_keys','jobs','job_instances','job_instance_attempts','workers','audit_events','job_change_audits','checks','check_runs','slis','slos','sli_snapshots','budgets','budget_alerts') AND c.relrowsecurity AND c.relforcerowsecurity") == 15 ]]
 
 before=$(psql_exec 'SELECT count(*) FROM tenants')
 helm upgrade "$release" "$root/charts/orbitjob" "${helm_args[@]}" --wait --wait-for-jobs --timeout 8m
@@ -95,12 +97,12 @@ helm upgrade "$release" "$root/charts/orbitjob" "${helm_args[@]}" --wait --wait-
 
 workdir=$(mktemp -d)
 cp -R "$root/charts/orbitjob" "$workdir/chart"
-cp "$root/deploy/kind/fixtures/0012_fail.up.sql" "$workdir/chart/migrations/"
+cp "$root/deploy/kind/fixtures/0002_fail.up.sql" "$workdir/chart/migrations/"
 if helm upgrade "$release" "$workdir/chart" "${helm_args[@]}" --wait --wait-for-jobs --timeout 3m; then
   printf 'failure migration unexpectedly succeeded\n' >&2
   exit 1
 fi
-[[ $(psql_exec 'SELECT count(*) FROM schema_migrations WHERE version=12') == 0 ]]
+[[ $(psql_exec 'SELECT count(*) FROM schema_migrations WHERE version=2') == 0 ]]
 [[ $(psql_exec "SELECT to_regclass('public.v020_failure_probe') IS NULL") == t ]]
 
 psql_exec "INSERT INTO tenants(id,slug,name,status) VALUES ('retain-marker','retain-marker','retain marker','active') ON CONFLICT DO NOTHING"

@@ -29,8 +29,6 @@ spec:
                   key: {{ .Values.database.keys.migrator }}
             - name: MIGRATIONS_DIR
               value: /migrations
-            - name: MIGRATIONS_BASELINE_VERSION
-              value: {{ .Values.migrations.baselineVersion | quote }}
           volumeMounts:
             - name: migrations
               mountPath: /migrations
