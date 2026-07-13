@@ -1,0 +1,38 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: orbitjob-load-operations
+  namespace: orbitjob-tasks
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: orbitjob-load-operations
+  namespace: orbitjob
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "configmaps", "endpoints"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: orbitjob-load-operations
+  namespace: orbitjob
+subjects:
+  - kind: ServiceAccount
+    name: orbitjob-load-operations
+    namespace: orbitjob-tasks
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: orbitjob-load-operations
