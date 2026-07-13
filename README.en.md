@@ -23,7 +23,7 @@ Poor fit: millisecond-latency scheduling, exactly-once execution, or replacing a
 - `exec`, `http`, `webhook`, `pg_notify`, and `container` handlers
 - Kubernetes Job execution with digest checks, RBAC, and a restricted Pod security context
 - API-key authentication, tenant isolation, PostgreSQL roles, RLS, and scoped `SECURITY DEFINER` entry points
-- Checksum-aware migration runner, advisory locking, and legacy-database baselining
+- Checksum-aware migration runner, advisory locking, a formal v0.2.0 baseline, and pre-release database reset enforcement
 - Checks, CheckRuns, SLIs, SLOs, error budgets, and burn-rate alerts
 - Docker Compose, a Helm Chart, and kind install/upgrade verification
 - Prometheus metrics, Grafana dashboards, structured logs, and trace IDs
@@ -42,6 +42,18 @@ Not delivered yet: Operator, CRDs, Kubernetes Lease, PostgreSQL epoch fencing, W
 ## Docker Compose quick start
 
 You need Docker Compose v2 and `make`:
+
+> **v0.2.0 database reset requirement**
+>
+> v0.2.0 squashes the pre-release `0001`–`0011` migration history into one formal baseline. Existing development databases and named volumes cannot be upgraded in place. Before starting this version for the first time, run `make docker-reset`, then run `make docker-up`.
+>
+> Old development histories are rejected with:
+>
+> ```text
+> unsupported pre-release schema history; recreate the database for v0.2.0
+> ```
+>
+> Do not edit `schema_migrations` or insert a fabricated baseline row.
 
 ```bash
 make docker-up
