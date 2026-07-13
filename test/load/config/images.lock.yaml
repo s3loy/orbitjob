@@ -1,0 +1,50 @@
+schema_version: v020-images/v1
+images:
+  - name: python
+    repository: docker.io/library/python
+    tag: 3.14-alpine
+    index_digest: sha256:26730869004e2b9c4b9ad09cab8625e81d256d1ce97e72df5520e806b1709f92
+    platform_manifests:
+      linux/amd64: sha256:47f36929d95852c8aa959380eeeea761ba7411ebe793d090da4cd518ac3af237
+      linux/arm64: sha256:ea1c84f6f8fd70586985617ca87516c75e583748885d70515d83c7f3c8e94174
+    purpose: [json, csv, checksum, fixture-client]
+  - name: postgres
+    repository: docker.io/library/postgres
+    tag: 17-alpine
+    index_digest: sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+    platform_manifests:
+      linux/amd64: sha256:af194ccf3e2d7fe367012c7b88ce8b816c5c889b18a5b316799a1f0d7eac746a
+      linux/arm64: sha256:b797483593b82cbea9a7ee41c88f324a90d10d9c2504d40e755d91c75456366d
+    purpose: [sql, transaction, pagination]
+  - name: curl
+    repository: docker.io/curlimages/curl
+    tag: 8.16.0
+    index_digest: sha256:463eaf6072688fe96ac64fa623fe73e1dbe25d8ad6c34404a669ad3ce1f104b6
+    platform_manifests:
+      linux/amd64: sha256:5a91ea0c9c3ee27b4abe657b68cf6bf0676afa13b236b3bda34283cb3924d4f6
+      linux/arm64: sha256:b949ec80877077def1544f0727d3e3101dd687fe20a5bf74997e557f7e3ac961
+    purpose: [http, webhook, external-probe]
+  - name: alpine
+    repository: docker.io/library/alpine
+    tag: "3.22"
+    index_digest: sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce
+    platform_manifests:
+      linux/amd64: sha256:7c8cb692ae09657cbc4a3f3cbd0e8d5a2690ba38386aaaf252dbb060bf5eb2e6
+      linux/arm64: sha256:2c9d26f410d032d5b1525aa8a873e238b05b90c4ae8618743d4311f0cc827e37
+    purpose: [archive, sha256, sort]
+  - name: busybox
+    repository: docker.io/library/busybox
+    tag: "1.37"
+    index_digest: sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028
+    platform_manifests:
+      linux/amd64: sha256:7a3ebe5bfd1a4a19797d20b0c0bb39d44393e9a03fd852c0865b0f540d868df0
+      linux/arm64: sha256:f10e809bcf667d8e9f01d2baf82869049a495cd448cdfe1f4dee94078b960ae9
+    purpose: [dns, network, negative-cases]
+  - name: kubectl
+    repository: registry.k8s.io/kubectl
+    tag: v1.35.0
+    index_digest: sha256:0bb95b2a450875fc8ceaea2f9987a99fe27c228846e2e00b93b65ebb0d59034e
+    platform_manifests:
+      linux/amd64: sha256:3aa73a9c4cf5a830a02ee108238011b7f8d9084b9b88432b7851e489420bacc6
+      linux/arm64: sha256:db2a69640a0b58e8577367b3964d3c19a38d84644ad30a9e65be19990a7cec03
+    purpose: [pod, deployment, job, configmap, endpointslice, rbac]
