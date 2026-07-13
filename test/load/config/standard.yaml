@@ -1,0 +1,52 @@
+schema_version: v020-load/v1
+profile: standard
+qualification: true
+seed: v020-standard-1
+duration: 4h
+minimum_instances: 10000
+environment:
+  docker_cpu: 10
+  docker_memory_gib: 8
+  kind_nodes: 1
+definitions:
+  total: 1200
+  categories:
+    data-processing: 280
+    database: 220
+    http-webhook: 240
+    operations: 140
+    failure: 220
+    external-probes: 100
+  product_trigger_types:
+    manual: 840
+    cron: 360
+  trigger_origins:
+    manual: 720
+    cron: 360
+    webhook: 120
+tenants:
+  - load-alpha
+  - load-beta
+  - load-gamma
+  - load-adversarial
+phases:
+  - {name: warmup, offset: 0m, duration: 15m, rate_per_minute: 0, max_active: 20}
+  - {name: correctness, offset: 15m, duration: 45m, rate_per_minute: 20, max_active: 20}
+  - {name: steady, offset: 60m, duration: 30m, rate_per_minute: 40, max_active: 30}
+  - {name: ramp, offset: 90m, duration: 30m, rate_per_minute: 80, max_active: 50}
+  - {name: peak, offset: 120m, duration: 20m, rate_per_minute: 150, max_active: 80}
+  - {name: recovery, offset: 140m, duration: 40m, rate_per_minute: 30, max_active: 30}
+  - {name: fault-recovery, offset: 180m, duration: 60m, rate_per_minute: 40, max_active: 40}
+burst:
+  phase: peak
+  offset: 5m
+  count: 500
+  submit_within: 60s
+sampling:
+  readiness: 10s
+  kubernetes_objects: 15s
+  resources: 15s
+  prometheus: 15s
+  postgres: 30s
+  backlog: 30s
+  database_size: 5m
