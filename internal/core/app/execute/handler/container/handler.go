@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -96,13 +97,14 @@ func (h *Handler) Execute(ctx context.Context, task execute.AssignedTask) execut
 }
 
 type payload struct {
-	Image              string
-	Command            []string
-	Args               []string
-	Env                []corev1.EnvVar
-	Resources          corev1.ResourceRequirements
-	ImagePullPolicy    corev1.PullPolicy
-	ServiceAccountName string
+	Image                        string
+	Command                      []string
+	Args                         []string
+	Env                          []corev1.EnvVar
+	Resources                    corev1.ResourceRequirements
+	ImagePullPolicy              corev1.PullPolicy
+	ServiceAccountName           string
+	AutomountServiceAccountToken bool
 }
 
 func parsePayload(raw map[string]any, requireDigest bool) (payload, error) {
@@ -140,14 +142,105 @@ func parsePayload(raw map[string]any, requireDigest bool) (payload, error) {
 		}
 	}
 
+	env, err := envVars(raw["env"])
+	if err != nil {
+		return payload{}, err
+	}
+	resources, err := resourceRequirements(raw["resources"])
+	if err != nil {
+		return payload{}, err
+	}
+	automount := false
+	if value, ok := raw["automount_service_account_token"]; ok {
+		var valid bool
+		automount, valid = value.(bool)
+		if !valid {
+			return payload{}, fmt.Errorf("automount_service_account_token must be a boolean")
+		}
+	}
+
 	return payload{
-		Image: image, Command: command, Args: args,
+		Image: image, Command: command, Args: args, Env: env,
 		ImagePullPolicy: pullPolicy, ServiceAccountName: serviceAccount,
-		Resources: corev1.ResourceRequirements{
-			Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m"), corev1.ResourceMemory: resource.MustParse("64Mi")},
-			Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("512Mi")},
-		},
+		AutomountServiceAccountToken: automount,
+		Resources:                    resources,
 	}, nil
+}
+
+func envVars(value any) ([]corev1.EnvVar, error) {
+	if value == nil {
+		return nil, nil
+	}
+	values, ok := value.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("env must be an object of string values")
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out := make([]corev1.EnvVar, 0, len(keys))
+	for _, key := range keys {
+		text, ok := values[key].(string)
+		if !ok || key == "" {
+			return nil, fmt.Errorf("env.%s must be a string with a non-empty key", key)
+		}
+		out = append(out, corev1.EnvVar{Name: key, Value: text})
+	}
+	return out, nil
+}
+
+func resourceRequirements(value any) (corev1.ResourceRequirements, error) {
+	defaults := corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m"), corev1.ResourceMemory: resource.MustParse("64Mi")},
+		Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("512Mi")},
+	}
+	if value == nil {
+		return defaults, nil
+	}
+	root, ok := value.(map[string]any)
+	if !ok {
+		return corev1.ResourceRequirements{}, fmt.Errorf("resources must be an object")
+	}
+	parseList := func(name string, fallback corev1.ResourceList) (corev1.ResourceList, error) {
+		raw, exists := root[name]
+		if !exists {
+			return fallback, nil
+		}
+		values, ok := raw.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("resources.%s must be an object", name)
+		}
+		out := corev1.ResourceList{}
+		for _, key := range []corev1.ResourceName{corev1.ResourceCPU, corev1.ResourceMemory} {
+			text, ok := values[string(key)].(string)
+			if !ok || text == "" {
+				return nil, fmt.Errorf("resources.%s.%s must be a Kubernetes quantity", name, key)
+			}
+			quantity, err := resource.ParseQuantity(text)
+			if err != nil || quantity.Sign() <= 0 {
+				return nil, fmt.Errorf("resources.%s.%s must be a positive Kubernetes quantity", name, key)
+			}
+			out[key] = quantity
+		}
+		return out, nil
+	}
+	requests, err := parseList("requests", defaults.Requests)
+	if err != nil {
+		return corev1.ResourceRequirements{}, err
+	}
+	limits, err := parseList("limits", defaults.Limits)
+	if err != nil {
+		return corev1.ResourceRequirements{}, err
+	}
+	if requests.Cpu().Cmp(*limits.Cpu()) > 0 {
+		return corev1.ResourceRequirements{}, fmt.Errorf("cpu request exceeds limit")
+	}
+	if requests.Memory().Cmp(*limits.Memory()) > 0 {
+		return corev1.ResourceRequirements{}, fmt.Errorf("memory request exceeds limit")
+	}
+	return corev1.ResourceRequirements{Requests: requests, Limits: limits}, nil
 }
 
 func stringSlice(value any, field string) ([]string, error) {
@@ -192,7 +285,7 @@ func buildJob(cfg Config, task execute.AssignedTask, p payload) *batchv1.Job {
 		Spec: batchv1.JobSpec{
 			BackoffLimit: &zero, TTLSecondsAfterFinished: &ttl, ActiveDeadlineSeconds: &deadline,
 			Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Spec: corev1.PodSpec{
-				RestartPolicy: corev1.RestartPolicyNever, AutomountServiceAccountToken: ptr(false), ServiceAccountName: p.ServiceAccountName,
+				RestartPolicy: corev1.RestartPolicyNever, AutomountServiceAccountToken: ptr(p.AutomountServiceAccountToken), ServiceAccountName: p.ServiceAccountName,
 				SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: &nonRoot, RunAsUser: &uid, SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}},
 				Containers: []corev1.Container{{Name: "task", Image: p.Image, Command: p.Command, Args: p.Args, Env: p.Env, ImagePullPolicy: p.ImagePullPolicy, Resources: p.Resources,
 					SecurityContext: &corev1.SecurityContext{RunAsNonRoot: &nonRoot, RunAsUser: &uid, ReadOnlyRootFilesystem: &readOnly, AllowPrivilegeEscalation: &noEscalation, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
