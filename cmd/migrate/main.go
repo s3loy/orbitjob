@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strconv"
 
 	_ "github.com/lib/pq"
 
@@ -21,11 +20,10 @@ const (
 )
 
 type config struct {
-	mode            migrationMode
-	dsn             string
-	migrationsDir   string
-	baselineVersion int
-	rolePasswords   map[string]string
+	mode          migrationMode
+	dsn           string
+	migrationsDir string
+	rolePasswords map[string]string
 }
 
 func loadConfig() (config, error) {
@@ -55,16 +53,12 @@ func loadConfig() (config, error) {
 			}
 		}
 	case modeMigrate:
+		if _, exists := os.LookupEnv("MIGRATIONS_BASELINE_VERSION"); exists {
+			return config{}, fmt.Errorf("MIGRATIONS_BASELINE_VERSION has been removed; recreate pre-v0.2.0 development databases instead")
+		}
 		cfg.dsn = os.Getenv("MIGRATOR_DSN")
 		if cfg.dsn == "" {
 			return config{}, fmt.Errorf("MIGRATOR_DSN is required in migrate mode")
-		}
-		if raw := os.Getenv("MIGRATIONS_BASELINE_VERSION"); raw != "" {
-			value, err := strconv.Atoi(raw)
-			if err != nil || value < 0 {
-				return config{}, fmt.Errorf("MIGRATIONS_BASELINE_VERSION must be a non-negative integer")
-			}
-			cfg.baselineVersion = value
 		}
 	default:
 		return config{}, fmt.Errorf("MIGRATION_MODE must be owner-init or migrate")
@@ -94,10 +88,7 @@ func run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		result, err := platformmigrate.Execute(ctx, db, migrations, platformmigrate.Options{
-			BaselineVersion: cfg.baselineVersion,
-			Logger:          log.Default(),
-		})
+		result, err := platformmigrate.Execute(ctx, db, migrations, platformmigrate.Options{Logger: log.Default()})
 		if err != nil {
 			return err
 		}
