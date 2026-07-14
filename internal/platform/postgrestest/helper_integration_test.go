@@ -7,6 +7,8 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +21,39 @@ const (
 	expectedLockClassID  = 32117
 	expectedLockObjectID = 260326
 )
+
+func TestFindTestSchemaFile(t *testing.T) {
+	path, err := findMigrationFile("internal", "platform", "postgrestest", "schema.sql")
+	if err != nil {
+		t.Fatalf("find schema.sql: %v", err)
+	}
+	if !strings.HasSuffix(filepath.ToSlash(path), "internal/platform/postgrestest/schema.sql") {
+		t.Fatalf("schema path = %q", path)
+	}
+}
+
+func TestTestSchemaExcludesProductionSecurityInstallation(t *testing.T) {
+	path, err := findMigrationFile("internal", "platform", "postgrestest", "schema.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fragment := range []string{
+		"CREATE ROLE ",
+		"ALTER ROLE ",
+		"OWNER TO orbitjob_",
+		"FORCE ROW LEVEL SECURITY",
+		"SECURITY DEFINER",
+		"schema_migrations",
+	} {
+		if strings.Contains(string(data), fragment) {
+			t.Errorf("test schema contains %q", fragment)
+		}
+	}
+}
 
 func TestApplySchemaWaitsForSharedDatabaseLock(t *testing.T) {
 	dsn := packageTestDSN(t)

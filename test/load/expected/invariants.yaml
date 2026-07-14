@@ -1,0 +1,23 @@
+schema_version: v020-invariants/v1
+fatal:
+  - tenant-leak
+  - duplicate-valid-attempt-token
+  - terminal-regression
+  - succeeded-reexecution
+  - cancelled-side-effect
+  - retry-after-exhaustion
+  - stale-token-completion
+  - version-regression
+  - tenant-id-mutation
+  - duplicate-idempotent-side-effect
+  - schema-corruption
+thresholds:
+  definitions: {operator: eq, value: 1200}
+  instances: {operator: gte, value: 10000}
+  throughput_trigger_acceptance: {operator: gte, value: 0.999}
+  burst_count: {operator: eq, value: 500}
+  burst_seconds: {operator: lte, value: 60}
+  peak_unexpected_failure_ratio: {operator: lte, value: 0.001}
+  postgres_deadlocks: {operator: eq, value: 0}
+  final_active_jobs: {operator: eq, value: 0}
+  final_orphan_pods: {operator: eq, value: 0}

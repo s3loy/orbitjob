@@ -1,0 +1,11 @@
+schema_version: v020-scenarios/v1
+category: http-webhook
+families:
+  - {id: paginated-api, count: 50, image: curl}
+  - {id: webhook-delivery, count: 50, image: curl}
+  - {id: idempotent-webhook, count: 30, image: curl}
+  - {id: file-download, count: 30, image: curl}
+  - {id: rate-limit-then-success, count: 25, image: curl}
+  - {id: server-error-then-success, count: 25, image: curl}
+  - {id: slow-response-timeout, count: 15, image: curl, terminal_state: failed}
+  - {id: invalid-json-content-type, count: 15, image: curl, terminal_state: failed}

@@ -79,10 +79,11 @@ make docker-status
 
 | 服务 | 用途 | 主机端口 |
 |---|---|---:|
-| `pg` | PostgreSQL 17 | `5432` |
-| `pgbouncer` | transaction pooling；当前 runtime DSN 不经过它 | 不发布 |
-| `migrate` | role 初始化、checksum migration、legacy baseline | 一次性任务 |
-| `secret-init` | 初始化非 root secret volume | 一次性任务 |
+| `pg` | PostgreSQL 17 | `5432`，仅 development override |
+| `pgbouncer` | transaction pooling | 不发布 |
+| `owner-init` | 创建和收紧数据库 role，设置部署密码 | 一次性任务 |
+| `migrate` | 以 migrator 身份执行 checksum migration；拒绝旧开发 schema | 一次性任务 |
+| `secret-init` | 准备非 root secret volume | 一次性任务 |
 | `bootstrap` | 创建默认 tenant 和初始 API key | 一次性任务 |
 | `admin-api` | HTTP 控制面 | `8080` |
 | `scheduler` | 生成到期 instance | 不发布 |
@@ -93,7 +94,17 @@ make docker-status
 | `etcd` | 可选协调 | profile 启用后为 `2379` |
 | `loki`、`promtail` | 可选日志栈 | profile 启用 |
 
-`migrate` 使用 advisory lock、`schema_migrations` 和 SHA-256 checksum。Compose 为旧开发库设置 `MIGRATIONS_BASELINE_VERSION=6`；不要把这个值复制到新部署。一次性任务以退出码 0 结束是正常状态。
+`owner-init` 使用 bootstrap database owner 创建 cluster-level role、收紧属性和 membership，并设置部署生成的密码。随后 `migrate` 以 `orbitjob_migrator` 登录，通过 `SET ROLE orbitjob_table_owner` 执行唯一的 `0001_v020_baseline.up.sql`。
+
+v0.2.0 不支持旧开发数据库原地升级，也不提供 legacy rebase。升级前重建本地数据：
+
+```bash
+make docker-reset
+# 输入 delete-volumes
+make docker-up
+```
+
+Runner 使用单连接 advisory lock、逐 migration 事务和 SHA-256 checksum。重复运行为 no-op。v0.2.0 发布后的 migration 只能追加，不能重写 baseline。
 
 查看日志：
 
@@ -330,7 +341,43 @@ make helm-migrations-check
 make helm-check
 ```
 
-安装：
+修改 `db/migrations/*.up.sql` 后同步 Chart：
+
+```bash
+make helm-migrations-sync
+```
+
+### 3.2 本地 kind 验证
+
+需要 `kind`、`kubectl`、`helm`、Docker：
+
+```bash
+make kind-up
+make kind-v020-verify
+```
+
+验证脚本使用 `deploy/kind/` 下的 PostgreSQL、values 和失败 migration fixture，覆盖首次安装、重复升级与 migration 失败阻断。
+
+若 PostgreSQL PVC 包含发布前开发 schema，删除本地集群后重建：
+
+```bash
+make kind-down
+# 输入 delete-kind
+make kind-up
+```
+
+Chart 不会删除外部 PostgreSQL 数据，也不会把旧开发 history rebase 为正式 baseline。
+
+删除集群：
+
+```bash
+make kind-down
+# 输入 delete-kind
+```
+
+### 3.3 安装到已有 Kubernetes
+
+先准备镜像和数据库 Secret，再安装：
 
 ```bash
 helm upgrade --install orbitjob charts/orbitjob \
@@ -341,6 +388,19 @@ helm upgrade --install orbitjob charts/orbitjob \
 ```
 
 生产环境建议 `worker.containerExecution.requireDigest: true`。container Job image 必须写成 `image@sha256:...`；可变 tag 会被拒绝。
+
+```yaml
+worker:
+  containerExecution:
+    namespace: orbitjob-tasks
+    requireDigest: true
+    ttlSecondsAfterFinished: 600
+    serviceAccountName: orbitjob-task
+
+taskNamespace:
+  create: true
+  name: orbitjob-tasks
+```
 
 Chart 当前只为 Admin API 创建 ClusterIP Service，没有内置 Ingress。用端口转发访问：
 
@@ -721,10 +781,12 @@ Grafana 预置 Prometheus datasource 和 OrbitJob dashboard。Loki datasource �
 ### migration 失败
 
 ```bash
-docker compose logs migrate
+docker compose logs owner-init migrate
 ```
 
-checksum mismatch 表示已应用 migration 被修改。不要改历史 migration；新增下一个序号。生产环境不要使用 `make migrate-down` 回退 `0007`–`0009`，这些版本明确不可逆。
+- `unsupported pre-release schema history; recreate the database for v0.2.0` 表示数据库来自发布前开发 migration。执行 `make docker-reset`；不要修改 `schema_migrations`。
+- `migration 0001 checksum mismatch` 且 ledger 中的 name 是 `v020_baseline`，表示正式 baseline 文件被改写。恢复发布文件，不要用 reset 掩盖 history 变更。
+- 后续 migration 的 checksum mismatch 同样要求恢复原文件，或通过新的连续编号 migration 修正 schema。
 
 ### bootstrap key 取不到
 

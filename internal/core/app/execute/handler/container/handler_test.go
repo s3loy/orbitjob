@@ -2,6 +2,7 @@ package container
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -72,6 +73,53 @@ func TestHandlerCreatesSecureJobAndCompletes(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("handler did not finish")
+	}
+}
+
+func TestParsePayloadQualificationFields(t *testing.T) {
+	got, err := parsePayload(map[string]any{
+		"image": "registry.example/tool:1@sha256:" + strings.Repeat("a", 64),
+		"env":   map[string]any{"CASE_ID": "data-json-0001"},
+		"resources": map[string]any{
+			"requests": map[string]any{"cpu": "25m", "memory": "32Mi"},
+			"limits":   map[string]any{"cpu": "250m", "memory": "128Mi"},
+		},
+		"automount_service_account_token": true,
+	}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Env) != 1 || got.Env[0].Name != "CASE_ID" || got.Env[0].Value != "data-json-0001" {
+		t.Fatalf("env = %#v", got.Env)
+	}
+	if got.Resources.Requests.Cpu().String() != "25m" || got.Resources.Limits.Memory().String() != "128Mi" {
+		t.Fatalf("resources = %#v", got.Resources)
+	}
+	if !got.AutomountServiceAccountToken {
+		t.Fatal("automount token should be enabled")
+	}
+}
+
+func TestParsePayloadDefaultsTokenAutomountOff(t *testing.T) {
+	got, err := parsePayload(map[string]any{"image": "alpine:3.22"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AutomountServiceAccountToken {
+		t.Fatal("token automount must default to false")
+	}
+}
+
+func TestParsePayloadRejectsResourceRequestAboveLimit(t *testing.T) {
+	_, err := parsePayload(map[string]any{
+		"image": "alpine:3.22",
+		"resources": map[string]any{
+			"requests": map[string]any{"cpu": "500m", "memory": "64Mi"},
+			"limits":   map[string]any{"cpu": "100m", "memory": "64Mi"},
+		},
+	}, false)
+	if err == nil || !strings.Contains(err.Error(), "cpu request exceeds limit") {
+		t.Fatalf("error = %v", err)
 	}
 }
 

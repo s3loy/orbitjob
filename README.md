@@ -23,7 +23,7 @@ OrbitJob 是 Kubernetes-first 的分布式作业调度平台。PostgreSQL 保存
 - `exec`、`http`、`webhook`、`pg_notify`、`container` handler
 - Kubernetes Job container 执行，带 digest 校验、RBAC 和受限 Pod Security
 - API key 认证、tenant 隔离、PostgreSQL role、RLS 与 `SECURITY DEFINER` 入口
-- checksum migration runner、advisory lock、legacy database baseline
+- checksum migration runner、advisory lock、正式 v0.2.0 baseline 和旧开发数据库 reset 防护
 - Check、CheckRun、SLI、SLO、错误预算和燃烧率告警
 - Docker Compose、Helm Chart 和 kind 安装/升级验证
 - Prometheus metrics、Grafana dashboard、结构化日志和 trace ID
@@ -42,6 +42,18 @@ OrbitJob 是 Kubernetes-first 的分布式作业调度平台。PostgreSQL 保存
 ## Docker Compose 快速启动
 
 需要 Docker Compose v2 和 `make`：
+
+> **v0.2.0 数据库重建要求**
+>
+> v0.2.0 将发布前的 `0001`–`0011` 开发 migration 合并为一个正式 baseline。旧开发数据库和 named volume 不支持原地升级。首次运行本版本前，执行 `make docker-reset` 删除旧 volume，再执行 `make docker-up`。
+>
+> Runner 检测到旧开发 history 时会拒绝启动：
+>
+> ```text
+> unsupported pre-release schema history; recreate the database for v0.2.0
+> ```
+>
+> 不要手工修改 `schema_migrations`，也不要插入伪造的 baseline 记录。
 
 ```bash
 make setup

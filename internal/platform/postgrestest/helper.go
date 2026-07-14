@@ -150,7 +150,7 @@ func applySchemaWithDB(dsn string, db *sql.DB) error {
 		return err
 	}
 
-	path, err := findMigrationFile("db", "migrations", "0001_init.up.sql")
+	path, err := findMigrationFile("internal", "platform", "postgrestest", "schema.sql")
 	if err != nil {
 		return err
 	}

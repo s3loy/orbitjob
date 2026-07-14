@@ -1,0 +1,10 @@
+schema_version: v020-scenarios/v1
+category: operations
+families:
+  - {id: pod-status, count: 30, image: kubectl}
+  - {id: deployment-rollout, count: 20, image: kubectl}
+  - {id: job-completion, count: 25, image: kubectl}
+  - {id: label-list, count: 20, image: kubectl}
+  - {id: configmap-check, count: 15, image: kubectl}
+  - {id: endpointslice-check, count: 15, image: kubectl}
+  - {id: rbac-denied, count: 15, image: kubectl}

@@ -31,14 +31,24 @@ func TestLoadConfigOwnerInit(t *testing.T) {
 func TestLoadConfigMigrate(t *testing.T) {
 	t.Setenv("MIGRATION_MODE", string(modeMigrate))
 	t.Setenv("MIGRATOR_DSN", "postgres://migrator")
-	t.Setenv("MIGRATIONS_BASELINE_VERSION", "2")
 
 	cfg, err := loadConfig()
 	if err != nil {
 		t.Fatalf("loadConfig() error = %v", err)
 	}
-	if cfg.mode != modeMigrate || cfg.dsn != "postgres://migrator" || cfg.baselineVersion != 2 {
+	if cfg.mode != modeMigrate || cfg.dsn != "postgres://migrator" {
 		t.Fatalf("loadConfig() = %#v", cfg)
+	}
+}
+
+func TestLoadConfigRejectsRemovedBaselineVersion(t *testing.T) {
+	t.Setenv("MIGRATION_MODE", string(modeMigrate))
+	t.Setenv("MIGRATOR_DSN", "postgres://migrator")
+	t.Setenv("MIGRATIONS_BASELINE_VERSION", "6")
+
+	_, err := loadConfig()
+	if err == nil || !strings.Contains(err.Error(), "MIGRATIONS_BASELINE_VERSION has been removed") {
+		t.Fatalf("loadConfig() error = %v", err)
 	}
 }
 
@@ -49,17 +59,6 @@ func TestLoadConfigRejectsDatabaseDSNFallback(t *testing.T) {
 
 	_, err := loadConfig()
 	if err == nil || !strings.Contains(err.Error(), "MIGRATOR_DSN") {
-		t.Fatalf("loadConfig() error = %v", err)
-	}
-}
-
-func TestLoadConfigRejectsInvalidBaseline(t *testing.T) {
-	t.Setenv("MIGRATION_MODE", string(modeMigrate))
-	t.Setenv("MIGRATOR_DSN", "postgres://migrator")
-	t.Setenv("MIGRATIONS_BASELINE_VERSION", "-1")
-
-	_, err := loadConfig()
-	if err == nil || !strings.Contains(err.Error(), "non-negative integer") {
 		t.Fatalf("loadConfig() error = %v", err)
 	}
 }
