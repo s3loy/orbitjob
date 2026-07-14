@@ -6,13 +6,6 @@ metadata:
     app.kubernetes.io/managed-by: orbitjob-loadtest
 ---
 apiVersion: v1
-kind: Namespace
-metadata:
-  name: orbitjob-tasks
-  labels:
-    app.kubernetes.io/managed-by: orbitjob
----
-apiVersion: v1
 kind: ResourceQuota
 metadata:
   name: orbitjob-load-fixtures
