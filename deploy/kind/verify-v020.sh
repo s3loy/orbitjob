@@ -8,7 +8,8 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 tag=${ORBITJOB_IMAGE_TAG:-v020}
 created_cluster=false
 workdir=
-password_file=
+dsn_file=
+port_forward_pid=
 
 cleanup() {
   status=$?
@@ -18,7 +19,9 @@ cleanup() {
     kubectl logs -n "$namespace" -l job-name --all-containers --tail=100 2>/dev/null || true
   fi
   [[ -z ${workdir:-} ]] || rm -rf "$workdir"
-  [[ -z ${password_file:-} ]] || rm -f "$password_file"
+  [[ -z ${config_dir:-} ]] || rm -rf "$config_dir"
+  [[ -z ${dsn_file:-} ]] || rm -f "$dsn_file"
+  [[ -z ${port_forward_pid:-} ]] || kill "$port_forward_pid" 2>/dev/null || true
   if [[ $created_cluster == true && $status == 0 ]]; then
     kind delete cluster --name "$cluster" >/dev/null 2>&1 || true
   elif [[ $created_cluster == true ]]; then
@@ -29,7 +32,7 @@ cleanup() {
 trap cleanup EXIT
 
 require() { command -v "$1" >/dev/null || { printf '%s is required\n' "$1" >&2; exit 1; }; }
-for command in kind kubectl helm docker openssl; do require "$command"; done
+for command in kind kubectl helm docker openssl go nc; do require "$command"; done
 
 docker info >/dev/null
 if ! kind get clusters | grep -qx "$cluster"; then
@@ -41,23 +44,42 @@ kubectl apply -f "$root/deploy/kind/postgres-17.yaml"
 kubectl rollout status deployment/orbitjob-postgres -n "$namespace" --timeout=3m
 
 umask 077
-password_file=$(mktemp "${TMPDIR:-/tmp}/orbitjob-v020-passwords.XXXXXX")
-migrator_password=$(openssl rand -hex 24)
-admin_password=$(openssl rand -hex 24)
-runtime_password=$(openssl rand -hex 24)
-operator_password=$(openssl rand -hex 24)
-owner_dsn='postgres://postgres:orbitjob-owner@orbitjob-postgres.orbitjob.svc:5432/orbitjob?sslmode=disable'
+config_dir=$(mktemp -d "${TMPDIR:-/tmp}/orbitjob-v020-config.XXXXXX")
+dsn_file=$(mktemp "${TMPDIR:-/tmp}/orbitjob-v020-dsn.XXXXXX")
+printf '%s\n' 'postgres://postgres:orbitjob-owner@orbitjob-postgres.orbitjob.svc:5432/orbitjob?sslmode=disable' >"$dsn_file"
+# Port-forward lets the same configure command initialize an external database
+# without teaching this script how to generate role-specific DSNs.
+kubectl port-forward -n "$namespace" deployment/orbitjob-postgres 15432:5432 >"$config_dir/port-forward.log" 2>&1 &
+port_forward_pid=$!
+ready=false
+for _ in $(seq 1 30); do
+  if ! kill -0 "$port_forward_pid" 2>/dev/null; then
+    cat "$config_dir/port-forward.log" >&2
+    exit 1
+  fi
+  if nc -z 127.0.0.1 15432; then ready=true; break; fi
+  sleep 1
+done
+[[ $ready == true ]] || { printf 'PostgreSQL port-forward did not become ready\n' >&2; exit 1; }
+printf '%s\n' 'postgres://postgres:orbitjob-owner@127.0.0.1:15432/orbitjob?sslmode=disable' >"$dsn_file"
+go -C "$root" run ./cmd/configure setup --mode external --database-dsn-file "$dsn_file" --state "$config_dir/database.json" --runtime-env "$config_dir/database.env"
+set -a
+# shellcheck disable=SC1090
+. "$config_dir/database.env"
+set +a
 kubectl create secret generic orbitjob-database -n "$namespace" \
-  --from-literal=bootstrap-owner-dsn="$owner_dsn" \
-  --from-literal=migrator-dsn="postgres://orbitjob_migrator:${migrator_password}@orbitjob-postgres.orbitjob.svc:5432/orbitjob?sslmode=disable" \
-  --from-literal=admin-dsn="postgres://orbitjob_admin:${admin_password}@orbitjob-postgres.orbitjob.svc:5432/orbitjob?sslmode=disable" \
-  --from-literal=runtime-dsn="postgres://orbitjob_runtime:${runtime_password}@orbitjob-postgres.orbitjob.svc:5432/orbitjob?sslmode=disable" \
-  --from-literal=migrator-password="$migrator_password" \
-  --from-literal=admin-password="$admin_password" \
-  --from-literal=runtime-password="$runtime_password" \
-  --from-literal=operator-password="$operator_password" \
+  --from-literal=bootstrap-owner-dsn="${BOOTSTRAP_OWNER_DSN/127.0.0.1:15432/orbitjob-postgres.orbitjob.svc:5432}" \
+  --from-literal=migrator-dsn="${MIGRATOR_DSN/127.0.0.1:15432/orbitjob-postgres.orbitjob.svc:5432}" \
+  --from-literal=admin-dsn="${ADMIN_DSN/127.0.0.1:15432/orbitjob-postgres.orbitjob.svc:5432}" \
+  --from-literal=runtime-dsn="${RUNTIME_DSN/127.0.0.1:15432/orbitjob-postgres.orbitjob.svc:5432}" \
+  --from-literal=migrator-password="$MIGRATOR_PASSWORD" \
+  --from-literal=admin-password="$ADMIN_PASSWORD" \
+  --from-literal=runtime-password="$RUNTIME_PASSWORD" \
   --from-literal=bootstrap-api-key="otj_$(openssl rand -hex 24)" \
   --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+kill "$port_forward_pid"
+wait "$port_forward_pid" 2>/dev/null || true
+port_forward_pid=
 
 for target in migrate admin scheduler dispatcher worker bootstrap; do
   case "$target" in
@@ -86,7 +108,8 @@ psql_exec() {
 }
 
 [[ $(psql_exec 'SELECT max(version) FROM schema_migrations') == 11 ]]
-[[ $(psql_exec "SELECT count(*) FROM pg_roles WHERE rolname IN ('orbitjob_migrator','orbitjob_admin','orbitjob_runtime','orbitjob_operator') AND NOT rolsuper AND NOT rolbypassrls AND NOT rolcreaterole") == 4 ]]
+[[ $(psql_exec "SELECT count(*) FROM pg_roles WHERE rolname IN ('orbitjob_migrator','orbitjob_admin','orbitjob_runtime') AND rolcanlogin AND NOT rolsuper AND NOT rolbypassrls AND NOT rolcreaterole") == 3 ]]
+[[ $(psql_exec "SELECT count(*) FROM pg_roles WHERE rolname='orbitjob_operator' AND NOT rolcanlogin") == 1 ]]
 [[ $(psql_exec "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname IN ('checks','check_runs') AND c.relrowsecurity") == 2 ]]
 
 before=$(psql_exec 'SELECT count(*) FROM tenants')

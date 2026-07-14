@@ -28,8 +28,8 @@ type stubTickRunner struct {
 	handled         int
 	housekeepingErr error
 
-	tenantIDs       []string
-	tenantErr       error
+	tenantIDs []string
+	tenantErr error
 }
 
 func (s *stubTickRunner) RunBatch(ctx context.Context, spec domaininstance.ClaimSpec, limit int) (int, error) {
@@ -424,14 +424,16 @@ func TestRun_LoadDotenvError(t *testing.T) {
 
 func TestRun_DatabaseDSNRequired(t *testing.T) {
 	resetDispatcherMainDeps(t)
+	t.Setenv("RUNTIME_DSN", "")
+	t.Setenv("DISPATCHER_DSN", "")
 	t.Setenv("DATABASE_DSN", "")
 
 	loadDotenvFn = func() error { return nil }
 	newLoggerFn = func(string) *slog.Logger { return slog.Default() }
 
 	err := run(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "DATABASE_DSN is required") {
-		t.Fatalf("expected DATABASE_DSN required error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "RUNTIME_DSN or DISPATCHER_DSN or DATABASE_DSN is required") {
+		t.Fatalf("expected database DSN required error, got %v", err)
 	}
 }
 
@@ -455,7 +457,8 @@ func TestRun_OpenDBError(t *testing.T) {
 
 func TestRun_SuccessInvokesRunLoop(t *testing.T) {
 	resetDispatcherMainDeps(t)
-	t.Setenv("DATABASE_DSN", "postgres://unit-test")
+	t.Setenv("RUNTIME_DSN", "postgres://runtime-unit-test")
+	t.Setenv("DATABASE_DSN", "postgres://legacy-unit-test")
 	t.Setenv("DISPATCHER_TENANT_ID", "tenant-42")
 	t.Setenv("DISPATCHER_BATCH_SIZE", "9")
 	t.Setenv("DISPATCHER_TICK_INTERVAL_SEC", "3")
@@ -476,7 +479,7 @@ func TestRun_SuccessInvokesRunLoop(t *testing.T) {
 		return slog.Default()
 	}
 	openDBFn = func(dsn string) (*sql.DB, error) {
-		if dsn != "postgres://unit-test" {
+		if dsn != "postgres://runtime-unit-test" {
 			t.Fatalf("unexpected dsn: %q", dsn)
 		}
 		return db, nil

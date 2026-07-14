@@ -13,6 +13,7 @@ import (
 
 	"orbitjob/internal/admin/bootstrap"
 	adminpostgres "orbitjob/internal/admin/store/postgres"
+	"orbitjob/internal/platform/config"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -81,10 +82,8 @@ func resolveDSN(args []string) string {
 	if len(args) > 1 && args[1] != "" {
 		return args[1]
 	}
-	if d := os.Getenv("DATABASE_DSN"); d != "" {
-		return d
-	}
-	return os.Getenv("ADMIN_DSN")
+	dsn, _, _ := config.ResolveDatabaseDSN("ADMIN_DSN", "DATABASE_DSN")
+	return dsn
 }
 
 func newSecretWriter() (bootstrap.SecretWriter, error) {

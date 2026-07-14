@@ -28,7 +28,7 @@ spec:
           env:
             - name: APP_ENV
               value: {{ ternary "production" "development" .Values.worker.containerExecution.requireDigest | quote }}
-            - name: WORKER_DSN
+            - name: RUNTIME_DSN
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.database.secretName }}

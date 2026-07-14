@@ -41,18 +41,18 @@ worker:
 runtimeResources: *runtimeResources
 
 database:
+  # `cmd/configure` creates this installation-level Secret once. All replicas
+  # inherit it; users do not configure per-process DSNs.
   secretName: orbitjob-database
   keys:
     bootstrapOwner: bootstrap-owner-dsn
     migrator: migrator-dsn
     admin: admin-dsn
     runtime: runtime-dsn
-  passwords:
-    migrator: migrator-password
-    admin: admin-password
-    runtime: runtime-password
-    operator: operator-password
-  bootstrapAPIKey: bootstrap-api-key
+    migratorPassword: migrator-password
+    adminPassword: admin-password
+    runtimePassword: runtime-password
+    bootstrapAPIKey: bootstrap-api-key
 
 bootstrap:
   secretName: orbitjob-bootstrap

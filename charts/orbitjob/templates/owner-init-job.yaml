@@ -31,21 +31,16 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.database.secretName }}
-                  key: {{ .Values.database.passwords.migrator }}
+                  key: {{ .Values.database.keys.migratorPassword }}
             - name: ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.database.secretName }}
-                  key: {{ .Values.database.passwords.admin }}
+                  key: {{ .Values.database.keys.adminPassword }}
             - name: RUNTIME_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.database.secretName }}
-                  key: {{ .Values.database.passwords.runtime }}
-            - name: OPERATOR_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.database.secretName }}
-                  key: {{ .Values.database.passwords.operator }}
+                  key: {{ .Values.database.keys.runtimePassword }}
           securityContext:
 {{ include "orbitjob.securityContext" . | indent 12 }}

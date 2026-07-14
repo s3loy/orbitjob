@@ -44,10 +44,11 @@ OrbitJob 是 Kubernetes-first 的分布式作业调度平台。PostgreSQL 保存
 需要 Docker Compose v2 和 `make`：
 
 ```bash
+make setup
 make docker-up
 ```
 
-命令会生成随机 `.env` 凭据，运行 role 初始化、migration、bootstrap，并等待 runtime、Prometheus 和 Grafana 就绪。不要把 `.env.example` 的空占位符直接复制进 `.env`。
+`make setup` 生成一次 installation 级数据库配置。Bundled PostgreSQL 不需要 DSN。admin-api、scheduler、dispatcher、worker 自动获得各自的最小权限连接。详细说明见 [`docs/database-setup.md`](docs/database-setup.md)。
 
 ```bash
 export ORBITJOB_API_KEY="$(make --no-print-directory bootstrap-key)"
@@ -85,6 +86,8 @@ docker compose --profile logs up -d
 ## Helm 与 Kubernetes
 
 Chart 版本为 `0.2.0`，位于 `charts/orbitjob`。Chart 安装 owner-init、migration、bootstrap、四个 runtime、RBAC 和 container task namespace；它不安装 PostgreSQL。
+
+一次 installation 只使用一个 `orbitjob-database` Secret。所有副本共享它，扩容时不用再次填写 DSN。配置工具从一份 bootstrap DSN 生成这个 Secret；流程见 [`docs/database-setup.md`](docs/database-setup.md)。
 
 ```bash
 make helm-check

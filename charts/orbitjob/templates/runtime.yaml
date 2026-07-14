@@ -23,7 +23,7 @@ spec:
           env:
             - name: APP_ENV
               value: production
-            - name: {{ if eq $name "admin-api" }}ADMIN_DSN{{ else if eq $name "scheduler" }}SCHEDULER_DSN{{ else }}DISPATCHER_DSN{{ end }}
+            - name: {{ if eq $name "admin-api" }}ADMIN_DSN{{ else }}RUNTIME_DSN{{ end }}
               valueFrom:
                 secretKeyRef:
                   name: {{ $.Values.database.secretName }}

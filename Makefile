@@ -3,7 +3,7 @@
 .PHONY: docker-build docker-up docker-down docker-status observability-status
 .PHONY: kind-up kind-status kind-down kind-v020-verify
 .PHONY: helm-migrations-sync helm-migrations-check helm-check
-.PHONY: env-init env-check env-clean bootstrap-key grafana-password docker-reset
+.PHONY: env-init env-check env-clean setup setup-check bootstrap-key grafana-password docker-reset
 .PHONY: migrate-up migrate-down migrate-version
 .PHONY: clean
 
@@ -73,6 +73,16 @@ tidy-check:
 	go mod tidy && git diff --exit-code go.sum
 
 # ---- Local environment ----
+setup: env-init
+	@set -a; . ./.env; set +a; go run ./cmd/configure setup --mode bundled --state .runtime/database.json --runtime-env .runtime/database.env
+	@echo "Database configuration is ready."
+
+setup-check:
+	@test -s .env || { echo "Local environment is missing. Run: make setup"; exit 1; }
+	@test -s .runtime/database.env || { echo "Database configuration is missing. Run: make setup"; exit 1; }
+	@for key in BOOTSTRAP_OWNER_DSN MIGRATOR_DSN ADMIN_DSN RUNTIME_DSN MIGRATOR_PASSWORD ADMIN_PASSWORD RUNTIME_PASSWORD; do grep -q "^$$key=" .runtime/database.env || { echo ".runtime/database.env is missing $$key. Run: make setup"; exit 1; }; done
+	@test "$$(stat -f '%Lp' .runtime/database.env 2>/dev/null || stat -c '%a' .runtime/database.env)" = "600" || { echo ".runtime/database.env permissions must be 0600"; exit 1; }
+
 env-init:
 	@go run ./scripts/env-init.go
 	@echo "Local environment is initialized and validated."
@@ -81,9 +91,9 @@ env-check:
 	@go run ./scripts/env-init.go -check
 
 env-clean:
-	@printf "Type 'delete-env' to remove .env: "; read answer; \
+	@printf "Type 'delete-env' to remove .env and generated database state: "; read answer; \
 	[ "$$answer" = "delete-env" ] || { echo "Cancelled."; exit 1; }; \
-	rm -f .env
+	rm -f .env; rm -rf .runtime
 
 # ---- Docker ----
 docker-build:
@@ -92,7 +102,7 @@ docker-build:
 	docker build --target dispatcher -t orbitjob-dispatcher:latest .
 	docker build --target worker     -t orbitjob-worker:latest     .
 
-docker-up: env-init
+docker-up: env-check setup-check
 	docker compose config >/dev/null
 	docker compose up -d --build
 	@bash scripts/docker-wait.sh
@@ -117,9 +127,9 @@ docker-down:
 	docker compose down
 
 docker-reset:
-	@printf "Type 'delete-volumes' to remove OrbitJob containers and volumes: "; read answer; \
+	@printf "Type 'delete-volumes' to remove OrbitJob containers, volumes, and generated database state: "; read answer; \
 	[ "$$answer" = "delete-volumes" ] || { echo "Cancelled."; exit 1; }; \
-	docker compose down -v
+	docker compose down -v; rm -rf .runtime
 
 # ---- Local Kubernetes ----
 helm-migrations-sync:

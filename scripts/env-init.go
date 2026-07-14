@@ -1,4 +1,4 @@
-// Command env-init creates or validates OrbitJob's local .env file.
+// Command env-init creates or validates OrbitJob's local non-database secrets.
 package main
 
 import (
@@ -13,20 +13,15 @@ import (
 )
 
 type Values struct {
-	PGPassword       string
-	MigratorPassword string
-	AdminPassword    string
-	RuntimePassword  string
-	OperatorPassword string
-	GrafanaPassword  string
-	BootstrapAPIKey  string
+	PGPassword      string
+	GrafanaPassword string
+	BootstrapAPIKey string
 }
 
 func main() {
 	check := flag.Bool("check", false, "validate an existing environment file")
 	path := flag.String("path", ".env", "environment file path")
 	flag.Parse()
-
 	var err error
 	if *check {
 		err = validateEnv(*path)
@@ -68,18 +63,7 @@ func generateValues() (Values, error) {
 	if err != nil {
 		return Values{}, err
 	}
-	passwords := make([]string, 4)
-	for i := range passwords {
-		passwords[i], err = randomHex(32)
-		if err != nil {
-			return Values{}, err
-		}
-	}
-	return Values{
-		PGPassword: pg, MigratorPassword: passwords[0], AdminPassword: passwords[1],
-		RuntimePassword: passwords[2], OperatorPassword: passwords[3],
-		GrafanaPassword: grafana, BootstrapAPIKey: "otj_" + key,
-	}, nil
+	return Values{PGPassword: pg, GrafanaPassword: grafana, BootstrapAPIKey: "otj_" + key}, nil
 }
 
 func randomHex(size int) (string, error) {
@@ -91,7 +75,7 @@ func randomHex(size int) (string, error) {
 }
 
 func writeEnv(path string, values Values) error {
-	content := fmt.Sprintf("PG_PASSWORD=%s\nMIGRATOR_PASSWORD=%s\nADMIN_PASSWORD=%s\nRUNTIME_PASSWORD=%s\nOPERATOR_PASSWORD=%s\nGRAFANA_USER=admin\nGRAFANA_PASSWORD=%s\nADMIN_BOOTSTRAP_API_KEY=%s\n", values.PGPassword, values.MigratorPassword, values.AdminPassword, values.RuntimePassword, values.OperatorPassword, values.GrafanaPassword, values.BootstrapAPIKey)
+	content := fmt.Sprintf("PG_PASSWORD=%s\nGRAFANA_USER=admin\nGRAFANA_PASSWORD=%s\nADMIN_BOOTSTRAP_API_KEY=%s\n", values.PGPassword, values.GrafanaPassword, values.BootstrapAPIKey)
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		if errors.Is(err, os.ErrExist) {
@@ -115,7 +99,6 @@ func validateEnv(path string) error {
 		return fmt.Errorf("open %s: %w", path, err)
 	}
 	defer func() { _ = file.Close() }()
-
 	values := make(map[string]string)
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
@@ -131,7 +114,7 @@ func validateEnv(path string) error {
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
-	for _, key := range []string{"PG_PASSWORD", "MIGRATOR_PASSWORD", "ADMIN_PASSWORD", "RUNTIME_PASSWORD", "OPERATOR_PASSWORD", "GRAFANA_PASSWORD", "ADMIN_BOOTSTRAP_API_KEY"} {
+	for _, key := range []string{"PG_PASSWORD", "GRAFANA_PASSWORD", "ADMIN_BOOTSTRAP_API_KEY"} {
 		if values[key] == "" {
 			return fmt.Errorf("%s is required in %s", key, path)
 		}

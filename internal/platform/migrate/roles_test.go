@@ -9,6 +9,17 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 )
 
+func TestManagedLoginRolesReturnsCopy(t *testing.T) {
+	roles := ManagedLoginRoles()
+	if len(roles) != 3 {
+		t.Fatalf("ManagedLoginRoles() length = %d, want 3", len(roles))
+	}
+	roles[0] = "changed"
+	if managedLoginRoles[0] != RoleMigrator {
+		t.Fatal("ManagedLoginRoles() exposed internal slice")
+	}
+}
+
 func TestEnsureRolesExecutesIdempotentRoleSetup(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -34,11 +45,10 @@ func TestEnsureRolePasswordsRequiresEveryPasswordBeforeWriting(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	err = EnsureRolePasswords(context.Background(), db, map[string]string{
-		"orbitjob_migrator": "migrator",
-		"orbitjob_admin":    "admin",
-		"orbitjob_runtime":  "runtime",
+		RoleMigrator: "migrator",
+		RoleAdmin:    "admin",
 	})
-	if err == nil || !strings.Contains(err.Error(), "password for orbitjob_operator is required") {
+	if err == nil || !strings.Contains(err.Error(), "password for orbitjob_runtime is required") {
 		t.Fatalf("EnsureRolePasswords() error = %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -54,11 +64,10 @@ func TestEnsureRolePasswordsUsesFixedAllowlist(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	passwords := map[string]string{
-		"orbitjob_migrator": "migrator",
-		"orbitjob_admin":    "admin",
-		"orbitjob_runtime":  "runtime",
-		"orbitjob_operator": "operator",
-		"attacker":          "ignored",
+		RoleMigrator: "migrator",
+		RoleAdmin:    "admin",
+		RoleRuntime:  "runtime",
+		"attacker":   "ignored",
 	}
 	for _, role := range managedLoginRoles {
 		mock.ExpectExec("ALTER ROLE \\\"" + role + "\\\" PASSWORD '").WillReturnResult(sqlmock.NewResult(0, 0))
@@ -80,10 +89,9 @@ func TestEnsureRolePasswordsPropagatesDatabaseError(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	passwords := map[string]string{
-		"orbitjob_migrator": "migrator",
-		"orbitjob_admin":    "admin",
-		"orbitjob_runtime":  "runtime",
-		"orbitjob_operator": "operator",
+		RoleMigrator: "migrator",
+		RoleAdmin:    "admin",
+		RoleRuntime:  "runtime",
 	}
 	mock.ExpectExec(`ALTER ROLE "orbitjob_migrator" PASSWORD 'migrator'`).WillReturnError(errors.New("denied"))
 

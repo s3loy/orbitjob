@@ -79,9 +79,19 @@ func TestResolveDSN_ArgumentFirst(t *testing.T) {
 	}
 }
 
-func TestResolveDSN_DatabaseDSNFallback(t *testing.T) {
+func TestResolveDSN_AdminDSNBeforeDatabaseFallback(t *testing.T) {
 	t.Setenv("DATABASE_DSN", "postgres://database")
 	t.Setenv("ADMIN_DSN", "postgres://admin")
+
+	got := resolveDSN([]string{"cmd"})
+	if got != "postgres://admin" {
+		t.Fatalf("expected ADMIN_DSN, got %q", got)
+	}
+}
+
+func TestResolveDSN_DatabaseDSNFallback(t *testing.T) {
+	t.Setenv("DATABASE_DSN", "postgres://database")
+	t.Setenv("ADMIN_DSN", "")
 
 	got := resolveDSN([]string{"cmd"})
 	if got != "postgres://database" {

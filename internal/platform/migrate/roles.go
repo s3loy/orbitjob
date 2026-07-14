@@ -8,7 +8,18 @@ import (
 	"github.com/lib/pq"
 )
 
-var managedLoginRoles = []string{"orbitjob_migrator", "orbitjob_admin", "orbitjob_runtime", "orbitjob_operator"}
+const (
+	RoleMigrator = "orbitjob_migrator"
+	RoleAdmin    = "orbitjob_admin"
+	RoleRuntime  = "orbitjob_runtime"
+)
+
+var managedLoginRoles = []string{RoleMigrator, RoleAdmin, RoleRuntime}
+
+// ManagedLoginRoles returns the fixed deployment login roles.
+func ManagedLoginRoles() []string {
+	return append([]string(nil), managedLoginRoles...)
+}
 
 // EnsureRoles creates and hardens the deployment login roles before numbered
 // migrations run with the restricted migrator identity.
@@ -32,7 +43,7 @@ BEGIN
     CREATE ROLE orbitjob_runtime LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOINHERIT;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'orbitjob_operator') THEN
-    CREATE ROLE orbitjob_operator LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOINHERIT;
+    CREATE ROLE orbitjob_operator NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOINHERIT;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'orbitjob_owner') THEN
     CREATE ROLE orbitjob_owner NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOINHERIT;
@@ -51,7 +62,7 @@ ALTER ROLE orbitjob_table_owner NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOI
 ALTER ROLE orbitjob_migrator LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOINHERIT;
 ALTER ROLE orbitjob_admin LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOINHERIT;
 ALTER ROLE orbitjob_runtime LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOINHERIT;
-ALTER ROLE orbitjob_operator LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOINHERIT;
+ALTER ROLE orbitjob_operator NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOINHERIT;
 DO $$
 DECLARE
   membership record;

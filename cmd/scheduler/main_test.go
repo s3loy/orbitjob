@@ -267,14 +267,16 @@ func TestRun_LoadDotenvError(t *testing.T) {
 
 func TestRun_DatabaseDSNRequired(t *testing.T) {
 	resetSchedulerMainDeps(t)
+	t.Setenv("RUNTIME_DSN", "")
+	t.Setenv("SCHEDULER_DSN", "")
 	t.Setenv("DATABASE_DSN", "")
 
 	loadDotenvFn = func() error { return nil }
 	newLoggerFn = func(string) *slog.Logger { return slog.Default() }
 
 	err := run(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "DATABASE_DSN is required") {
-		t.Fatalf("expected DATABASE_DSN required error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "RUNTIME_DSN or SCHEDULER_DSN or DATABASE_DSN is required") {
+		t.Fatalf("expected database DSN required error, got %v", err)
 	}
 }
 
@@ -296,7 +298,8 @@ func TestRun_OpenDBError(t *testing.T) {
 
 func TestRun_SuccessInvokesRunLoop(t *testing.T) {
 	resetSchedulerMainDeps(t)
-	t.Setenv("DATABASE_DSN", "postgres://unit-test")
+	t.Setenv("RUNTIME_DSN", "postgres://runtime-unit-test")
+	t.Setenv("DATABASE_DSN", "postgres://legacy-unit-test")
 	t.Setenv("SCHEDULER_BATCH_SIZE_MAX", "9")
 	t.Setenv("SCHEDULER_TICK_INTERVAL_SEC", "3")
 	t.Setenv("APP_ENV", "test")
@@ -315,7 +318,7 @@ func TestRun_SuccessInvokesRunLoop(t *testing.T) {
 		return slog.Default()
 	}
 	openDBFn = func(dsn string) (*sql.DB, error) {
-		if dsn != "postgres://unit-test" {
+		if dsn != "postgres://runtime-unit-test" {
 			t.Fatalf("unexpected dsn: %q", dsn)
 		}
 		return db, nil

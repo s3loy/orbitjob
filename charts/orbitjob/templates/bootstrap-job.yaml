@@ -32,7 +32,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.database.secretName }}
-                  key: {{ .Values.database.bootstrapAPIKey }}
+                  key: {{ .Values.database.keys.bootstrapAPIKey }}
             - name: ADMIN_BOOTSTRAP_SECRET_BACKEND
               value: kubernetes
             - name: ADMIN_BOOTSTRAP_NAMESPACE

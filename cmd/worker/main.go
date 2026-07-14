@@ -537,12 +537,9 @@ func run(ctx context.Context) error {
 
 	slog.SetDefault(newLoggerFn(os.Getenv("APP_ENV")))
 
-	dsn := os.Getenv("WORKER_DSN")
-	if dsn == "" {
-		dsn = os.Getenv("DATABASE_DSN")
-	}
-	if dsn == "" {
-		return fmt.Errorf("DATABASE_DSN is required")
+	dsn, _, err := config.ResolveDatabaseDSN("RUNTIME_DSN", "WORKER_DSN", "DATABASE_DSN")
+	if err != nil {
+		return err
 	}
 
 	cfg, err := loadWorkerRuntimeConfig()

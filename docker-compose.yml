@@ -2,7 +2,6 @@
 # 11 services: PostgreSQL + PgBouncer + migration + 4 Go components + observability stack
 
 x-go-defaults: &go-defaults
-  env_file: .env
   cap_drop:
     - ALL
   read_only: true
@@ -76,30 +75,41 @@ services:
       - backend
     restart: unless-stopped
 
+  # ── Database role initialization ───────────────────────────────
+  owner-init:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: migrate
+    env_file:
+      - .env
+      - .runtime/database.env
+    environment:
+      MIGRATION_MODE: owner-init
+    depends_on:
+      pg:
+        condition: service_healthy
+    networks:
+      - backend
+    restart: "no"
+
   # ── Database migration ─────────────────────────────────────────
-  # Runs exactly once, mounting migrations read-only, applying each
-  # .sql file in sorted order directly against PG.
   migrate:
     build:
       context: .
       dockerfile: Dockerfile
       target: migrate
-    env_file: .env
+    env_file:
+      - .env
+      - .runtime/database.env
     environment:
-      MIGRATOR_DSN: "postgres://orbitjob:${PG_PASSWORD}@pg:5432/orbitjob?sslmode=disable"
+      MIGRATION_MODE: migrate
       MIGRATIONS_DIR: /migrations
-      # Existing development databases predate schema_migrations. Baseline only
-      # the versions that were already applied before the unified runner.
-      MIGRATIONS_BASELINE_VERSION: "6"
-      MIGRATOR_PASSWORD: ${MIGRATOR_PASSWORD}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
-      RUNTIME_PASSWORD: ${RUNTIME_PASSWORD}
-      OPERATOR_PASSWORD: ${OPERATOR_PASSWORD}
     volumes:
       - ./db/migrations:/migrations:ro
     depends_on:
-      pg:
-        condition: service_healthy
+      owner-init:
+        condition: service_completed_successfully
     networks:
       - backend
     restart: "no"
@@ -122,16 +132,15 @@ services:
   # ── Bootstrap: create default tenant and initial API key ───────
   bootstrap:
     <<: *go-defaults
+    env_file:
+      - .env
+      - .runtime/database.env
     build:
       context: .
       dockerfile: Dockerfile
       target: bootstrap
     environment:
       APP_ENV: production
-      # env_file may contain a host-side DATABASE_DSN. Bootstrap must use the
-      # container-network ADMIN_DSN instead of resolving localhost in-container.
-      DATABASE_DSN: ""
-      ADMIN_DSN: "postgres://orbitjob_admin:${ADMIN_PASSWORD}@pg:5432/orbitjob?sslmode=disable"
       ADMIN_BOOTSTRAP_SECRET_BACKEND: local
       ADMIN_BOOTSTRAP_SECRET_ROOT: /run/secrets/orbitjob
     volumes:
@@ -148,6 +157,9 @@ services:
   # ── Admin API ──────────────────────────────────────────────────
   admin-api:
     <<: *go-defaults
+    env_file:
+      - .env
+      - .runtime/database.env
     build:
       context: .
       dockerfile: Dockerfile
@@ -156,7 +168,6 @@ services:
       - "8080:8080"
     environment:
       APP_ENV: production
-      ADMIN_DSN: "postgres://orbitjob_admin:${ADMIN_PASSWORD}@pg:5432/orbitjob?sslmode=disable"
     volumes:
       - bootstrap_secrets:/run/secrets/orbitjob:ro
     networks:
@@ -183,6 +194,9 @@ services:
   # ── Scheduler ──────────────────────────────────────────────────
   scheduler:
     <<: *go-defaults
+    env_file:
+      - .env
+      - .runtime/database.env
     build:
       context: .
       dockerfile: Dockerfile
@@ -190,7 +204,6 @@ services:
     environment:
       APP_ENV: production
       SCHEDULER_HEALTH_PORT: "6060"
-      SCHEDULER_DSN: "postgres://orbitjob_runtime:${RUNTIME_PASSWORD}@pg:5432/orbitjob?sslmode=disable"
       GOMAXPROCS: "1"
       GOMEMLIMIT: 100MiB
     depends_on:
@@ -212,6 +225,9 @@ services:
   # ── Dispatcher ─────────────────────────────────────────────────
   dispatcher:
     <<: *go-defaults
+    env_file:
+      - .env
+      - .runtime/database.env
     build:
       context: .
       dockerfile: Dockerfile
@@ -219,7 +235,6 @@ services:
     environment:
       APP_ENV: production
       DISPATCHER_HEALTH_PORT: "6061"
-      DISPATCHER_DSN: "postgres://orbitjob_runtime:${RUNTIME_PASSWORD}@pg:5432/orbitjob?sslmode=disable"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -239,6 +254,9 @@ services:
   # ── Worker ─────────────────────────────────────────────────────
   worker:
     <<: *go-defaults
+    env_file:
+      - .env
+      - .runtime/database.env
     build:
       context: .
       dockerfile: Dockerfile
@@ -246,7 +264,6 @@ services:
     environment:
       APP_ENV: production
       WORKER_HEALTH_PORT: "6062"
-      WORKER_DSN: "postgres://orbitjob_runtime:${RUNTIME_PASSWORD}@pg:5432/orbitjob?sslmode=disable"
       WORKER_CAPACITY: "5"
       GOMEMLIMIT: 400MiB
     depends_on:

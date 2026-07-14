@@ -33,10 +33,9 @@ func loadConfig() (config, error) {
 		mode:          migrationMode(os.Getenv("MIGRATION_MODE")),
 		migrationsDir: os.Getenv("MIGRATIONS_DIR"),
 		rolePasswords: map[string]string{
-			"orbitjob_migrator": os.Getenv("MIGRATOR_PASSWORD"),
-			"orbitjob_admin":    os.Getenv("ADMIN_PASSWORD"),
-			"orbitjob_runtime":  os.Getenv("RUNTIME_PASSWORD"),
-			"orbitjob_operator": os.Getenv("OPERATOR_PASSWORD"),
+			platformmigrate.RoleMigrator: os.Getenv("MIGRATOR_PASSWORD"),
+			platformmigrate.RoleAdmin:    os.Getenv("ADMIN_PASSWORD"),
+			platformmigrate.RoleRuntime:  os.Getenv("RUNTIME_PASSWORD"),
 		},
 	}
 	if cfg.migrationsDir == "" {

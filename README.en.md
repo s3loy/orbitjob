@@ -44,10 +44,11 @@ Not delivered yet: Operator, CRDs, Kubernetes Lease, PostgreSQL epoch fencing, W
 You need Docker Compose v2 and `make`:
 
 ```bash
+make setup
 make docker-up
 ```
 
-The command generates random `.env` credentials, initializes database roles, runs migrations and bootstrap, then waits for the runtime, Prometheus, and Grafana. Do not copy the empty placeholders from `.env.example` into `.env`.
+`make setup` creates one installation-level database configuration. Bundled PostgreSQL needs no DSN input. Admin and runtime processes receive their least-privilege connections automatically. See [`docs/database-setup.md`](docs/database-setup.md) for the setup contract.
 
 ```bash
 export ORBITJOB_API_KEY="$(make --no-print-directory bootstrap-key)"
@@ -85,6 +86,8 @@ Starting the etcd container does not switch the runtime automatically. Set `ETCD
 ## Helm and Kubernetes
 
 The Chart is version `0.2.0` and lives under `charts/orbitjob`. It installs owner-init, migration, bootstrap, all four runtime processes, RBAC, and a task namespace for container Jobs. It does not install PostgreSQL.
+
+One installation uses one `orbitjob-database` Secret. Every replica inherits it, so scaling does not require another DSN. The setup tool generates this Secret from one bootstrap DSN; see [`docs/database-setup.md`](docs/database-setup.md).
 
 ```bash
 make helm-check
