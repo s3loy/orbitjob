@@ -5,6 +5,8 @@
 .PHONY: helm-migrations-sync helm-migrations-check helm-check
 .PHONY: env-init env-check env-clean bootstrap-key grafana-password docker-reset
 .PHONY: migrate-up migrate-version
+.PHONY: loadtest-preflight loadtest-generate loadtest-prepare loadtest-run
+.PHONY: loadtest-verify loadtest-report loadtest-clean loadtest-smoke loadtest-v020
 .PHONY: clean
 
 DEV_DSN      ?= postgres://postgres:postgres@localhost:5432/orbitjob?sslmode=disable
@@ -166,3 +168,41 @@ migrate-version:
 clean:
 	rm -f coverage.out
 	rm -rf bin/
+
+# ---- Load Qualification ----
+LOADTEST_CONFIG ?= test/load/config/standard.yaml
+LOADTEST_IMAGES ?= test/load/config/images.lock.yaml
+RUN_ID ?= $(shell date -u +%Y%m%dT%H%M%SZ)-$(shell git rev-parse --short HEAD)
+
+loadtest-preflight:
+	go run ./scripts/loadtest preflight --config "$(LOADTEST_CONFIG)" --images "$(LOADTEST_IMAGES)"
+
+loadtest-generate:
+	go run ./scripts/loadtest generate --config "$(LOADTEST_CONFIG)" --images "$(LOADTEST_IMAGES)" --run-id "$(RUN_ID)"
+
+loadtest-prepare:
+	kubectl apply -f deploy/load/namespace.yaml
+	kubectl apply -f deploy/load/operations-rbac.yaml
+	kubectl apply -f deploy/load/fixture-configmap.yaml
+	kubectl apply -f deploy/load/fixture.yaml
+	kubectl apply -f deploy/load/postgres.yaml
+
+loadtest-run:
+	@echo "loadtest run requires a live cluster; use make loadtest-v020 for full flow"
+
+loadtest-verify:
+	go run ./scripts/loadtest verify --run-id "$(RUN_ID)"
+
+loadtest-report:
+	go run ./scripts/loadtest report --run-id "$(RUN_ID)"
+
+loadtest-clean:
+	@test -n "$(RUN_ID)" || { printf 'RUN_ID is required\n' >&2; exit 2; }
+	go run ./scripts/loadtest clean --run-id "$(RUN_ID)" --confirm
+
+loadtest-smoke:
+	@echo "NON-STANDARD RUN - NOT A RELEASE QUALIFICATION"
+	go run ./scripts/loadtest preflight --config "$(LOADTEST_CONFIG)" --images "$(LOADTEST_IMAGES)" --check-only
+
+loadtest-v020: loadtest-preflight loadtest-generate
+	@echo "Full 4-hour qualification run requires manual review of preflight and generated manifest."

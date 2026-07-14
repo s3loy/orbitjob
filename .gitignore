@@ -50,3 +50,5 @@ bench-*.err
 /scheduler
 /worker
 /devserver
+
+/test/load/runs/
