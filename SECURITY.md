@@ -51,11 +51,11 @@ API key 使用 `otj_` 前缀。服务端保存 bcrypt 摘要，不保存可恢�
 
 runtime 进程不要使用 bootstrap owner、table owner 或 PostgreSQL superuser DSN。Compose 和 Helm 分开保存 admin/runtime/migrator 凭据。
 
-migration 0008 撤销 `PUBLIC` 在 `public` schema 上的 `CREATE`，安全函数也显式撤销 `PUBLIC EXECUTE`。新增函数时要重复这两个约束，不要依赖数据库默认权限。
+v0.2.0 baseline 撤销 `PUBLIC` 在 `public` schema 上的 `CREATE`，安全函数也显式撤销 `PUBLIC EXECUTE`。新增函数时要重复这两个约束，不要依赖数据库默认权限。
 
 ### RLS
 
-migration 0007 对这些表执行 `ALTER TABLE ... ENABLE ROW LEVEL SECURITY`：
+v0.2.0 baseline 对这些表执行 `ALTER TABLE ... ENABLE ROW LEVEL SECURITY`：
 
 ```text
 jobs
@@ -74,6 +74,8 @@ budget_alerts
 api_keys
 tenants
 ```
+
+baseline 只 `ENABLE` 不 `FORCE` RLS。`orbitjob_table_owner` 是 NOLOGIN，没有任何进程以 owner 身份登录；`orbitjob_admin`、`orbitjob_runtime`、`orbitjob_operator` 都不是 table owner，`ENABLE` 已对它们强制 RLS。`FORCE` 只在 owner 也需受 RLS 约束时有意义，当前身份分离模型下不需要。
 
 策略读取事务局部变量 `app.tenant_id`。repository 必须在同一事务中设置 tenant，再执行 query。不要使用 session 级 `SET app.tenant_id`，连接池会复用连接。
 
