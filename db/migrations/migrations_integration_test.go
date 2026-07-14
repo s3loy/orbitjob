@@ -76,8 +76,7 @@ func resetPublicSchema(t *testing.T) {
 	if _, err := db.ExecContext(ctx, `
 		DROP SCHEMA public CASCADE;
 		CREATE SCHEMA public;
-		GRANT ALL ON SCHEMA public TO postgres;
-		GRANT USAGE ON SCHEMA public TO PUBLIC;
+		GRANT ALL ON SCHEMA public TO PUBLIC;
 	`); err != nil {
 		t.Fatalf("reset public schema: %v", err)
 	}

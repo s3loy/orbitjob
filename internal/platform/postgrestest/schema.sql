@@ -617,3 +617,55 @@ AFTER INSERT OR UPDATE OF status ON job_instances
 FOR EACH ROW
 WHEN (NEW.status IN ('pending', 'retry_wait'))
 EXECUTE FUNCTION notify_job_event();
+
+
+-- ============================================================
+-- Application functions (test version without role security)
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION orbitjob_auth_api_key(p_prefix text)
+RETURNS TABLE(id text, tenant_id text, key_hash text, revoked text, expired text)
+LANGUAGE sql
+AS $$
+  SELECT ak.id::text, ak.tenant_id::text, ak.key_hash::text,
+         CASE WHEN ak.revoked_at IS NOT NULL THEN 'revoked' END,
+         CASE WHEN ak.expires_at IS NOT NULL AND ak.expires_at < now() THEN 'expired' END
+  FROM api_keys ak
+  JOIN tenants t ON t.id = ak.tenant_id
+  WHERE ak.key_prefix = p_prefix
+    AND ak.revoked_at IS NULL
+    AND t.status = 'active'
+  ORDER BY ak.created_at DESC
+$$;
+
+CREATE OR REPLACE FUNCTION orbitjob_list_active_tenant_ids()
+RETURNS TABLE(id text)
+LANGUAGE sql
+AS $$
+  SELECT t.id::text FROM tenants t WHERE t.status = 'active' ORDER BY t.id
+$$;
+
+CREATE OR REPLACE FUNCTION orbitjob_bootstrap_default(
+  p_tenant_id text, p_tenant_slug text, p_tenant_name text, p_tenant_status text,
+  p_key_id text, p_key_hash text, p_key_prefix text, p_permissions jsonb
+)
+RETURNS TABLE(tenant_created boolean, key_created boolean)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  tenant_rows bigint;
+  key_rows bigint;
+BEGIN
+  INSERT INTO tenants (id, slug, name, status, created_at, updated_at)
+  VALUES (p_tenant_id, p_tenant_slug, p_tenant_name, p_tenant_status, now(), now())
+  ON CONFLICT (id) DO NOTHING;
+  GET DIAGNOSTICS tenant_rows = ROW_COUNT;
+
+  INSERT INTO api_keys (id, tenant_id, key_hash, key_prefix, permissions, created_at)
+  VALUES (p_key_id, p_tenant_id, p_key_hash, p_key_prefix, p_permissions, now())
+  ON CONFLICT (id) DO NOTHING;
+  GET DIAGNOSTICS key_rows = ROW_COUNT;
+
+  RETURN QUERY SELECT tenant_rows = 1, key_rows = 1;
+END
+$$;

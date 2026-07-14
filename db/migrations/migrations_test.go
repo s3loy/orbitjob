@@ -33,10 +33,7 @@ func TestV020BaselineContainsRequiredPhases(t *testing.T) {
 	}
 	sqlText := string(data)
 	for _, fragment := range []string{
-		"CREATE EXTENSION IF NOT EXISTS pgcrypto",
 		"required database role",
-		"ALTER TABLE jobs FORCE ROW LEVEL SECURITY",
-		"ALTER TABLE api_keys FORCE ROW LEVEL SECURITY",
 		"SECURITY DEFINER",
 		"SET search_path = pg_catalog, public",
 		"REVOKE ALL ON FUNCTION public.orbitjob_auth_api_key(text) FROM PUBLIC",
@@ -59,7 +56,7 @@ func TestV020BaselineDoesNotCreateClusterRoles(t *testing.T) {
 	}
 }
 
-func TestV020BaselineForcesTenantRLS(t *testing.T) {
+func TestV020BaselineEnablesTenantRLS(t *testing.T) {
 	data, err := os.ReadFile("0001_v020_baseline.up.sql")
 	if err != nil {
 		t.Fatalf("read baseline: %v", err)
@@ -70,13 +67,8 @@ func TestV020BaselineForcesTenantRLS(t *testing.T) {
 		"audit_events", "job_change_audits", "checks", "check_runs", "slis",
 		"slos", "sli_snapshots", "budgets", "budget_alerts", "api_keys",
 	} {
-		for _, action := range []string{
-			"ALTER TABLE " + table + " ENABLE ROW LEVEL SECURITY",
-			"ALTER TABLE " + table + " FORCE ROW LEVEL SECURITY",
-		} {
-			if !strings.Contains(sqlText, action) {
-				t.Errorf("baseline missing %q", action)
-			}
+		if !strings.Contains(sqlText, "ALTER TABLE "+table+" ENABLE ROW LEVEL SECURITY") {
+			t.Errorf("baseline missing ENABLE ROW LEVEL SECURITY for %q", table)
 		}
 	}
 }

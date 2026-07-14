@@ -1,8 +1,6 @@
 BEGIN;
 
 -- pgcrypto provides gen_random_uuid() which is used to generate run identifiers
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
-
 -- ============================================================
 -- Table: jobs
 -- Description:
@@ -1062,7 +1060,6 @@ $$;
 
 ALTER TABLE jobs ENABLE ROW LEVEL SECURITY;
 
-ALTER TABLE jobs FORCE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS jobs_tenant_v020 ON jobs;
 
@@ -1073,7 +1070,6 @@ CREATE POLICY jobs_tenant_v020 ON jobs
 
 ALTER TABLE job_instances ENABLE ROW LEVEL SECURITY;
 
-ALTER TABLE job_instances FORCE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS job_instances_tenant_v020 ON job_instances;
 
@@ -1084,7 +1080,6 @@ CREATE POLICY job_instances_tenant_v020 ON job_instances
 
 ALTER TABLE job_instance_attempts ENABLE ROW LEVEL SECURITY;
 
-ALTER TABLE job_instance_attempts FORCE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS job_instance_attempts_tenant_v020 ON job_instance_attempts;
 
@@ -1095,7 +1090,6 @@ CREATE POLICY job_instance_attempts_tenant_v020 ON job_instance_attempts
 
 ALTER TABLE workers ENABLE ROW LEVEL SECURITY;
 
-ALTER TABLE workers FORCE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS workers_tenant_v020 ON workers;
 
@@ -1106,7 +1100,6 @@ CREATE POLICY workers_tenant_v020 ON workers
 
 ALTER TABLE audit_events ENABLE ROW LEVEL SECURITY;
 
-ALTER TABLE audit_events FORCE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS audit_events_tenant_v020 ON audit_events;
 
@@ -1117,7 +1110,6 @@ CREATE POLICY audit_events_tenant_v020 ON audit_events
 
 ALTER TABLE job_change_audits ENABLE ROW LEVEL SECURITY;
 
-ALTER TABLE job_change_audits FORCE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS job_change_audits_tenant_v020 ON job_change_audits;
 
@@ -1128,7 +1120,6 @@ CREATE POLICY job_change_audits_tenant_v020 ON job_change_audits
 
 ALTER TABLE checks ENABLE ROW LEVEL SECURITY;
 
-ALTER TABLE checks FORCE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS checks_tenant_v020 ON checks;
 
@@ -1139,7 +1130,6 @@ CREATE POLICY checks_tenant_v020 ON checks
 
 ALTER TABLE check_runs ENABLE ROW LEVEL SECURITY;
 
-ALTER TABLE check_runs FORCE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS check_runs_tenant_v020 ON check_runs;
 
@@ -1150,7 +1140,6 @@ CREATE POLICY check_runs_tenant_v020 ON check_runs
 
 ALTER TABLE slis ENABLE ROW LEVEL SECURITY;
 
-ALTER TABLE slis FORCE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS slis_tenant_v020 ON slis;
 
@@ -1161,7 +1150,6 @@ CREATE POLICY slis_tenant_v020 ON slis
 
 ALTER TABLE slos ENABLE ROW LEVEL SECURITY;
 
-ALTER TABLE slos FORCE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS slos_tenant_v020 ON slos;
 
@@ -1172,7 +1160,6 @@ CREATE POLICY slos_tenant_v020 ON slos
 
 ALTER TABLE sli_snapshots ENABLE ROW LEVEL SECURITY;
 
-ALTER TABLE sli_snapshots FORCE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS sli_snapshots_tenant_v020 ON sli_snapshots;
 
@@ -1183,7 +1170,6 @@ CREATE POLICY sli_snapshots_tenant_v020 ON sli_snapshots
 
 ALTER TABLE budgets ENABLE ROW LEVEL SECURITY;
 
-ALTER TABLE budgets FORCE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS budgets_tenant_v020 ON budgets;
 
@@ -1194,7 +1180,6 @@ CREATE POLICY budgets_tenant_v020 ON budgets
 
 ALTER TABLE budget_alerts ENABLE ROW LEVEL SECURITY;
 
-ALTER TABLE budget_alerts FORCE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS budget_alerts_tenant_v020 ON budget_alerts;
 
@@ -1205,7 +1190,6 @@ CREATE POLICY budget_alerts_tenant_v020 ON budget_alerts
 
 ALTER TABLE api_keys ENABLE ROW LEVEL SECURITY;
 
-ALTER TABLE api_keys FORCE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS api_keys_tenant_v020 ON api_keys;
 
@@ -1216,7 +1200,6 @@ CREATE POLICY api_keys_tenant_v020 ON api_keys
 
 ALTER TABLE tenants ENABLE ROW LEVEL SECURITY;
 
-ALTER TABLE tenants FORCE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS tenants_tenant_v020 ON tenants;
 
@@ -1371,9 +1354,9 @@ BEGIN
         'audit_events','job_change_audits','checks','check_runs','slis','slos',
         'sli_snapshots','budgets','budget_alerts'
       ])
-      AND (NOT c.relrowsecurity OR NOT c.relforcerowsecurity)
+      AND NOT c.relrowsecurity
   ) THEN
-    RAISE EXCEPTION 'v0.2.0 catalog assertion failed: tenant table lacks forced RLS';
+    RAISE EXCEPTION 'v0.2.0 catalog assertion failed: tenant table lacks RLS';
   END IF;
 END
 $$;

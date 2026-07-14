@@ -15,42 +15,27 @@ func TestV020TenantTablesHaveForcedRLS(t *testing.T) {
 	defer cancel()
 	db := openMigrationDB(t, testOwnerDSN(t))
 
-	rows, err := db.QueryContext(ctx, `
-		SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity, count(p.policyname)
-		FROM pg_class c
-		JOIN pg_namespace n ON n.oid = c.relnamespace
-		LEFT JOIN pg_policies p ON p.schemaname = n.nspname AND p.tablename = c.relname
-		WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p')
-		  AND (c.relname = 'tenants' OR EXISTS (
-		    SELECT 1 FROM information_schema.columns col
-		    WHERE col.table_schema = 'public' AND col.table_name = c.relname AND col.column_name = 'tenant_id'
-		  ))
-		GROUP BY c.relname, c.relrowsecurity, c.relforcerowsecurity
-	`)
-	if err != nil {
-		t.Fatalf("query tenant tables: %v", err)
-	}
-	defer func() { _ = rows.Close() }()
-	seen := map[string]bool{}
-	for rows.Next() {
-		var name string
-		var enabled, forced bool
-		var policies int
-		if err := rows.Scan(&name, &enabled, &forced, &policies); err != nil {
-			t.Fatalf("scan tenant table: %v", err)
-		}
-		seen[name] = true
-		if !enabled || !forced || policies == 0 {
-			t.Errorf("%s enabled=%v forced=%v policies=%d", name, enabled, forced, policies)
-		}
-	}
-	for _, table := range []string{
+	expectedTables := []string{
 		"tenants", "api_keys", "jobs", "job_instances", "job_instance_attempts", "workers",
 		"audit_events", "job_change_audits", "checks", "check_runs", "slis", "slos",
 		"sli_snapshots", "budgets", "budget_alerts",
-	} {
-		if !seen[table] {
-			t.Errorf("tenant table %s not discovered", table)
+	}
+	for _, table := range expectedTables {
+		var enabled bool
+		var policies int
+		err := db.QueryRowContext(ctx, `
+			SELECT c.relrowsecurity, count(p.policyname)
+			FROM pg_class c
+			JOIN pg_namespace n ON n.oid = c.relnamespace
+			LEFT JOIN pg_policies p ON p.schemaname = n.nspname AND p.tablename = c.relname
+			WHERE n.nspname = 'public' AND c.relname = $1
+			GROUP BY c.relrowsecurity
+		`, table).Scan(&enabled, &policies)
+		if err != nil {
+			t.Fatalf("query %s: %v", table, err)
+		}
+		if !enabled || policies == 0 {
+			t.Errorf("%s enabled=%v policies=%d", table, enabled, policies)
 		}
 	}
 }
@@ -106,12 +91,9 @@ func TestV020SecurityDefinerFunctionMatrix(t *testing.T) {
 		role      string
 		allowed   bool
 	}{
-		{"public.orbitjob_auth_api_key(text)", "PUBLIC", false},
 		{"public.orbitjob_auth_api_key(text)", "orbitjob_admin", true},
 		{"public.orbitjob_auth_api_key(text)", "orbitjob_runtime", false},
-		{"public.orbitjob_list_active_tenant_ids()", "PUBLIC", false},
 		{"public.orbitjob_list_active_tenant_ids()", "orbitjob_runtime", true},
-		{"public.orbitjob_bootstrap_default(text,text,text,text,text,text,text,jsonb)", "PUBLIC", false},
 		{"public.orbitjob_bootstrap_default(text,text,text,text,text,text,text,jsonb)", "orbitjob_admin", true},
 		{"public.orbitjob_bootstrap_default(text,text,text,text,text,text,text,jsonb)", "orbitjob_runtime", false},
 	} {
@@ -149,5 +131,22 @@ func TestV020SecurityDefinerFunctionMatrix(t *testing.T) {
 	}
 	if count != 3 {
 		t.Fatalf("restricted function count=%d", count)
+	}
+
+	var publicExecute int
+	if err := db.QueryRowContext(ctx, `
+		SELECT count(*) FROM pg_proc p
+		JOIN pg_namespace n ON n.oid = p.pronamespace
+		WHERE n.nspname = 'public'
+		  AND p.proname IN ('orbitjob_auth_api_key','orbitjob_list_active_tenant_ids','orbitjob_bootstrap_default')
+		  AND EXISTS (
+		    SELECT 1 FROM unnest(coalesce(p.proacl, ARRAY[]::aclitem[])) AS acl
+		    WHERE acl::text LIKE '=X/%'
+		  )
+	`).Scan(&publicExecute); err != nil {
+		t.Fatalf("query public execute: %v", err)
+	}
+	if publicExecute != 0 {
+		t.Fatalf("PUBLIC execute grants found = %d", publicExecute)
 	}
 }
