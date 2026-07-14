@@ -54,7 +54,7 @@ func TestV020RoleAttributesAndOwnership(t *testing.T) {
 		{name: "orbitjob_migrator", login: true},
 		{name: "orbitjob_admin", login: true},
 		{name: "orbitjob_runtime", login: true},
-		{name: "orbitjob_operator", login: true},
+		{name: "orbitjob_operator", login: false},
 	} {
 		var login, superuser, bypassRLS, createRole, inherit bool
 		if err := db.QueryRowContext(ctx, `SELECT rolcanlogin, rolsuper, rolbypassrls, rolcreaterole, rolinherit FROM pg_roles WHERE rolname=$1`, role.name).
