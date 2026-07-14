@@ -1,6 +1,6 @@
 BEGIN;
 
--- pgcrypto provides gen_random_uuid() which is used to generate run identifiers
+-- gen_random_uuid() is used to generate run identifiers (built into PostgreSQL 13+)
 -- ============================================================
 -- Table: jobs
 -- Description:

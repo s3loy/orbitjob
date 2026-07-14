@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func TestV020TenantTablesHaveForcedRLS(t *testing.T) {
+func TestV020TenantTablesHaveEnabledRLS(t *testing.T) {
 	applyV020Baseline(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
