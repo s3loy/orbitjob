@@ -30,9 +30,9 @@ type instanceReaderByIdempotency interface {
 }
 
 type TriggerJobUseCase struct {
-	jobReader      jobReader
-	instanceRepo   instanceCreator
-	idempotency    instanceReaderByIdempotency
+	jobReader    jobReader
+	instanceRepo instanceCreator
+	idempotency  instanceReaderByIdempotency
 }
 
 func NewTriggerJobUseCase(jobReader jobReader, instanceRepo instanceCreator, idempotency instanceReaderByIdempotency) *TriggerJobUseCase {

@@ -28,9 +28,9 @@ func (realClock) Now() time.Time {
 }
 
 type CreateJobUseCase struct {
-	repo       jobCreator
+	repo        jobCreator
 	quotaReader tenantQuotaReader
-	clock      clock
+	clock       clock
 }
 
 func NewCreateJobUseCase(repo jobCreator, quotaReader tenantQuotaReader) *CreateJobUseCase {

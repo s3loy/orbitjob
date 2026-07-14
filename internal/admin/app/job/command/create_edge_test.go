@@ -44,9 +44,9 @@ func TestGetMaxJobs(t *testing.T) {
 
 func TestToFloatInt(t *testing.T) {
 	tests := []struct {
-		name string
-		v    any
-		want int
+		name   string
+		v      any
+		want   int
 		wantOK bool
 	}{
 		{"float64", float64(3.0), 3, true},

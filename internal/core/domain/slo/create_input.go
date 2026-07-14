@@ -4,7 +4,7 @@ import "time"
 
 // Window type constants.
 const (
-	WindowTypeRolling  = "rolling"
+	WindowTypeRolling   = "rolling"
 	WindowTypeCalendar  = "calendar"
 	WindowTypeQuarterly = "quarterly"
 )
@@ -17,7 +17,7 @@ const (
 
 // ValidWindowTypes is the set of supported window types.
 var ValidWindowTypes = map[string]bool{
-	WindowTypeRolling:  true,
+	WindowTypeRolling:   true,
 	WindowTypeCalendar:  true,
 	WindowTypeQuarterly: true,
 }
@@ -52,14 +52,14 @@ const (
 
 // CreateInput is the raw input for creating an SLO.
 type CreateInput struct {
-	Name               string
-	Description        *string
-	SLIID              int64
-	Target             float64
-	WindowType         string
-	WindowDuration     time.Duration
-	AlertFastBurnRate  float64
-	AlertSlowBurnRate  float64
+	Name              string
+	Description       *string
+	SLIID             int64
+	Target            float64
+	WindowType        string
+	WindowDuration    time.Duration
+	AlertFastBurnRate float64
+	AlertSlowBurnRate float64
 }
 
 // CreateSpec is the normalized, validated specification for creating an SLO.

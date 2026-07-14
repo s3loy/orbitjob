@@ -17,9 +17,9 @@ type ChangeStatusInput struct {
 }
 
 type ChangeStatusResult struct {
-	ID        int64  `json:"id"`
-	Status    string `json:"status"`
-	Version   int    `json:"version"`
+	ID      int64  `json:"id"`
+	Status  string `json:"status"`
+	Version int    `json:"version"`
 }
 
 type PauseCheckUseCase struct {

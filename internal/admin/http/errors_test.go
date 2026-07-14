@@ -189,15 +189,15 @@ type fakeFieldError struct {
 	tag string
 }
 
-func (f fakeFieldError) Tag() string               { return f.tag }
-func (f fakeFieldError) ActualTag() string         { return f.tag }
-func (f fakeFieldError) Namespace() string         { return "" }
-func (f fakeFieldError) StructNamespace() string   { return "" }
-func (f fakeFieldError) Field() string             { return "" }
-func (f fakeFieldError) StructField() string       { return "" }
-func (f fakeFieldError) Value() interface{}        { return nil }
-func (f fakeFieldError) Param() string             { return "" }
-func (f fakeFieldError) Kind() reflect.Kind        { return reflect.String }
-func (f fakeFieldError) Type() reflect.Type        { return nil }
+func (f fakeFieldError) Tag() string                      { return f.tag }
+func (f fakeFieldError) ActualTag() string                { return f.tag }
+func (f fakeFieldError) Namespace() string                { return "" }
+func (f fakeFieldError) StructNamespace() string          { return "" }
+func (f fakeFieldError) Field() string                    { return "" }
+func (f fakeFieldError) StructField() string              { return "" }
+func (f fakeFieldError) Value() interface{}               { return nil }
+func (f fakeFieldError) Param() string                    { return "" }
+func (f fakeFieldError) Kind() reflect.Kind               { return reflect.String }
+func (f fakeFieldError) Type() reflect.Type               { return nil }
 func (f fakeFieldError) Translate(_ ut.Translator) string { return "" }
-func (f fakeFieldError) Error() string             { return "" }
+func (f fakeFieldError) Error() string                    { return "" }

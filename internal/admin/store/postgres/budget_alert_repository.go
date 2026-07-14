@@ -121,13 +121,13 @@ func (r *BudgetAlertReadRepository) List(ctx context.Context, tenantID string, s
 
 func mapBudgetAlertRow(row budgetAlertRow) sloalertquery.BudgetAlertItem {
 	item := sloalertquery.BudgetAlertItem{
-		ID:       row.ID,
-		TenantID: row.TenantID,
-		SLOID:    row.SLOID,
-		BudgetID: row.BudgetID,
+		ID:        row.ID,
+		TenantID:  row.TenantID,
+		SLOID:     row.SLOID,
+		BudgetID:  row.BudgetID,
 		AlertType: row.AlertType,
-		BurnRate: row.BurnRate,
-		Status:   row.Status,
+		BurnRate:  row.BurnRate,
+		Status:    row.Status,
 	}
 	if row.TriggeredAt.Valid {
 		item.TriggeredAt = row.TriggeredAt.Time

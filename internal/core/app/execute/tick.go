@@ -253,8 +253,8 @@ func (uc *TickUseCase) startLeaseRenewal(
 				writeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				newExpiry := time.Now().Add(leaseDuration)
 				if err := uc.repo.ExtendLease(writeCtx, tenantID, instanceID, workerID, newExpiry); err != nil {
-						slog.Warn("final lease extension failed", "instance_id", instanceID, "error", err.Error())
-					}
+					slog.Warn("final lease extension failed", "instance_id", instanceID, "error", err.Error())
+				}
 				cancel()
 				return
 			case <-ticker.C:

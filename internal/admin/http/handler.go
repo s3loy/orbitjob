@@ -16,14 +16,14 @@ import (
 	instancequery "orbitjob/internal/admin/app/instance/query"
 	command "orbitjob/internal/admin/app/job/command"
 	query "orbitjob/internal/admin/app/job/query"
-	tenantcommand "orbitjob/internal/admin/app/tenant/command"
-	tenantquery "orbitjob/internal/admin/app/tenant/query"
 	slicommand "orbitjob/internal/admin/app/sli/command"
 	sliquery "orbitjob/internal/admin/app/sli/query"
 	slocommand "orbitjob/internal/admin/app/slo/command"
 	sloquery "orbitjob/internal/admin/app/slo/query"
 	sloalertquery "orbitjob/internal/admin/app/sloalert/query"
 	slobudgetquery "orbitjob/internal/admin/app/slobudget/query"
+	tenantcommand "orbitjob/internal/admin/app/tenant/command"
+	tenantquery "orbitjob/internal/admin/app/tenant/query"
 	"orbitjob/internal/admin/bootstrap"
 	"orbitjob/internal/admin/http/apperror"
 	"orbitjob/internal/admin/http/middleware"
@@ -318,8 +318,8 @@ func (h *Handler) SetGetBudgetUseCase(uc getBudgetUseCase)             { h.getBu
 func (h *Handler) SetListBudgetHistoryUseCase(uc listBudgetHistoryUseCase) {
 	h.listBudgetHistoryUC = uc
 }
-func (h *Handler) SetGetAlertUseCase(uc getAlertUseCase)     { h.getAlertUC = uc }
-func (h *Handler) SetListAlertsUseCase(uc listAlertsUseCase) { h.listAlertsUC = uc }
+func (h *Handler) SetGetAlertUseCase(uc getAlertUseCase)         { h.getAlertUC = uc }
+func (h *Handler) SetListAlertsUseCase(uc listAlertsUseCase)     { h.listAlertsUC = uc }
 func (h *Handler) SetCreateTenantUseCase(uc createTenantUseCase) { h.createTenantUC = uc }
 func (h *Handler) SetListTenantsUseCase(uc listTenantsUseCase)   { h.listTenantsUC = uc }
 func (h *Handler) SetGetTenantUseCase(uc getTenantUseCase)       { h.getTenantUC = uc }

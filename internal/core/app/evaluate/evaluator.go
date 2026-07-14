@@ -16,10 +16,10 @@ const (
 
 // Result holds the outcome of evaluating a check run.
 type Result struct {
-	OverallSeverity string          `json:"overall_severity"`
-	Passed          int             `json:"passed"`
-	Failed          int             `json:"failed"`
-	Results         []RuleResult    `json:"results"`
+	OverallSeverity string       `json:"overall_severity"`
+	Passed          int          `json:"passed"`
+	Failed          int          `json:"failed"`
+	Results         []RuleResult `json:"results"`
 }
 
 // RuleResult holds the outcome of a single assertion rule.

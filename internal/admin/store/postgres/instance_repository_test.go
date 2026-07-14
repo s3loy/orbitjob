@@ -466,4 +466,3 @@ func TestInstanceRepository_ListAttempts_RowsError(t *testing.T) {
 		t.Fatal("expected rows iteration error")
 	}
 }
-

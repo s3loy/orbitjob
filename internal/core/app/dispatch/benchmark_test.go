@@ -53,8 +53,8 @@ func (m *benchDispatchRepo) DispatchBatch(
 	return handled, nil
 }
 
-func (m *benchDispatchRepo) TryAdvisoryLock(_ context.Context) (bool, error)   { return true, nil }
-func (m *benchDispatchRepo) ReleaseAdvisoryLock(_ context.Context) error       { return nil }
+func (m *benchDispatchRepo) TryAdvisoryLock(_ context.Context) (bool, error) { return true, nil }
+func (m *benchDispatchRepo) ReleaseAdvisoryLock(_ context.Context) error     { return nil }
 func (m *benchDispatchRepo) CountQueueDepth(_ context.Context, _ string, _ time.Time) (int64, error) {
 	return 0, nil
 }
@@ -76,10 +76,10 @@ func BenchmarkDispatchTick(b *testing.B) {
 	}
 
 	tests := []struct {
-		name            string
-		limit           int
-		orphanDisp      int64
-		orphanRun       int64
+		name             string
+		limit            int
+		orphanDisp       int64
+		orphanRun        int64
 		priorityAffected int64
 	}{
 		{"limit=1_empty_orphans", 1, 0, 0, 0},

@@ -3,8 +3,8 @@ package instance
 // DispatchAction constants
 const (
 	DispatchActionDispatch = "dispatch"
-	DispatchActionSkip    = "skip"
-	DispatchActionReplace = "replace"
+	DispatchActionSkip     = "skip"
+	DispatchActionReplace  = "replace"
 )
 
 // DispatchInput contains the data needed to decide whether to dispatch one instance.

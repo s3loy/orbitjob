@@ -9,13 +9,13 @@ import (
 )
 
 type stubAPIKeyRevoker struct {
-	called             bool
-	tenantID           string
-	id                 string
-	err                error
-	crossTenantCalled  bool
-	crossTenantID      string
-	crossTenantErr     error
+	called            bool
+	tenantID          string
+	id                string
+	err               error
+	crossTenantCalled bool
+	crossTenantID     string
+	crossTenantErr    error
 }
 
 func (s *stubAPIKeyRevoker) Revoke(ctx context.Context, tenantID, id string) error {

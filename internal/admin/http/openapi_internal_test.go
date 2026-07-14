@@ -278,7 +278,7 @@ type doublePtrModel struct {
 }
 
 type unexportedFieldModel struct {
-	Exported  string `uri:"id" binding:"required"`
+	Exported   string `uri:"id" binding:"required"`
 	unexported string `uri:"hidden"`
 }
 

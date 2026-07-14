@@ -14,11 +14,11 @@ const (
 
 	StatusPending    = "pending"
 	StatusDispatched = "dispatched"
-	StatusRunning     = "running"
-	StatusRetryWait   = "retry_wait"
-	StatusSuccess     = "success"
-	StatusFailed      = "failed"
-	StatusCanceled    = "canceled"
+	StatusRunning    = "running"
+	StatusRetryWait  = "retry_wait"
+	StatusSuccess    = "success"
+	StatusFailed     = "failed"
+	StatusCanceled   = "canceled"
 )
 
 type ValidationError = validation.Error
@@ -32,31 +32,31 @@ func validationErrorf(field, format string, args ...any) error {
 }
 
 type Snapshot struct {
-	ID               int64
-	RunID            string
-	TenantID         string
-	JobID            int64
-	TriggerSource    string
-	Status           string
+	ID                int64
+	RunID             string
+	TenantID          string
+	JobID             int64
+	TriggerSource     string
+	Status            string
 	Priority          int
 	EffectivePriority int
 	PartitionKey      *string
-	IdempotencyKey   *string
-	IdempotencyScope string
-	RoutingKey       *string
-	WorkerID         *string
-	Attempt          int
-	MaxAttempt       int
-	ScheduledAt      time.Time
-	StartedAt        *time.Time
-	FinishedAt       *time.Time
-	LeaseExpiresAt   *time.Time
-	DispatchedAt     *time.Time
-	RetryAt          *time.Time
-	ResultCode       *string
-	ErrorMsg         *string
-	TraceID          *string
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
-	Version          int
+	IdempotencyKey    *string
+	IdempotencyScope  string
+	RoutingKey        *string
+	WorkerID          *string
+	Attempt           int
+	MaxAttempt        int
+	ScheduledAt       time.Time
+	StartedAt         *time.Time
+	FinishedAt        *time.Time
+	LeaseExpiresAt    *time.Time
+	DispatchedAt      *time.Time
+	RetryAt           *time.Time
+	ResultCode        *string
+	ErrorMsg          *string
+	TraceID           *string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	Version           int
 }

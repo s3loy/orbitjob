@@ -229,8 +229,8 @@ func TestCronJob_EndToEnd(t *testing.T) {
 	}
 
 	required := map[string]bool{
-		"instance.created":          false,
-		"instance.completed":        false,
+		"instance.created":        false,
+		"instance.completed":      false,
 		"instance.status_changed": false,
 	}
 	for rows.Next() {

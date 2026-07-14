@@ -201,4 +201,3 @@ func parseHTTPHealthConfig(p map[string]any) (httpHealthConfig, error) {
 
 	return cfg, nil
 }
-

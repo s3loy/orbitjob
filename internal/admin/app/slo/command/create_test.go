@@ -44,10 +44,10 @@ func (s *stubSLOStatusChanger) ChangeStatus(_ context.Context, _ string, _ int64
 func validSLOInput() CreateInput {
 	return CreateInput{
 		Name: "slo-1", TenantID: "t1", SLIID: 1, Target: 0.99,
-		WindowType:         slo.WindowTypeRolling,
-		WindowDuration:     30 * 24 * time.Hour,
-		AlertFastBurnRate:  0.1,
-		AlertSlowBurnRate:  0.02,
+		WindowType:        slo.WindowTypeRolling,
+		WindowDuration:    30 * 24 * time.Hour,
+		AlertFastBurnRate: 0.1,
+		AlertSlowBurnRate: 0.02,
 	}
 }
 

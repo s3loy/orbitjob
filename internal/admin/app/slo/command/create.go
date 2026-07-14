@@ -37,18 +37,18 @@ type CreateInput struct {
 
 // CreateResult is the output of creating an SLO.
 type CreateResult struct {
-	ID                int64         `json:"id"`
-	Name              string        `json:"name"`
-	Description       *string       `json:"description,omitempty"`
-	SLIID             int64         `json:"sli_id"`
-	Target            float64       `json:"target"`
-	WindowType        string        `json:"window_type"`
-	WindowDuration    string        `json:"window_duration"`
-	AlertFastBurnRate float64       `json:"alert_fast_burn_rate"`
-	AlertSlowBurnRate float64       `json:"alert_slow_burn_rate"`
-	Status            string        `json:"status"`
-	Version           int           `json:"version"`
-	CreatedAt         string        `json:"created_at"`
+	ID                int64   `json:"id"`
+	Name              string  `json:"name"`
+	Description       *string `json:"description,omitempty"`
+	SLIID             int64   `json:"sli_id"`
+	Target            float64 `json:"target"`
+	WindowType        string  `json:"window_type"`
+	WindowDuration    string  `json:"window_duration"`
+	AlertFastBurnRate float64 `json:"alert_fast_burn_rate"`
+	AlertSlowBurnRate float64 `json:"alert_slow_burn_rate"`
+	Status            string  `json:"status"`
+	Version           int     `json:"version"`
+	CreatedAt         string  `json:"created_at"`
 }
 
 // Create validates and creates a new SLO.

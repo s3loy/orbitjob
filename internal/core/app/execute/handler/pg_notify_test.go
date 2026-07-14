@@ -142,13 +142,13 @@ func TestPGNotify_InvalidPayload(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			task := execute.AssignedTask{
-				RunID:       "run-abc",
-				JobID:       42,
-				TenantID:    "default",
-				ScheduledAt: time.Now().UTC(),
-				Attempt:     1,
+				RunID:          "run-abc",
+				JobID:          42,
+				TenantID:       "default",
+				ScheduledAt:    time.Now().UTC(),
+				Attempt:        1,
 				HandlerPayload: tt.payload,
-				TimeoutSec:  30,
+				TimeoutSec:     30,
 			}
 			result := pn.Execute(context.Background(), task)
 			if result.Success {

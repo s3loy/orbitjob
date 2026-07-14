@@ -53,9 +53,9 @@ func TestSendHeartbeat_UpsertError(t *testing.T) {
 	hb := &errorHeartbeater{err: errors.New("db write failed")}
 	now := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
 	cfg := runtimeConfig{
-		TenantID:      "t1",
-		WorkerID:      "w1",
-		Labels:        map[string]any{},
+		TenantID: "t1",
+		WorkerID: "w1",
+		Labels:   map[string]any{},
 	}
 	cfg.SetLeaseDuration(60 * time.Second)
 	cfg.SetCapacity(1)
@@ -68,9 +68,9 @@ func TestSendHeartbeat_NormalizeError(t *testing.T) {
 	hb := &errorHeartbeater{}
 	now := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
 	cfg := runtimeConfig{
-		TenantID:      "t1",
-		WorkerID:      "", // empty workerID triggers normalize error
-		Labels:        map[string]any{},
+		TenantID: "t1",
+		WorkerID: "", // empty workerID triggers normalize error
+		Labels:   map[string]any{},
 	}
 	cfg.SetLeaseDuration(60 * time.Second)
 	cfg.SetCapacity(1)
@@ -156,9 +156,9 @@ func TestHeartbeatLoop_ShutdownGraceful(t *testing.T) {
 
 	now := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
 	cfg := runtimeConfig{
-		TenantID:          "t1",
-		WorkerID:          "w1",
-		Labels:            map[string]any{},
+		TenantID: "t1",
+		WorkerID: "w1",
+		Labels:   map[string]any{},
 	}
 	cfg.SetHeartbeatInterval(time.Second)
 	cfg.SetLeaseDuration(60 * time.Second)
@@ -221,9 +221,9 @@ func TestRunLoop_SubmitNextError(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		runLoop(ctx, runner, hb, &runtimeConfig{
-			TenantID:          "t1",
-			WorkerID:          "w1",
-			Labels:            map[string]any{},
+			TenantID: "t1",
+			WorkerID: "w1",
+			Labels:   map[string]any{},
 		}, func(time.Duration) workerTicker {
 			return ticker
 		}, func() time.Time { return time.Now().UTC() })

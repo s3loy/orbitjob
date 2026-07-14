@@ -87,17 +87,17 @@ type AuditEvent struct {
 }
 
 const (
-	ActorTypeSystem  = "system"
-	ActorTypeAPIKey  = "api_key"
-	ActorTypeUser    = "user"
+	ActorTypeSystem = "system"
+	ActorTypeAPIKey = "api_key"
+	ActorTypeUser   = "user"
 
-	EventTypeJobCreated        = "job.created"
-	EventTypeJobUpdated        = "job.updated"
-	EventTypeJobStatusChanged  = "job.status_changed"
-	EventTypeInstanceCreated   = "instance.created"
-	EventTypeInstanceCompleted = "instance.completed"
+	EventTypeJobCreated            = "job.created"
+	EventTypeJobUpdated            = "job.updated"
+	EventTypeJobStatusChanged      = "job.status_changed"
+	EventTypeInstanceCreated       = "instance.created"
+	EventTypeInstanceCompleted     = "instance.completed"
 	EventTypeInstanceStatusChanged = "instance.status_changed"
-	EventTypeOrphanRecovered   = "instance.orphan_recovered"
+	EventTypeOrphanRecovered       = "instance.orphan_recovered"
 
 	ResourceTypeJob      = "job"
 	ResourceTypeInstance = "instance"

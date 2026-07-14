@@ -20,9 +20,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	command "orbitjob/internal/admin/app/job/command"
 	instancecommand "orbitjob/internal/admin/app/instance/command"
 	instancequery "orbitjob/internal/admin/app/instance/query"
+	command "orbitjob/internal/admin/app/job/command"
 	query "orbitjob/internal/admin/app/job/query"
 	adminhttp "orbitjob/internal/admin/http"
 	"orbitjob/internal/admin/http/middleware"
@@ -144,16 +144,16 @@ func runDevScheduler(ctx context.Context, wg *sync.WaitGroup, db *sql.DB, cfg de
 
 		select {
 		case <-ctx.Done():
-				slog.Info("scheduler draining, running final tick")
-				drainCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				now := time.Now().UTC()
-				if counts, err := runner.RunBatch(drainCtx, now, cfg.BatchSize); err != nil {
-					slog.Error("scheduler drain tick failed", "error", err)
-				} else {
-					slog.Info("scheduler drain tick completed", "handled_due_jobs", counts.Handled)
-				}
-				cancel()
-				return
+			slog.Info("scheduler draining, running final tick")
+			drainCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			now := time.Now().UTC()
+			if counts, err := runner.RunBatch(drainCtx, now, cfg.BatchSize); err != nil {
+				slog.Error("scheduler drain tick failed", "error", err)
+			} else {
+				slog.Info("scheduler drain tick completed", "handled_due_jobs", counts.Handled)
+			}
+			cancel()
+			return
 		case <-ticker.C:
 		}
 	}

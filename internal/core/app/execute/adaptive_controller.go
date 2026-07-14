@@ -14,11 +14,11 @@ import (
 //
 // Not safe for concurrent use; the caller must serialize calls to Update.
 type AdaptiveCapacity struct {
-	maxCapacity   int
-	rttThreshold  float64 // multiplier over baseline RTT that triggers reduction
-	current       int
-	emaSmoothing  float64 // EMA coefficient for capacity smoothing
-	longtermRtt   time.Duration
+	maxCapacity  int
+	rttThreshold float64 // multiplier over baseline RTT that triggers reduction
+	current      int
+	emaSmoothing float64 // EMA coefficient for capacity smoothing
+	longtermRtt  time.Duration
 }
 
 // NewAdaptiveCapacity creates a controller with the given upper bound.

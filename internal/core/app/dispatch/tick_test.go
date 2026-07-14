@@ -11,23 +11,23 @@ import (
 )
 
 type stubDispatcherRepo struct {
-	found                   []bool
-	errAt                   int
-	recoverOrphansCalls     int
-	recoverOrphansErr       error
+	found                    []bool
+	errAt                    int
+	recoverOrphansCalls      int
+	recoverOrphansErr        error
 	recoverOrphansDispatched int64
-	recoverOrphansRunning   int64
-	refreshPriorityErr      error
-	recoverWorkersErr       error
-	recoverWorkersResult    int64
-	listTenantIDsResult     []string
-	listTenantIDsErr        error
-	snapTraceID             *string // non-nil when the snapshot should carry a TraceID
-	tryAdvisoryLockErr      error
-	tryAdvisoryLockFail     bool // when true, TryAdvisoryLock returns (false, nil)
-	releaseAdvisoryLockErr  error
-	countQueueDepthResult   int64
-	countQueueDepthErr      error
+	recoverOrphansRunning    int64
+	refreshPriorityErr       error
+	recoverWorkersErr        error
+	recoverWorkersResult     int64
+	listTenantIDsResult      []string
+	listTenantIDsErr         error
+	snapTraceID              *string // non-nil when the snapshot should carry a TraceID
+	tryAdvisoryLockErr       error
+	tryAdvisoryLockFail      bool // when true, TryAdvisoryLock returns (false, nil)
+	releaseAdvisoryLockErr   error
+	countQueueDepthResult    int64
+	countQueueDepthErr       error
 }
 
 func (s *stubDispatcherRepo) DispatchBatch(

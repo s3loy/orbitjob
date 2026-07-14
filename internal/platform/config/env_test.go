@@ -463,4 +463,3 @@ func TestLoadDotenv_FromTempDir(t *testing.T) {
 		t.Fatalf("expected os.ErrNotExist from temp dir without .env, got %v", err)
 	}
 }
-

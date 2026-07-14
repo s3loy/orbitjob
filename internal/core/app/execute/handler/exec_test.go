@@ -180,7 +180,6 @@ func TestTruncate(t *testing.T) {
 		{"longer than n", "abcdefghi", 5, "abcde"},
 		{"empty string", "", 5, ""},
 		{"zero n", "abc", 0, ""},
-		
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

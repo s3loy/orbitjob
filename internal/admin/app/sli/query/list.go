@@ -30,21 +30,21 @@ type ListInput struct {
 
 // ListItem is a single item in the list.
 type ListItem struct {
-	ID           int64  `json:"id"`
-	Name         string `json:"name"`
-	SLIType      string `json:"sli_type"`
-	SourceType   string `json:"source_type"`
-	Aggregation  string `json:"aggregation"`
-	Version      int    `json:"version"`
-	CreatedAt    string `json:"created_at"`
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	SLIType     string `json:"sli_type"`
+	SourceType  string `json:"source_type"`
+	Aggregation string `json:"aggregation"`
+	Version     int    `json:"version"`
+	CreatedAt   string `json:"created_at"`
 }
 
 // ListResult is the output of listing SLIs.
 type ListResult struct {
-	Items      []ListItem `json:"items"`
-	Total      int64      `json:"total"`
-	Limit      int        `json:"limit"`
-	Offset     int        `json:"offset"`
+	Items  []ListItem `json:"items"`
+	Total  int64      `json:"total"`
+	Limit  int        `json:"limit"`
+	Offset int        `json:"offset"`
 }
 
 // List retrieves a paginated list of SLIs.

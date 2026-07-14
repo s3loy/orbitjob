@@ -43,11 +43,11 @@ const MaxNameLength = 128
 
 // CreateInput is the raw input for creating an SLI.
 type CreateInput struct {
-	Name               string
-	Description        *string
-	SLIType            string
-	SourceType         string
-	SourceConfig       map[string]any
-	Aggregation        string
-	GoodEventCriteria  map[string]any
+	Name              string
+	Description       *string
+	SLIType           string
+	SourceType        string
+	SourceConfig      map[string]any
+	Aggregation       string
+	GoodEventCriteria map[string]any
 }

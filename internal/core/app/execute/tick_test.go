@@ -51,7 +51,6 @@ func (s *stubExecutor) ExtendLease(_ context.Context, _ string, _ int64, _ strin
 	return s.extendErr
 }
 
-
 // ---------------------------------------------------------------------------
 // stub handler
 // ---------------------------------------------------------------------------

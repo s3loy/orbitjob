@@ -45,12 +45,12 @@ func (s *stubListAPIKeysUseCase) List(ctx context.Context, in apikeyquery.ListIn
 }
 
 type stubRevokeAPIKeyUseCase struct {
-	called         bool
-	in             apikeycommand.RevokeInput
-	err            error
-	adminCalled    bool
-	adminID        string
-	adminErr       error
+	called      bool
+	in          apikeycommand.RevokeInput
+	err         error
+	adminCalled bool
+	adminID     string
+	adminErr    error
 }
 
 func (s *stubRevokeAPIKeyUseCase) Revoke(ctx context.Context, in apikeycommand.RevokeInput) error {

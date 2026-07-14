@@ -27,26 +27,26 @@ type ListInstancesInput struct {
 }
 
 type InstanceItem struct {
-	RunID              string     `json:"run_id"`
-	TenantID           string     `json:"tenant_id"`
-	JobID              int64      `json:"job_id"`
-	TriggerSource      string     `json:"trigger_source"`
-	Status             string     `json:"status"`
-	Priority           int        `json:"priority"`
-	EffectivePriority  int        `json:"effective_priority"`
-	Attempt            int        `json:"attempt"`
-	MaxAttempt         int        `json:"max_attempt"`
-	ScheduledAt        time.Time  `json:"scheduled_at"`
-	StartedAt          *time.Time `json:"started_at"`
-	FinishedAt         *time.Time `json:"finished_at"`
-	WorkerID           *string    `json:"worker_id"`
-	ResultCode         *string    `json:"result_code"`
-	ErrorMsg           *string    `json:"error_msg"`
-	RetryAt            *time.Time `json:"retry_at"`
-	DispatchedAt       *time.Time `json:"dispatched_at"`
-	CreatedAt          time.Time  `json:"created_at"`
-	UpdatedAt          time.Time  `json:"updated_at"`
-	Version            int        `json:"version"`
+	RunID             string     `json:"run_id"`
+	TenantID          string     `json:"tenant_id"`
+	JobID             int64      `json:"job_id"`
+	TriggerSource     string     `json:"trigger_source"`
+	Status            string     `json:"status"`
+	Priority          int        `json:"priority"`
+	EffectivePriority int        `json:"effective_priority"`
+	Attempt           int        `json:"attempt"`
+	MaxAttempt        int        `json:"max_attempt"`
+	ScheduledAt       time.Time  `json:"scheduled_at"`
+	StartedAt         *time.Time `json:"started_at"`
+	FinishedAt        *time.Time `json:"finished_at"`
+	WorkerID          *string    `json:"worker_id"`
+	ResultCode        *string    `json:"result_code"`
+	ErrorMsg          *string    `json:"error_msg"`
+	RetryAt           *time.Time `json:"retry_at"`
+	DispatchedAt      *time.Time `json:"dispatched_at"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
+	Version           int        `json:"version"`
 }
 
 func (uc *ListInstancesUseCase) List(ctx context.Context, in ListInstancesInput) ([]InstanceItem, error) {
