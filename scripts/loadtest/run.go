@@ -101,7 +101,6 @@ type RunEngine struct {
 	triggered atomic.Int64
 	accepted  atomic.Int64
 	rejected  atomic.Int64
-	mu        sync.Mutex
 }
 
 func NewRunEngine(api *APIClient, schedule PhaseSchedule, maxActive map[string]int) *RunEngine {

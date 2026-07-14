@@ -1,11 +1,9 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"regexp"
-	"sort"
 
 	"gopkg.in/yaml.v3"
 )
@@ -80,14 +78,3 @@ func ValidateImageLock(lock ImageLock) error {
 func ImageReference(image LockedImage) string {
 	return image.Repository + ":" + image.Tag + "@" + image.IndexDigest
 }
-
-func imageNames(lock ImageLock) []string {
-	names := make([]string, 0, len(lock.Images))
-	for _, image := range lock.Images {
-		names = append(names, image.Name)
-	}
-	sort.Strings(names)
-	return names
-}
-
-var errImageLockMismatch = errors.New("image lock mismatch")

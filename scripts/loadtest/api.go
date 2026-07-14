@@ -61,14 +61,14 @@ func (c *APIClient) TriggerJob(ctx context.Context, jobID int64, tenant, idempot
 		return TriggerResponse{}, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	switch {
-	case resp.StatusCode == http.StatusCreated, resp.StatusCode == http.StatusOK:
+	switch resp.StatusCode {
+	case http.StatusCreated, http.StatusOK:
 		var out TriggerResponse
 		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 			return TriggerResponse{}, err
 		}
 		return out, nil
-	case resp.StatusCode == http.StatusConflict:
+	case http.StatusConflict:
 		return TriggerResponse{Created: false}, nil
 	default:
 		return TriggerResponse{}, fmt.Errorf("trigger job %d: status %d", jobID, resp.StatusCode)

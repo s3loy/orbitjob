@@ -16,7 +16,7 @@ func TestTriggerJobSendsIdempotencyKey(t *testing.T) {
 		gotTenant = r.Header.Get("X-OrbitJob-Tenant")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		fmt.Fprint(w, `{"run_id":"run-41","job_id":7,"tenant_id":"load-alpha","status":"pending","created":true}`)
+		_, _ = fmt.Fprint(w, `{"run_id":"run-41","job_id":7,"tenant_id":"load-alpha","status":"pending","created":true}`)
 	}))
 	defer srv.Close()
 
