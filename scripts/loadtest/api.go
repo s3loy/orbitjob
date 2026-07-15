@@ -93,6 +93,62 @@ func (c *APIClient) ListInstances(ctx context.Context, tenant string, limit int)
 	return body.Items, nil
 }
 
+func (c *APIClient) CreateTenant(ctx context.Context, slug, name string) (string, error) {
+	body, err := json.Marshal(map[string]any{"slug": slug, "name": name, "status": "active"})
+	if err != nil {
+		return "", err
+	}
+	resp, err := c.do(ctx, http.MethodPost, "/api/v1/tenants", "", "", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusCreated {
+		return "", fmt.Errorf("create tenant %s: status %d", slug, resp.StatusCode)
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		return "", err
+	}
+	return created.ID, nil
+}
+
+func (c *APIClient) CreateAPIKey(ctx context.Context, tenantID string) (string, error) {
+	resp, err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/tenants/%s/api_keys", tenantID), "", "", nil)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusCreated {
+		return "", fmt.Errorf("create api key for %s: status %d", tenantID, resp.StatusCode)
+	}
+	var created struct {
+		Key string `json:"key"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		return "", err
+	}
+	return created.Key, nil
+}
+
+func (c *APIClient) GetJob(ctx context.Context, jobID int64, tenant string) (map[string]any, error) {
+	resp, err := c.do(ctx, http.MethodGet, fmt.Sprintf("/api/v1/jobs/%d", jobID), tenant, "", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get job %d: status %d", jobID, resp.StatusCode)
+	}
+	var out map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *APIClient) do(ctx context.Context, method, path, tenant, idempotencyKey string, body io.Reader) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
 	if err != nil {

@@ -10,7 +10,7 @@ func TestBurstScheduleHasExactCount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	schedule := BuildPhaseSchedule(cfg)
+	schedule := BuildPhaseSchedule(cfg, nil)
 	if count := CountBurst(schedule.Events); count != 500 {
 		t.Fatalf("burst count = %d, want 500", count)
 	}
@@ -21,7 +21,7 @@ func TestBurstEventsFitSubmitWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	schedule := BuildPhaseSchedule(cfg)
+	schedule := BuildPhaseSchedule(cfg, nil)
 	var first, last time.Duration
 	for _, event := range schedule.Events {
 		if event.Phase != "peak" || event.IdempotencyKey[:11] != "v020-burst-" {
@@ -45,7 +45,7 @@ func TestPhasesRunInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	schedule := BuildPhaseSchedule(cfg)
+	schedule := BuildPhaseSchedule(cfg, nil)
 	var prev time.Duration
 	for _, event := range schedule.Events {
 		if event.At < prev {

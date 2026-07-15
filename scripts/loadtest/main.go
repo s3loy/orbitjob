@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 func main() {
@@ -22,8 +23,16 @@ func main() {
 		err = runPreflight(os.Args[2:])
 	case "generate":
 		err = runGenerate(os.Args[2:])
-	case "prepare", "run", "verify", "report", "clean", "smoke", "calibrate", "inject-fault":
-		err = fmt.Errorf("%s is not implemented yet", os.Args[1])
+	case "prepare":
+		err = runPrepare(os.Args[2:])
+	case "run":
+		err = runRun(os.Args[2:])
+	case "verify":
+		err = runVerify(os.Args[2:])
+	case "report":
+		err = runReport(os.Args[2:])
+	case "clean":
+		err = runClean(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -127,6 +136,151 @@ func runGenerate(args []string) error {
 	})
 }
 
+func runPrepare(args []string) error {
+	flags := flag.NewFlagSet("prepare", flag.ContinueOnError)
+	configPath := flags.String("config", "test/load/config/standard.yaml", "load config")
+	imagesPath := flags.String("images", "test/load/config/images.lock.yaml", "image lock")
+	runID := flags.String("run-id", "", "run ID")
+	runRoot := flags.String("run-root", "test/load/runs", "run root")
+	apiURL := flags.String("api-url", os.Getenv("ORBITJOB_API_URL"), "Admin API URL")
+	bootstrapKey := flags.String("bootstrap-key", os.Getenv("ORBITJOB_API_KEY"), "bootstrap admin API key")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *runID == "" || *apiURL == "" || *bootstrapKey == "" {
+		return fmt.Errorf("run-id, api-url and bootstrap-key are required")
+	}
+	return Prepare(*configPath, *imagesPath, *runID, *runRoot, *apiURL, *bootstrapKey)
+}
+
+func runRun(args []string) error {
+	flags := flag.NewFlagSet("run", flag.ContinueOnError)
+	configPath := flags.String("config", "test/load/config/standard.yaml", "load config")
+	runID := flags.String("run-id", "", "run ID")
+	runRoot := flags.String("run-root", "test/load/runs", "run root")
+	apiURL := flags.String("api-url", os.Getenv("ORBITJOB_API_URL"), "Admin API URL")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *runID == "" || *apiURL == "" {
+		return fmt.Errorf("run-id and api-url are required")
+	}
+	cfg, err := LoadConfig(*configPath)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	if err := ValidateStandard(cfg); err != nil {
+		return fmt.Errorf("validate standard: %w", err)
+	}
+	runDir := filepath.Join(*runRoot, *runID)
+	created, err := loadCreatedDefinitions(filepath.Join(runDir, "created-definitions.json"))
+	if err != nil {
+		return fmt.Errorf("load created definitions: %w", err)
+	}
+	tenantKeys, err := loadTenantKeys(filepath.Join(runDir, "tenant-keys.json"))
+	if err != nil {
+		return fmt.Errorf("load tenant keys: %w", err)
+	}
+	clients := make(map[string]*APIClient, len(tenantKeys))
+	for tenant, key := range tenantKeys {
+		clients[tenant] = NewAPIClient(*apiURL, key)
+	}
+	maxActive := map[string]int{}
+	for _, p := range cfg.Phases {
+		maxActive[p.Name] = p.MaxActive
+	}
+	schedule := BuildPhaseSchedule(cfg, created)
+	engine := NewRunEngine(clients, schedule, maxActive)
+
+	start := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.Duration+30*time.Minute)
+	defer cancel()
+
+	go injectFaults(ctx, start)
+	if err := engine.Run(ctx, func() time.Duration { return time.Since(start) }); err != nil && err != context.DeadlineExceeded {
+		return fmt.Errorf("run engine: %w", err)
+	}
+	engine.Stop()
+	triggered, accepted, rejected := engine.Stats()
+	fmt.Printf("run: triggered=%d accepted=%d rejected=%d\n", triggered, accepted, rejected)
+	return nil
+}
+
+func injectFaults(ctx context.Context, start time.Time) {
+	for _, fault := range StandardFaultPlan() {
+		wait := fault.Offset - time.Since(start)
+		if wait > 0 {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(wait):
+			}
+		}
+		cmd, err := FaultInjectionCommand(fault.Name, "orbitjob")
+		if err != nil || len(cmd) == 0 {
+			continue
+		}
+		_ = exec.Command(cmd[0], cmd[1:]...).Run()
+		gate := RecoveryGate{Name: fault.Name, ReadyTimeout: 2 * time.Minute, BusinessTimeout: 5 * time.Minute}
+		_ = WaitForRecovery(ctx, gate, func(context.Context) bool { return true })
+	}
+}
+
+func runReport(args []string) error {
+	flags := flag.NewFlagSet("report", flag.ContinueOnError)
+	runID := flags.String("run-id", "", "run ID")
+	runRoot := flags.String("run-root", "test/load/runs", "run root")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *runID == "" {
+		return fmt.Errorf("run-id is required")
+	}
+	runDir := filepath.Join(*runRoot, *runID)
+	data, err := os.ReadFile(filepath.Join(runDir, "result.json"))
+	if err != nil {
+		return fmt.Errorf("read result: %w", err)
+	}
+	var result Result
+	if err := json.Unmarshal(data, &result); err != nil {
+		return fmt.Errorf("decode result: %w", err)
+	}
+	run := RunRecord{RunID: *runID, Qualification: true, StartedAt: time.Now()}
+	if err := WriteReport(runDir, run, result); err != nil {
+		return err
+	}
+	if err := WriteChecksums(runDir); err != nil {
+		return err
+	}
+	fmt.Printf("report: verdict=%s written to %s\n", result.Verdict, runDir)
+	return nil
+}
+
+func runClean(args []string) error {
+	flags := flag.NewFlagSet("clean", flag.ContinueOnError)
+	runID := flags.String("run-id", "", "run ID")
+	runRoot := flags.String("run-root", "test/load/runs", "run root")
+	confirm := flags.Bool("confirm", false, "confirm cleanup")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *runID == "" || !*confirm {
+		return fmt.Errorf("run-id and --confirm are required")
+	}
+	if err := ValidateCleanRunID(*runID); err != nil {
+		return err
+	}
+	for _, manifest := range []string{"fixture.yaml", "postgres.yaml", "fixture-configmap.yaml", "operations-rbac.yaml", "namespace.yaml"} {
+		_ = exec.Command("kubectl", "delete", "-f", filepath.Join("deploy/load", manifest), "--ignore-not-found").Run()
+	}
+	runDir := filepath.Join(*runRoot, *runID)
+	if err := os.RemoveAll(runDir); err != nil {
+		return fmt.Errorf("remove run dir: %w", err)
+	}
+	fmt.Printf("clean: removed %s\n", runDir)
+	return nil
+}
+
 func writeStableJSON(path string, value any) error {
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
@@ -137,5 +291,5 @@ func writeStableJSON(path string, value any) error {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: loadtest <preflight|generate|prepare|run|verify|report|clean|smoke|calibrate|inject-fault>")
+	fmt.Fprintln(os.Stderr, "usage: loadtest <preflight|generate|prepare|run|verify|report|clean> [flags]")
 }

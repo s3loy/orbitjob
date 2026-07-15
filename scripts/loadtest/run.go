@@ -11,6 +11,7 @@ import (
 
 type TriggerEvent struct {
 	At             time.Duration
+	JobID          int64
 	DefinitionCase string
 	Tenant         string
 	IdempotencyKey string
@@ -22,54 +23,59 @@ type PhaseSchedule struct {
 	Events []TriggerEvent
 }
 
-func BuildPhaseSchedule(cfg Config) PhaseSchedule {
+// BuildPhaseSchedule assigns created definitions to phase time slots and appends
+// the peak burst. When cases is empty, burst events are emitted as placeholders
+// with JobID=0 so schedule shape (count, span, ordering) stays testable without
+// a live prepared run.
+func BuildPhaseSchedule(cfg Config, cases []CreatedDefinition) PhaseSchedule {
 	var events []TriggerEvent
 	caseIndex := 0
-	manualCases := manualTriggerCases(cfg)
 	for _, phase := range cfg.Phases {
 		if phase.RatePerMinute == 0 {
 			continue
 		}
 		interval := time.Minute / time.Duration(phase.RatePerMinute)
 		for offset := phase.Offset; offset < phase.Offset+phase.Duration; offset += interval {
-			if caseIndex >= len(manualCases) {
+			if caseIndex >= len(cases) {
 				break
 			}
-			def := manualCases[caseIndex]
+			c := cases[caseIndex]
 			events = append(events, TriggerEvent{
 				At:             offset,
-				DefinitionCase: def.CaseID,
-				Tenant:         def.Tenant,
-				IdempotencyKey: fmt.Sprintf("v020-%s-%04d", def.CaseID, caseIndex),
-				Origin:         def.TriggerOrigin,
+				JobID:          c.JobID,
+				DefinitionCase: c.CaseID,
+				Tenant:         c.Tenant,
+				IdempotencyKey: fmt.Sprintf("v020-%s-%04d", c.CaseID, caseIndex),
+				Origin:         "manual",
 				Phase:          phase.Name,
 			})
 			caseIndex++
 		}
 	}
-	events = append(events, burstEvents(cfg, caseIndex)...)
+	events = append(events, burstEvents(cfg, cases, caseIndex)...)
 	return PhaseSchedule{Events: events}
 }
 
-func manualTriggerCases(cfg Config) []Definition {
-	// Placeholder: in the real run, this is populated from the generated manifest.
-	// The scheduler only consumes the abstract event list, decoupling it from generation.
-	return nil
-}
-
-func burstEvents(cfg Config, startIndex int) []TriggerEvent {
+func burstEvents(cfg Config, cases []CreatedDefinition, startIndex int) []TriggerEvent {
 	var events []TriggerEvent
 	if cfg.Burst.Count == 0 {
 		return events
 	}
 	interval := cfg.Burst.SubmitWithin / time.Duration(cfg.Burst.Count)
 	for i := 0; i < cfg.Burst.Count; i++ {
-		events = append(events, TriggerEvent{
+		ev := TriggerEvent{
 			At:             phaseOffset(cfg, cfg.Burst.Phase) + cfg.Burst.Offset + time.Duration(i)*interval,
 			IdempotencyKey: fmt.Sprintf("v020-burst-%04d", startIndex+i),
 			Origin:         "manual",
 			Phase:          cfg.Burst.Phase,
-		})
+		}
+		if len(cases) > 0 {
+			c := cases[(startIndex+i)%len(cases)]
+			ev.JobID = c.JobID
+			ev.DefinitionCase = c.CaseID
+			ev.Tenant = c.Tenant
+		}
+		events = append(events, ev)
 	}
 	return events
 }
@@ -94,7 +100,7 @@ func CountBurst(events []TriggerEvent) int {
 }
 
 type RunEngine struct {
-	api       *APIClient
+	api       map[string]*APIClient
 	schedule  PhaseSchedule
 	maxActive map[string]int
 	stop      chan struct{}
@@ -103,7 +109,7 @@ type RunEngine struct {
 	rejected  atomic.Int64
 }
 
-func NewRunEngine(api *APIClient, schedule PhaseSchedule, maxActive map[string]int) *RunEngine {
+func NewRunEngine(api map[string]*APIClient, schedule PhaseSchedule, maxActive map[string]int) *RunEngine {
 	return &RunEngine{api: api, schedule: schedule, maxActive: maxActive, stop: make(chan struct{})}
 }
 
@@ -118,7 +124,6 @@ func (e *RunEngine) Run(ctx context.Context, clock func() time.Duration) error {
 			return nil
 		default:
 		}
-		// Wait until event time.
 		for clock() < event.At {
 			select {
 			case <-ctx.Done():
@@ -142,7 +147,12 @@ func (e *RunEngine) Run(ctx context.Context, clock func() time.Duration) error {
 				active--
 				activeMu.Unlock()
 			}()
-			_, err := e.api.TriggerJob(ctx, 1, ev.Tenant, ev.IdempotencyKey)
+			client := e.api[ev.Tenant]
+			if client == nil || ev.JobID == 0 {
+				e.rejected.Add(1)
+				return
+			}
+			_, err := client.TriggerJob(ctx, ev.JobID, ev.Tenant, ev.IdempotencyKey)
 			if err == nil {
 				e.accepted.Add(1)
 			} else {
