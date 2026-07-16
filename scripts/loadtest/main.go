@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -174,6 +175,9 @@ func runRun(args []string) error {
 	runID := flags.String("run-id", "", "run ID")
 	runRoot := flags.String("run-root", "test/load/runs", "run root")
 	apiURL := flags.String("api-url", os.Getenv("ORBITJOB_API_URL"), "Admin API URL")
+	prometheusURL := flags.String("prometheus-url", "http://localhost:9090", "Prometheus URL for feedback controller")
+	tuneDeployments := flags.Bool("tune-deployments", false, "patch worker/admin-api env from resource model")
+	dryRunTuning := flags.Bool("dry-run-tuning", false, "print computed tuning and exit")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -187,6 +191,7 @@ func runRun(args []string) error {
 	if err := validateProfile(*profile, cfg); err != nil {
 		return fmt.Errorf("validate profile: %w", err)
 	}
+
 	runDir := filepath.Join(*runRoot, *runID)
 	created, err := loadCreatedDefinitions(filepath.Join(runDir, "created-definitions.json"))
 	if err != nil {
@@ -200,15 +205,65 @@ func runRun(args []string) error {
 	for tenant, key := range tenantKeys {
 		clients[tenant] = NewAPIClient(*apiURL, key)
 	}
-	maxActive := map[string]int{}
-	for _, p := range cfg.Phases {
-		maxActive[p.Name] = p.MaxActive
+
+	var schedule PhaseSchedule
+	var maxActive map[string]int
+	var pace *PaceController
+	var promClient *PrometheusClient
+
+	if cfg.DynamicTuningEnabled() {
+		snap, err := InspectResources(context.Background(), cfg.Dynamic.Resource)
+		if err != nil {
+			return fmt.Errorf("inspect resources: %w", err)
+		}
+		params, err := ComputeTuning(snap, cfg, cfg.Dynamic.Resource)
+		if err != nil {
+			return fmt.Errorf("compute tuning: %w", err)
+		}
+		printTuning(params)
+		if *dryRunTuning {
+			return nil
+		}
+		if *tuneDeployments {
+			if err := patchDeploymentEnv(context.Background(), "orbitjob-worker", map[string]string{
+				"WORKER_CAPACITY":                   strconv.Itoa(params.RecommendedWorkerCapacity),
+				"WORKER_CAPACITY_MAX":               strconv.Itoa(params.EffectiveWorkerCapacityMax),
+				"WORKER_ADAPTIVE_CAPACITY_ENABLED": "false",
+			}); err != nil {
+				return fmt.Errorf("patch worker: %w", err)
+			}
+			if err := patchDeploymentEnv(context.Background(), "orbitjob-admin-api", map[string]string{
+				"RATELIMIT_TRIGGER_RPS": strconv.Itoa(params.RecommendedTriggerRPSPerTenant),
+			}); err != nil {
+				return fmt.Errorf("patch admin-api: %w", err)
+			}
+		}
+		cfg = applyTuningToConfig(cfg, params)
+		maxActive = params.MaxActive
+		promClient = NewPrometheusClient(*prometheusURL)
+		pace = NewPaceController(cfg.Dynamic.Feedback, params, cfg.MinimumInstances, cfg.Duration)
+	} else {
+		maxActive = map[string]int{}
+		for _, p := range cfg.Phases {
+			maxActive[p.Name] = p.MaxActive
+		}
 	}
-	schedule := BuildPhaseSchedule(cfg, created)
-	engine := NewRunEngine(clients, schedule, maxActive)
+	schedule = BuildPhaseSchedule(cfg, created)
+
+	var engine *RunEngine
+	if pace != nil {
+		engine = NewRunEngineWithPace(clients, schedule, maxActive, pace, promClient)
+	} else {
+		engine = NewRunEngine(clients, schedule, maxActive)
+	}
 
 	start := time.Now()
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.Duration+30*time.Minute)
+	timeout := cfg.Duration + 30*time.Minute
+	if cfg.DynamicTuningEnabled() {
+		// Allow stretched schedule when under pressure.
+		timeout = time.Duration(float64(cfg.Duration)/cfg.Dynamic.Feedback.MinPace) + 30*time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	go injectFaults(ctx, start)
@@ -218,6 +273,49 @@ func runRun(args []string) error {
 	engine.Stop()
 	triggered, accepted, rejected := engine.Stats()
 	fmt.Printf("run: triggered=%d accepted=%d rejected=%d\n", triggered, accepted, rejected)
+	return nil
+}
+
+func printTuning(params TuningParameters) {
+	fmt.Printf("tuning: worker_capacity_max=%d worker_capacity=%d trigger_rps_per_tenant=%d\n",
+		params.EffectiveWorkerCapacityMax, params.RecommendedWorkerCapacity, params.RecommendedTriggerRPSPerTenant)
+	fmt.Printf("tuning: estimated_manual=%d estimated_cron=%d\n",
+		params.EstimatedManualInstances, params.EstimatedCronInstances)
+	fmt.Println("tuning: phase_rates")
+	for name, rate := range params.PhaseRates {
+		fmt.Printf("  %s: rate=%d/min max_active=%d\n", name, rate, params.MaxActive[name])
+	}
+}
+
+func applyTuningToConfig(cfg Config, params TuningParameters) Config {
+	for i := range cfg.Phases {
+		if r, ok := params.PhaseRates[cfg.Phases[i].Name]; ok {
+			cfg.Phases[i].RatePerMinute = r
+		}
+		if m, ok := params.MaxActive[cfg.Phases[i].Name]; ok {
+			cfg.Phases[i].MaxActive = m
+		}
+	}
+	return cfg
+}
+
+func patchDeploymentEnv(ctx context.Context, name string, env map[string]string) error {
+	if len(env) == 0 {
+		return nil
+	}
+	args := []string{"set", "env", "deployment", name, "-n", "orbitjob"}
+	for k, v := range env {
+		args = append(args, fmt.Sprintf("%s=%s", k, v))
+	}
+	out, err := exec.CommandContext(ctx, "kubectl", args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("kubectl %s: %s", args, strings.TrimSpace(string(out)))
+	}
+	waitArgs := []string{"rollout", "status", "deployment", name, "-n", "orbitjob", "--timeout=120s"}
+	out, err = exec.CommandContext(ctx, "kubectl", waitArgs...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("kubectl rollout %s: %s", name, strings.TrimSpace(string(out)))
+	}
 	return nil
 }
 

@@ -1,0 +1,71 @@
+schema_version: v020-load/v1
+profile: standard
+qualification: true
+seed: v020-standard-1
+duration: 4h
+minimum_instances: 10000
+environment:
+  docker_cpu: 10
+  docker_memory_gib: 8
+  kind_nodes: 1
+definitions:
+  total: 1200
+  categories:
+    data-processing: 280
+    database: 220
+    http-webhook: 240
+    operations: 140
+    failure: 220
+    external-probes: 100
+  product_trigger_types:
+    manual: 840
+    cron: 360
+  trigger_origins:
+    manual: 720
+    cron: 360
+    webhook: 120
+  cron_interval_minutes: 10
+tenants:
+  - load-alpha
+  - load-beta
+  - load-gamma
+  - load-adversarial
+# Dynamic tuning: phase rates and max_active are computed from Docker/Kubernetes
+# resource limits at runtime, and the trigger pace is adjusted via Prometheus.
+dynamic:
+  enabled: true
+  resource:
+    task_avg_duration_sec: 30
+    system_reserve_cpu: 1.0
+    system_reserve_mem_gib: 2.0
+    headroom_factor: 0.8
+    peak_overshoot: 1.2
+  feedback:
+    prometheus_url: "http://localhost:9090"
+    sample_interval_sec: 15
+    latency_threshold_sec: 0.5
+    high_pressure_threshold: 0.7
+    low_pressure_threshold: 0.3
+    min_pace: 0.5
+    max_pace: 1.5
+phases:
+  - {name: warmup, offset: 0m, duration: 10m}
+  - {name: correctness, offset: 10m, duration: 30m}
+  - {name: steady, offset: 40m, duration: 30m}
+  - {name: ramp, offset: 70m, duration: 30m}
+  - {name: peak, offset: 100m, duration: 20m}
+  - {name: recovery, offset: 120m, duration: 40m}
+  - {name: fault-recovery, offset: 160m, duration: 80m}
+burst:
+  phase: peak
+  offset: 5m
+  count: 500
+  submit_within: 60s
+sampling:
+  readiness: 10s
+  kubernetes_objects: 15s
+  resources: 15s
+  prometheus: 15s
+  postgres: 30s
+  backlog: 30s
+  database_size: 5m

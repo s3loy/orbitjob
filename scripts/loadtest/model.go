@@ -24,6 +24,33 @@ type Config struct {
 	Phases           []Phase           `yaml:"phases"`
 	Burst            BurstConfig       `yaml:"burst"`
 	Sampling         SamplingConfig    `yaml:"sampling"`
+	Dynamic          DynamicConfig     `yaml:"dynamic"`
+}
+
+type DynamicConfig struct {
+	Enabled  bool               `yaml:"enabled"`
+	Resource ResourceModelConfig `yaml:"resource"`
+	Feedback FeedbackConfig     `yaml:"feedback"`
+}
+
+func (c Config) DynamicTuningEnabled() bool { return c.Dynamic.Enabled }
+
+type ResourceModelConfig struct {
+	TaskAvgDurationSec int     `yaml:"task_avg_duration_sec"`
+	SystemReserveCPU   float64 `yaml:"system_reserve_cpu"`
+	SystemReserveMemGi float64 `yaml:"system_reserve_mem_gib"`
+	HeadroomFactor     float64 `yaml:"headroom_factor"`
+	PeakOvershoot      float64 `yaml:"peak_overshoot"`
+}
+
+type FeedbackConfig struct {
+	PrometheusURL         string  `yaml:"prometheus_url"`
+	SampleIntervalSec     int     `yaml:"sample_interval_sec"`
+	LatencyThresholdSec   float64 `yaml:"latency_threshold_sec"`
+	HighPressureThreshold float64 `yaml:"high_pressure_threshold"`
+	LowPressureThreshold  float64 `yaml:"low_pressure_threshold"`
+	MinPace               float64 `yaml:"min_pace"`
+	MaxPace               float64 `yaml:"max_pace"`
 }
 
 type EnvironmentConfig struct {

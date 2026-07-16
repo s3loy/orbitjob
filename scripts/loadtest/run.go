@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -101,22 +102,54 @@ func CountBurst(events []TriggerEvent) int {
 }
 
 type RunEngine struct {
-	api       map[string]*APIClient
-	schedule  PhaseSchedule
-	maxActive map[string]int
-	stop      chan struct{}
-	triggered atomic.Int64
-	accepted  atomic.Int64
-	rejected  atomic.Int64
+	api        map[string]*APIClient
+	schedule   PhaseSchedule
+	maxActive  map[string]int
+	pace       *PaceController
+	promClient *PrometheusClient
+	stop       chan struct{}
+	triggered  atomic.Int64
+	accepted   atomic.Int64
+	rejected   atomic.Int64
 }
 
 func NewRunEngine(api map[string]*APIClient, schedule PhaseSchedule, maxActive map[string]int) *RunEngine {
 	return &RunEngine{api: api, schedule: schedule, maxActive: maxActive, stop: make(chan struct{})}
 }
 
+func NewRunEngineWithPace(api map[string]*APIClient, schedule PhaseSchedule, maxActive map[string]int, pace *PaceController, promClient *PrometheusClient) *RunEngine {
+	return &RunEngine{api: api, schedule: schedule, maxActive: maxActive, pace: pace, promClient: promClient, stop: make(chan struct{})}
+}
+
 func (e *RunEngine) Run(ctx context.Context, clock func() time.Duration) error {
 	active := 0
 	var activeMu sync.Mutex
+	dynamic := e.pace != nil
+
+	if dynamic && e.promClient != nil {
+		ticker := time.NewTicker(time.Duration(e.pace.cfg.SampleIntervalSec) * time.Second)
+		defer ticker.Stop()
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-e.stop:
+					return
+				case <-ticker.C:
+					pf, pressure, err := e.pace.Update(ctx, e.promClient, e.accepted.Load(), clock())
+					if err == nil {
+						slog.Debug("pace controller update", "pace", pf, "pressure", pressure)
+					}
+				}
+			}
+		}()
+	}
+
+	var lastReal time.Duration
+	virtual := time.Duration(0)
+	progressLast := time.Duration(0)
+
 	for _, event := range e.schedule.Events {
 		select {
 		case <-ctx.Done():
@@ -125,21 +158,52 @@ func (e *RunEngine) Run(ctx context.Context, clock func() time.Duration) error {
 			return nil
 		default:
 		}
-		for clock() < event.At {
+
+		for {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-time.After(time.Millisecond):
+			case <-e.stop:
+				return nil
+			default:
 			}
+			nowReal := clock()
+			dt := nowReal - lastReal
+			if dt < 0 {
+				dt = 0
+			}
+			if dynamic {
+				virtual += time.Duration(float64(dt) * e.pace.Pace())
+			} else {
+				virtual += dt
+			}
+			lastReal = nowReal
+			if virtual >= event.At {
+				break
+			}
+			time.Sleep(time.Millisecond)
 		}
-		activeMu.Lock()
-		limit := e.maxActive[event.Phase]
-		if limit > 0 && active >= limit {
+
+		skip := false
+		for {
+			activeMu.Lock()
+			limit := e.maxActive[event.Phase]
+			if limit > 0 && active >= limit {
+				activeMu.Unlock()
+				if !dynamic {
+					skip = true
+					break
+				}
+				time.Sleep(time.Millisecond)
+				continue
+			}
+			active++
 			activeMu.Unlock()
+			break
+		}
+		if skip {
 			continue
 		}
-		active++
-		activeMu.Unlock()
 
 		e.triggered.Add(1)
 		go func(ev TriggerEvent) {
@@ -160,6 +224,15 @@ func (e *RunEngine) Run(ctx context.Context, clock func() time.Duration) error {
 				e.rejected.Add(1)
 			}
 		}(event)
+
+		if nowReal := clock(); nowReal-progressLast >= time.Minute {
+			progressLast = nowReal
+			pace := 1.0
+			if e.pace != nil {
+				pace = e.pace.Pace()
+			}
+			fmt.Printf("loadtest progress: triggered=%d accepted=%d rejected=%d pace=%.2f\n", e.triggered.Load(), e.accepted.Load(), e.rejected.Load(), pace)
+		}
 	}
 	return nil
 }

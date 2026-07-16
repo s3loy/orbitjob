@@ -38,7 +38,48 @@ func LoadConfig(path string) (Config, error) {
 	if cfg.Burst.SubmitWithin, err = time.ParseDuration(cfg.Burst.SubmitWithinText); err != nil {
 		return Config{}, fmt.Errorf("parse burst submit_within: %w", err)
 	}
+	cfg = withDefaults(cfg)
 	return cfg, nil
+}
+
+func withDefaults(cfg Config) Config {
+	if cfg.Dynamic.Resource.TaskAvgDurationSec == 0 {
+		cfg.Dynamic.Resource.TaskAvgDurationSec = 30
+	}
+	if cfg.Dynamic.Resource.SystemReserveCPU == 0 {
+		cfg.Dynamic.Resource.SystemReserveCPU = 1.0
+	}
+	if cfg.Dynamic.Resource.SystemReserveMemGi == 0 {
+		cfg.Dynamic.Resource.SystemReserveMemGi = 2.0
+	}
+	if cfg.Dynamic.Resource.HeadroomFactor == 0 {
+		cfg.Dynamic.Resource.HeadroomFactor = 0.8
+	}
+	if cfg.Dynamic.Resource.PeakOvershoot == 0 {
+		cfg.Dynamic.Resource.PeakOvershoot = 1.2
+	}
+	if cfg.Dynamic.Feedback.PrometheusURL == "" {
+		cfg.Dynamic.Feedback.PrometheusURL = "http://localhost:9090"
+	}
+	if cfg.Dynamic.Feedback.SampleIntervalSec == 0 {
+		cfg.Dynamic.Feedback.SampleIntervalSec = 15
+	}
+	if cfg.Dynamic.Feedback.LatencyThresholdSec == 0 {
+		cfg.Dynamic.Feedback.LatencyThresholdSec = 0.5
+	}
+	if cfg.Dynamic.Feedback.HighPressureThreshold == 0 {
+		cfg.Dynamic.Feedback.HighPressureThreshold = 0.7
+	}
+	if cfg.Dynamic.Feedback.LowPressureThreshold == 0 {
+		cfg.Dynamic.Feedback.LowPressureThreshold = 0.3
+	}
+	if cfg.Dynamic.Feedback.MinPace == 0 {
+		cfg.Dynamic.Feedback.MinPace = 0.5
+	}
+	if cfg.Dynamic.Feedback.MaxPace == 0 {
+		cfg.Dynamic.Feedback.MaxPace = 1.5
+	}
+	return cfg
 }
 
 func ValidateStandard(c Config) error {
@@ -64,6 +105,27 @@ func ValidateStandard(c Config) error {
 	case c.Environment.DockerCPU != 10 || c.Environment.DockerMemoryGi != 8 || c.Environment.KindNodes != 1:
 		return fmt.Errorf("standard environment must be Docker 10 CPU / 8 GiB and one kind node")
 	}
+	if err := validatePhaseContinuity(c); err != nil {
+		return err
+	}
+	if c.Dynamic.Enabled {
+		if err := validateDynamicPhases(c); err != nil {
+			return err
+		}
+		return nil
+	}
+	for _, phase := range c.Phases {
+		if phase.RatePerMinute == 0 {
+			return fmt.Errorf("phase %s must have rate_per_minute > 0 in static mode", phase.Name)
+		}
+		if phase.MaxActive == 0 {
+			return fmt.Errorf("phase %s must have max_active > 0 in static mode", phase.Name)
+		}
+	}
+	return nil
+}
+
+func validatePhaseContinuity(c Config) error {
 	var end time.Duration
 	for _, phase := range c.Phases {
 		if phase.Offset != end {
@@ -73,6 +135,18 @@ func ValidateStandard(c Config) error {
 	}
 	if end != c.Duration {
 		return fmt.Errorf("phases end at %s, expected %s", end, c.Duration)
+	}
+	return nil
+}
+
+func validateDynamicPhases(c Config) error {
+	for _, phase := range c.Phases {
+		if phase.RatePerMinute != 0 {
+			return fmt.Errorf("phase %s must not set rate_per_minute when dynamic.enabled=true", phase.Name)
+		}
+		if phase.MaxActive != 0 {
+			return fmt.Errorf("phase %s must not set max_active when dynamic.enabled=true", phase.Name)
+		}
 	}
 	return nil
 }
@@ -95,15 +169,19 @@ func ValidateSmoke(c Config) error {
 	case c.Environment.KindNodes < 1:
 		return errors.New("smoke profile requires at least one kind node")
 	}
-	var end time.Duration
-	for _, phase := range c.Phases {
-		if phase.Offset != end {
-			return fmt.Errorf("phase %s starts at %s, expected %s", phase.Name, phase.Offset, end)
-		}
-		end = phase.Offset + phase.Duration
+	if err := validatePhaseContinuity(c); err != nil {
+		return err
 	}
-	if end != c.Duration {
-		return fmt.Errorf("phases end at %s, expected %s", end, c.Duration)
+	if c.Dynamic.Enabled {
+		return validateDynamicPhases(c)
+	}
+	for _, phase := range c.Phases {
+		if phase.RatePerMinute == 0 {
+			return fmt.Errorf("phase %s must have rate_per_minute > 0 in static mode", phase.Name)
+		}
+		if phase.MaxActive == 0 {
+			return fmt.Errorf("phase %s must have max_active > 0 in static mode", phase.Name)
+		}
 	}
 	return nil
 }
@@ -126,15 +204,19 @@ func ValidateLong(c Config) error {
 	case c.Environment.KindNodes < 1:
 		return errors.New("long profile requires at least one kind node")
 	}
-	var end time.Duration
-	for _, phase := range c.Phases {
-		if phase.Offset != end {
-			return fmt.Errorf("phase %s starts at %s, expected %s", phase.Name, phase.Offset, end)
-		}
-		end = phase.Offset + phase.Duration
+	if err := validatePhaseContinuity(c); err != nil {
+		return err
 	}
-	if end != c.Duration {
-		return fmt.Errorf("phases end at %s, expected %s", end, c.Duration)
+	if c.Dynamic.Enabled {
+		return validateDynamicPhases(c)
+	}
+	for _, phase := range c.Phases {
+		if phase.RatePerMinute == 0 {
+			return fmt.Errorf("phase %s must have rate_per_minute > 0 in static mode", phase.Name)
+		}
+		if phase.MaxActive == 0 {
+			return fmt.Errorf("phase %s must have max_active > 0 in static mode", phase.Name)
+		}
 	}
 	return nil
 }
