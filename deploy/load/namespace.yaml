@@ -24,10 +24,10 @@ metadata:
   namespace: orbitjob-tasks
 spec:
   hard:
-    requests.cpu: 1500m
-    requests.memory: 1536Mi
-    limits.cpu: "5"
-    limits.memory: 4Gi
+    requests.cpu: 5
+    requests.memory: 5Gi
+    limits.cpu: "10"
+    limits.memory: 8Gi
 ---
 apiVersion: v1
 kind: LimitRange

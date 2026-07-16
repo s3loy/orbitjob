@@ -1,0 +1,57 @@
+schema_version: v020-load/v1
+profile: long
+qualification: false
+seed: v020-long-1
+duration: 8h
+minimum_instances: 0
+environment:
+  docker_cpu: 8
+  docker_memory_gib: 8
+  kind_nodes: 1
+definitions:
+  total: 1200
+  categories:
+    data-processing: 280
+    database: 220
+    http-webhook: 240
+    operations: 140
+    failure: 220
+    external-probes: 100
+  product_trigger_types:
+    manual: 840
+    cron: 360
+  trigger_origins:
+    manual: 720
+    cron: 360
+    webhook: 120
+  cron_interval_minutes: 60
+tenants:
+  - long-alpha
+  - long-beta
+  - long-gamma
+  - long-adversarial
+# 8h soak: definitions are cycled so the schedule covers the full duration.
+# Cron jobs fire hourly for a steady baseline; manual triggers provide shape.
+# Rates are capped to worker pool capacity so jobs execute instead of being
+# rejected.
+phases:
+  - {name: warmup, offset: 0m, duration: 30m, rate_per_minute: 5, max_active: 5}
+  - {name: correctness, offset: 30m, duration: 90m, rate_per_minute: 8, max_active: 10}
+  - {name: steady, offset: 120m, duration: 60m, rate_per_minute: 15, max_active: 10}
+  - {name: ramp, offset: 180m, duration: 60m, rate_per_minute: 25, max_active: 12}
+  - {name: peak, offset: 240m, duration: 40m, rate_per_minute: 35, max_active: 15}
+  - {name: recovery, offset: 280m, duration: 80m, rate_per_minute: 10, max_active: 10}
+  - {name: fault-recovery, offset: 360m, duration: 120m, rate_per_minute: 10, max_active: 10}
+burst:
+  phase: peak
+  offset: 5m
+  count: 60
+  submit_within: 60s
+sampling:
+  readiness: 10s
+  kubernetes_objects: 15s
+  resources: 15s
+  prometheus: 15s
+  postgres: 30s
+  backlog: 30s
+  database_size: 5m

@@ -1,0 +1,102 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: monitoring
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus.monitoring.svc.cluster.local:9090
+        isDefault: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards-provider
+  namespace: monitoring
+data:
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: orbitjob
+        orgId: 1
+        type: file
+        disableDeletion: false
+        updateIntervalSeconds: 10
+        options:
+          path: /var/lib/grafana/dashboards
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: orbitjob-dashboard
+  namespace: monitoring
+data:
+  orbitjob.json: |
+    {
+      "title": "OrbitJob Load Test",
+      "uid": "orbitjob-load",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "15s",
+      "time": {"from": "now-8h", "to": "now"},
+      "panels": [
+        {"id": 1, "type": "stat", "title": "Instances by status", "gridPos": {"x": 0, "y": 0, "w": 8, "h": 6}, "targets": [{"refId": "A", "expr": "sum by (status) (increase(orbitjob_instances_total[$__range]))"}]},
+        {"id": 2, "type": "stat", "title": "Executions by result", "gridPos": {"x": 8, "y": 0, "w": 8, "h": 6}, "targets": [{"refId": "A", "expr": "sum by (result) (increase(orbitjob_executions_total[$__range]))"}]},
+        {"id": 3, "type": "stat", "title": "Worker pool submitted/rejected", "gridPos": {"x": 16, "y": 0, "w": 8, "h": 6}, "targets": [{"refId": "A", "expr": "sum(increase(orbitjob_worker_pool_submitted_total[$__range]))", "legendFormat": "submitted"}, {"refId": "B", "expr": "sum(increase(orbitjob_worker_pool_rejected_total[$__range]))", "legendFormat": "rejected"}]},
+        {"id": 4, "type": "timeseries", "title": "Execution duration p95 by result", "gridPos": {"x": 0, "y": 6, "w": 12, "h": 8}, "targets": [{"refId": "A", "expr": "histogram_quantile(0.95, sum by (le, result_code) (rate(orbitjob_handler_execution_duration_seconds_bucket[1m])))"}]},
+        {"id": 5, "type": "timeseries", "title": "Dispatcher queue depth", "gridPos": {"x": 12, "y": 6, "w": 12, "h": 8}, "targets": [{"refId": "A", "expr": "sum by (tenant_id) (orbitjob_dispatcher_queue_depth)"}]},
+        {"id": 6, "type": "timeseries", "title": "Dispatch/Execute rate", "gridPos": {"x": 0, "y": 14, "w": 24, "h": 8}, "targets": [{"refId": "A", "expr": "sum(rate(orbitjob_dispatcher_dispatch_total[5m]))", "legendFormat": "dispatch/s"}, {"refId": "B", "expr": "sum(rate(orbitjob_executions_total[5m]))", "legendFormat": "execute/s"}]}
+      ]
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: monitoring
+  labels: {app: grafana}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: grafana}
+  template:
+    metadata:
+      labels: {app: grafana}
+    spec:
+      containers:
+        - name: grafana
+          image: docker.io/grafana/grafana:11.4.0
+          env:
+            - {name: GF_SECURITY_ADMIN_USER, value: admin}
+            - {name: GF_SECURITY_ADMIN_PASSWORD, value: admin}
+            - {name: GF_AUTH_ANONYMOUS_ENABLED, value: "true"}
+            - {name: GF_AUTH_ANONYMOUS_ORG_ROLE, value: Viewer}
+          ports: [{containerPort: 3000, name: web}]
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {cpu: 250m, memory: 256Mi}
+          volumeMounts:
+            - {name: datasources, mountPath: /etc/grafana/provisioning/datasources}
+            - {name: dashboards-provider, mountPath: /etc/grafana/provisioning/dashboards}
+            - {name: dashboards, mountPath: /var/lib/grafana/dashboards}
+      volumes:
+        - name: datasources
+          configMap: {name: grafana-datasources}
+        - name: dashboards-provider
+          configMap: {name: grafana-dashboards-provider}
+        - name: dashboards
+          configMap: {name: orbitjob-dashboard}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  selector: {app: grafana}
+  ports: [{name: web, port: 3000, targetPort: web}]

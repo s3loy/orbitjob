@@ -116,7 +116,11 @@ func (c *APIClient) CreateTenant(ctx context.Context, slug, name string) (string
 }
 
 func (c *APIClient) CreateAPIKey(ctx context.Context, tenantID string) (string, error) {
-	resp, err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/tenants/%s/api_keys", tenantID), "", "", nil)
+	body, err := json.Marshal(map[string]any{})
+	if err != nil {
+		return "", err
+	}
+	resp, err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/tenants/%s/api_keys", tenantID), "", "", bytes.NewReader(body))
 	if err != nil {
 		return "", err
 	}

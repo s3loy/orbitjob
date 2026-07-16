@@ -33,6 +33,10 @@ func main() {
 		err = runReport(os.Args[2:])
 	case "clean":
 		err = runClean(os.Args[2:])
+	case "monitor":
+		err = runMonitor(os.Args[2:])
+	case "reset":
+		err = runReset(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -47,6 +51,7 @@ func runPreflight(args []string) error {
 	flags := flag.NewFlagSet("preflight", flag.ContinueOnError)
 	configPath := flags.String("config", "test/load/config/standard.yaml", "load config")
 	imagesPath := flags.String("images", "test/load/config/images.lock.yaml", "image lock")
+	profile := flags.String("profile", "standard", "load profile: standard|smoke")
 	checkOnly := flags.Bool("check-only", false, "skip image pulls and cluster mutations")
 	imagesOnly := flags.Bool("images-only", false, "validate image lock only")
 	if err := flags.Parse(args); err != nil {
@@ -63,7 +68,7 @@ func runPreflight(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := ValidateStandard(cfg); err != nil {
+	if err := validateProfile(*profile, cfg); err != nil {
 		return err
 	}
 	if err := requireTools(); err != nil {
@@ -73,20 +78,28 @@ func runPreflight(args []string) error {
 	if err != nil {
 		return err
 	}
-	evaluation := EvaluateEnvironment(env)
+	minCPU, minMemBytes := 10, int64(8<<30)
+	if *profile == "smoke" {
+		minCPU, minMemBytes = 6, 8<<30
+	}
+	evaluation := EvaluateEnvironmentWith(env, minCPU, minMemBytes)
 	if evaluation.Status != "ready" {
 		return fmt.Errorf("%s\n%s", evaluation.Status, evaluation.Message)
 	}
-	output, err := exec.Command("git", "status", "--porcelain=v1", "--untracked-files=all").Output()
-	if err != nil {
-		return err
+	// Standard qualification runs require a clean workspace for reproducibility;
+	// smoke runs are dev iterations and may carry uncommitted changes.
+	if *profile == "standard" {
+		output, err := exec.Command("git", "status", "--porcelain=v1", "--untracked-files=all").Output()
+		if err != nil {
+			return err
+		}
+		lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+		gitEvaluation := EvaluateGit(lines)
+		if gitEvaluation.Verdict != VerdictPass {
+			return fmt.Errorf("INCONCLUSIVE: %s", gitEvaluation.Message)
+		}
 	}
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	gitEvaluation := EvaluateGit(lines)
-	if gitEvaluation.Verdict != VerdictPass {
-		return fmt.Errorf("INCONCLUSIVE: %s", gitEvaluation.Message)
-	}
-	fmt.Printf("preflight: Docker capacity >= 10 CPU / 8 GiB\n")
+	fmt.Printf("preflight: profile=%s Docker capacity >= %d CPU / %.0f GiB\n", *profile, minCPU, float64(minMemBytes)/(1<<30))
 	fmt.Printf("preflight: configuration and image lock valid\n")
 	if *checkOnly {
 		return nil
@@ -140,6 +153,7 @@ func runPrepare(args []string) error {
 	flags := flag.NewFlagSet("prepare", flag.ContinueOnError)
 	configPath := flags.String("config", "test/load/config/standard.yaml", "load config")
 	imagesPath := flags.String("images", "test/load/config/images.lock.yaml", "image lock")
+	profile := flags.String("profile", "standard", "load profile: standard|smoke")
 	runID := flags.String("run-id", "", "run ID")
 	runRoot := flags.String("run-root", "test/load/runs", "run root")
 	apiURL := flags.String("api-url", os.Getenv("ORBITJOB_API_URL"), "Admin API URL")
@@ -150,12 +164,13 @@ func runPrepare(args []string) error {
 	if *runID == "" || *apiURL == "" || *bootstrapKey == "" {
 		return fmt.Errorf("run-id, api-url and bootstrap-key are required")
 	}
-	return Prepare(*configPath, *imagesPath, *runID, *runRoot, *apiURL, *bootstrapKey)
+	return Prepare(*configPath, *imagesPath, *runID, *runRoot, *apiURL, *bootstrapKey, *profile)
 }
 
 func runRun(args []string) error {
 	flags := flag.NewFlagSet("run", flag.ContinueOnError)
 	configPath := flags.String("config", "test/load/config/standard.yaml", "load config")
+	profile := flags.String("profile", "standard", "load profile: standard|smoke")
 	runID := flags.String("run-id", "", "run ID")
 	runRoot := flags.String("run-root", "test/load/runs", "run root")
 	apiURL := flags.String("api-url", os.Getenv("ORBITJOB_API_URL"), "Admin API URL")
@@ -169,8 +184,8 @@ func runRun(args []string) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	if err := ValidateStandard(cfg); err != nil {
-		return fmt.Errorf("validate standard: %w", err)
+	if err := validateProfile(*profile, cfg); err != nil {
+		return fmt.Errorf("validate profile: %w", err)
 	}
 	runDir := filepath.Join(*runRoot, *runID)
 	created, err := loadCreatedDefinitions(filepath.Join(runDir, "created-definitions.json"))
@@ -245,7 +260,13 @@ func runReport(args []string) error {
 	if err := json.Unmarshal(data, &result); err != nil {
 		return fmt.Errorf("decode result: %w", err)
 	}
-	run := RunRecord{RunID: *runID, Qualification: true, StartedAt: time.Now()}
+	run := RunRecord{
+		RunID:         *runID,
+		Qualification: result.Qualification,
+		Commit:        gitCommit(),
+		Dirty:         gitDirty(),
+		StartedAt:     result.CompletedAt,
+	}
 	if err := WriteReport(runDir, run, result); err != nil {
 		return err
 	}
@@ -290,6 +311,72 @@ func writeStableJSON(path string, value any) error {
 	return os.WriteFile(path, data, 0o600)
 }
 
+func runMonitor(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("monitor requires deploy|status|cleanup")
+	}
+	switch args[0] {
+	case "deploy":
+		return monitorDeploy()
+	case "status":
+		return monitorStatus()
+	case "cleanup":
+		return monitorCleanup()
+	default:
+		return fmt.Errorf("unknown monitor action %q: deploy|status|cleanup", args[0])
+	}
+}
+
+func monitorDeploy() error {
+	manifests := []string{"namespace.yaml", "prometheus.yaml", "grafana.yaml"}
+	for _, name := range manifests {
+		if err := kubectlApply(filepath.Join("deploy/monitoring", name)); err != nil {
+			return fmt.Errorf("apply %s: %w", name, err)
+		}
+	}
+	if err := kubectlWait("deployment/prometheus", "monitoring", 3*time.Minute); err != nil {
+		return fmt.Errorf("wait prometheus: %w", err)
+	}
+	if err := kubectlWait("deployment/grafana", "monitoring", 3*time.Minute); err != nil {
+		return fmt.Errorf("wait grafana: %w", err)
+	}
+	fmt.Println("monitor: prometheus + grafana deployed")
+	fmt.Println("monitor: view with port-forward:")
+	fmt.Println("  kubectl port-forward -n monitoring svc/grafana 3000:3000  (admin/admin)")
+	fmt.Println("  kubectl port-forward -n monitoring svc/prometheus 9090:9090")
+	return nil
+}
+
+func monitorStatus() error {
+	out, err := exec.Command("kubectl", "get", "pods", "-n", "monitoring").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("get pods: %s", strings.TrimSpace(string(out)))
+	}
+	fmt.Print(string(out))
+	return nil
+}
+
+func monitorCleanup() error {
+	for _, name := range []string{"grafana.yaml", "prometheus.yaml", "namespace.yaml"} {
+		_ = exec.Command("kubectl", "delete", "-f", filepath.Join("deploy/monitoring", name), "--ignore-not-found").Run()
+	}
+	fmt.Println("monitor: removed")
+	return nil
+}
+
+func validateProfile(profile string, cfg Config) error {
+	switch profile {
+	case "standard":
+		return ValidateStandard(cfg)
+	case "smoke":
+		return ValidateSmoke(cfg)
+	case "long":
+		return ValidateLong(cfg)
+	default:
+		return fmt.Errorf("unknown profile %q: standard|smoke|long", profile)
+	}
+}
+
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: loadtest <preflight|generate|prepare|run|verify|report|clean> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: loadtest <preflight|generate|prepare|run|verify|report|clean|monitor|reset> [flags]")
 }

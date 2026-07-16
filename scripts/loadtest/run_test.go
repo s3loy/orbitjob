@@ -54,3 +54,30 @@ func TestPhasesRunInOrder(t *testing.T) {
 		prev = event.At
 	}
 }
+
+func TestBuildPhaseScheduleCyclesDefinitions(t *testing.T) {
+	cfg := Config{
+		Phases: []Phase{
+			{Name: "test", Offset: 0, Duration: time.Minute, RatePerMinute: 5, MaxActive: 10},
+		},
+	}
+	cases := []CreatedDefinition{
+		{CaseID: "a", JobID: 1, Tenant: "t1"},
+		{CaseID: "b", JobID: 2, Tenant: "t2"},
+	}
+	schedule := BuildPhaseSchedule(cfg, cases)
+	if len(schedule.Events) != 5 {
+		t.Fatalf("events = %d, want 5", len(schedule.Events))
+	}
+	want := []int64{1, 2, 1, 2, 1}
+	seen := map[string]bool{}
+	for i, ev := range schedule.Events {
+		if ev.JobID != want[i] {
+			t.Fatalf("event %d jobID = %d, want %d", i, ev.JobID, want[i])
+		}
+		if seen[ev.IdempotencyKey] {
+			t.Fatalf("duplicate idempotency key %s", ev.IdempotencyKey)
+		}
+		seen[ev.IdempotencyKey] = true
+	}
+}

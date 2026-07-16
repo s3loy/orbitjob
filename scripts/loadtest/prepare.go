@@ -47,8 +47,8 @@ func ValidateLoadManifests(namespacePath, rbacPath string) error {
 	if quotas["orbitjob-load"]["limits.cpu"] != "1" || quotas["orbitjob-load"]["limits.memory"] != "1Gi" {
 		return fmt.Errorf("orbitjob-load quota does not match 1 CPU / 1Gi")
 	}
-	if quotas["orbitjob-tasks"]["limits.cpu"] != "5" || quotas["orbitjob-tasks"]["limits.memory"] != "4Gi" {
-		return fmt.Errorf("orbitjob-tasks quota does not match 5 CPU / 4Gi")
+	if quotas["orbitjob-tasks"]["limits.cpu"] != "10" || quotas["orbitjob-tasks"]["limits.memory"] != "8Gi" {
+		return fmt.Errorf("orbitjob-tasks quota does not match 10 CPU / 8Gi")
 	}
 	rbac, err := os.ReadFile(rbacPath)
 	if err != nil {
@@ -70,13 +70,13 @@ type CreatedDefinition struct {
 // Prepare applies load fixtures, creates tenants with API keys, creates every
 // generated definition through the Admin API, and writes the case-to-job mapping
 // consumed by the run engine. Tenant keys are written with 0600 permissions.
-func Prepare(configPath, imagesPath, runID, runRoot, apiURL, bootstrapKey string) error {
+func Prepare(configPath, imagesPath, runID, runRoot, apiURL, bootstrapKey, profile string) error {
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	if err := ValidateStandard(cfg); err != nil {
-		return fmt.Errorf("validate standard: %w", err)
+	if err := validateProfile(profile, cfg); err != nil {
+		return fmt.Errorf("validate profile: %w", err)
 	}
 	if err := ValidateLoadManifests("deploy/load/namespace.yaml", "deploy/load/operations-rbac.yaml"); err != nil {
 		return fmt.Errorf("validate manifests: %w", err)
@@ -96,7 +96,7 @@ func Prepare(configPath, imagesPath, runID, runRoot, apiURL, bootstrapKey string
 			return fmt.Errorf("apply %s: %w", name, err)
 		}
 	}
-	if err := kubectlWait("deployment/fixture", "orbitjob-load", 3*time.Minute); err != nil {
+	if err := kubectlWait("deployment/load-fixture", "orbitjob-load", 3*time.Minute); err != nil {
 		return fmt.Errorf("wait fixture: %w", err)
 	}
 	if err := kubectlWait("deployment/load-postgres", "orbitjob-load", 3*time.Minute); err != nil {
@@ -169,9 +169,9 @@ func loadGeneratedDefinitions(path string) ([]Definition, error) {
 	if err != nil {
 		return nil, err
 	}
-	var manifest Manifest
-	if err := json.Unmarshal(data, &manifest); err != nil {
+	var definitions []Definition
+	if err := json.Unmarshal(data, &definitions); err != nil {
 		return nil, err
 	}
-	return manifest.Definitions, nil
+	return definitions, nil
 }

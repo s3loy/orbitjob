@@ -1,0 +1,14 @@
+{{- if eq (.Values.worker.replicas | int) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: orbitjob-worker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: orbitjob-worker
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: orbitjob-worker
+{{- end }}

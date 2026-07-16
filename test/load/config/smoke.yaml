@@ -1,0 +1,55 @@
+schema_version: v020-load/v1
+profile: smoke
+qualification: false
+seed: v020-smoke-1
+duration: 30m
+minimum_instances: 0
+environment:
+  docker_cpu: 6
+  docker_memory_gib: 8
+  kind_nodes: 1
+definitions:
+  total: 1200
+  categories:
+    data-processing: 280
+    database: 220
+    http-webhook: 240
+    operations: 140
+    failure: 220
+    external-probes: 100
+  product_trigger_types:
+    manual: 840
+    cron: 360
+  trigger_origins:
+    manual: 720
+    cron: 360
+    webhook: 120
+  cron_interval_minutes: 60
+tenants:
+  - smoke-alpha
+  - smoke-beta
+  - smoke-gamma
+  - smoke-adversarial
+# 30m smoke: definitions are cycled so the schedule covers the full duration.
+# Rates are capped to worker pool capacity (5) so the smoke run exercises the
+# full trigger->dispatch->execute chain without drowning the single worker.
+phases:
+  - {name: warmup, offset: 0m, duration: 2m, rate_per_minute: 5, max_active: 5}
+  - {name: correctness, offset: 2m, duration: 8m, rate_per_minute: 8, max_active: 5}
+  - {name: steady, offset: 10m, duration: 6m, rate_per_minute: 15, max_active: 5}
+  - {name: ramp, offset: 16m, duration: 6m, rate_per_minute: 25, max_active: 5}
+  - {name: peak, offset: 22m, duration: 3m, rate_per_minute: 35, max_active: 5}
+  - {name: recovery, offset: 25m, duration: 5m, rate_per_minute: 10, max_active: 5}
+burst:
+  phase: peak
+  offset: 1m
+  count: 30
+  submit_within: 20s
+sampling:
+  readiness: 10s
+  kubernetes_objects: 15s
+  resources: 15s
+  prometheus: 15s
+  postgres: 30s
+  backlog: 30s
+  database_size: 5m

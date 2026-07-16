@@ -21,6 +21,7 @@ images:
     pullPolicy: IfNotPresent
 
 worker:
+  replicas: 1
   image:
     repository: orbitjob-worker
     tag: dev
@@ -30,15 +31,21 @@ worker:
     requireDigest: false
     ttlSecondsAfterFinished: 600
     serviceAccountName: orbitjob-task
-  resources: &runtimeResources
+  resources:
     requests:
-      cpu: 100m
-      memory: 128Mi
-    limits:
-      cpu: "1"
+      cpu: 500m
       memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 1Gi
 
-runtimeResources: *runtimeResources
+runtimeResources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
 
 database:
   # `cmd/configure` creates this installation-level Secret once. All replicas

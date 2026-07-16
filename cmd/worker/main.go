@@ -53,8 +53,9 @@ type runtimeConfig struct {
 	LeaseMax           time.Duration
 	LeaseDecay         float64
 	Labels             map[string]any
-	ContainerEnabled   bool
-	ContainerNamespace string
+	ContainerEnabled      bool
+	ContainerNamespace    string
+	ContainerPollInterval time.Duration
 
 	tenantLister tenantLister
 }
@@ -131,6 +132,7 @@ var (
 				Namespace:        cfg.ContainerNamespace,
 				RequireDigest:    os.Getenv("APP_ENV") == "production",
 				TTLAfterFinished: 10 * time.Minute,
+				PollInterval:     cfg.ContainerPollInterval,
 			})
 		}
 		maps.Copy(handlers, handler.GetRegistered())
@@ -269,6 +271,10 @@ func loadWorkerRuntimeConfig() (*runtimeConfig, error) {
 		return nil, fmt.Errorf("WORKER_CONTAINER_ENABLED must be a boolean: %w", err)
 	}
 	containerNamespace := strings.TrimSpace(os.Getenv("WORKER_CONTAINER_NAMESPACE"))
+	containerPollIntervalMs, err := loadPositiveIntEnv("WORKER_CONTAINER_POLL_INTERVAL_MS", 1000)
+	if err != nil {
+		return nil, err
+	}
 	if containerEnabled {
 		if containerNamespace == "" {
 			return nil, fmt.Errorf("WORKER_CONTAINER_NAMESPACE is required when container execution is enabled")
@@ -290,9 +296,10 @@ func loadWorkerRuntimeConfig() (*runtimeConfig, error) {
 		LeaseMin:           time.Duration(leaseMinSec) * time.Second,
 		LeaseMax:           time.Duration(leaseMaxSec) * time.Second,
 		LeaseDecay:         leaseDecay,
-		Labels:             labels,
-		ContainerEnabled:   containerEnabled,
-		ContainerNamespace: containerNamespace,
+		Labels:                labels,
+		ContainerEnabled:      containerEnabled,
+		ContainerNamespace:    containerNamespace,
+		ContainerPollInterval: time.Duration(containerPollIntervalMs) * time.Millisecond,
 	}
 	cfg.SetPollInterval(time.Duration(pollIntervalSec) * time.Second)
 	cfg.SetHeartbeatInterval(time.Duration(heartbeatIntervalSec) * time.Second)
@@ -371,7 +378,7 @@ func runLoop(
 	newTicker func(time.Duration) workerTicker,
 	nowFn func() time.Time,
 ) {
-	pool := execute.NewWorkerPool(cfg.Capacity())
+	pool := execute.NewWorkerPool(cfg.CapacityMax)
 
 	loopDone := make(chan struct{})
 	go heartbeatLoop(ctx, loopDone, hb, cfg, newTicker, nowFn)
@@ -454,7 +461,7 @@ func runLoop(
 	}
 }
 
-const shutdownDeadline = 30 * time.Second
+const shutdownDeadline = 45 * time.Second
 
 func heartbeatLoop(
 	ctx context.Context,

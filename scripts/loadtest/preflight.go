@@ -19,10 +19,18 @@ type GitEvaluation struct {
 }
 
 func EvaluateEnvironment(env Environment) EnvironmentEvaluation {
-	if env.DockerCPU < 10 || env.DockerMemoryBytes < 8<<30 {
+	return EvaluateEnvironmentWith(env, 10, 8<<30)
+}
+
+// EvaluateEnvironmentWith checks Docker capacity against profile-specific
+// minimums. Standard requires 10 CPU / 8 GiB for reproducible 4h runs; smoke
+// relaxes to 6 CPU / 8 GiB so a dev machine can exercise the pipeline without
+// the full qualification footprint.
+func EvaluateEnvironmentWith(env Environment, minCPU int, minMemBytes int64) EnvironmentEvaluation {
+	if env.DockerCPU < minCPU || env.DockerMemoryBytes < minMemBytes {
 		return EnvironmentEvaluation{
 			Status:  "environment rejected",
-			Message: fmt.Sprintf("required: Docker 10 CPU / 8 GiB; observed: %d CPU / %.2f GiB", env.DockerCPU, float64(env.DockerMemoryBytes)/(1<<30)),
+			Message: fmt.Sprintf("required: Docker %d CPU / %.2f GiB; observed: %d CPU / %.2f GiB", minCPU, float64(minMemBytes)/(1<<30), env.DockerCPU, float64(env.DockerMemoryBytes)/(1<<30)),
 		}
 	}
 	return EnvironmentEvaluation{Status: "ready"}

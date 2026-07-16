@@ -24,35 +24,36 @@ type PhaseSchedule struct {
 }
 
 // BuildPhaseSchedule assigns created definitions to phase time slots and appends
-// the peak burst. When cases is empty, burst events are emitted as placeholders
-// with JobID=0 so schedule shape (count, span, ordering) stays testable without
-// a live prepared run.
+// the peak burst. Definitions are cycled so the schedule covers the full phase
+// duration even when there are fewer definitions than time slots. A monotonic
+// global event index guarantees unique idempotency keys across cycles and burst.
+// When cases is empty, burst events are emitted as placeholders with JobID=0 so
+// schedule shape (count, span, ordering) stays testable without a live run.
 func BuildPhaseSchedule(cfg Config, cases []CreatedDefinition) PhaseSchedule {
 	var events []TriggerEvent
+	eventIndex := 0
 	caseIndex := 0
 	for _, phase := range cfg.Phases {
-		if phase.RatePerMinute == 0 {
+		if phase.RatePerMinute == 0 || len(cases) == 0 {
 			continue
 		}
 		interval := time.Minute / time.Duration(phase.RatePerMinute)
 		for offset := phase.Offset; offset < phase.Offset+phase.Duration; offset += interval {
-			if caseIndex >= len(cases) {
-				break
-			}
-			c := cases[caseIndex]
+			c := cases[caseIndex%len(cases)]
 			events = append(events, TriggerEvent{
 				At:             offset,
 				JobID:          c.JobID,
 				DefinitionCase: c.CaseID,
 				Tenant:         c.Tenant,
-				IdempotencyKey: fmt.Sprintf("v020-%s-%04d", c.CaseID, caseIndex),
+				IdempotencyKey: fmt.Sprintf("v020-%s-%06d", c.CaseID, eventIndex),
 				Origin:         "manual",
 				Phase:          phase.Name,
 			})
 			caseIndex++
+			eventIndex++
 		}
 	}
-	events = append(events, burstEvents(cfg, cases, caseIndex)...)
+	events = append(events, burstEvents(cfg, cases, eventIndex)...)
 	return PhaseSchedule{Events: events}
 }
 
@@ -65,7 +66,7 @@ func burstEvents(cfg Config, cases []CreatedDefinition, startIndex int) []Trigge
 	for i := 0; i < cfg.Burst.Count; i++ {
 		ev := TriggerEvent{
 			At:             phaseOffset(cfg, cfg.Burst.Phase) + cfg.Burst.Offset + time.Duration(i)*interval,
-			IdempotencyKey: fmt.Sprintf("v020-burst-%04d", startIndex+i),
+			IdempotencyKey: fmt.Sprintf("v020-burst-%06d", startIndex+i),
 			Origin:         "manual",
 			Phase:          cfg.Burst.Phase,
 		}

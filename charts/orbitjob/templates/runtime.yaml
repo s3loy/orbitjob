@@ -31,9 +31,17 @@ spec:
           {{- if eq $name "scheduler" }}
             - name: SCHEDULER_HEALTH_PORT
               value: "6060"
+            - name: SCHEDULER_BATCH_SIZE_MAX
+              value: "1000"
+            - name: SCHEDULER_TICK_INTERVAL_SEC
+              value: "2"
           {{- else if eq $name "dispatcher" }}
             - name: DISPATCHER_HEALTH_PORT
               value: "6061"
+            - name: DISPATCHER_BATCH_SIZE
+              value: "200"
+            - name: DISPATCHER_TICK_INTERVAL_SEC
+              value: "1"
           {{- end }}
           ports:
             - name: health

@@ -37,6 +37,7 @@ type DefinitionConfig struct {
 	Categories          map[string]int `yaml:"categories"`
 	ProductTriggerTypes map[string]int `yaml:"product_trigger_types"`
 	TriggerOrigins      map[string]int `yaml:"trigger_origins"`
+	CronIntervalMinutes int            `yaml:"cron_interval_minutes"`
 }
 
 type Phase struct {

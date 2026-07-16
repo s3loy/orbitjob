@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,7 +24,7 @@ func VerifyCorrectness(evidence Evidence) []CheckResult {
 	return checks
 }
 
-func EvaluateQualification(run RunRecord, evidence Evidence) Result {
+func EvaluateQualification(run RunRecord, evidence Evidence, minimumInstances int) Result {
 	result := Result{SchemaVersion: "v020-result/v1", RunID: run.RunID, Qualification: run.Qualification}
 
 	correctness := VerifyCorrectness(evidence)
@@ -33,6 +34,7 @@ func EvaluateQualification(run RunRecord, evidence Evidence) Result {
 		if check.Status == VerdictFail {
 			result.Verdict = VerdictFail
 			result.Reason = fmt.Sprintf("correctness failure: %s", check.ID)
+			result.CompletedAt = time.Now()
 			return result
 		}
 	}
@@ -40,29 +42,34 @@ func EvaluateQualification(run RunRecord, evidence Evidence) Result {
 	if len(evidence.MissingSources) > 0 {
 		result.Verdict = VerdictInconclusive
 		result.Reason = fmt.Sprintf("missing evidence sources: %s", strings.Join(evidence.MissingSources, ", "))
+		result.CompletedAt = time.Now()
 		return result
 	}
 
 	if len(evidence.Interruptions) > 0 {
 		result.Verdict = VerdictInconclusive
 		result.Reason = "environmental interruption detected"
+		result.CompletedAt = time.Now()
 		return result
 	}
 
 	if !run.Qualification {
 		result.Verdict = VerdictPass
 		result.Reason = "non-standard run completed"
+		result.CompletedAt = time.Now()
 		return result
 	}
 
-	if evidence.Instances < 10000 {
+	if evidence.Instances < minimumInstances {
 		result.Verdict = VerdictFail
-		result.Reason = fmt.Sprintf("instances %d < 10000", evidence.Instances)
+		result.Reason = fmt.Sprintf("instances %d < %d", evidence.Instances, minimumInstances)
+		result.CompletedAt = time.Now()
 		return result
 	}
 
 	result.Verdict = VerdictPass
 	result.Reason = "all qualification gates passed"
+	result.CompletedAt = time.Now()
 	return result
 }
 
@@ -150,7 +157,7 @@ func checkTerminalRegression(transitions []Transition) CheckResult {
 // CollectEvidence reads correctness evidence from the OrbitJob database, the
 // load fixture ledger, and cross-tenant Admin API probes. It never mutates
 // OrbitJob state. The orbitjob DSN must be read-only.
-func CollectEvidence(ctx context.Context, orbitjobDSN, loadPGDSN, apiURL string, tenantKeys map[string]string, created []CreatedDefinition) (Evidence, error) {
+func CollectEvidence(ctx context.Context, orbitjobDSN, fixtureURL, apiURL string, tenantKeys map[string]string, created []CreatedDefinition) (Evidence, error) {
 	var e Evidence
 
 	odb, err := sql.Open("postgres", orbitjobDSN)
@@ -195,25 +202,30 @@ func CollectEvidence(ctx context.Context, orbitjobDSN, loadPGDSN, apiURL string,
 		}
 	}
 
-	if loadPGDSN != "" {
-		lbdb, err := sql.Open("postgres", loadPGDSN)
+	if fixtureURL != "" {
+		// The fixture keeps its ledger in an in-memory dict exposed over HTTP
+		// (deploy/load/fixture-configmap.yaml), not a Postgres table. Querying the
+		// HTTP endpoint is the only way to read it.
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, fixtureURL+"/ledger", nil)
 		if err != nil {
-			e.MissingSources = append(e.MissingSources, "load-pg")
+			e.MissingSources = append(e.MissingSources, "ledger")
 		} else {
-			defer func() { _ = lbdb.Close() }()
-			lrows, err := lbdb.QueryContext(ctx, "SELECT idempotency_key, operation FROM ledger")
+			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
 				e.MissingSources = append(e.MissingSources, "ledger")
 			} else {
-				for lrows.Next() {
-					var key, op string
-					if err := lrows.Scan(&key, &op); err != nil {
-						_ = lrows.Close()
-						return e, err
-					}
-					e.Ledger = append(e.Ledger, LedgerEntry{IdempotencyKey: key, Operation: op})
+				defer func() { _ = resp.Body.Close() }()
+				var entries []struct {
+					IdempotencyKey string `json:"idempotency_key"`
+					Operation      string `json:"operation"`
 				}
-				_ = lrows.Close()
+				if err := json.NewDecoder(resp.Body).Decode(&entries); err != nil {
+					e.MissingSources = append(e.MissingSources, "ledger")
+				} else {
+					for _, entry := range entries {
+						e.Ledger = append(e.Ledger, LedgerEntry{IdempotencyKey: entry.IdempotencyKey, Operation: entry.Operation})
+					}
+				}
 			}
 		}
 	}
@@ -226,13 +238,18 @@ func runVerify(args []string) error {
 	runID := flags.String("run-id", "", "run ID")
 	runRoot := flags.String("run-root", "test/load/runs", "run root")
 	orbitjobDSN := flags.String("orbitjob-dsn", os.Getenv("ORBITJOB_DSN"), "OrbitJob read-only DSN")
-	loadPGDSN := flags.String("load-pg-dsn", os.Getenv("LOAD_PG_DSN"), "load fixture PG DSN")
+	fixtureURL := flags.String("fixture-url", defaultFixtureURL(), "load fixture HTTP URL")
 	apiURL := flags.String("api-url", os.Getenv("ORBITJOB_API_URL"), "Admin API URL")
+	configPath := flags.String("config", "test/load/config/standard.yaml", "load config (qualification flag)")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if *runID == "" || *orbitjobDSN == "" || *apiURL == "" {
 		return fmt.Errorf("run-id, orbitjob-dsn and api-url are required")
+	}
+	cfg, err := LoadConfig(*configPath)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
 	}
 	runDir := filepath.Join(*runRoot, *runID)
 	tenantKeys, err := loadTenantKeys(filepath.Join(runDir, "tenant-keys.json"))
@@ -245,17 +262,36 @@ func runVerify(args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
-	evidence, err := CollectEvidence(ctx, *orbitjobDSN, *loadPGDSN, *apiURL, tenantKeys, created)
+	evidence, err := CollectEvidence(ctx, *orbitjobDSN, *fixtureURL, *apiURL, tenantKeys, created)
 	if err != nil {
 		return fmt.Errorf("collect evidence: %w", err)
 	}
-	run := RunRecord{RunID: *runID, Qualification: true, StartedAt: time.Now()}
-	result := EvaluateQualification(run, evidence)
+	run := RunRecord{
+		RunID:         *runID,
+		Profile:       cfg.Profile,
+		Qualification: cfg.Qualification,
+		Seed:          cfg.Seed,
+		Commit:        gitCommit(),
+		Dirty:         gitDirty(),
+		StartedAt:     time.Now(),
+		Environment: Environment{
+			DockerCPU:         cfg.Environment.DockerCPU,
+			DockerMemoryBytes: int64(cfg.Environment.DockerMemoryGi) * (1 << 30),
+		},
+	}
+	result := EvaluateQualification(run, evidence, cfg.MinimumInstances)
 	if err := writeStableJSON(filepath.Join(runDir, "result.json"), result); err != nil {
 		return err
 	}
 	fmt.Printf("verify: verdict=%s reason=%s instances=%d\n", result.Verdict, result.Reason, evidence.Instances)
 	return nil
+}
+
+func defaultFixtureURL() string {
+	if v := os.Getenv("ORBITJOB_FIXTURE_URL"); v != "" {
+		return v
+	}
+	return fixtureURL
 }
 
 func loadTenantKeys(path string) (map[string]string, error) {

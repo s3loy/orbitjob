@@ -6,7 +6,12 @@ metadata:
   labels:
     app.kubernetes.io/name: orbitjob-worker
 spec:
-  replicas: 1
+  replicas: {{ .Values.worker.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: orbitjob-worker
@@ -16,6 +21,7 @@ spec:
         app.kubernetes.io/name: orbitjob-worker
     spec:
       serviceAccountName: orbitjob-worker
+      terminationGracePeriodSeconds: 60
       securityContext:
         runAsNonRoot: true
         runAsUser: 65534
@@ -37,6 +43,43 @@ spec:
               value: "true"
             - name: WORKER_CONTAINER_NAMESPACE
               value: {{ .Values.worker.containerExecution.namespace | quote }}
+            - name: WORKER_CAPACITY
+              value: "20"
+            - name: WORKER_CAPACITY_MAX
+              value: "25"
+            - name: WORKER_CONTAINER_POLL_INTERVAL_MS
+              value: "250"
+          ports:
+            - name: health
+              containerPort: 6062
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 12
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 5"]
           resources:
 {{ toYaml .Values.worker.resources | indent 12 }}
           securityContext:

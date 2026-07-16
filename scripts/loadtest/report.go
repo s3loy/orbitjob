@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -49,6 +50,22 @@ func WriteChecksums(runDir string) error {
 	}
 	sort.Strings(lines)
 	return os.WriteFile(filepath.Join(runDir, "checksums.txt"), []byte(strings.Join(lines, "\n")+"\n"), 0o600)
+}
+
+func gitCommit() string {
+	out, err := exec.Command("git", "rev-parse", "HEAD").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func gitDirty() bool {
+	out, err := exec.Command("git", "status", "--porcelain").Output()
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(out)) != ""
 }
 
 func CleanupSelector(runID string) string {
