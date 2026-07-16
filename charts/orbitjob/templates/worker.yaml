@@ -49,6 +49,8 @@ spec:
               value: "25"
             - name: WORKER_CONTAINER_POLL_INTERVAL_MS
               value: "250"
+            - name: WORKER_ADAPTIVE_CAPACITY_ENABLED
+              value: "false"
           ports:
             - name: health
               containerPort: 6062

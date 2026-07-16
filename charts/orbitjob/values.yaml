@@ -61,6 +61,13 @@ database:
     runtimePassword: runtime-password
     bootstrapAPIKey: bootstrap-api-key
 
+adminapi:
+  rateLimits:
+    readRPS: 100
+    writeRPS: 100
+    triggerRPS: 500
+    adminRPS: 10
+
 bootstrap:
   secretName: orbitjob-bootstrap
 

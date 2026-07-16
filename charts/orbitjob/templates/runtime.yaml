@@ -28,7 +28,16 @@ spec:
                 secretKeyRef:
                   name: {{ $.Values.database.secretName }}
                   key: {{ if eq $name "admin-api" }}{{ $.Values.database.keys.admin }}{{ else }}{{ $.Values.database.keys.runtime }}{{ end }}
-          {{- if eq $name "scheduler" }}
+          {{- if eq $name "admin-api" }}
+            - name: RATELIMIT_READ_RPS
+              value: {{ $.Values.adminapi.rateLimits.readRPS | quote }}
+            - name: RATELIMIT_WRITE_RPS
+              value: {{ $.Values.adminapi.rateLimits.writeRPS | quote }}
+            - name: RATELIMIT_TRIGGER_RPS
+              value: {{ $.Values.adminapi.rateLimits.triggerRPS | quote }}
+            - name: RATELIMIT_ADMIN_RPS
+              value: {{ $.Values.adminapi.rateLimits.adminRPS | quote }}
+          {{- else if eq $name "scheduler" }}
             - name: SCHEDULER_HEALTH_PORT
               value: "6060"
             - name: SCHEDULER_BATCH_SIZE_MAX

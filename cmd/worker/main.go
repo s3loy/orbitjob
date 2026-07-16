@@ -40,22 +40,23 @@ import (
 )
 
 type runtimeConfig struct {
-	TenantID           string
-	MultiTenant        bool
-	WorkerID           string
-	HealthPort         string
-	pollInterval       atomic.Int64
-	heartbeatInterval  atomic.Int64
-	leaseDuration      atomic.Int64
-	capacity           atomic.Int64
-	CapacityMax        int
-	LeaseMin           time.Duration
-	LeaseMax           time.Duration
-	LeaseDecay         float64
-	Labels             map[string]any
-	ContainerEnabled      bool
-	ContainerNamespace    string
-	ContainerPollInterval time.Duration
+	TenantID                 string
+	MultiTenant              bool
+	WorkerID                 string
+	HealthPort               string
+	pollInterval             atomic.Int64
+	heartbeatInterval        atomic.Int64
+	leaseDuration            atomic.Int64
+	capacity                 atomic.Int64
+	CapacityMax              int
+	LeaseMin                 time.Duration
+	LeaseMax                 time.Duration
+	LeaseDecay               float64
+	Labels                   map[string]any
+	ContainerEnabled         bool
+	ContainerNamespace       string
+	ContainerPollInterval    time.Duration
+	AdaptiveCapacityEnabled  bool
 
 	tenantLister tenantLister
 }
@@ -282,24 +283,34 @@ func loadWorkerRuntimeConfig() (*runtimeConfig, error) {
 		labels["handler:container"] = "container"
 	}
 
+	adaptiveEnabledRaw := os.Getenv("WORKER_ADAPTIVE_CAPACITY_ENABLED")
+	if adaptiveEnabledRaw == "" {
+		adaptiveEnabledRaw = "true"
+	}
+	adaptiveCapacityEnabled, err := strconv.ParseBool(adaptiveEnabledRaw)
+	if err != nil {
+		return nil, fmt.Errorf("WORKER_ADAPTIVE_CAPACITY_ENABLED must be a boolean: %w", err)
+	}
+
 	healthPort := os.Getenv("WORKER_HEALTH_PORT")
 	if healthPort == "" {
 		healthPort = "6062"
 	}
 
 	cfg := &runtimeConfig{
-		TenantID:           tenantID,
-		MultiTenant:        multiTenant,
-		WorkerID:           workerID,
-		HealthPort:         healthPort,
-		CapacityMax:        capacityMax,
-		LeaseMin:           time.Duration(leaseMinSec) * time.Second,
-		LeaseMax:           time.Duration(leaseMaxSec) * time.Second,
-		LeaseDecay:         leaseDecay,
-		Labels:                labels,
-		ContainerEnabled:      containerEnabled,
-		ContainerNamespace:    containerNamespace,
-		ContainerPollInterval: time.Duration(containerPollIntervalMs) * time.Millisecond,
+		TenantID:                tenantID,
+		MultiTenant:             multiTenant,
+		WorkerID:                workerID,
+		HealthPort:              healthPort,
+		CapacityMax:             capacityMax,
+		LeaseMin:                time.Duration(leaseMinSec) * time.Second,
+		LeaseMax:                time.Duration(leaseMaxSec) * time.Second,
+		LeaseDecay:              leaseDecay,
+		Labels:                  labels,
+		ContainerEnabled:        containerEnabled,
+		ContainerNamespace:      containerNamespace,
+		ContainerPollInterval:   time.Duration(containerPollIntervalMs) * time.Millisecond,
+		AdaptiveCapacityEnabled: adaptiveCapacityEnabled,
 	}
 	cfg.SetPollInterval(time.Duration(pollIntervalSec) * time.Second)
 	cfg.SetHeartbeatInterval(time.Duration(heartbeatIntervalSec) * time.Second)
@@ -588,8 +599,14 @@ func run(ctx context.Context) error {
 		uc.SetDynamicLease(dynamicLease)
 	}
 
-	// Wrap with adaptive capacity.
-	adaptiveCap := execute.NewAdaptiveCapacity(cfg.CapacityMax, 3)
+	// Wrap with adaptive capacity unless qualification/load-test mode requests a
+	// fixed capacity. Adaptive capacity starts conservative and can take minutes
+	// to ramp, which prevents sustained high-throughput runs from reaching the
+	// configured WORKER_CAPACITY_MAX.
+	var adaptiveCap *execute.AdaptiveCapacity
+	if cfg.AdaptiveCapacityEnabled {
+		adaptiveCap = execute.NewAdaptiveCapacity(cfg.CapacityMax, 3)
+	}
 	runner := &adaptiveTickRunner{
 		inner:        inner,
 		db:           db,

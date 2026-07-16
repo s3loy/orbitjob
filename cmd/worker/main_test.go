@@ -160,6 +160,9 @@ func TestLoadWorkerRuntimeConfig_Defaults(t *testing.T) {
 	if !cfg.MultiTenant {
 		t.Fatalf("expected MultiTenant=true when WORKER_TENANT_ID not set")
 	}
+	if !cfg.AdaptiveCapacityEnabled {
+		t.Fatalf("expected AdaptiveCapacityEnabled=true by default")
+	}
 }
 
 func TestLoadWorkerRuntimeConfig_Custom(t *testing.T) {
@@ -172,6 +175,7 @@ func TestLoadWorkerRuntimeConfig_Custom(t *testing.T) {
 	t.Setenv("WORKER_LABELS", `{"gpu":"a100"}`)
 	t.Setenv("WORKER_CONTAINER_ENABLED", "true")
 	t.Setenv("WORKER_CONTAINER_NAMESPACE", "orbitjob-tasks")
+	t.Setenv("WORKER_ADAPTIVE_CAPACITY_ENABLED", "false")
 
 	cfg, err := loadWorkerRuntimeConfig()
 	if err != nil {
@@ -206,6 +210,9 @@ func TestLoadWorkerRuntimeConfig_Custom(t *testing.T) {
 	}
 	if cfg.Labels["handler:container"] != "container" {
 		t.Fatalf("expected container capability label, got %v", cfg.Labels)
+	}
+	if cfg.AdaptiveCapacityEnabled {
+		t.Fatalf("expected AdaptiveCapacityEnabled=false when env is false")
 	}
 }
 
