@@ -12,6 +12,12 @@ import (
 
 // List queries control-plane job list items.
 func (r *JobRepository) List(ctx context.Context, in query.ListInput) (_ []query.ListItem, err error) {
+	tx, err := WithTenant(ctx, r.db, in.TenantID)
+	if err != nil {
+		return nil, fmt.Errorf("begin job list tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	const baseQuery = `
                 SELECT
                     id,
@@ -38,12 +44,12 @@ func (r *JobRepository) List(ctx context.Context, in query.ListInput) (_ []query
 	var rows *sql.Rows
 
 	if in.Status == "" {
-		rows, err = r.db.QueryContext(ctx, baseQuery+`
+		rows, err = tx.QueryContext(ctx, baseQuery+`
                         ORDER BY id DESC
                         LIMIT $2 OFFSET $3
                 `, in.TenantID, in.Limit, in.Offset)
 	} else {
-		rows, err = r.db.QueryContext(ctx, baseQuery+`
+		rows, err = tx.QueryContext(ctx, baseQuery+`
                         AND status = $2
                         ORDER BY id DESC
                         LIMIT $3 OFFSET $4
@@ -74,6 +80,7 @@ func (r *JobRepository) List(ctx context.Context, in query.ListInput) (_ []query
 		return nil, fmt.Errorf("iterate job list: %w", err)
 	}
 
+	_ = tx.Commit()
 	return out, nil
 }
 

@@ -46,6 +46,8 @@ func TestWorkerRepository_UpsertHeartbeatUnit_Success(t *testing.T) {
 		Labels:          map[string]any{"queue": "video"},
 	}
 
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("tenant-a").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery("INSERT INTO workers").
 		WithArgs("worker-1", "tenant-a", "online", now, leaseExpires, 2, sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{
@@ -53,6 +55,7 @@ func TestWorkerRepository_UpsertHeartbeatUnit_Success(t *testing.T) {
 			"capacity", "labels", "created_at", "updated_at",
 		}).AddRow("tenant-a", "worker-1", "online", now, leaseExpires, 2,
 			[]byte(`{"queue":"video"}`), now, now))
+	mock.ExpectCommit()
 
 	out, err := repo.UpsertHeartbeat(context.Background(), spec)
 	if err != nil {
@@ -97,9 +100,12 @@ func TestWorkerRepository_UpsertHeartbeatUnit_InsertError(t *testing.T) {
 		Labels:          map[string]any{"queue": "video"},
 	}
 
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("tenant-a").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery("INSERT INTO workers").
 		WithArgs("worker-1", "tenant-a", "online", now, leaseExpires, 2, sqlmock.AnyArg()).
 		WillReturnError(errors.New("insert boom"))
+	mock.ExpectRollback()
 
 	_, err = repo.UpsertHeartbeat(context.Background(), spec)
 	if err == nil {
@@ -125,6 +131,8 @@ func TestWorkerRepository_GetByIDUnit_Success(t *testing.T) {
 	now := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
 	leaseExpires := now.Add(30 * time.Second)
 
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("tenant-a").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery("SELECT").
 		WithArgs("tenant-a", "worker-1").
 		WillReturnRows(sqlmock.NewRows([]string{
@@ -132,6 +140,7 @@ func TestWorkerRepository_GetByIDUnit_Success(t *testing.T) {
 			"capacity", "labels", "created_at", "updated_at",
 		}).AddRow("tenant-a", "worker-1", "online", now, leaseExpires, 3,
 			[]byte(`{"queue":"image"}`), now, now))
+	mock.ExpectCommit()
 
 	out, err := repo.GetByID(context.Background(), "tenant-a", "worker-1")
 	if err != nil {
@@ -161,9 +170,12 @@ func TestWorkerRepository_GetByIDUnit_NotFound(t *testing.T) {
 
 	repo := NewWorkerRepository(db)
 
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("tenant-a").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery("SELECT").
 		WithArgs("tenant-a", "worker-missing").
 		WillReturnError(sql.ErrNoRows)
+	mock.ExpectRollback()
 
 	_, err = repo.GetByID(context.Background(), "tenant-a", "worker-missing")
 	if err == nil {

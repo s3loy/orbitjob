@@ -11,7 +11,18 @@ import (
 )
 
 func (r *InstanceRepository) Create(ctx context.Context, in domaininstance.CreateSpec) (domaininstance.Snapshot, error) {
-	row := r.db.QueryRowContext(ctx, `
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domaininstance.Snapshot{}, fmt.Errorf("begin instance create tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Set tenant context for RLS
+	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", in.TenantID); err != nil {
+		return domaininstance.Snapshot{}, fmt.Errorf("set tenant context: %w", err)
+	}
+
+	row := tx.QueryRowContext(ctx, `
 			INSERT INTO job_instances (
 				tenant_id,
 				job_id,
@@ -85,7 +96,7 @@ func (r *InstanceRepository) Create(ctx context.Context, in domaininstance.Creat
 	if err != nil {
 		return domaininstance.Snapshot{}, fmt.Errorf("marshal audit diff: %w", err)
 	}
-	if _, err = r.db.ExecContext(ctx, `
+	if _, err = tx.ExecContext(ctx, `
 			INSERT INTO audit_events (tenant_id, actor_type, actor_id, event_type, resource_type, resource_id, diff)
 			VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
 		`,
@@ -98,6 +109,10 @@ func (r *InstanceRepository) Create(ctx context.Context, in domaininstance.Creat
 		string(diffBytes),
 	); err != nil {
 		return domaininstance.Snapshot{}, fmt.Errorf("insert audit event: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return domaininstance.Snapshot{}, fmt.Errorf("commit instance create tx: %w", err)
 	}
 
 	metrics.InstancesTotal.WithLabelValues(in.TenantID, domaininstance.StatusPending).Inc()

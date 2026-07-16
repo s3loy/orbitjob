@@ -28,6 +28,11 @@ func (r *JobRepository) Create(ctx context.Context, in domainjob.CreateSpec) (do
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	// Set tenant context for RLS
+	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", in.TenantID); err != nil {
+		return domainjob.Snapshot{}, fmt.Errorf("set tenant context: %w", err)
+	}
+
 	var out domainjob.Snapshot
 	var nextRunAt sql.NullTime
 

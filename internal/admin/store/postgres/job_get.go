@@ -15,7 +15,13 @@ import (
 
 // Get queries one control-plane job detail item.
 func (r *JobRepository) Get(ctx context.Context, in query.GetInput) (query.GetItem, error) {
-	row := r.db.QueryRowContext(ctx, `
+	tx, err := WithTenant(ctx, r.db, in.TenantID)
+	if err != nil {
+		return query.GetItem{}, fmt.Errorf("begin job get tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	row := tx.QueryRowContext(ctx, `
 		SELECT
 			id,
 			name,
@@ -65,6 +71,7 @@ func (r *JobRepository) Get(ctx context.Context, in query.GetInput) (query.GetIt
 		return query.GetItem{}, fmt.Errorf("query job detail: %w", err)
 	}
 
+	_ = tx.Commit()
 	return item, nil
 }
 

@@ -21,6 +21,8 @@ func TestInstanceRepository_GetByIdempotencyKey_Success(t *testing.T) {
 	repo := NewInstanceRepository(db)
 	now := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
 
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("tenant-a").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery("SELECT (.+) FROM job_instances").
 		WithArgs("tenant-a", "job_instance_create", "idem-1").
 		WillReturnRows(sqlmock.NewRows(instanceColumnsAll).AddRow(
@@ -34,6 +36,7 @@ func TestInstanceRepository_GetByIdempotencyKey_Success(t *testing.T) {
 			now, now,
 			2,
 		))
+	mock.ExpectCommit()
 
 	out, err := repo.GetByIdempotencyKey(context.Background(), "tenant-a", "job_instance_create", "idem-1")
 	if err != nil {
@@ -66,9 +69,12 @@ func TestInstanceRepository_GetByIdempotencyKey_NotFound(t *testing.T) {
 
 	repo := NewInstanceRepository(db)
 
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("tenant-a").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery("SELECT (.+) FROM job_instances").
 		WithArgs("tenant-a", "job_instance_create", "missing").
 		WillReturnError(errors.New("no rows"))
+	mock.ExpectRollback()
 
 	_, err = repo.GetByIdempotencyKey(context.Background(), "tenant-a", "job_instance_create", "missing")
 	if err == nil {

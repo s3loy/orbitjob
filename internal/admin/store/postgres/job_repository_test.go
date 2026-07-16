@@ -54,9 +54,12 @@ func TestJobRepository_Get_Success(t *testing.T) {
 		now, now, now, now,
 	)
 
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT (.+) FROM jobs WHERE tenant_id = \$1 AND id = \$2 AND deleted_at IS NULL`).
 		WithArgs("default", int64(42)).
 		WillReturnRows(rows)
+	mock.ExpectCommit()
 
 	repo := NewJobRepository(db)
 	item, err := repo.Get(context.Background(), query.GetInput{ID: 42, TenantID: "default"})
@@ -76,9 +79,12 @@ func TestJobRepository_Get_NotFound(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT (.+) FROM jobs WHERE tenant_id = \$1 AND id = \$2 AND deleted_at IS NULL`).
 		WithArgs("default", int64(42)).
 		WillReturnError(sql.ErrNoRows)
+	mock.ExpectRollback()
 
 	repo := NewJobRepository(db)
 	_, err = repo.Get(context.Background(), query.GetInput{ID: 42, TenantID: "default"})
@@ -99,9 +105,12 @@ func TestJobRepository_Get_DBError(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT (.+) FROM jobs WHERE tenant_id = \$1 AND id = \$2 AND deleted_at IS NULL`).
 		WithArgs("default", int64(42)).
 		WillReturnError(errors.New("connection refused"))
+	mock.ExpectRollback()
 
 	repo := NewJobRepository(db)
 	_, err = repo.Get(context.Background(), query.GetInput{ID: 42, TenantID: "default"})
@@ -135,9 +144,12 @@ func TestJobRepository_List_AllStatuses(t *testing.T) {
 		now, now, now, now,
 	)
 
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT (.+) FROM jobs WHERE tenant_id = \$1 AND deleted_at IS NULL ORDER BY id DESC LIMIT \$2 OFFSET \$3`).
 		WithArgs("default", 50, 0).
 		WillReturnRows(rows)
+	mock.ExpectCommit()
 
 	repo := NewJobRepository(db)
 	items, err := repo.List(context.Background(), query.ListInput{
@@ -173,9 +185,12 @@ func TestJobRepository_List_FilterByStatus(t *testing.T) {
 		nil, nil, now, now,
 	)
 
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT (.+) FROM jobs WHERE tenant_id = \$1 AND deleted_at IS NULL AND status = \$2 ORDER BY id DESC LIMIT \$3 OFFSET \$4`).
 		WithArgs("default", "paused", 50, 0).
 		WillReturnRows(rows)
+	mock.ExpectCommit()
 
 	repo := NewJobRepository(db)
 	items, err := repo.List(context.Background(), query.ListInput{
@@ -209,9 +224,12 @@ func TestJobRepository_List_Empty(t *testing.T) {
 		"next_run_at", "last_scheduled_at", "created_at", "updated_at",
 	})
 
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT (.+) FROM jobs WHERE tenant_id = \$1 AND deleted_at IS NULL`).
 		WithArgs("default", 50, 0).
 		WillReturnRows(rows)
+	mock.ExpectCommit()
 
 	repo := NewJobRepository(db)
 	items, err := repo.List(context.Background(), query.ListInput{
@@ -234,9 +252,12 @@ func TestJobRepository_List_DBError(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT (.+) FROM jobs`).
 		WithArgs("default", 50, 0).
 		WillReturnError(errors.New("connection refused"))
+	mock.ExpectRollback()
 
 	repo := NewJobRepository(db)
 	_, err = repo.List(context.Background(), query.ListInput{
@@ -390,9 +411,12 @@ func TestScanJobGetItem_EmptyPayload(t *testing.T) {
 		nil, nil, now, now,
 	)
 
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT (.+) FROM jobs`).
 		WithArgs("default", int64(42)).
 		WillReturnRows(rows)
+	mock.ExpectCommit()
 
 	repo := NewJobRepository(db)
 	item, err := repo.Get(context.Background(), query.GetInput{ID: 42, TenantID: "default"})
@@ -428,9 +452,12 @@ func TestScanJobGetItem_NilPayloadAfterUnmarshal(t *testing.T) {
 		nil, nil, now, now,
 	)
 
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT (.+) FROM jobs`).
 		WithArgs("default", int64(42)).
 		WillReturnRows(rows)
+	mock.ExpectCommit()
 
 	repo := NewJobRepository(db)
 	item, err := repo.Get(context.Background(), query.GetInput{ID: 42, TenantID: "default"})
@@ -466,9 +493,12 @@ func TestScanJobGetItem_InvalidJSON(t *testing.T) {
 		nil, nil, now, now,
 	)
 
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT (.+) FROM jobs`).
 		WithArgs("default", int64(42)).
 		WillReturnRows(rows)
+	mock.ExpectCommit()
 
 	repo := NewJobRepository(db)
 	_, err = repo.Get(context.Background(), query.GetInput{ID: 42, TenantID: "default"})
@@ -493,9 +523,12 @@ func TestJobRepository_List_WithOffset(t *testing.T) {
 		"next_run_at", "last_scheduled_at", "created_at", "updated_at",
 	})
 
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT (.+) FROM jobs WHERE tenant_id = \$1 AND deleted_at IS NULL ORDER BY id DESC LIMIT \$2 OFFSET \$3`).
 		WithArgs("default", 20, 10). // limit=20, offset=10
 		WillReturnRows(rows)
+	mock.ExpectCommit()
 
 	repo := NewJobRepository(db)
 	items, err := repo.List(context.Background(), query.ListInput{
@@ -525,9 +558,12 @@ func TestJobRepository_List_FilteredEmpty(t *testing.T) {
 		"next_run_at", "last_scheduled_at", "created_at", "updated_at",
 	})
 
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT (.+) FROM jobs WHERE tenant_id = \$1 AND deleted_at IS NULL AND status = \$2 ORDER BY id DESC LIMIT \$3 OFFSET \$4`).
 		WithArgs("default", "active", 50, 0).
 		WillReturnRows(rows)
+	mock.ExpectCommit()
 
 	repo := NewJobRepository(db)
 	items, err := repo.List(context.Background(), query.ListInput{
@@ -566,9 +602,12 @@ func TestScanJobListItem_ScanError(t *testing.T) {
 		nil, nil, time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC), time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC),
 	)
 
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT (.+) FROM jobs WHERE tenant_id = \$1 AND deleted_at IS NULL`).
 		WithArgs("default", 50, 0).
 		WillReturnRows(rows)
+	mock.ExpectCommit()
 
 	repo := NewJobRepository(db)
 	_, err = repo.List(context.Background(), query.ListInput{
@@ -601,9 +640,12 @@ func TestJobRepository_List_ScanError(t *testing.T) {
 		nil, nil, now, now,
 	).RowError(0, errors.New("scan: conversion error"))
 
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT (.+) FROM jobs WHERE tenant_id = \$1 AND deleted_at IS NULL`).
 		WithArgs("default", 50, 0).
 		WillReturnRows(rows)
+	mock.ExpectCommit()
 
 	repo := NewJobRepository(db)
 	_, err = repo.List(context.Background(), query.ListInput{

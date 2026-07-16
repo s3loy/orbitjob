@@ -41,6 +41,8 @@ func TestInstanceRepository_CreateUnit_Success(t *testing.T) {
 		MaxAttempt:    3,
 	}
 
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("tenant-a").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery("INSERT INTO job_instances").
 		WithArgs("tenant-a", int64(42), "schedule", now, 5, nil, nil, "", nil, 3, nil).
 		WillReturnRows(sqlmock.NewRows(instanceColumnsAll).AddRow(
@@ -58,6 +60,7 @@ func TestInstanceRepository_CreateUnit_Success(t *testing.T) {
 	mock.ExpectExec("INSERT INTO audit_events").
 		WithArgs("tenant-a", tenant.ActorTypeSystem, "system", tenant.EventTypeInstanceCreated, tenant.ResourceTypeInstance, "run-1", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
 
 	out, err := repo.Create(context.Background(), spec)
 	if err != nil {
@@ -97,9 +100,12 @@ func TestInstanceRepository_CreateUnit_InsertError(t *testing.T) {
 		MaxAttempt:    3,
 	}
 
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("tenant-a").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery("INSERT INTO job_instances").
 		WithArgs("tenant-a", int64(42), "schedule", now, 5, nil, nil, "", nil, 3, nil).
 		WillReturnError(errors.New("insert boom"))
+	mock.ExpectRollback()
 
 	_, err = repo.Create(context.Background(), spec)
 	if err == nil {
@@ -133,6 +139,8 @@ func TestInstanceRepository_CreateUnit_AuditInsertError(t *testing.T) {
 		MaxAttempt:    3,
 	}
 
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("tenant-a").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery("INSERT INTO job_instances").
 		WithArgs("tenant-a", int64(42), "schedule", now, 5, nil, nil, "", nil, 3, nil).
 		WillReturnRows(sqlmock.NewRows(instanceColumnsAll).AddRow(
@@ -150,6 +158,7 @@ func TestInstanceRepository_CreateUnit_AuditInsertError(t *testing.T) {
 	mock.ExpectExec("INSERT INTO audit_events").
 		WithArgs("tenant-a", tenant.ActorTypeSystem, "system", tenant.EventTypeInstanceCreated, tenant.ResourceTypeInstance, "run-1", sqlmock.AnyArg()).
 		WillReturnError(errors.New("audit boom"))
+	mock.ExpectRollback()
 
 	_, err = repo.Create(context.Background(), spec)
 	if err == nil || !containsStr(err.Error(), "insert audit event") {

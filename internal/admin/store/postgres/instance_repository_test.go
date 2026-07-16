@@ -61,6 +61,8 @@ func TestInstanceRepository_List_Success(t *testing.T) {
 			nil, now, now, 1,
 		)
 
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT (.+) FROM job_instances
 			WHERE tenant_id = \$1
 			  AND \(\$2 = '' OR status = \$2\)
@@ -68,6 +70,7 @@ func TestInstanceRepository_List_Success(t *testing.T) {
 			LIMIT \$3 OFFSET \$4`).
 		WithArgs("default", "", 50, 0).
 		WillReturnRows(rows)
+	mock.ExpectCommit()
 
 	repo := NewInstanceRepository(db)
 	items, err := repo.List(context.Background(), "default", "", 50, 0)
@@ -113,6 +116,8 @@ func TestInstanceRepository_List_FilterByStatus(t *testing.T) {
 			"trace-001", now, now, 1,
 		)
 
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT (.+) FROM job_instances
 			WHERE tenant_id = \$1
 			  AND \(\$2 = '' OR status = \$2\)
@@ -120,6 +125,7 @@ func TestInstanceRepository_List_FilterByStatus(t *testing.T) {
 			LIMIT \$3 OFFSET \$4`).
 		WithArgs("default", "running", 50, 0).
 		WillReturnRows(rows)
+	mock.ExpectCommit()
 
 	repo := NewInstanceRepository(db)
 	items, err := repo.List(context.Background(), "default", "running", 50, 0)
@@ -143,6 +149,8 @@ func TestInstanceRepository_List_Empty(t *testing.T) {
 
 	rows := sqlmock.NewRows(instColumns)
 
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT (.+) FROM job_instances
 			WHERE tenant_id = \$1
 			  AND \(\$2 = '' OR status = \$2\)
@@ -150,6 +158,7 @@ func TestInstanceRepository_List_Empty(t *testing.T) {
 			LIMIT \$3 OFFSET \$4`).
 		WithArgs("default", "", 50, 0).
 		WillReturnRows(rows)
+	mock.ExpectCommit()
 
 	repo := NewInstanceRepository(db)
 	items, err := repo.List(context.Background(), "default", "", 50, 0)
@@ -168,9 +177,12 @@ func TestInstanceRepository_List_DBError(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT (.+) FROM job_instances`).
 		WithArgs("default", "", 50, 0).
 		WillReturnError(errors.New("connection refused"))
+	mock.ExpectRollback()
 
 	repo := NewInstanceRepository(db)
 	_, err = repo.List(context.Background(), "default", "", 50, 0)
@@ -197,11 +209,14 @@ func TestInstanceRepository_GetByRunID_Success(t *testing.T) {
 			"trace-001", now, now, 1,
 		)
 
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("tenant-a").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT (.+) FROM job_instances
 			WHERE tenant_id = \$1
 			  AND run_id = \$2`).
 		WithArgs("tenant-a", "run-001").
 		WillReturnRows(rows)
+	mock.ExpectCommit()
 
 	repo := NewInstanceRepository(db)
 	snap, err := repo.GetByRunID(context.Background(), "tenant-a", "run-001")
@@ -223,11 +238,14 @@ func TestInstanceRepository_GetByRunID_NotFound(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("tenant-a").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT (.+) FROM job_instances
 			WHERE tenant_id = \$1
 			  AND run_id = \$2`).
 		WithArgs("tenant-a", "run-missing").
 		WillReturnError(sql.ErrNoRows)
+	mock.ExpectRollback()
 
 	repo := NewInstanceRepository(db)
 	_, err = repo.GetByRunID(context.Background(), "tenant-a", "run-missing")
@@ -257,6 +275,8 @@ func TestInstanceRepository_List_ScanError(t *testing.T) {
 			nil, time.Now(), time.Now(), 1,
 		)
 
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT (.+) FROM job_instances
 			WHERE tenant_id = \$1
 			  AND \(\$2 = '' OR status = \$2\)
@@ -264,6 +284,7 @@ func TestInstanceRepository_List_ScanError(t *testing.T) {
 			LIMIT \$3 OFFSET \$4`).
 		WithArgs("default", "", 50, 0).
 		WillReturnRows(rows)
+	mock.ExpectCommit()
 
 	repo := NewInstanceRepository(db)
 	_, err = repo.List(context.Background(), "default", "", 50, 0)
@@ -291,6 +312,8 @@ func TestInstanceRepository_List_RowsError(t *testing.T) {
 		).
 		RowError(0, errors.New("iteration failure"))
 
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT (.+) FROM job_instances
 			WHERE tenant_id = \$1
 			  AND \(\$2 = '' OR status = \$2\)
@@ -298,6 +321,7 @@ func TestInstanceRepository_List_RowsError(t *testing.T) {
 			LIMIT \$3 OFFSET \$4`).
 		WithArgs("default", "", 50, 0).
 		WillReturnRows(rows)
+	mock.ExpectCommit()
 
 	repo := NewInstanceRepository(db)
 	_, err = repo.List(context.Background(), "default", "", 50, 0)
@@ -313,11 +337,14 @@ func TestInstanceRepository_GetByRunID_DBError(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("tenant-a").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT (.+) FROM job_instances
 			WHERE tenant_id = \$1
 			  AND run_id = \$2`).
 		WithArgs("tenant-a", "run-001").
 		WillReturnError(errors.New("connection refused"))
+	mock.ExpectRollback()
 
 	repo := NewInstanceRepository(db)
 	_, err = repo.GetByRunID(context.Background(), "tenant-a", "run-001")
@@ -346,9 +373,12 @@ func TestInstanceRepository_ListAttempts_Success(t *testing.T) {
 		AddRow(1, workerID, "success", now, now, resultCode, nil).
 		AddRow(2, nil, "failed", now, now, nil, errorMsg)
 
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT a\.attempt_no, a\.worker_id, a\.status, a\.started_at, a\.finished_at,\s*a\.result_code, a\.error_msg\s+FROM job_instance_attempts a\s+JOIN job_instances i ON a\.tenant_id = i\.tenant_id AND a\.instance_id = i\.id\s+WHERE i\.tenant_id = \$1 AND i\.run_id = \$2\s+ORDER BY a\.attempt_no ASC`).
 		WithArgs("default", "run-001").
 		WillReturnRows(rows)
+	mock.ExpectCommit()
 
 	repo := NewInstanceRepository(db)
 	items, err := repo.ListAttempts(context.Background(), "default", "run-001")
@@ -389,9 +419,12 @@ func TestInstanceRepository_ListAttempts_Empty(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	rows := sqlmock.NewRows(attemptColumns)
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT a\.attempt_no, a\.worker_id, a\.status, a\.started_at, a\.finished_at,\s*a\.result_code, a\.error_msg\s+FROM job_instance_attempts a\s+JOIN job_instances i ON a\.tenant_id = i\.tenant_id AND a\.instance_id = i\.id\s+WHERE i\.tenant_id = \$1 AND i\.run_id = \$2\s+ORDER BY a\.attempt_no ASC`).
 		WithArgs("default", "run-001").
 		WillReturnRows(rows)
+	mock.ExpectCommit()
 
 	repo := NewInstanceRepository(db)
 	items, err := repo.ListAttempts(context.Background(), "default", "run-001")
@@ -410,6 +443,8 @@ func TestInstanceRepository_ListAttempts_DBError(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT a\.attempt_no, a\.worker_id, a\.status, a\.started_at, a\.finished_at,
 \s+a\.result_code, a\.error_msg
 \s+FROM job_instance_attempts a
@@ -418,6 +453,7 @@ func TestInstanceRepository_ListAttempts_DBError(t *testing.T) {
 \s+ORDER BY a\.attempt_no ASC`).
 		WithArgs("default", "run-001").
 		WillReturnError(errors.New("connection refused"))
+	mock.ExpectRollback()
 
 	repo := NewInstanceRepository(db)
 	_, err = repo.ListAttempts(context.Background(), "default", "run-001")
@@ -435,9 +471,12 @@ func TestInstanceRepository_ListAttempts_ScanError(t *testing.T) {
 
 	rows := sqlmock.NewRows(attemptColumns).
 		AddRow("not-an-int", nil, "success", nil, nil, nil, nil)
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT a\.attempt_no, a\.worker_id, a\.status, a\.started_at, a\.finished_at,\s*a\.result_code, a\.error_msg\s+FROM job_instance_attempts a\s+JOIN job_instances i ON a\.tenant_id = i\.tenant_id AND a\.instance_id = i\.id\s+WHERE i\.tenant_id = \$1 AND i\.run_id = \$2\s+ORDER BY a\.attempt_no ASC`).
 		WithArgs("default", "run-001").
 		WillReturnRows(rows)
+	mock.ExpectCommit()
 
 	repo := NewInstanceRepository(db)
 	_, err = repo.ListAttempts(context.Background(), "default", "run-001")
@@ -456,9 +495,12 @@ func TestInstanceRepository_ListAttempts_RowsError(t *testing.T) {
 	rows := sqlmock.NewRows(attemptColumns).
 		AddRow(1, nil, "success", nil, nil, nil, nil).
 		RowError(0, errors.New("iteration failure"))
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT a\.attempt_no, a\.worker_id, a\.status, a\.started_at, a\.finished_at,\s*a\.result_code, a\.error_msg\s+FROM job_instance_attempts a\s+JOIN job_instances i ON a\.tenant_id = i\.tenant_id AND a\.instance_id = i\.id\s+WHERE i\.tenant_id = \$1 AND i\.run_id = \$2\s+ORDER BY a\.attempt_no ASC`).
 		WithArgs("default", "run-001").
 		WillReturnRows(rows)
+	mock.ExpectCommit()
 
 	repo := NewInstanceRepository(db)
 	_, err = repo.ListAttempts(context.Background(), "default", "run-001")

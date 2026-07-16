@@ -43,6 +43,7 @@ func TestJobRepository_CreateUnit_Success(t *testing.T) {
 	}
 
 	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("tenant-a").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery("INSERT INTO jobs").
 		WithArgs(
 			"test-job", "tenant-a", 5, nil, "cron", "*/5 * * * *", "UTC", "http",
@@ -113,6 +114,7 @@ func TestJobRepository_CreateUnit_InsertError(t *testing.T) {
 	}
 
 	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("tenant-a").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery("INSERT INTO jobs").
 		WithArgs(
 			"test-job", "tenant-a", 5, nil, "cron", "*/5 * * * *", "UTC", "http",
@@ -185,6 +187,7 @@ func TestJobRepository_CreateUnit_AuditInsertError(t *testing.T) {
 	}
 
 	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config").WithArgs("tenant-a").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery("INSERT INTO jobs").
 		WithArgs(
 			"test-job", "tenant-a", 5, nil, "manual", (*string)(nil), "UTC", "http",

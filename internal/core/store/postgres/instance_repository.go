@@ -22,7 +22,18 @@ func (r *InstanceRepository) GetByIdempotencyKey(
 	ctx context.Context,
 	tenantID, scope, key string,
 ) (domaininstance.Snapshot, error) {
-	row := r.db.QueryRowContext(ctx, `
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domaininstance.Snapshot{}, fmt.Errorf("begin get instance by idempotency key tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Set tenant context for RLS
+	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID); err != nil {
+		return domaininstance.Snapshot{}, fmt.Errorf("set tenant context: %w", err)
+	}
+
+	row := tx.QueryRowContext(ctx, `
 		SELECT
 			id, run_id::text, tenant_id, job_id, trigger_source, status,
 			priority, effective_priority, partition_key, idempotency_key,
@@ -40,6 +51,7 @@ func (r *InstanceRepository) GetByIdempotencyKey(
 	if err != nil {
 		return domaininstance.Snapshot{}, fmt.Errorf("get instance by idempotency key: %w", err)
 	}
+	_ = tx.Commit()
 	return out, nil
 }
 

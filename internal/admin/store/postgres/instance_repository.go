@@ -20,7 +20,13 @@ func NewInstanceRepository(db *sql.DB) *InstanceRepository {
 }
 
 func (r *InstanceRepository) List(ctx context.Context, tenantID, status string, limit, offset int) ([]domaininstance.Snapshot, error) {
-	rows, err := r.db.QueryContext(ctx, `
+	tx, err := WithTenant(ctx, r.db, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("begin instance list tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	rows, err := tx.QueryContext(ctx, `
 		SELECT
 			id,
 			run_id::text,
@@ -74,11 +80,18 @@ func (r *InstanceRepository) List(ctx context.Context, tenantID, status string, 
 	if out == nil {
 		out = []domaininstance.Snapshot{}
 	}
+	_ = tx.Commit()
 	return out, nil
 }
 
 func (r *InstanceRepository) GetByRunID(ctx context.Context, tenantID, runID string) (domaininstance.Snapshot, error) {
-	row := r.db.QueryRowContext(ctx, `
+	tx, err := WithTenant(ctx, r.db, tenantID)
+	if err != nil {
+		return domaininstance.Snapshot{}, fmt.Errorf("begin instance get tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	row := tx.QueryRowContext(ctx, `
 		SELECT
 			id,
 			run_id::text,
@@ -112,11 +125,22 @@ func (r *InstanceRepository) GetByRunID(ctx context.Context, tenantID, runID str
 		  AND run_id = $2
 	`, tenantID, runID)
 
-	return scanInstanceSnapshot(row)
+	out, err := scanInstanceSnapshot(row)
+	if err != nil {
+		return domaininstance.Snapshot{}, fmt.Errorf("get instance by run id: %w", err)
+	}
+	_ = tx.Commit()
+	return out, nil
 }
 
 func (r *InstanceRepository) ListAttempts(ctx context.Context, tenantID, runID string) ([]instancequery.AttemptItem, error) {
-	rows, err := r.db.QueryContext(ctx, `
+	tx, err := WithTenant(ctx, r.db, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("begin list attempts tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	rows, err := tx.QueryContext(ctx, `
 		SELECT a.attempt_no, a.worker_id, a.status, a.started_at, a.finished_at,
 			   a.result_code, a.error_msg
 		FROM job_instance_attempts a
@@ -148,6 +172,7 @@ func (r *InstanceRepository) ListAttempts(ctx context.Context, tenantID, runID s
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate attempts: %w", err)
 	}
+	_ = tx.Commit()
 	return out, nil
 }
 
