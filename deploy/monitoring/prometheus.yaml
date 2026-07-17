@@ -12,6 +12,9 @@ rules:
   - apiGroups: [""]
     resources: [pods, services, endpoints, nodes]
     verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [nodes/proxy, nodes/metrics]
+    verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -40,6 +43,7 @@ data:
       # OrbitJob processes expose /metrics on their health server. The worker
       # does not declare containerPort 6062, so we address each pod by IP:port
       # via kubernetes_sd instead of relying on declared container ports.
+      # The `pod` label keeps series stable across pod restarts.
       - job_name: 'orbitjob-admin-api'
         kubernetes_sd_configs:
           - role: pod
@@ -52,6 +56,8 @@ data:
           - source_labels: [__meta_kubernetes_pod_ip]
             target_label: __address__
             replacement: $1:8080
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
       - job_name: 'orbitjob-scheduler'
         kubernetes_sd_configs:
           - role: pod
@@ -64,6 +70,8 @@ data:
           - source_labels: [__meta_kubernetes_pod_ip]
             target_label: __address__
             replacement: $1:6060
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
       - job_name: 'orbitjob-dispatcher'
         kubernetes_sd_configs:
           - role: pod
@@ -76,6 +84,8 @@ data:
           - source_labels: [__meta_kubernetes_pod_ip]
             target_label: __address__
             replacement: $1:6061
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
       - job_name: 'orbitjob-worker'
         kubernetes_sd_configs:
           - role: pod
@@ -88,18 +98,46 @@ data:
           - source_labels: [__meta_kubernetes_pod_ip]
             target_label: __address__
             replacement: $1:6062
-      - job_name: 'load-fixture'
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+      - job_name: 'orbitjob-postgres'
         kubernetes_sd_configs:
           - role: pod
             namespaces:
-              names: [orbitjob-load]
+              names: [orbitjob]
         relabel_configs:
           - source_labels: [__meta_kubernetes_pod_label_app]
-            regex: load-fixture
+            regex: orbitjob-postgres-exporter
             action: keep
           - source_labels: [__meta_kubernetes_pod_ip]
             target_label: __address__
-            replacement: $1:8080
+            replacement: $1:9187
+      # Container resources via the apiserver proxy to kubelet's cAdvisor
+      # endpoint. kind uses a self-signed kubelet cert.
+      - job_name: 'cadvisor'
+        scheme: https
+        authorization:
+          credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        tls_config:
+          insecure_skip_verify: true
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - target_label: __address__
+            replacement: kubernetes.default.svc:443
+          - source_labels: [__meta_kubernetes_node_name]
+            target_label: __metrics_path__
+            replacement: /api/v1/nodes/$1/proxy/metrics/cadvisor
+        metric_relabel_configs:
+          - source_labels: [__name__]
+            regex: container_(cpu_usage_seconds_total|memory_working_set_bytes|network_receive_bytes_total|network_transmit_bytes_total)
+            action: keep
+          - source_labels: [namespace]
+            regex: orbitjob|orbitjob-load|orbitjob-tasks|monitoring
+            action: keep
+          - source_labels: [container]
+            regex: .+
+            action: keep
       - job_name: 'prometheus'
         static_configs:
           - targets: ['localhost:9090']
@@ -125,7 +163,7 @@ spec:
           args:
             - --config.file=/etc/prometheus/prometheus.yml
             - --storage.tsdb.path=/prometheus
-            - --storage.tsdb.retention.time=10h
+            - --storage.tsdb.retention.time=36h
             - --web.enable-lifecycle
           ports: [{containerPort: 9090, name: web}]
           resources:
@@ -137,9 +175,12 @@ spec:
       volumes:
         - name: config
           configMap: {name: prometheus-config}
+        # emptyDir on purpose: this stack serves loadtest runs only. Deleting
+        # the pod (loadtest reset) must clear the TSDB so a new run starts
+        # from clean counters — a PVC would silently keep the previous run's
+        # history and pollute increase()/rate() windows.
         - name: data
-          persistentVolumeClaim:
-            claimName: prometheus-data
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
@@ -149,15 +190,3 @@ metadata:
 spec:
   selector: {app: prometheus}
   ports: [{name: web, port: 9090, targetPort: web}]
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: prometheus-data
-  namespace: monitoring
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 10Gi

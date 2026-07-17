@@ -511,11 +511,10 @@ func runMonitor(args []string) error {
 }
 
 func monitorDeploy() error {
-	manifests := []string{"namespace.yaml", "prometheus.yaml", "grafana.yaml"}
-	for _, name := range manifests {
-		if err := kubectlApply(filepath.Join("deploy/monitoring", name)); err != nil {
-			return fmt.Errorf("apply %s: %w", name, err)
-		}
+	// Apply the whole directory so new manifests (dashboards, exporters) are
+	// picked up without touching this list.
+	if err := kubectlApply("deploy/monitoring"); err != nil {
+		return fmt.Errorf("apply monitoring: %w", err)
 	}
 	if err := kubectlWait("deployment/prometheus", "monitoring", 3*time.Minute); err != nil {
 		return fmt.Errorf("wait prometheus: %w", err)
@@ -523,7 +522,10 @@ func monitorDeploy() error {
 	if err := kubectlWait("deployment/grafana", "monitoring", 3*time.Minute); err != nil {
 		return fmt.Errorf("wait grafana: %w", err)
 	}
-	fmt.Println("monitor: prometheus + grafana deployed")
+	if err := kubectlWait("deployment/orbitjob-postgres-exporter", "orbitjob", 3*time.Minute); err != nil {
+		return fmt.Errorf("wait postgres exporter: %w", err)
+	}
+	fmt.Println("monitor: prometheus + grafana + postgres exporter deployed")
 	fmt.Println("monitor: view with port-forward:")
 	fmt.Println("  kubectl port-forward -n monitoring svc/grafana 3000:3000  (admin/admin)")
 	fmt.Println("  kubectl port-forward -n monitoring svc/prometheus 9090:9090")
@@ -540,8 +542,9 @@ func monitorStatus() error {
 }
 
 func monitorCleanup() error {
-	for _, name := range []string{"grafana.yaml", "prometheus.yaml", "namespace.yaml"} {
-		_ = exec.Command("kubectl", "delete", "-f", filepath.Join("deploy/monitoring", name), "--ignore-not-found").Run()
+	out, err := exec.Command("kubectl", "delete", "-f", "deploy/monitoring", "--ignore-not-found").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("delete monitoring: %s", strings.TrimSpace(string(out)))
 	}
 	fmt.Println("monitor: removed")
 	return nil
