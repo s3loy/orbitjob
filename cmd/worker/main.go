@@ -187,10 +187,15 @@ func (r *adaptiveTickRunner) SubmitNext(
 		slog.Warn("worker active workers query failed", "error", err.Error())
 	}
 
-	// Adaptive capacity.
+	// Adaptive capacity. In static mode (adaptiveCap == nil) we still publish
+	// the queue depth and the effective capacity so dashboards and the loadtest
+	// feedback controller can see worker backpressure.
 	currentLimit := limit
 	if r.adaptiveCap != nil {
 		currentLimit = r.adaptiveCap.Update(probeRtt, queueDepth, activeWorkers, workerID, tenantID)
+	} else {
+		metrics.WorkerQueueDepth.WithLabelValues(workerID, tenantID).Set(float64(queueDepth))
+		metrics.WorkerCapacity.WithLabelValues(workerID, tenantID).Set(float64(currentLimit))
 	}
 
 	// Dynamic lease.

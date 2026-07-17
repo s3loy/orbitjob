@@ -167,8 +167,10 @@ func (e *RunEngine) Run(ctx context.Context, clock func() time.Duration) error {
 				case <-e.stop:
 					return
 				case <-ticker.C:
-					pf, pressure, err := e.pace.Update(ctx, e.promClient, e.accepted.Load(), clock())
-					if err == nil {
+					pf, pressure, err := e.pace.Update(ctx, e.promClient, e.triggered.Load(), e.accepted.Load(), clock())
+					if err != nil {
+						slog.Warn("pace controller update failed", "error", err.Error())
+					} else {
 						slog.Debug("pace controller update", "pace", pf, "pressure", pressure)
 					}
 				}

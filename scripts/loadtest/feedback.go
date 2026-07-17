@@ -89,8 +89,9 @@ type PaceController struct {
 	dynamicMax  float64
 	emaPressure float64
 
-	lastUpdate   time.Time
-	lastAccepted int64
+	lastUpdate       time.Time
+	lastAttempted    int64
+	consecQueryError int
 }
 
 func NewPaceController(cfg FeedbackConfig, params TuningParameters, minInstances int, duration time.Duration) *PaceController {
@@ -113,24 +114,47 @@ func (pc *PaceController) Pace() float64 {
 	return pc.paceFactor
 }
 
-// Update samples Prometheus and the engine's accepted count, then updates the
-// pace factor. It is safe for concurrent use.
-func (pc *PaceController) Update(ctx context.Context, client *PrometheusClient, accepted int64, elapsed time.Duration) (float64, float64, error) {
+// Update samples Prometheus and the engine's attempt/accept counters, then
+// updates the pace factor. Query errors are counted: after three consecutive
+// samples with failures the pace freezes instead of accelerating into an
+// unobserved system. Empty results (metric missing) read as zero, which is
+// distinct from a failed query.
+func (pc *PaceController) Update(ctx context.Context, client *PrometheusClient, attempted, accepted int64, elapsed time.Duration) (float64, float64, error) {
 	now := time.Now()
 	dt := now.Sub(pc.lastUpdate).Seconds()
 	if dt <= 0 {
 		dt = 1
 	}
-	currentTriggerRate := float64(accepted-pc.lastAccepted) / dt
+	currentAttemptRate := float64(attempted-pc.lastAttempted) / dt
 	pc.lastUpdate = now
-	pc.lastAccepted = accepted
+	pc.lastAttempted = attempted
 
-	queueDepth, _ := client.Query(ctx, "sum(orbitjob_dispatcher_queue_depth)")
-	workerDepth, _ := client.Query(ctx, "sum(orbitjob_worker_queue_depth)")
-	workerCapacity, _ := client.Query(ctx, "sum(orbitjob_worker_capacity)")
-	latency, _ := client.Query(ctx, "histogram_quantile(0.99, sum(rate(orbitjob_trigger_latency_seconds_bucket[1m])) by (le))")
-	rateLimitHits, _ := client.Query(ctx, "sum(rate(orbitjob_ratelimit_hits_total{endpoint_group=\"trigger\"}[1m]))")
-	poolRejected, _ := client.Query(ctx, "sum(rate(orbitjob_worker_pool_rejected_total[1m]))")
+	queryErrs := 0
+	query := func(q string) float64 {
+		v, err := client.Query(ctx, q)
+		if err != nil {
+			queryErrs++
+		}
+		return v
+	}
+	queueDepth := query("sum(orbitjob_dispatcher_queue_depth)")
+	workerDepth := query("sum(orbitjob_worker_queue_depth)")
+	workerCapacity := query("sum(orbitjob_worker_capacity)")
+	latency := query("histogram_quantile(0.99, sum(rate(orbitjob_trigger_latency_seconds_bucket[5m])) by (le))")
+	rateLimitHits := query("sum(rate(orbitjob_ratelimit_hits_total{endpoint_group=\"trigger\"}[1m]))")
+	poolRejected := query("sum(rate(orbitjob_worker_pool_rejected_total[1m]))")
+
+	if queryErrs > 0 {
+		pc.consecQueryError++
+	} else {
+		pc.consecQueryError = 0
+	}
+	if pc.consecQueryError >= 3 {
+		pc.mu.Lock()
+		pf := pc.paceFactor
+		pc.mu.Unlock()
+		return pf, pc.emaPressure, fmt.Errorf("prometheus queries failed for %d consecutive samples; pace frozen at %.2f", pc.consecQueryError, pf)
+	}
 
 	cap := float64(pc.params.EffectiveWorkerCapacityMax)
 	if cap < 1 {
@@ -147,20 +171,22 @@ func (pc *PaceController) Update(ctx context.Context, client *PrometheusClient, 
 	}
 
 	var rateLimitRatio, rejectionRatio float64
-	if currentTriggerRate > 0 {
-		rateLimitRatio = rateLimitHits / currentTriggerRate
+	if currentAttemptRate > 0 {
+		rateLimitRatio = rateLimitHits / currentAttemptRate
 		if rateLimitRatio > 1 {
 			rateLimitRatio = 1
 		}
-		rejectionRatio = poolRejected / currentTriggerRate
+		rejectionRatio = poolRejected / currentAttemptRate
 		if rejectionRatio > 1 {
 			rejectionRatio = 1
 		}
 	}
 
-	// Worker capacity utilization: if the worker is not using its max, pressure is low.
+	// Adaptive capacity backoff is a pressure signal: when the controller has
+	// reduced capacity below the max, it did so because the DB is hot. A
+	// missing series (static mode) reads as full capacity, i.e. no signal.
 	capacityRatio := 0.0
-	if workerCapacity < cap {
+	if workerCapacity > 0 && workerCapacity < cap {
 		capacityRatio = 1.0 - workerCapacity/cap
 	}
 
@@ -191,7 +217,7 @@ func (pc *PaceController) Update(ctx context.Context, client *PrometheusClient, 
 	defer pc.mu.Unlock()
 
 	pf := pc.paceFactor
-	if requiredRate > 0 && currentTriggerRate < requiredRate*1.1 {
+	if requiredRate > 0 && currentAttemptRate < requiredRate*1.1 {
 		pf = pc.cfg.MaxPace
 	} else if pc.emaPressure > pc.cfg.HighPressureThreshold {
 		pf *= 0.9
