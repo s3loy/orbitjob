@@ -25,7 +25,7 @@ func TestV020BaselineAppliesAndThenNoops(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second Execute() error = %v", err)
 	}
-	if result.CurrentVersion != 1 || !result.Noop || len(result.Applied) != 0 {
+	if result.CurrentVersion != 2 || !result.Noop || len(result.Applied) != 0 {
 		t.Fatalf("second result = %#v", result)
 	}
 }
