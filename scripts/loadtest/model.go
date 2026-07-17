@@ -151,6 +151,22 @@ type CheckResult struct {
 	Message  string   `json:"message"`
 }
 
+// RunStats is written by the run command and read by verify/report. Completed
+// is false when the engine stopped early (timeout) — a truncated run cannot
+// produce a PASS verdict.
+type RunStats struct {
+	RunID           string             `json:"run_id"`
+	StartedAt       time.Time          `json:"started_at"`
+	FinishedAt      time.Time          `json:"finished_at"`
+	ScheduledEvents int                `json:"scheduled_events"`
+	Triggered       int64              `json:"triggered"`
+	Accepted        int64              `json:"accepted"`
+	Rejected        int64              `json:"rejected"`
+	Skipped         int64              `json:"skipped"`
+	Breakdown       RejectionBreakdown `json:"breakdown"`
+	Completed       bool               `json:"completed"`
+}
+
 type Result struct {
 	SchemaVersion string        `json:"schema_version"`
 	RunID         string        `json:"run_id"`

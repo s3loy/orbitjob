@@ -156,17 +156,32 @@ func (c *APIClient) CreateAPIKey(ctx context.Context, tenantID string) (string, 
 func (c *APIClient) GetJob(ctx context.Context, jobID int64, tenant string) (map[string]any, error) {
 	resp, err := c.do(ctx, http.MethodGet, fmt.Sprintf("/api/v1/jobs/%d", jobID), tenant, "", nil)
 	if err != nil {
-		return nil, err
+		return nil, &APIError{StatusCode: 0, Message: err.Error()}
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get job %d: status %d", jobID, resp.StatusCode)
+		return nil, &APIError{StatusCode: resp.StatusCode, Message: fmt.Sprintf("get job %d: status %d", jobID, resp.StatusCode)}
 	}
 	var out map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+// APIError carries the HTTP status of a failed API call so callers can tell
+// authorization denials (403) apart from server faults and transport errors.
+// StatusCode 0 means no response was received.
+type APIError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *APIError) Error() string {
+	if e.StatusCode == 0 {
+		return "transport error: " + e.Message
+	}
+	return e.Message
 }
 
 func (c *APIClient) do(ctx context.Context, method, path, tenant, idempotencyKey string, body io.Reader) (*http.Response, error) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"net/http"
@@ -12,16 +13,20 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 )
 
+// terminalStatuses are the states an instance never leaves once reached.
+var terminalStatuses = map[string]bool{"success": true, "failed": true, "canceled": true}
+
 func VerifyCorrectness(evidence Evidence) []CheckResult {
-	var checks []CheckResult
-	checks = append(checks, checkDuplicateTokens(evidence.Attempts))
-	checks = append(checks, checkTenantLeak(evidence.TenantReads))
-	checks = append(checks, checkDuplicateLedger(evidence.Ledger))
-	checks = append(checks, checkTerminalRegression(evidence.Transitions))
-	return checks
+	return []CheckResult{
+		checkDuplicateTokens(evidence.Attempts),
+		checkTenantLeak(evidence.TenantReads),
+		checkDuplicateLedger(evidence.Ledger),
+		checkTerminalRegression(evidence.Regressions),
+		checkExpectedTerminal(evidence.TerminalMismatches),
+	}
 }
 
 func EvaluateQualification(run RunRecord, evidence Evidence, minimumInstances int) Result {
@@ -46,9 +51,23 @@ func EvaluateQualification(run RunRecord, evidence Evidence, minimumInstances in
 		return result
 	}
 
-	if len(evidence.Interruptions) > 0 {
+	if evidence.Truncated {
 		result.Verdict = VerdictInconclusive
-		result.Reason = "environmental interruption detected"
+		result.Reason = "run truncated before the schedule completed"
+		result.CompletedAt = time.Now()
+		return result
+	}
+
+	if evidence.InFlight > 0 {
+		result.Verdict = VerdictInconclusive
+		result.Reason = fmt.Sprintf("%d instances not in a terminal state at verify time", evidence.InFlight)
+		result.CompletedAt = time.Now()
+		return result
+	}
+
+	if evidence.MissingDefinitions > 0 {
+		result.Verdict = VerdictInconclusive
+		result.Reason = fmt.Sprintf("%d created definitions have no instances", evidence.MissingDefinitions)
 		result.CompletedAt = time.Now()
 		return result
 	}
@@ -60,9 +79,9 @@ func EvaluateQualification(run RunRecord, evidence Evidence, minimumInstances in
 		return result
 	}
 
-	if evidence.Instances < minimumInstances {
+	if evidence.QualifiedInstances < minimumInstances {
 		result.Verdict = VerdictFail
-		result.Reason = fmt.Sprintf("instances %d < %d", evidence.Instances, minimumInstances)
+		result.Reason = fmt.Sprintf("qualified instances %d < %d", evidence.QualifiedInstances, minimumInstances)
 		result.CompletedAt = time.Now()
 		return result
 	}
@@ -74,13 +93,17 @@ func EvaluateQualification(run RunRecord, evidence Evidence, minimumInstances in
 }
 
 type Evidence struct {
-	Instances      int
-	Attempts       []Attempt
-	TenantReads    []TenantRead
-	Ledger         []LedgerEntry
-	Transitions    []Transition
-	MissingSources []string
-	Interruptions  []Interruption
+	Instances          int // instances belonging to this run's definitions
+	QualifiedInstances int // instances in their expected terminal state
+	InFlight           int // instances not yet in a terminal state
+	MissingDefinitions int // created definitions with zero instances
+	Attempts           []Attempt
+	TenantReads        []TenantRead
+	Ledger             []LedgerEntry
+	Regressions        []Regression
+	TerminalMismatches []TerminalMismatch
+	MissingSources     []string
+	Truncated          bool
 }
 
 type Attempt struct {
@@ -100,14 +123,22 @@ type LedgerEntry struct {
 	Operation      string
 }
 
-type Transition struct {
-	InstanceID int64
+// Regression is a terminal-state violation recovered from audit_events: an
+// instance that left a terminal status after reaching it.
+type Regression struct {
+	ResourceID string
 	From       string
 	To         string
 }
 
-type Interruption struct {
-	Kind string
+// TerminalMismatch counts instances of one definition that terminated in a
+// state other than the definition's Expected.TerminalState.
+type TerminalMismatch struct {
+	CaseID   string
+	JobID    int64
+	Expected string
+	Actual   string
+	Count    int
 }
 
 func checkDuplicateTokens(attempts []Attempt) CheckResult {
@@ -144,21 +175,49 @@ func checkDuplicateLedger(entries []LedgerEntry) CheckResult {
 	return CheckResult{ID: "duplicate-idempotent-side-effect", Status: VerdictPass}
 }
 
-func checkTerminalRegression(transitions []Transition) CheckResult {
-	terminals := map[string]bool{"success": true, "failed": true, "canceled": true}
-	for _, t := range transitions {
-		if terminals[t.From] && t.To != t.From {
-			return CheckResult{ID: "terminal-regression", Status: VerdictFail, Message: fmt.Sprintf("instance %d regressed from %s to %s", t.InstanceID, t.From, t.To)}
-		}
+func checkTerminalRegression(regressions []Regression) CheckResult {
+	if len(regressions) > 0 {
+		first := regressions[0]
+		return CheckResult{ID: "terminal-regression", Status: VerdictFail,
+			Message: fmt.Sprintf("%d terminal regressions; first: instance %s went %s -> %s", len(regressions), first.ResourceID, first.From, first.To)}
 	}
 	return CheckResult{ID: "terminal-regression", Status: VerdictPass}
 }
 
+func checkExpectedTerminal(mismatches []TerminalMismatch) CheckResult {
+	if len(mismatches) > 0 {
+		first := mismatches[0]
+		return CheckResult{ID: "expected-terminal-state", Status: VerdictFail,
+			Message: fmt.Sprintf("%d definitions terminated in unexpected states; first: %s expected %s, got %s x%d",
+				len(mismatches), first.CaseID, first.Expected, first.Actual, first.Count)}
+	}
+	return CheckResult{ID: "expected-terminal-state", Status: VerdictPass}
+}
+
 // CollectEvidence reads correctness evidence from the OrbitJob database, the
 // load fixture ledger, and cross-tenant Admin API probes. It never mutates
-// OrbitJob state. The orbitjob DSN must be read-only.
-func CollectEvidence(ctx context.Context, orbitjobDSN, fixtureURL, apiURL string, tenantKeys map[string]string, created []CreatedDefinition) (Evidence, error) {
+// OrbitJob state. The orbitjob DSN must be read-only. Instance counting is
+// scoped to the run's created definitions: a full-table count would let
+// leftovers from earlier runs feed the qualification gate.
+func CollectEvidence(ctx context.Context, orbitjobDSN, fixtureURL, apiURL string, tenantKeys map[string]string, created []CreatedDefinition, definitions []Definition) (Evidence, error) {
 	var e Evidence
+
+	expectedByCase := make(map[string]string, len(definitions))
+	for _, def := range definitions {
+		terminal := def.Expected.TerminalState
+		if terminal == "" {
+			terminal = "success"
+		}
+		expectedByCase[def.CaseID] = terminal
+	}
+	jobIDs := make([]int64, 0, len(created))
+	expectedByJob := make(map[int64]string, len(created))
+	caseByJob := make(map[int64]string, len(created))
+	for _, cd := range created {
+		jobIDs = append(jobIDs, cd.JobID)
+		expectedByJob[cd.JobID] = expectedByCase[cd.CaseID]
+		caseByJob[cd.JobID] = cd.CaseID
+	}
 
 	odb, err := sql.Open("postgres", orbitjobDSN)
 	if err != nil {
@@ -166,11 +225,75 @@ func CollectEvidence(ctx context.Context, orbitjobDSN, fixtureURL, apiURL string
 	}
 	defer func() { _ = odb.Close() }()
 
-	if err := odb.QueryRowContext(ctx, "SELECT count(*) FROM job_instances").Scan(&e.Instances); err != nil {
-		return e, fmt.Errorf("count instances: %w", err)
+	// Instance counts by status, scoped to this run's definitions.
+	statusCounts := map[int64]map[string]int{}
+	rows, err := odb.QueryContext(ctx, `
+		SELECT job_id, status, count(*) FROM job_instances
+		WHERE job_id = ANY($1)
+		GROUP BY job_id, status
+	`, pq.Array(jobIDs))
+	if err != nil {
+		return e, fmt.Errorf("count instances by status: %w", err)
+	}
+	for rows.Next() {
+		var jobID int64
+		var status string
+		var count int
+		if err := rows.Scan(&jobID, &status, &count); err != nil {
+			_ = rows.Close()
+			return e, fmt.Errorf("scan instance count: %w", err)
+		}
+		if statusCounts[jobID] == nil {
+			statusCounts[jobID] = map[string]int{}
+		}
+		statusCounts[jobID][status] = count
+		e.Instances += count
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return e, fmt.Errorf("iterate instance counts: %w", err)
+	}
+	_ = rows.Close()
+
+	mismatchCounts := map[int64]map[string]int{}
+	for _, cd := range created {
+		counts := statusCounts[cd.JobID]
+		if len(counts) == 0 {
+			e.MissingDefinitions++
+			continue
+		}
+		expected := expectedByJob[cd.JobID]
+		if expected == "" {
+			expected = "success"
+		}
+		for status, count := range counts {
+			switch {
+			case !terminalStatuses[status]:
+				e.InFlight += count
+			case status == expected:
+				e.QualifiedInstances += count
+			default:
+				if mismatchCounts[cd.JobID] == nil {
+					mismatchCounts[cd.JobID] = map[string]int{}
+				}
+				mismatchCounts[cd.JobID][status] += count
+			}
+		}
+	}
+	for jobID, byStatus := range mismatchCounts {
+		for status, count := range byStatus {
+			e.TerminalMismatches = append(e.TerminalMismatches, TerminalMismatch{
+				CaseID:   caseByJob[jobID],
+				JobID:    jobID,
+				Expected: expectedByJob[jobID],
+				Actual:   status,
+				Count:    count,
+			})
+		}
 	}
 
-	rows, err := odb.QueryContext(ctx, "SELECT instance_id, attempt_no, status FROM job_instance_attempts WHERE status IN ('success','running')")
+	// Attempt tokens for the duplicate-execution check.
+	rows, err = odb.QueryContext(ctx, "SELECT instance_id, attempt_no, status FROM job_instance_attempts WHERE status IN ('success','running')")
 	if err != nil {
 		return e, fmt.Errorf("query attempts: %w", err)
 	}
@@ -184,21 +307,69 @@ func CollectEvidence(ctx context.Context, orbitjobDSN, fixtureURL, apiURL string
 		}
 		e.Attempts = append(e.Attempts, Attempt{InstanceID: instID, Token: fmt.Sprintf("attempt-%d", attemptNo), Valid: status == "success"})
 	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return e, fmt.Errorf("iterate attempts: %w", err)
+	}
 	_ = rows.Close()
 
+	// Terminal regressions from the audit log: an instance that left a
+	// terminal status after reaching it. audit_events survives runs, so scope
+	// to this run's job ids via the instances table join.
+	rows, err = odb.QueryContext(ctx, `
+		SELECT ae.resource_id, ae.diff->>'from_status', ae.diff->>'to_status'
+		FROM audit_events ae
+		WHERE ae.event_type = 'instance.status_changed'
+		  AND ae.diff->>'from_status' IN ('success','failed','canceled')
+		  AND ae.diff->>'to_status' <> ae.diff->>'from_status'
+		  AND ae.created_at > now() - interval '1 day'
+	`)
+	if err != nil {
+		return e, fmt.Errorf("query regressions: %w", err)
+	}
+	for rows.Next() {
+		var r Regression
+		if err := rows.Scan(&r.ResourceID, &r.From, &r.To); err != nil {
+			_ = rows.Close()
+			return e, fmt.Errorf("scan regression: %w", err)
+		}
+		e.Regressions = append(e.Regressions, r)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return e, fmt.Errorf("iterate regressions: %w", err)
+	}
+	_ = rows.Close()
+
+	// Cross-tenant probes: every actor reads up to three foreign definitions.
+	// Only 200 counts as a leak; 403/404 are expected denials; anything else
+	// (transport error, 5xx) is an evidence gap, not a pass.
 	for actor, actorKey := range tenantKeys {
 		client := NewAPIClient(apiURL, actorKey)
+		probed := 0
 		for _, def := range created {
-			if def.Tenant == actor {
+			if def.Tenant == actor || probed >= 3 {
 				continue
 			}
 			_, err := client.GetJob(ctx, def.JobID, def.Tenant)
-			status := 403
-			if err == nil {
-				status = 200
+			status := 200
+			if err != nil {
+				var aerr *APIError
+				if errors.As(err, &aerr) {
+					status = aerr.StatusCode
+				} else {
+					status = 0
+				}
+			}
+			if status == 0 || status >= 500 {
+				e.MissingSources = append(e.MissingSources, fmt.Sprintf("tenant-probe:%s", actor))
+				break
 			}
 			e.TenantReads = append(e.TenantReads, TenantRead{ActorTenant: actor, ObjectTenant: def.Tenant, HTTPStatus: status})
-			break
+			probed++
+		}
+		if probed == 0 {
+			e.MissingSources = append(e.MissingSources, fmt.Sprintf("tenant-probe:%s", actor))
 		}
 	}
 
@@ -260,12 +431,24 @@ func runVerify(args []string) error {
 	if err != nil {
 		return fmt.Errorf("load created definitions: %w", err)
 	}
+	definitions, err := loadGeneratedDefinitions(filepath.Join(runDir, "generated", "definitions.json"))
+	if err != nil {
+		return fmt.Errorf("load generated definitions: %w", err)
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
-	evidence, err := CollectEvidence(ctx, *orbitjobDSN, *fixtureURL, *apiURL, tenantKeys, created)
+	evidence, err := CollectEvidence(ctx, *orbitjobDSN, *fixtureURL, *apiURL, tenantKeys, created, definitions)
 	if err != nil {
 		return fmt.Errorf("collect evidence: %w", err)
 	}
+
+	stats, err := loadRunStats(filepath.Join(runDir, "run-stats.json"))
+	if err != nil {
+		return fmt.Errorf("load run stats: %w (run the loadtest run command first; it writes run-stats.json)", err)
+	}
+	evidence.Truncated = !stats.Completed
+
 	run := RunRecord{
 		RunID:         *runID,
 		Profile:       cfg.Profile,
@@ -273,17 +456,22 @@ func runVerify(args []string) error {
 		Seed:          cfg.Seed,
 		Commit:        gitCommit(),
 		Dirty:         gitDirty(),
-		StartedAt:     time.Now(),
+		StartedAt:     stats.StartedAt,
 		Environment: Environment{
 			DockerCPU:         cfg.Environment.DockerCPU,
 			DockerMemoryBytes: int64(cfg.Environment.DockerMemoryGi) * (1 << 30),
 		},
 	}
+	if err := writeStableJSON(filepath.Join(runDir, "run-record.json"), run); err != nil {
+		return fmt.Errorf("write run record: %w", err)
+	}
+
 	result := EvaluateQualification(run, evidence, cfg.MinimumInstances)
 	if err := writeStableJSON(filepath.Join(runDir, "result.json"), result); err != nil {
 		return err
 	}
-	fmt.Printf("verify: verdict=%s reason=%s instances=%d\n", result.Verdict, result.Reason, evidence.Instances)
+	fmt.Printf("verify: verdict=%s reason=%s instances=%d qualified=%d in_flight=%d\n",
+		result.Verdict, result.Reason, evidence.Instances, evidence.QualifiedInstances, evidence.InFlight)
 	return nil
 }
 
@@ -316,4 +504,16 @@ func loadCreatedDefinitions(path string) ([]CreatedDefinition, error) {
 		return nil, err
 	}
 	return created, nil
+}
+
+func loadRunStats(path string) (RunStats, error) {
+	var stats RunStats
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return stats, err
+	}
+	if err := json.Unmarshal(data, &stats); err != nil {
+		return stats, fmt.Errorf("decode run stats: %w", err)
+	}
+	return stats, nil
 }

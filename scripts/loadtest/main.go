@@ -267,16 +267,34 @@ func runRun(args []string) error {
 	defer cancel()
 
 	go injectFaults(ctx, start, FaultPlanFromConfig(cfg))
-	if err := engine.Run(ctx, func() time.Duration { return time.Since(start) }); err != nil && err != context.DeadlineExceeded {
-		return fmt.Errorf("run engine: %w", err)
-	}
+	runErr := engine.Run(ctx, func() time.Duration { return time.Since(start) })
 	engine.Stop()
 	triggered, accepted, rejected, skipped := engine.Stats()
 	fmt.Printf("run: triggered=%d accepted=%d rejected=%d skipped=%d\n", triggered, accepted, rejected, skipped)
+	stats := RunStats{
+		RunID:           *runID,
+		StartedAt:       start,
+		FinishedAt:      time.Now(),
+		ScheduledEvents: len(schedule.Events),
+		Triggered:       triggered,
+		Accepted:        accepted,
+		Rejected:        rejected,
+		Skipped:         skipped,
+		Breakdown:       engine.Rejections(),
+		Completed:       runErr == nil,
+	}
 	if rejected > 0 {
-		breakdown := engine.Rejections()
 		fmt.Printf("run: rejections: rate_limited=%d server=%d transport=%d other=%d\n",
-			breakdown.RateLimited, breakdown.Server, breakdown.Transport, breakdown.Other)
+			stats.Breakdown.RateLimited, stats.Breakdown.Server, stats.Breakdown.Transport, stats.Breakdown.Other)
+	}
+	if !stats.Completed {
+		fmt.Printf("run: TRUNCATED before schedule completed: %v\n", runErr)
+	}
+	if err := writeStableJSON(filepath.Join(runDir, "run-stats.json"), stats); err != nil {
+		return fmt.Errorf("write run stats: %w", err)
+	}
+	if runErr != nil && runErr != context.DeadlineExceeded {
+		return fmt.Errorf("run engine: %w", runErr)
 	}
 	return nil
 }
@@ -364,14 +382,29 @@ func runReport(args []string) error {
 	if err := json.Unmarshal(data, &result); err != nil {
 		return fmt.Errorf("decode result: %w", err)
 	}
-	run := RunRecord{
-		RunID:         *runID,
-		Qualification: result.Qualification,
-		Commit:        gitCommit(),
-		Dirty:         gitDirty(),
-		StartedAt:     result.CompletedAt,
+
+	// verify writes run-record.json with the run's true environment and start
+	// time; fall back to a minimal record for run dirs predating it.
+	var run RunRecord
+	if recordData, err := os.ReadFile(filepath.Join(runDir, "run-record.json")); err == nil {
+		if err := json.Unmarshal(recordData, &run); err != nil {
+			return fmt.Errorf("decode run record: %w", err)
+		}
+	} else {
+		run = RunRecord{
+			RunID:         *runID,
+			Qualification: result.Qualification,
+			Commit:        gitCommit(),
+			Dirty:         gitDirty(),
+			StartedAt:     result.CompletedAt,
+		}
 	}
-	if err := WriteReport(runDir, run, result); err != nil {
+
+	var stats *RunStats
+	if s, err := loadRunStats(filepath.Join(runDir, "run-stats.json")); err == nil {
+		stats = &s
+	}
+	if err := WriteReport(runDir, run, result, stats); err != nil {
 		return err
 	}
 	if err := WriteChecksums(runDir); err != nil {

@@ -116,11 +116,25 @@ func TestRunEngineCountsSkippedWhenAtCapacity(t *testing.T) {
 	}}
 	engine := NewRunEngine(map[string]*APIClient{"t1": NewAPIClient(srv.URL, "k")}, schedule, map[string]int{"p": 1})
 	start := time.Now()
-	if err := engine.Run(context.Background(), func() time.Duration { return time.Since(start) }); err != nil {
-		t.Fatal(err)
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- engine.Run(context.Background(), func() time.Duration { return time.Since(start) })
+	}()
+
+	// The engine drains in-flight triggers before Run returns, so release the
+	// blocked request once the skip has happened instead of after Run.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		_, _, _, skipped := engine.Stats()
+		if skipped == 1 {
+			break
+		}
+		time.Sleep(time.Millisecond)
 	}
 	close(release)
-	waitForStats(t, engine, 1)
+	if err := <-runErr; err != nil {
+		t.Fatal(err)
+	}
 
 	triggered, accepted, rejected, skipped := engine.Stats()
 	if triggered != 1 || skipped != 1 {

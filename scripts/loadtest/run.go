@@ -117,6 +117,7 @@ type RunEngine struct {
 	pace       *PaceController
 	promClient *PrometheusClient
 	stop       chan struct{}
+	wg         sync.WaitGroup
 	triggered  atomic.Int64
 	accepted   atomic.Int64
 	rejected   atomic.Int64
@@ -147,6 +148,10 @@ func NewRunEngineWithPace(api map[string]*APIClient, schedule PhaseSchedule, max
 }
 
 func (e *RunEngine) Run(ctx context.Context, clock func() time.Duration) error {
+	// Drain in-flight triggers before returning so final stats are complete,
+	// even on context cancellation (in-flight requests carry ctx and abort).
+	defer e.wg.Wait()
+
 	active := 0
 	var activeMu sync.Mutex
 	dynamic := e.pace != nil
@@ -232,7 +237,9 @@ func (e *RunEngine) Run(ctx context.Context, clock func() time.Duration) error {
 		}
 
 		e.triggered.Add(1)
+		e.wg.Add(1)
 		go func(ev TriggerEvent) {
+			defer e.wg.Done()
 			defer func() {
 				activeMu.Lock()
 				active--
