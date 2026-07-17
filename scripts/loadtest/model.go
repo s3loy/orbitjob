@@ -165,6 +165,7 @@ type RunStats struct {
 	Skipped         int64              `json:"skipped"`
 	Breakdown       RejectionBreakdown `json:"breakdown"`
 	Completed       bool               `json:"completed"`
+	Faults          []FaultRecord      `json:"faults,omitempty"`
 }
 
 type Result struct {

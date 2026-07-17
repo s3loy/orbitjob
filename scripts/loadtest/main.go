@@ -269,7 +269,8 @@ func runRun(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	go injectFaults(ctx, start, FaultPlanFromConfig(cfg))
+	faults := &FaultRecorder{}
+	go injectFaults(ctx, start, FaultPlanFromConfig(cfg), faults)
 	runErr := engine.Run(ctx, func() time.Duration { return time.Since(start) })
 	engine.Stop()
 	triggered, accepted, rejected, skipped := engine.Stats()
@@ -285,6 +286,7 @@ func runRun(args []string) error {
 		Skipped:         skipped,
 		Breakdown:       engine.Rejections(),
 		Completed:       runErr == nil,
+		Faults:          faults.Records(),
 	}
 	if rejected > 0 {
 		fmt.Printf("run: rejections: rate_limited=%d server=%d transport=%d other=%d\n",
@@ -345,7 +347,7 @@ func patchDeploymentEnv(ctx context.Context, name string, env map[string]string)
 	return nil
 }
 
-func injectFaults(ctx context.Context, start time.Time, plan []FaultSpec) {
+func injectFaults(ctx context.Context, start time.Time, plan []FaultSpec, rec *FaultRecorder) {
 	for _, fault := range plan {
 		wait := fault.Offset - time.Since(start)
 		if wait > 0 {
@@ -355,14 +357,55 @@ func injectFaults(ctx context.Context, start time.Time, plan []FaultSpec) {
 			case <-time.After(wait):
 			}
 		}
-		cmd, err := FaultInjectionCommand(fault.Name, "orbitjob")
+		cmd, restore, err := FaultInjectionPlan(fault.Name, "orbitjob")
 		if err != nil || len(cmd) == 0 {
+			if err != nil {
+				rec.add(FaultRecord{Name: fault.Name, InjectedAt: time.Now().UTC().Format(time.RFC3339), InjectError: err.Error()})
+			}
 			continue
 		}
 		fmt.Printf("fault: injecting %s at %s\n", fault.Name, time.Since(start).Round(time.Second))
-		_ = exec.Command(cmd[0], cmd[1:]...).Run()
+		injectStart := time.Now()
+		record := FaultRecord{Name: fault.Name, InjectedAt: injectStart.UTC().Format(time.RFC3339)}
+		if out, err := exec.Command(cmd[0], cmd[1:]...).CombinedOutput(); err != nil {
+			record.InjectError = fmt.Sprintf("%v: %s", err, strings.TrimSpace(string(out)))
+			rec.add(record)
+			fmt.Printf("fault: %s injection failed: %s\n", fault.Name, record.InjectError)
+			continue
+		}
+		if fault.DisconnectFor > 0 && len(restore) > 0 {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(fault.DisconnectFor):
+			}
+			if out, err := exec.Command(restore[0], restore[1:]...).CombinedOutput(); err != nil {
+				record.InjectError = fmt.Sprintf("restore: %v: %s", err, strings.TrimSpace(string(out)))
+				rec.add(record)
+				fmt.Printf("fault: %s restore failed: %s\n", fault.Name, record.InjectError)
+				continue
+			}
+		}
 		gate := RecoveryGate{Name: fault.Name, ReadyTimeout: 2 * time.Minute, BusinessTimeout: 5 * time.Minute}
-		_ = WaitForRecovery(ctx, gate, func(context.Context) bool { return true })
+		if err := WaitForRecovery(ctx, gate, deploymentReadyCheck(fault.Name, "orbitjob")); err != nil {
+			record.InjectError = err.Error()
+		}
+		record.RecoveredSeconds = time.Since(injectStart).Seconds()
+		rec.add(record)
+		fmt.Printf("fault: %s recovered in %.0fs\n", fault.Name, record.RecoveredSeconds)
+	}
+}
+
+// deploymentReadyCheck polls the target deployment until it reports one ready
+// replica, twice in a row (handled by WaitForRecovery).
+func deploymentReadyCheck(name, namespace string) func(context.Context) bool {
+	return func(ctx context.Context) bool {
+		out, err := exec.CommandContext(ctx, "kubectl", "get", "deployment", "orbitjob-"+name,
+			"-n", namespace, "-o", "jsonpath={.status.readyReplicas}").Output()
+		if err != nil {
+			return false
+		}
+		return strings.TrimSpace(string(out)) == "1"
 	}
 }
 

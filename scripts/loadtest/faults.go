@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -90,20 +91,59 @@ func ValidateFaultOrder(plan []FaultSpec) error {
 }
 
 func FaultInjectionCommand(name, namespace string) ([]string, error) {
+	inject, _, err := FaultInjectionPlan(name, namespace)
+	return inject, err
+}
+
+// FaultInjectionPlan returns the inject command and, for faults with a
+// DisconnectFor window, the restore command that undoes it. Components without
+// a restore step recover on their own (rollout restart, pod delete).
+func FaultInjectionPlan(name, namespace string) (inject, restore []string, err error) {
 	switch name {
 	case "scheduler":
-		return []string{"kubectl", "rollout", "restart", "deployment/orbitjob-scheduler", "-n", namespace}, nil
+		return []string{"kubectl", "rollout", "restart", "deployment/orbitjob-scheduler", "-n", namespace}, nil, nil
 	case "dispatcher":
-		return []string{"kubectl", "rollout", "restart", "deployment/orbitjob-dispatcher", "-n", namespace}, nil
+		return []string{"kubectl", "rollout", "restart", "deployment/orbitjob-dispatcher", "-n", namespace}, nil, nil
 	case "worker":
-		return []string{"kubectl", "delete", "pod", "-n", namespace, "-l", "app.kubernetes.io/name=orbitjob-worker"}, nil
+		return []string{"kubectl", "delete", "pod", "-n", namespace, "-l", "app.kubernetes.io/name=orbitjob-worker"}, nil, nil
 	case "admin-api":
-		return []string{"kubectl", "rollout", "restart", "deployment/orbitjob-admin-api", "-n", namespace}, nil
+		return []string{"kubectl", "rollout", "restart", "deployment/orbitjob-admin-api", "-n", namespace}, nil, nil
 	case "postgres":
-		return nil, nil
+		return []string{"kubectl", "scale", "deployment/orbitjob-postgres", "-n", namespace, "--replicas=0"},
+			[]string{"kubectl", "scale", "deployment/orbitjob-postgres", "-n", namespace, "--replicas=1"}, nil
 	default:
-		return nil, fmt.Errorf("unknown fault %s", name)
+		return nil, nil, fmt.Errorf("unknown fault %s", name)
 	}
+}
+
+// FaultRecord is one fault injection's evidence: when it fired, how long
+// recovery took, and whether injection itself failed.
+type FaultRecord struct {
+	Name             string  `json:"name"`
+	InjectedAt       string  `json:"injected_at"`
+	RecoveredSeconds float64 `json:"recovered_seconds"`
+	InjectError      string  `json:"inject_error,omitempty"`
+}
+
+// FaultRecorder collects FaultRecords from the injection goroutine; read after
+// the run ends via Records.
+type FaultRecorder struct {
+	mu      sync.Mutex
+	records []FaultRecord
+}
+
+func (r *FaultRecorder) add(rec FaultRecord) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.records = append(r.records, rec)
+}
+
+func (r *FaultRecorder) Records() []FaultRecord {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]FaultRecord, len(r.records))
+	copy(out, r.records)
+	return out
 }
 
 func WaitForRecovery(ctx context.Context, gate RecoveryGate, check func(context.Context) bool) error {

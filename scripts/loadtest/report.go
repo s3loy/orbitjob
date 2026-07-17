@@ -31,10 +31,21 @@ func buildReportBody(run RunRecord, result Result, stats *RunStats) string {
 	if stats != nil {
 		b.WriteString("## Run Stats\n\n")
 		fmt.Fprintf(&b, "- Window: %s → %s (completed=%v)\n", stats.StartedAt.Format(time.RFC3339), stats.FinishedAt.Format(time.RFC3339), stats.Completed)
-		fmt.Fprintf(&b, "- Scheduled events: %d\n- Triggered: %d\n- Accepted: %d\n- Rejected: %d (rate_limited=%d server=%d transport=%d other=%d)\n- Skipped: %d\n\n",
+		fmt.Fprintf(&b, "- Scheduled events: %d\n- Triggered: %d\n- Accepted: %d\n- Rejected: %d (rate_limited=%d server=%d transport=%d other=%d)\n- Skipped: %d\n",
 			stats.ScheduledEvents, stats.Triggered, stats.Accepted,
 			stats.Rejected, stats.Breakdown.RateLimited, stats.Breakdown.Server, stats.Breakdown.Transport, stats.Breakdown.Other,
 			stats.Skipped)
+		if len(stats.Faults) > 0 {
+			b.WriteString("- Faults:\n")
+			for _, f := range stats.Faults {
+				if f.InjectError != "" {
+					fmt.Fprintf(&b, "  - %s @ %s: ERROR %s\n", f.Name, f.InjectedAt, f.InjectError)
+				} else {
+					fmt.Fprintf(&b, "  - %s @ %s: recovered in %.0fs\n", f.Name, f.InjectedAt, f.RecoveredSeconds)
+				}
+			}
+		}
+		b.WriteString("\n")
 	}
 	b.WriteString("## Correctness\n\n")
 	for _, check := range result.Checks {

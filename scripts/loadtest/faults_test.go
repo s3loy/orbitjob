@@ -48,8 +48,13 @@ func TestFaultInjectionCommands(t *testing.T) {
 			t.Fatalf("%s produced empty command", name)
 		}
 	}
-	if _, err := FaultInjectionCommand("postgres", "orbitjob"); err != nil {
-		t.Fatalf("postgres should return nil command, not error: %v", err)
+	// postgres scales down and restores up.
+	inject, restore, err := FaultInjectionPlan("postgres", "orbitjob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inject) == 0 || len(restore) == 0 {
+		t.Fatalf("postgres plan incomplete: inject=%v restore=%v", inject, restore)
 	}
 }
 
