@@ -1,4 +1,4 @@
--- 0006: scheduler quota check reads tenant rows
+-- 0002: scheduler quota check reads tenant rows
 --
 -- checkConcurrentInstanceQuota (internal/core/store/postgres/scheduler_repository.go)
 -- runs `SELECT quotas FROM tenants WHERE id = $1` as orbitjob_runtime before

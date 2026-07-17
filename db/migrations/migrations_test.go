@@ -20,7 +20,11 @@ func TestV020MigrationFileSet(t *testing.T) {
 		}
 	}
 	sort.Strings(files)
-	want := []string{"0001_v020_baseline.up.sql"}
+	want := []string{
+		"0001_v020_baseline.up.sql",
+		"0002_grant_runtime_tenants_select.down.sql",
+		"0002_grant_runtime_tenants_select.up.sql",
+	}
 	if !reflect.DeepEqual(files, want) {
 		t.Fatalf("migration files = %v, want %v", files, want)
 	}
