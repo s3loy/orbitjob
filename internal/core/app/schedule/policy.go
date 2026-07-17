@@ -21,6 +21,13 @@ type ScheduleDecision struct {
 	NextRunAt      *time.Time
 }
 
+// MisfireGraceWindow bounds how late a claim may be before the "skip" misfire
+// policy drops the run. The claim query only picks slots that are already due
+// (next_run_at <= now), so every claim is late by at least one poll tick —
+// without a grace window the skip policy would skip every single run. 30s
+// covers slow ticks while still dropping genuinely missed runs.
+const MisfireGraceWindow = 30 * time.Second
+
 // DecideSchedule computes one scheduling decision for a due cron job.
 func DecideSchedule(now time.Time, job DueCronJob) (ScheduleDecision, error) {
 	tz := defaultIfEmpty(job.Timezone, "UTC")
@@ -40,6 +47,12 @@ func DecideSchedule(now time.Time, job DueCronJob) (ScheduleDecision, error) {
 
 	switch strings.TrimSpace(job.MisfirePolicy) {
 	case "skip":
+		if nowInLoc.Sub(nextInLoc) <= MisfireGraceWindow {
+			// Within grace: fire at the missed slot instead of skipping it.
+			scheduledAt := nextInLoc.UTC()
+			next := schedule.Next(nextInLoc).UTC()
+			return ScheduleDecision{CreateInstance: true, ScheduledAt: &scheduledAt, NextRunAt: &next}, nil
+		}
 		next := schedule.Next(nowInLoc).UTC()
 		return ScheduleDecision{CreateInstance: false, NextRunAt: &next}, nil
 	case "catch_up":

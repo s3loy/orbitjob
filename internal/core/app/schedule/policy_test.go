@@ -25,6 +25,31 @@ func TestDecideSchedule_SkipMisfire_DoesNotCreateInstance(t *testing.T) {
 	}
 }
 
+// Claims always arrive at least one poll tick after the slot; the skip policy
+// must still fire within the grace window or it would skip every run.
+func TestDecideSchedule_SkipWithinGrace_CreatesAtMissedSlot(t *testing.T) {
+	now := time.Date(2026, 4, 19, 12, 0, 5, 0, time.UTC)
+	next := time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC)
+	decision, err := DecideSchedule(now, DueCronJob{
+		CronExpr:      "*/5 * * * *",
+		Timezone:      "UTC",
+		MisfirePolicy: "skip",
+		NextRunAt:     next,
+	})
+	if err != nil {
+		t.Fatalf("DecideSchedule() error = %v", err)
+	}
+	if !decision.CreateInstance {
+		t.Fatalf("expected CreateInstance=true within grace window")
+	}
+	if decision.ScheduledAt == nil || !decision.ScheduledAt.Equal(next) {
+		t.Fatalf("expected scheduled_at=%s, got %v", next, decision.ScheduledAt)
+	}
+	if decision.NextRunAt == nil || !decision.NextRunAt.After(next) {
+		t.Fatalf("expected next_run_at to advance to the following slot")
+	}
+}
+
 func TestDecideSchedule_FireNow_CreatesAtNow(t *testing.T) {
 	now := time.Date(2026, 4, 19, 12, 3, 0, 0, time.UTC)
 	next := time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC)
