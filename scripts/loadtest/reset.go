@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -14,8 +15,16 @@ import (
 //
 // It calls kubectl directly; the Go process executes kubectl internally so the
 // reset is not subject to the same interactive gating as a typed shell command.
+// The destructive nature matches clean: --confirm is required.
 func runReset(args []string) error {
-	_ = args
+	flags := flag.NewFlagSet("reset", flag.ContinueOnError)
+	confirm := flags.Bool("confirm", false, "confirm wiping business data and load tenants")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if !*confirm {
+		return fmt.Errorf("reset truncates business tables and deletes load tenants; pass --confirm to proceed")
+	}
 	steps := []struct {
 		name string
 		cmd  []string

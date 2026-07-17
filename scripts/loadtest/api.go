@@ -56,11 +56,11 @@ func (c *APIClient) CreateJob(ctx context.Context, tenant string, request map[st
 	}
 	resp, err := c.do(ctx, http.MethodPost, "/api/v1/jobs", tenant, "", bytes.NewReader(body))
 	if err != nil {
-		return 0, err
+		return 0, &APIError{StatusCode: 0, Message: err.Error()}
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusCreated {
-		return 0, fmt.Errorf("create job: status %d", resp.StatusCode)
+		return 0, &APIError{StatusCode: resp.StatusCode, Message: fmt.Sprintf("create job: status %d", resp.StatusCode)}
 	}
 	var created struct {
 		ID int64 `json:"id"`

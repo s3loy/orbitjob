@@ -191,6 +191,9 @@ func runRun(args []string) error {
 	if err := validateProfile(*profile, cfg); err != nil {
 		return fmt.Errorf("validate profile: %w", err)
 	}
+	if *tuneDeployments && !cfg.DynamicTuningEnabled() {
+		return fmt.Errorf("--tune-deployments requires dynamic.enabled=true in the load config; static profiles have no tuning model to apply")
+	}
 
 	runDir := filepath.Join(*runRoot, *runID)
 	created, err := loadCreatedDefinitions(filepath.Join(runDir, "created-definitions.json"))

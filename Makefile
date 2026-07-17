@@ -6,7 +6,7 @@
 .PHONY: env-init env-check env-clean setup setup-check bootstrap-key grafana-password docker-reset
 .PHONY: migrate-up migrate-version
 .PHONY: loadtest-preflight loadtest-generate loadtest-prepare loadtest-run
-.PHONY: loadtest-verify loadtest-report loadtest-clean loadtest-smoke loadtest-v020
+.PHONY: loadtest-verify loadtest-report loadtest-clean loadtest-smoke loadtest-long loadtest-v020
 .PHONY: clean
 
 DEV_DSN      ?= postgres://postgres:postgres@localhost:5432/orbitjob?sslmode=disable
@@ -180,12 +180,15 @@ clean:
 	rm -rf bin/
 
 # ---- Load Qualification ----
+# Config and profile must stay in sync: standard.yaml→standard,
+# smoke.yaml→smoke, long.yaml→long.
 LOADTEST_CONFIG ?= test/load/config/standard.yaml
+LOADTEST_PROFILE ?= standard
 LOADTEST_IMAGES ?= test/load/config/images.lock.yaml
 RUN_ID ?= $(shell date -u +%Y%m%dT%H%M%SZ)-$(shell git rev-parse --short HEAD)
 
 loadtest-preflight:
-	go run ./scripts/loadtest preflight --config "$(LOADTEST_CONFIG)" --images "$(LOADTEST_IMAGES)"
+	go run ./scripts/loadtest preflight --config "$(LOADTEST_CONFIG)" --images "$(LOADTEST_IMAGES)" --profile "$(LOADTEST_PROFILE)"
 
 loadtest-generate:
 	go run ./scripts/loadtest generate --config "$(LOADTEST_CONFIG)" --images "$(LOADTEST_IMAGES)" --run-id "$(RUN_ID)"
@@ -201,7 +204,7 @@ loadtest-run:
 	@echo "loadtest run requires a live cluster; use make loadtest-v020 for full flow"
 
 loadtest-verify:
-	go run ./scripts/loadtest verify --run-id "$(RUN_ID)"
+	go run ./scripts/loadtest verify --config "$(LOADTEST_CONFIG)" --run-id "$(RUN_ID)"
 
 loadtest-report:
 	go run ./scripts/loadtest report --run-id "$(RUN_ID)"
@@ -212,7 +215,11 @@ loadtest-clean:
 
 loadtest-smoke:
 	@echo "NON-STANDARD RUN - NOT A RELEASE QUALIFICATION"
-	go run ./scripts/loadtest preflight --config "$(LOADTEST_CONFIG)" --images "$(LOADTEST_IMAGES)" --check-only
+	go run ./scripts/loadtest preflight --config test/load/config/smoke.yaml --images "$(LOADTEST_IMAGES)" --profile smoke --check-only
+
+loadtest-long:
+	@echo "NON-STANDARD RUN - NOT A RELEASE QUALIFICATION"
+	go run ./scripts/loadtest preflight --config test/load/config/long.yaml --images "$(LOADTEST_IMAGES)" --profile long --check-only
 
 loadtest-v020: loadtest-preflight loadtest-generate
 	@echo "Full 4-hour qualification run requires manual review of preflight and generated manifest."

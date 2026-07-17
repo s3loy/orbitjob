@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -70,6 +72,9 @@ type CreatedDefinition struct {
 // Prepare applies load fixtures, creates tenants with API keys, creates every
 // generated definition through the Admin API, and writes the case-to-job mapping
 // consumed by the run engine. Tenant keys are written with 0600 permissions.
+// Prepare is re-entrant: tenant keys that still validate are reused, and
+// definitions already present in created-definitions.json are skipped, so a
+// rerun resumes where a failed run stopped.
 func Prepare(configPath, imagesPath, runID, runRoot, apiURL, bootstrapKey, profile string) error {
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
@@ -112,10 +117,25 @@ func Prepare(configPath, imagesPath, runID, runRoot, apiURL, bootstrapKey, profi
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
-	tenantKeys := make(map[string]string, len(cfg.Tenants))
+	// Reuse tenant keys from a previous prepare attempt when they still
+	// validate; create tenants only for the missing or invalid ones.
+	tenantKeys := map[string]string{}
+	if existing, err := loadTenantKeys(filepath.Join(runDir, "tenant-keys.json")); err == nil {
+		tenantKeys = existing
+	}
 	for _, slug := range cfg.Tenants {
+		if key, ok := tenantKeys[slug]; ok {
+			if _, err := NewAPIClient(apiURL, key).ListInstances(ctx, slug, 1); err == nil {
+				continue
+			}
+			delete(tenantKeys, slug)
+		}
 		id, err := bootstrap.CreateTenant(ctx, slug, slug)
 		if err != nil {
+			var aerr *APIError
+			if errors.As(err, &aerr) && aerr.StatusCode == http.StatusConflict {
+				return fmt.Errorf("tenant %s already exists but no usable key in tenant-keys.json; run 'loadtest reset --confirm' first", slug)
+			}
 			return fmt.Errorf("create tenant %s: %w", slug, err)
 		}
 		key, err := bootstrap.CreateAPIKey(ctx, id)
@@ -128,24 +148,77 @@ func Prepare(configPath, imagesPath, runID, runRoot, apiURL, bootstrapKey, profi
 		return fmt.Errorf("write tenant keys: %w", err)
 	}
 
+	// Resume support: skip definitions already created in a previous attempt.
 	created := make([]CreatedDefinition, 0, len(defs))
+	createdPath := filepath.Join(runDir, "created-definitions.json")
+	if existing, err := loadCreatedDefinitions(createdPath); err == nil {
+		created = existing
+	}
+	createdByCase := make(map[string]bool, len(created))
+	for _, cd := range created {
+		createdByCase[cd.CaseID] = true
+	}
+
+	clients := make(map[string]*APIClient, len(tenantKeys))
+	for tenant, key := range tenantKeys {
+		clients[tenant] = NewAPIClient(apiURL, key)
+	}
 	for _, def := range defs {
-		key, ok := tenantKeys[def.Tenant]
+		if createdByCase[def.CaseID] {
+			continue
+		}
+		client, ok := clients[def.Tenant]
 		if !ok {
 			return fmt.Errorf("no api key for tenant %s", def.Tenant)
 		}
-		client := NewAPIClient(apiURL, key)
-		jobID, err := client.CreateJob(ctx, def.Tenant, def.Request)
-		if err != nil {
+		var jobID int64
+		if err := withBackoff(ctx, func() error {
+			var err error
+			jobID, err = client.CreateJob(ctx, def.Tenant, def.Request)
+			return err
+		}); err != nil {
 			return fmt.Errorf("create job %s: %w", def.CaseID, err)
 		}
 		created = append(created, CreatedDefinition{CaseID: def.CaseID, JobID: jobID, Tenant: def.Tenant})
+		createdByCase[def.CaseID] = true
+		if len(created)%50 == 0 {
+			if err := writeStableJSON(createdPath, created); err != nil {
+				return fmt.Errorf("write created definitions: %w", err)
+			}
+		}
 	}
-	if err := writeStableJSON(filepath.Join(runDir, "created-definitions.json"), created); err != nil {
+	if err := writeStableJSON(createdPath, created); err != nil {
 		return fmt.Errorf("write created definitions: %w", err)
 	}
 	fmt.Printf("prepare: created %d definitions across %d tenants\n", len(created), len(tenantKeys))
 	return nil
+}
+
+// withBackoff retries fn on rate limiting (429), transport errors, and 5xx —
+// the write-group rate limiter is the expected case during a 1200-job prepare.
+func withBackoff(ctx context.Context, fn func() error) error {
+	delay := 200 * time.Millisecond
+	for attempt := 0; ; attempt++ {
+		err := fn()
+		if err == nil {
+			return nil
+		}
+		var aerr *APIError
+		if !errors.As(err, &aerr) || (aerr.StatusCode != http.StatusTooManyRequests && aerr.StatusCode != 0 && aerr.StatusCode < 500) {
+			return err
+		}
+		if attempt >= 4 {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+		if delay < 3*time.Second {
+			delay *= 2
+		}
+	}
 }
 
 func kubectlApply(path string) error {

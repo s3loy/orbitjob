@@ -26,6 +26,14 @@ worker:
     repository: orbitjob-worker
     tag: dev
     pullPolicy: IfNotPresent
+  # Pool sizing comes from the loadtest resource model: kind task namespace
+  # quota (limits.cpu=10) / task limit (500m) = 20 pods hard ceiling,
+  # (10-1)/0.5*0.8 = 14 sustainable. Never raise capacityMax above 20:
+  # the quota admission rejects the 21st task pod and jobs hang to timeout.
+  capacity: 14
+  capacityMax: 14
+  containerPollIntervalMs: 250
+  adaptiveCapacityEnabled: false
   containerExecution:
     namespace: orbitjob-tasks
     requireDigest: false
@@ -65,7 +73,7 @@ adminapi:
   rateLimits:
     readRPS: 100
     writeRPS: 100
-    triggerRPS: 500
+    triggerRPS: 10
     adminRPS: 10
 
 bootstrap:

@@ -44,13 +44,13 @@ spec:
             - name: WORKER_CONTAINER_NAMESPACE
               value: {{ .Values.worker.containerExecution.namespace | quote }}
             - name: WORKER_CAPACITY
-              value: "20"
+              value: {{ .Values.worker.capacity | quote }}
             - name: WORKER_CAPACITY_MAX
-              value: "25"
+              value: {{ .Values.worker.capacityMax | quote }}
             - name: WORKER_CONTAINER_POLL_INTERVAL_MS
-              value: "250"
+              value: {{ .Values.worker.containerPollIntervalMs | quote }}
             - name: WORKER_ADAPTIVE_CAPACITY_ENABLED
-              value: "false"
+              value: {{ .Values.worker.adaptiveCapacityEnabled | quote }}
           ports:
             - name: health
               containerPort: 6062
