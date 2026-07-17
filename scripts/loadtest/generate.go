@@ -250,14 +250,14 @@ func workloadArgs(image, terminalState string) []any {
 	switch image {
 	case "python":
 		if failed {
-			return []any{"import sys; print('forced failure ${CASE_ID}'); sys.exit(1)"}
+			return []any{"import sys; print('forced failure $(CASE_ID)'); sys.exit(1)"}
 		}
-		return []any{"import hashlib,json; data={'case':'${CASE_ID}','values':list(range(128))}; print(hashlib.sha256(json.dumps(data,sort_keys=True).encode()).hexdigest())"}
+		return []any{"import hashlib,json; data={'case':'$(CASE_ID)','values':list(range(128))}; print(hashlib.sha256(json.dumps(data,sort_keys=True).encode()).hexdigest())"}
 	case "alpine":
 		if failed {
-			return []any{"echo 'checksum mismatch ${CASE_ID}'; exit 1"}
+			return []any{"echo 'checksum mismatch $(CASE_ID)'; exit 1"}
 		}
-		return []any{"echo -n \"${CASE_ID}\" | sha256sum"}
+		return []any{"echo -n \"$(CASE_ID)\" | sha256sum"}
 	case "busybox":
 		return []any{"nslookup load-postgres.orbitjob-load.svc.cluster.local"}
 	case "postgres":
@@ -267,12 +267,12 @@ func workloadArgs(image, terminalState string) []any {
 		return []any{"-v", "ON_ERROR_STOP=1", "-c", "SELECT 1"}
 	case "curl":
 		if failed {
-			return []any{"--fail-with-body", "--retry", "3", "--retry-delay", "2", "--retry-max-time", "30", "--connect-timeout", "5", "--max-time", "30", "${FIXTURE_URL}/api/fail-then-succeed?case_id=${CASE_ID}"}
+			return []any{"--fail-with-body", "--retry", "3", "--retry-delay", "2", "--retry-max-time", "30", "--connect-timeout", "5", "--max-time", "30", "$(FIXTURE_URL)/api/fail-then-succeed?case_id=$(CASE_ID)"}
 		}
-		return []any{"--fail-with-body", "--retry", "3", "--retry-delay", "2", "--retry-max-time", "30", "--connect-timeout", "5", "--max-time", "30", "${FIXTURE_URL}/api/pages?page=1"}
+		return []any{"--fail-with-body", "--retry", "3", "--retry-delay", "2", "--retry-max-time", "30", "--connect-timeout", "5", "--max-time", "30", "$(FIXTURE_URL)/api/pages?page=1"}
 	case "kubectl":
 		return []any{"get", "pods", "-n", "orbitjob"}
 	default:
-		return []any{"import hashlib,json; print(hashlib.sha256('${CASE_ID}'.encode()).hexdigest())"}
+		return []any{"import hashlib,json; print(hashlib.sha256('$(CASE_ID)'.encode()).hexdigest())"}
 	}
 }

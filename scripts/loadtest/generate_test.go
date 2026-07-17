@@ -345,3 +345,18 @@ func toStrings(values []any) []string {
 	}
 	return out
 }
+
+// Kubernetes expands $(VAR) in container args but never ${VAR}; the latter
+// reaches the process as a literal and curl tasks fail with URL rejected.
+func TestWorkloadArgsUseKubeExpandSyntax(t *testing.T) {
+	for _, image := range []string{"python", "alpine", "busybox", "postgres", "curl", "kubectl", "unknown"} {
+		for _, terminal := range []string{"success", "failed"} {
+			for _, arg := range workloadArgs(image, terminal) {
+				s, _ := arg.(string)
+				if strings.Contains(s, "${") {
+					t.Errorf("workloadArgs(%q, %q) contains ${...} literal: %s", image, terminal, s)
+				}
+			}
+		}
+	}
+}
