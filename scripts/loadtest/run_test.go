@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -158,5 +159,40 @@ func TestRunEngineClassifiesRejections(t *testing.T) {
 	}
 	if breakdown.Other != 1 {
 		t.Fatalf("other = %d, want 1 (placeholder job)", breakdown.Other)
+	}
+}
+
+// Burst events are generated after phase events but scheduled inside the run
+// window; the merged schedule must be time-ordered or the burst fires in a
+// lump at the end of the run.
+func TestBuildPhaseScheduleKeepsBurstInTimeOrder(t *testing.T) {
+	cfg := Config{
+		Phases: []Phase{
+			{Name: "steady", Offset: 0, Duration: 10 * time.Minute, RatePerMinute: 2, MaxActive: 5},
+			{Name: "peak", Offset: 10 * time.Minute, Duration: 10 * time.Minute, RatePerMinute: 2, MaxActive: 5},
+		},
+		Burst: BurstConfig{Phase: "peak", Offset: time.Minute, Count: 3, SubmitWithin: time.Minute},
+	}
+	cases := []CreatedDefinition{{CaseID: "a", JobID: 1, Tenant: "t1"}}
+
+	schedule := BuildPhaseSchedule(cfg, cases)
+
+	var prev time.Duration
+	burstSeen := 0
+	for i, ev := range schedule.Events {
+		if ev.At < prev {
+			t.Fatalf("event %d at %s precedes previous at %s", i, ev.At, prev)
+		}
+		prev = ev.At
+		if strings.HasPrefix(ev.IdempotencyKey, "v020-burst-") {
+			burstSeen++
+			want := 10*time.Minute + time.Minute
+			if ev.At < want || ev.At >= want+time.Minute {
+				t.Fatalf("burst event at %s, want within [%s, %s)", ev.At, want, want+time.Minute)
+			}
+		}
+	}
+	if burstSeen != 3 {
+		t.Fatalf("burst events = %d, want 3", burstSeen)
 	}
 }

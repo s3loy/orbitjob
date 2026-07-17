@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -57,6 +58,12 @@ func BuildPhaseSchedule(cfg Config, cases []CreatedDefinition) PhaseSchedule {
 		}
 	}
 	events = append(events, burstEvents(cfg, cases, eventIndex)...)
+	// The engine consumes events in list order and fires anything whose At is
+	// already past. Burst events are generated last but scheduled inside the
+	// run window, so the merged schedule must be time-ordered — otherwise the
+	// burst goes off in a lump at the end of the run and hits the trigger
+	// rate limiter.
+	sort.SliceStable(events, func(i, j int) bool { return events[i].At < events[j].At })
 	return PhaseSchedule{Events: events}
 }
 
