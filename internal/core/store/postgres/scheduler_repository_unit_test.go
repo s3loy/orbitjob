@@ -28,6 +28,7 @@ func TestSchedulerRepository_ScheduleOneDueCron_DecideRequired(t *testing.T) {
 
 func TestSchedulerRepository_ScheduleOneDueCron_BeginTxError(t *testing.T) {
 	repo, mock := newSchedulerRepoMock(t)
+	expectTenantDiscovery(mock, "tenant-a")
 	mock.ExpectBegin().WillReturnError(errors.New("boom"))
 
 	_, found, err := repo.ScheduleOneDueCron(context.Background(), time.Now().UTC(), schedule.DecideSchedule)
@@ -44,8 +45,10 @@ func TestSchedulerRepository_ScheduleOneDueCron_NoCandidateUnit(t *testing.T) {
 	repo, mock := newSchedulerRepoMock(t)
 	now := time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC)
 
+	expectTenantDiscovery(mock, "tenant-a")
 	mock.ExpectBegin()
-	expectClaimNoRows(mock, now)
+	expectSchedulerSetTenantContext(mock, "tenant-a")
+	expectClaimNoRows(mock, now, "tenant-a")
 	mock.ExpectRollback()
 
 	result, found, err := repo.ScheduleOneDueCron(context.Background(), now, schedule.DecideSchedule)
@@ -65,8 +68,10 @@ func TestSchedulerRepository_ScheduleOneDueCron_NoCandidateRollbackError(t *test
 	repo, mock := newSchedulerRepoMock(t)
 	now := time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC)
 
+	expectTenantDiscovery(mock, "tenant-a")
 	mock.ExpectBegin()
-	expectClaimNoRows(mock, now)
+	expectSchedulerSetTenantContext(mock, "tenant-a")
+	expectClaimNoRows(mock, now, "tenant-a")
 	mock.ExpectRollback().WillReturnError(errors.New("rb boom"))
 
 	_, found, err := repo.ScheduleOneDueCron(context.Background(), now, schedule.DecideSchedule)
@@ -83,7 +88,9 @@ func TestSchedulerRepository_ScheduleOneDueCron_DecideError(t *testing.T) {
 	repo, mock := newSchedulerRepoMock(t)
 	now := time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC)
 
+	expectTenantDiscovery(mock, "tenant-a")
 	mock.ExpectBegin()
+	expectSchedulerSetTenantContext(mock, "tenant-a")
 	expectClaimOneRow(mock, now, "tenant-a", 101, nil)
 	expectSchedulerSetTenantContext(mock, "tenant-a")
 	mock.ExpectRollback()
@@ -105,7 +112,9 @@ func TestSchedulerRepository_ScheduleOneDueCron_CreateWithoutScheduledAt(t *test
 	now := time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC)
 	next := now.Add(5 * time.Minute)
 
+	expectTenantDiscovery(mock, "tenant-a")
 	mock.ExpectBegin()
+	expectSchedulerSetTenantContext(mock, "tenant-a")
 	expectClaimOneRow(mock, now, "tenant-a", 101, nil)
 	expectSchedulerSetTenantContext(mock, "tenant-a")
 	mock.ExpectRollback()
@@ -129,7 +138,9 @@ func TestSchedulerRepository_ScheduleOneDueCron_InsertError(t *testing.T) {
 	scheduledAt := now
 	partition := "part-1"
 
+	expectTenantDiscovery(mock, "tenant-a")
 	mock.ExpectBegin()
+	expectSchedulerSetTenantContext(mock, "tenant-a")
 	expectClaimOneRow(mock, now, "tenant-a", 101, &partition)
 	expectSchedulerSetTenantContext(mock, "tenant-a")
 	mock.ExpectQuery("SELECT quotas FROM tenants").WithArgs("tenant-a").WillReturnRows(sqlmock.NewRows([]string{"quotas"}).AddRow(nil))
@@ -154,7 +165,9 @@ func TestSchedulerRepository_ScheduleOneDueCron_NextRunAtRequired(t *testing.T) 
 	repo, mock := newSchedulerRepoMock(t)
 	now := time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC)
 
+	expectTenantDiscovery(mock, "tenant-a")
 	mock.ExpectBegin()
+	expectSchedulerSetTenantContext(mock, "tenant-a")
 	expectClaimOneRow(mock, now, "tenant-a", 101, nil)
 	expectSchedulerSetTenantContext(mock, "tenant-a")
 	mock.ExpectRollback()
@@ -176,7 +189,9 @@ func TestSchedulerRepository_ScheduleOneDueCron_UpdateError(t *testing.T) {
 	now := time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC)
 	next := now.Add(5 * time.Minute)
 
+	expectTenantDiscovery(mock, "tenant-a")
 	mock.ExpectBegin()
+	expectSchedulerSetTenantContext(mock, "tenant-a")
 	expectClaimOneRow(mock, now, "tenant-a", 101, nil)
 	expectSchedulerSetTenantContext(mock, "tenant-a")
 	mock.ExpectExec("UPDATE jobs").
@@ -201,7 +216,9 @@ func TestSchedulerRepository_ScheduleOneDueCron_CommitError(t *testing.T) {
 	now := time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC)
 	next := now.Add(5 * time.Minute)
 
+	expectTenantDiscovery(mock, "tenant-a")
 	mock.ExpectBegin()
+	expectSchedulerSetTenantContext(mock, "tenant-a")
 	expectClaimOneRow(mock, now, "tenant-a", 101, nil)
 	expectSchedulerSetTenantContext(mock, "tenant-a")
 	mock.ExpectExec("UPDATE jobs").
@@ -226,7 +243,9 @@ func TestSchedulerRepository_ScheduleOneDueCron_SuccessWithoutInstance(t *testin
 	now := time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC)
 	next := now.Add(5 * time.Minute)
 
+	expectTenantDiscovery(mock, "tenant-a")
 	mock.ExpectBegin()
+	expectSchedulerSetTenantContext(mock, "tenant-a")
 	expectClaimOneRow(mock, now, "tenant-a", 101, nil)
 	expectSchedulerSetTenantContext(mock, "tenant-a")
 	mock.ExpectExec("UPDATE jobs").
@@ -262,7 +281,9 @@ func TestSchedulerRepository_ScheduleOneDueCron_SuccessWithInstance(t *testing.T
 	scheduledAt := now.Add(-time.Minute)
 	partition := "part-1"
 
+	expectTenantDiscovery(mock, "tenant-a")
 	mock.ExpectBegin()
+	expectSchedulerSetTenantContext(mock, "tenant-a")
 	expectClaimOneRow(mock, now, "tenant-a", 101, &partition)
 	expectSchedulerSetTenantContext(mock, "tenant-a")
 	mock.ExpectQuery("SELECT quotas FROM tenants").WithArgs("tenant-a").WillReturnRows(sqlmock.NewRows([]string{"quotas"}).AddRow(nil))
@@ -318,9 +339,17 @@ func expectSchedulerSetTenantContext(mock sqlmock.Sqlmock, tenantID string) {
 		WillReturnResult(sqlmock.NewResult(0, 0))
 }
 
-func expectClaimNoRows(mock sqlmock.Sqlmock, now time.Time) {
+func expectTenantDiscovery(mock sqlmock.Sqlmock, tenantIDs ...string) {
+	rows := sqlmock.NewRows([]string{"id"})
+	for _, id := range tenantIDs {
+		rows.AddRow(id)
+	}
+	mock.ExpectQuery("orbitjob_list_active_tenant_ids").WillReturnRows(rows)
+}
+
+func expectClaimNoRows(mock sqlmock.Sqlmock, now time.Time, tenantID string) {
 	columns := []string{"id", "tenant_id", "priority", "partition_key", "retry_limit", "cron_expr", "timezone", "misfire_policy", "next_run_at"}
-	mock.ExpectQuery("FOR UPDATE SKIP LOCKED").WithArgs(now).WillReturnRows(sqlmock.NewRows(columns))
+	mock.ExpectQuery("FOR UPDATE SKIP LOCKED").WithArgs(now, tenantID).WillReturnRows(sqlmock.NewRows(columns))
 }
 
 func expectClaimOneRow(mock sqlmock.Sqlmock, now time.Time, tenantID string, jobID int64, partitionKey *string) {
@@ -331,7 +360,7 @@ func expectClaimOneRow(mock sqlmock.Sqlmock, now time.Time, tenantID string, job
 	} else {
 		rows.AddRow(jobID, tenantID, 7, *partitionKey, 3, "*/5 * * * *", "UTC", "fire_now", now.Add(-time.Minute))
 	}
-	mock.ExpectQuery("FOR UPDATE SKIP LOCKED").WithArgs(now).WillReturnRows(rows)
+	mock.ExpectQuery("FOR UPDATE SKIP LOCKED").WithArgs(now, tenantID).WillReturnRows(rows)
 }
 
 func assertMock(t *testing.T, mock sqlmock.Sqlmock) {
@@ -350,14 +379,14 @@ func TestClaimOneDueCronJob_ClaimError(t *testing.T) {
 
 	now := time.Now().UTC()
 	mock.ExpectBegin()
-	mock.ExpectQuery("FOR UPDATE SKIP LOCKED").WithArgs(now).WillReturnError(errors.New("claim boom"))
+	mock.ExpectQuery("FOR UPDATE SKIP LOCKED").WithArgs(now, "tenant-a").WillReturnError(errors.New("claim boom"))
 	mock.ExpectRollback()
 
 	tx, err := db.BeginTx(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("BeginTx() error = %v", err)
 	}
-	_, found, err := claimOneDueCronJob(context.Background(), tx, now)
+	_, found, err := claimOneDueCronJob(context.Background(), tx, now, "tenant-a")
 	if err == nil || !strings.Contains(err.Error(), "claim one due cron job") {
 		t.Fatalf("expected wrapped claim error, got %v", err)
 	}
@@ -677,7 +706,9 @@ func TestSchedulerRepository_ScheduleOneDueCron_SetTenantContextError(t *testing
 	repo, mock := newSchedulerRepoMock(t)
 	now := time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC)
 
+	expectTenantDiscovery(mock, "tenant-a")
 	mock.ExpectBegin()
+	expectSchedulerSetTenantContext(mock, "tenant-a")
 	expectClaimOneRow(mock, now, "tenant-a", 101, nil)
 	mock.ExpectExec("SELECT set_config").
 		WithArgs("tenant-a").
@@ -700,7 +731,9 @@ func TestSchedulerRepository_ScheduleOneDueCron_QuotaExceededRollbackError(t *te
 	next := now.Add(5 * time.Minute)
 	scheduledAt := now
 
+	expectTenantDiscovery(mock, "tenant-a")
 	mock.ExpectBegin()
+	expectSchedulerSetTenantContext(mock, "tenant-a")
 	expectClaimOneRow(mock, now, "tenant-a", 101, nil)
 	expectSchedulerSetTenantContext(mock, "tenant-a")
 	// Quota is set to 1, but count is also 1 — exceeded
@@ -734,7 +767,9 @@ func TestSchedulerRepository_ScheduleOneDueCron_QuotaExceeded(t *testing.T) {
 	next := now.Add(5 * time.Minute)
 	scheduledAt := now
 
+	expectTenantDiscovery(mock, "tenant-a")
 	mock.ExpectBegin()
+	expectSchedulerSetTenantContext(mock, "tenant-a")
 	expectClaimOneRow(mock, now, "tenant-a", 101, nil)
 	expectSchedulerSetTenantContext(mock, "tenant-a")
 	// Quota is set to 2, count is 2 — exceeded
@@ -772,7 +807,9 @@ func TestSchedulerRepository_ScheduleOneDueCron_AuditInsertError(t *testing.T) {
 	scheduledAt := now.Add(-time.Minute)
 	partition := "part-1"
 
+	expectTenantDiscovery(mock, "tenant-a")
 	mock.ExpectBegin()
+	expectSchedulerSetTenantContext(mock, "tenant-a")
 	expectClaimOneRow(mock, now, "tenant-a", 101, &partition)
 	expectSchedulerSetTenantContext(mock, "tenant-a")
 	mock.ExpectQuery("SELECT quotas FROM tenants").
@@ -804,7 +841,9 @@ func TestSchedulerRepository_ScheduleOneDueCron_QuotaCheckError(t *testing.T) {
 	next := now.Add(5 * time.Minute)
 	scheduledAt := now
 
+	expectTenantDiscovery(mock, "tenant-a")
 	mock.ExpectBegin()
+	expectSchedulerSetTenantContext(mock, "tenant-a")
 	expectClaimOneRow(mock, now, "tenant-a", 101, nil)
 	expectSchedulerSetTenantContext(mock, "tenant-a")
 	// Quotas read returns non-ErrNoRows error
@@ -886,10 +925,12 @@ func TestScheduleBatch_ZeroLimit(t *testing.T) {
 	repo := NewSchedulerRepository(db)
 	now := time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC)
 
+	expectTenantDiscovery(mock, "tenant-a")
 	mock.ExpectBegin()
+	expectSchedulerSetTenantContext(mock, "tenant-a")
 	columns := []string{"id", "tenant_id", "priority", "partition_key", "retry_limit", "cron_expr", "timezone", "misfire_policy", "next_run_at"}
 	rows := sqlmock.NewRows(columns)
-	mock.ExpectQuery("FOR UPDATE SKIP LOCKED").WithArgs(now, 1).WillReturnRows(rows)
+	mock.ExpectQuery("FOR UPDATE SKIP LOCKED").WithArgs(now, "tenant-a", 1).WillReturnRows(rows)
 	mock.ExpectRollback()
 
 	counts, err := repo.ScheduleBatch(context.Background(), now, 0, schedule.DecideSchedule, classifySchedulerError)
@@ -910,6 +951,7 @@ func TestScheduleBatch_BeginTxError(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	repo := NewSchedulerRepository(db)
+	expectTenantDiscovery(mock, "tenant-a")
 	mock.ExpectBegin().WillReturnError(errors.New("begin boom"))
 
 	counts, err := repo.ScheduleBatch(context.Background(), time.Now().UTC(), 1, schedule.DecideSchedule, classifySchedulerError)
@@ -932,8 +974,10 @@ func TestScheduleBatch_ClaimMultipleError(t *testing.T) {
 	repo := NewSchedulerRepository(db)
 	now := time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC)
 
+	expectTenantDiscovery(mock, "tenant-a")
 	mock.ExpectBegin()
-	mock.ExpectQuery("FOR UPDATE SKIP LOCKED").WithArgs(now, 1).WillReturnError(errors.New("claim boom"))
+	expectSchedulerSetTenantContext(mock, "tenant-a")
+	mock.ExpectQuery("FOR UPDATE SKIP LOCKED").WithArgs(now, "tenant-a", 1).WillReturnError(errors.New("claim boom"))
 	mock.ExpectRollback()
 
 	counts, err := repo.ScheduleBatch(context.Background(), now, 1, schedule.DecideSchedule, classifySchedulerError)
@@ -956,10 +1000,12 @@ func TestScheduleBatch_NoJobs(t *testing.T) {
 	repo := NewSchedulerRepository(db)
 	now := time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC)
 
+	expectTenantDiscovery(mock, "tenant-a")
 	mock.ExpectBegin()
+	expectSchedulerSetTenantContext(mock, "tenant-a")
 	columns := []string{"id", "tenant_id", "priority", "partition_key", "retry_limit", "cron_expr", "timezone", "misfire_policy", "next_run_at"}
 	rows := sqlmock.NewRows(columns)
-	mock.ExpectQuery("FOR UPDATE SKIP LOCKED").WithArgs(now, 1).WillReturnRows(rows)
+	mock.ExpectQuery("FOR UPDATE SKIP LOCKED").WithArgs(now, "tenant-a", 1).WillReturnRows(rows)
 	mock.ExpectRollback()
 
 	counts, err := repo.ScheduleBatch(context.Background(), now, 1, schedule.DecideSchedule, classifySchedulerError)
@@ -983,10 +1029,12 @@ func TestScheduleBatch_SingleJobSuccess(t *testing.T) {
 	now := time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC)
 	next := now.Add(5 * time.Minute)
 
+	expectTenantDiscovery(mock, "tenant-a")
 	mock.ExpectBegin()
+	expectSchedulerSetTenantContext(mock, "tenant-a")
 	columns := []string{"id", "tenant_id", "priority", "partition_key", "retry_limit", "cron_expr", "timezone", "misfire_policy", "next_run_at"}
 	rows := sqlmock.NewRows(columns).AddRow(101, "tenant-a", 7, nil, 3, "*/5 * * * *", "UTC", "fire_now", now.Add(-time.Minute))
-	mock.ExpectQuery("FOR UPDATE SKIP LOCKED").WithArgs(now, 1).WillReturnRows(rows)
+	mock.ExpectQuery("FOR UPDATE SKIP LOCKED").WithArgs(now, "tenant-a", 1).WillReturnRows(rows)
 
 	mock.ExpectExec("SAVEPOINT").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("SELECT set_config").WithArgs("tenant-a").WillReturnResult(sqlmock.NewResult(0, 0))
@@ -1020,10 +1068,12 @@ func TestScheduleBatch_JobError_BackoffWorthy(t *testing.T) {
 	repo := NewSchedulerRepository(db)
 	now := time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC)
 
+	expectTenantDiscovery(mock, "tenant-a")
 	mock.ExpectBegin()
+	expectSchedulerSetTenantContext(mock, "tenant-a")
 	columns := []string{"id", "tenant_id", "priority", "partition_key", "retry_limit", "cron_expr", "timezone", "misfire_policy", "next_run_at"}
 	rows := sqlmock.NewRows(columns).AddRow(101, "tenant-a", 7, nil, 3, "*/5 * * * *", "UTC", "fire_now", now.Add(-time.Minute))
-	mock.ExpectQuery("FOR UPDATE SKIP LOCKED").WithArgs(now, 1).WillReturnRows(rows)
+	mock.ExpectQuery("FOR UPDATE SKIP LOCKED").WithArgs(now, "tenant-a", 1).WillReturnRows(rows)
 
 	mock.ExpectExec("SAVEPOINT").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("SELECT set_config").WithArgs("tenant-a").WillReturnResult(sqlmock.NewResult(0, 0))
@@ -1058,10 +1108,12 @@ func TestScheduleBatch_QuotaExceeded(t *testing.T) {
 	next := now.Add(5 * time.Minute)
 	scheduledAt := now
 
+	expectTenantDiscovery(mock, "tenant-a")
 	mock.ExpectBegin()
+	expectSchedulerSetTenantContext(mock, "tenant-a")
 	columns := []string{"id", "tenant_id", "priority", "partition_key", "retry_limit", "cron_expr", "timezone", "misfire_policy", "next_run_at"}
 	rows := sqlmock.NewRows(columns).AddRow(101, "tenant-a", 7, nil, 3, "*/5 * * * *", "UTC", "fire_now", now.Add(-time.Minute))
-	mock.ExpectQuery("FOR UPDATE SKIP LOCKED").WithArgs(now, 1).WillReturnRows(rows)
+	mock.ExpectQuery("FOR UPDATE SKIP LOCKED").WithArgs(now, "tenant-a", 1).WillReturnRows(rows)
 
 	mock.ExpectExec("SAVEPOINT").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("SELECT set_config").WithArgs("tenant-a").WillReturnResult(sqlmock.NewResult(0, 0))
@@ -1101,10 +1153,12 @@ func TestScheduleBatch_CommitError(t *testing.T) {
 	now := time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC)
 	next := now.Add(5 * time.Minute)
 
+	expectTenantDiscovery(mock, "tenant-a")
 	mock.ExpectBegin()
+	expectSchedulerSetTenantContext(mock, "tenant-a")
 	columns := []string{"id", "tenant_id", "priority", "partition_key", "retry_limit", "cron_expr", "timezone", "misfire_policy", "next_run_at"}
 	rows := sqlmock.NewRows(columns).AddRow(101, "tenant-a", 7, nil, 3, "*/5 * * * *", "UTC", "fire_now", now.Add(-time.Minute))
-	mock.ExpectQuery("FOR UPDATE SKIP LOCKED").WithArgs(now, 1).WillReturnRows(rows)
+	mock.ExpectQuery("FOR UPDATE SKIP LOCKED").WithArgs(now, "tenant-a", 1).WillReturnRows(rows)
 
 	mock.ExpectExec("SAVEPOINT").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("SELECT set_config").WithArgs("tenant-a").WillReturnResult(sqlmock.NewResult(0, 0))
@@ -1183,6 +1237,147 @@ func TestSchedulerRepository_ListActiveTenantIDs_ScanError(t *testing.T) {
 	_, err := repo.ListActiveTenantIDs(context.Background())
 	if err == nil {
 		t.Fatalf("expected error")
+	}
+	assertMock(t, mock)
+}
+
+func TestScheduleBatch_ListTenantsError(t *testing.T) {
+	repo, mock := newSchedulerRepoMock(t)
+
+	mock.ExpectQuery("orbitjob_list_active_tenant_ids").WillReturnError(errors.New("discovery boom"))
+
+	counts, err := repo.ScheduleBatch(context.Background(), time.Now().UTC(), 1, schedule.DecideSchedule, classifySchedulerError)
+	if err != nil {
+		t.Fatalf("ScheduleBatch() should not return error for classified discovery error, got %v", err)
+	}
+	if counts.Backoff != 1 || counts.Handled != 1 {
+		t.Fatalf("expected Backoff=1, Handled=1, got %+v", counts)
+	}
+	assertMock(t, mock)
+}
+
+func TestScheduleBatch_NoActiveTenants(t *testing.T) {
+	repo, mock := newSchedulerRepoMock(t)
+
+	expectTenantDiscovery(mock)
+
+	counts, err := repo.ScheduleBatch(context.Background(), time.Now().UTC(), 1, schedule.DecideSchedule, classifySchedulerError)
+	if err != nil {
+		t.Fatalf("ScheduleBatch() error = %v", err)
+	}
+	if counts.Handled != 0 {
+		t.Fatalf("expected handled=0 with no active tenants, got %d", counts.Handled)
+	}
+	assertMock(t, mock)
+}
+
+func TestSchedulerRepository_ScheduleOneDueCron_ListTenantsError(t *testing.T) {
+	repo, mock := newSchedulerRepoMock(t)
+
+	mock.ExpectQuery("orbitjob_list_active_tenant_ids").WillReturnError(errors.New("discovery boom"))
+
+	_, found, err := repo.ScheduleOneDueCron(context.Background(), time.Now().UTC(), schedule.DecideSchedule)
+	if err == nil || !strings.Contains(err.Error(), "list active tenants") {
+		t.Fatalf("expected list active tenants error, got %v", err)
+	}
+	if found {
+		t.Fatalf("expected found=false")
+	}
+	assertMock(t, mock)
+}
+
+func TestSchedulerRepository_ScheduleOneDueCron_NoActiveTenants(t *testing.T) {
+	repo, mock := newSchedulerRepoMock(t)
+
+	expectTenantDiscovery(mock)
+
+	_, found, err := repo.ScheduleOneDueCron(context.Background(), time.Now().UTC(), schedule.DecideSchedule)
+	if err != nil {
+		t.Fatalf("ScheduleOneDueCron() error = %v", err)
+	}
+	if found {
+		t.Fatalf("expected found=false with no active tenants")
+	}
+	assertMock(t, mock)
+}
+
+func TestSchedulerRepository_ScheduleOneDueCron_SecondTenantWins(t *testing.T) {
+	repo, mock := newSchedulerRepoMock(t)
+	now := time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC)
+	next := now.Add(5 * time.Minute)
+
+	expectTenantDiscovery(mock, "tenant-a", "tenant-b")
+	// First tenant has nothing due.
+	mock.ExpectBegin()
+	expectSchedulerSetTenantContext(mock, "tenant-a")
+	expectClaimNoRows(mock, now, "tenant-a")
+	mock.ExpectRollback()
+	// Second tenant yields the job.
+	mock.ExpectBegin()
+	expectSchedulerSetTenantContext(mock, "tenant-b")
+	expectClaimOneRow(mock, now, "tenant-b", 202, nil)
+	expectSchedulerSetTenantContext(mock, "tenant-b")
+	mock.ExpectExec("UPDATE jobs").
+		WithArgs("tenant-b", int64(202), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	result, found, err := repo.ScheduleOneDueCron(context.Background(), now, func(time.Time, schedule.DueCronJob) (schedule.ScheduleDecision, error) {
+		return schedule.ScheduleDecision{CreateInstance: false, NextRunAt: &next}, nil
+	})
+	if err != nil {
+		t.Fatalf("ScheduleOneDueCron() error = %v", err)
+	}
+	if !found || result.TenantID != "tenant-b" {
+		t.Fatalf("expected found=true for tenant-b, got %+v", result)
+	}
+	assertMock(t, mock)
+}
+
+func TestSchedulerRepository_CountActiveInstances_SumsPerTenant(t *testing.T) {
+	repo, mock := newSchedulerRepoMock(t)
+
+	expectTenantDiscovery(mock, "tenant-a", "tenant-b")
+	mock.ExpectBegin()
+	expectSchedulerSetTenantContext(mock, "tenant-a")
+	mock.ExpectQuery("SELECT COUNT").WithArgs("tenant-a").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(3))
+	expectSchedulerSetTenantContext(mock, "tenant-b")
+	mock.ExpectQuery("SELECT COUNT").WithArgs("tenant-b").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(4))
+	mock.ExpectRollback()
+
+	total, err := repo.CountActiveInstances(context.Background())
+	if err != nil {
+		t.Fatalf("CountActiveInstances() error = %v", err)
+	}
+	if total != 7 {
+		t.Fatalf("expected total=7, got %d", total)
+	}
+	assertMock(t, mock)
+}
+
+func TestSchedulerRepository_CountActiveInstances_NoTenants(t *testing.T) {
+	repo, mock := newSchedulerRepoMock(t)
+
+	expectTenantDiscovery(mock)
+
+	total, err := repo.CountActiveInstances(context.Background())
+	if err != nil {
+		t.Fatalf("CountActiveInstances() error = %v", err)
+	}
+	if total != 0 {
+		t.Fatalf("expected total=0, got %d", total)
+	}
+	assertMock(t, mock)
+}
+
+func TestSchedulerRepository_CountActiveInstances_ListError(t *testing.T) {
+	repo, mock := newSchedulerRepoMock(t)
+
+	mock.ExpectQuery("orbitjob_list_active_tenant_ids").WillReturnError(errors.New("discovery boom"))
+
+	_, err := repo.CountActiveInstances(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "list active tenants") {
+		t.Fatalf("expected list active tenants error, got %v", err)
 	}
 	assertMock(t, mock)
 }

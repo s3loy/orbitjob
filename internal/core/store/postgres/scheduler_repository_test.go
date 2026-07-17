@@ -161,6 +161,15 @@ type dueJobSeed struct {
 func seedDueCronJob(t *testing.T, db *sql.DB, in dueJobSeed) int64 {
 	t.Helper()
 
+	// Claims iterate active tenants, so the tenant row must exist.
+	if _, err := db.ExecContext(context.Background(), `
+		INSERT INTO tenants (id, slug, name, status)
+		VALUES ($1::char(26), $1::varchar(64), $1::varchar(128), 'active')
+		ON CONFLICT (id) DO NOTHING
+	`, in.TenantID); err != nil {
+		t.Fatalf("seed tenant: %v", err)
+	}
+
 	var id int64
 	err := db.QueryRowContext(context.Background(), `
 		INSERT INTO jobs (
