@@ -63,7 +63,7 @@ func TestSchedulerRepository_ScheduleOneDueCron_SkipMisfire(t *testing.T) {
 		CronExpr:      "*/5 * * * *",
 		Timezone:      "UTC",
 		MisfirePolicy: domainjob.MisfireSkip,
-		NextRunAt:     now.Add(-time.Minute),
+		NextRunAt:     now.Add(-3 * time.Minute), // beyond MisfireGraceWindow
 	})
 
 	result, found, err := repo.ScheduleOneDueCron(context.Background(), now, schedule.DecideSchedule)

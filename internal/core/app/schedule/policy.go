@@ -23,10 +23,10 @@ type ScheduleDecision struct {
 
 // MisfireGraceWindow bounds how late a claim may be before the "skip" misfire
 // policy drops the run. The claim query only picks slots that are already due
-// (next_run_at <= now), so every claim is late by at least one poll tick —
-// without a grace window the skip policy would skip every single run. 30s
-// covers slow ticks while still dropping genuinely missed runs.
-const MisfireGraceWindow = 30 * time.Second
+// (next_run_at <= now), so every claim is late by at least one poll interval.
+// The scheduler idles down to a 30s long interval, so the grace must exceed
+// that plus jitter or a steady fraction of slots gets skipped at the boundary.
+const MisfireGraceWindow = 90 * time.Second
 
 // DecideSchedule computes one scheduling decision for a due cron job.
 func DecideSchedule(now time.Time, job DueCronJob) (ScheduleDecision, error) {
