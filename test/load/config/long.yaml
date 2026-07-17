@@ -5,7 +5,7 @@ seed: v020-long-1
 duration: 8h
 minimum_instances: 0
 environment:
-  docker_cpu: 8
+  docker_cpu: 10
   docker_memory_gib: 8
   kind_nodes: 1
 definitions:
@@ -47,6 +47,16 @@ burst:
   offset: 5m
   count: 60
   submit_within: 60s
+# Faults fire inside the fault-recovery phase (360m-480m) so the phase actually
+# exercises recovery; the default StandardFaultPlan (180m-220m) would land in
+# ramp and leave this window idle. 10m spacing mirrors the qualification plan.
+faults:
+  plan:
+    - {name: scheduler, offset: 370m}
+    - {name: dispatcher, offset: 380m}
+    - {name: worker, offset: 390m}
+    - {name: admin-api, offset: 400m}
+    - {name: postgres, offset: 410m}
 sampling:
   readiness: 10s
   kubernetes_objects: 15s

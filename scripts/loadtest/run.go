@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -111,6 +113,22 @@ type RunEngine struct {
 	triggered  atomic.Int64
 	accepted   atomic.Int64
 	rejected   atomic.Int64
+	skipped    atomic.Int64
+
+	rejectRateLimited atomic.Int64
+	rejectServer      atomic.Int64
+	rejectTransport   atomic.Int64
+	rejectOther       atomic.Int64
+}
+
+// RejectionBreakdown splits rejected triggers by cause so a long soak run can
+// tell rate limiting apart from server faults, transport failures, and
+// schedule/config problems (missing tenant client or placeholder events).
+type RejectionBreakdown struct {
+	RateLimited int64
+	Server      int64
+	Transport   int64
+	Other       int64
 }
 
 func NewRunEngine(api map[string]*APIClient, schedule PhaseSchedule, maxActive map[string]int) *RunEngine {
@@ -202,6 +220,7 @@ func (e *RunEngine) Run(ctx context.Context, clock func() time.Duration) error {
 			break
 		}
 		if skip {
+			e.skipped.Add(1)
 			continue
 		}
 
@@ -214,14 +233,14 @@ func (e *RunEngine) Run(ctx context.Context, clock func() time.Duration) error {
 			}()
 			client := e.api[ev.Tenant]
 			if client == nil || ev.JobID == 0 {
-				e.rejected.Add(1)
+				e.recordRejection("other", ev, errors.New("no api client or placeholder event"))
 				return
 			}
 			_, err := client.TriggerJob(ctx, ev.JobID, ev.Tenant, ev.IdempotencyKey)
 			if err == nil {
 				e.accepted.Add(1)
 			} else {
-				e.rejected.Add(1)
+				e.recordRejection(classifyRejection(err), ev, err)
 			}
 		}(event)
 
@@ -231,18 +250,65 @@ func (e *RunEngine) Run(ctx context.Context, clock func() time.Duration) error {
 			if e.pace != nil {
 				pace = e.pace.Pace()
 			}
-			fmt.Printf("loadtest progress: triggered=%d accepted=%d rejected=%d pace=%.2f\n", e.triggered.Load(), e.accepted.Load(), e.rejected.Load(), pace)
+			fmt.Printf("loadtest progress: triggered=%d accepted=%d rejected=%d skipped=%d pace=%.2f\n",
+				e.triggered.Load(), e.accepted.Load(), e.rejected.Load(), e.skipped.Load(), pace)
 		}
 	}
 	return nil
+}
+
+// classifyRejection buckets a trigger error for the breakdown counters.
+func classifyRejection(err error) string {
+	var terr *TriggerError
+	if errors.As(err, &terr) {
+		switch {
+		case terr.StatusCode == 0:
+			return "transport"
+		case terr.StatusCode == http.StatusTooManyRequests:
+			return "rate_limited"
+		case terr.StatusCode >= 500:
+			return "server"
+		}
+		return "other"
+	}
+	return "transport"
+}
+
+// recordRejection increments the total and per-cause counters and logs a
+// throttled line: the first 20 rejections individually, then every 100th, so
+// an 8h soak stays readable while early failures remain visible.
+func (e *RunEngine) recordRejection(kind string, ev TriggerEvent, err error) {
+	e.rejected.Add(1)
+	switch kind {
+	case "rate_limited":
+		e.rejectRateLimited.Add(1)
+	case "server":
+		e.rejectServer.Add(1)
+	case "transport":
+		e.rejectTransport.Add(1)
+	default:
+		e.rejectOther.Add(1)
+	}
+	if n := e.rejected.Load(); n <= 20 || n%100 == 0 {
+		fmt.Printf("loadtest rejected: kind=%s job=%d tenant=%s phase=%s err=%v\n", kind, ev.JobID, ev.Tenant, ev.Phase, err)
+	}
 }
 
 func (e *RunEngine) Stop() {
 	close(e.stop)
 }
 
-func (e *RunEngine) Stats() (triggered, accepted, rejected int64) {
-	return e.triggered.Load(), e.accepted.Load(), e.rejected.Load()
+func (e *RunEngine) Stats() (triggered, accepted, rejected, skipped int64) {
+	return e.triggered.Load(), e.accepted.Load(), e.rejected.Load(), e.skipped.Load()
+}
+
+func (e *RunEngine) Rejections() RejectionBreakdown {
+	return RejectionBreakdown{
+		RateLimited: e.rejectRateLimited.Load(),
+		Server:      e.rejectServer.Load(),
+		Transport:   e.rejectTransport.Load(),
+		Other:       e.rejectOther.Load(),
+	}
 }
 
 // strings is used for burst prefix matching.

@@ -38,6 +38,11 @@ func LoadConfig(path string) (Config, error) {
 	if cfg.Burst.SubmitWithin, err = time.ParseDuration(cfg.Burst.SubmitWithinText); err != nil {
 		return Config{}, fmt.Errorf("parse burst submit_within: %w", err)
 	}
+	for i := range cfg.Faults.Plan {
+		if cfg.Faults.Plan[i].Offset, err = time.ParseDuration(cfg.Faults.Plan[i].OffsetText); err != nil {
+			return Config{}, fmt.Errorf("parse fault %s offset: %w", cfg.Faults.Plan[i].Name, err)
+		}
+	}
 	cfg = withDefaults(cfg)
 	return cfg, nil
 }
@@ -105,6 +110,9 @@ func ValidateStandard(c Config) error {
 	case c.Environment.DockerCPU != 10 || c.Environment.DockerMemoryGi != 8 || c.Environment.KindNodes != 1:
 		return fmt.Errorf("standard environment must be Docker 10 CPU / 8 GiB and one kind node")
 	}
+	if len(c.Faults.Plan) > 0 {
+		return errors.New("standard profile must not override the qualification fault plan")
+	}
 	if err := validatePhaseContinuity(c); err != nil {
 		return err
 	}
@@ -151,6 +159,26 @@ func validateDynamicPhases(c Config) error {
 	return nil
 }
 
+// validateFaults checks a custom fault plan: known component names, strictly
+// increasing offsets, and every offset inside the run duration. An empty plan
+// is valid and falls back to StandardFaultPlan at run time.
+func validateFaults(c Config) error {
+	var prev time.Duration
+	for i, fault := range c.Faults.Plan {
+		if !knownFault(fault.Name) {
+			return fmt.Errorf("unknown fault %q", fault.Name)
+		}
+		if fault.Offset <= 0 || fault.Offset >= c.Duration {
+			return fmt.Errorf("fault %s offset %s must be within run duration %s", fault.Name, fault.Offset, c.Duration)
+		}
+		if i > 0 && fault.Offset <= prev {
+			return fmt.Errorf("fault offsets must be strictly increasing: %s at %s follows %s", fault.Name, fault.Offset, prev)
+		}
+		prev = fault.Offset
+	}
+	return nil
+}
+
 // ValidateSmoke checks a 30-minute non-qualification profile. It exercises the
 // load pipeline and observability stack without the 4h / 10000-instance gates,
 // so environment is relaxed and minimum_instances is not enforced.
@@ -170,6 +198,9 @@ func ValidateSmoke(c Config) error {
 		return errors.New("smoke profile requires at least one kind node")
 	}
 	if err := validatePhaseContinuity(c); err != nil {
+		return err
+	}
+	if err := validateFaults(c); err != nil {
 		return err
 	}
 	if c.Dynamic.Enabled {
@@ -205,6 +236,9 @@ func ValidateLong(c Config) error {
 		return errors.New("long profile requires at least one kind node")
 	}
 	if err := validatePhaseContinuity(c); err != nil {
+		return err
+	}
+	if err := validateFaults(c); err != nil {
 		return err
 	}
 	if c.Dynamic.Enabled {

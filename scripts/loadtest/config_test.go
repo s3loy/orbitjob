@@ -89,3 +89,72 @@ func TestValidateLong(t *testing.T) {
 		t.Fatalf("long duration = %s, want 8h", cfg.Duration)
 	}
 }
+
+func TestLoadLongConfigAlignsFaultsWithRecoveryPhase(t *testing.T) {
+	cfg, err := LoadConfig("../../test/load/config/long.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Faults.Plan) == 0 {
+		t.Fatal("long profile should declare a fault plan")
+	}
+	// fault-recovery phase spans 360m-480m; faults anywhere else defeat the
+	// phase's purpose.
+	for _, fault := range cfg.Faults.Plan {
+		if fault.Offset < 360*time.Minute || fault.Offset >= 480*time.Minute {
+			t.Fatalf("fault %s at %s falls outside fault-recovery phase", fault.Name, fault.Offset)
+		}
+	}
+}
+
+func TestValidateFaultsRejectsUnknownName(t *testing.T) {
+	cfg := Config{
+		Duration: time.Hour,
+		Faults: FaultsConfig{Plan: []FaultPhase{
+			{Name: "unknown-component", Offset: time.Minute},
+		}},
+	}
+	err := validateFaults(cfg)
+	if err == nil || !strings.Contains(err.Error(), "unknown fault") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestValidateFaultsRejectsNonIncreasingOffsets(t *testing.T) {
+	cfg := Config{
+		Duration: 2 * time.Hour,
+		Faults: FaultsConfig{Plan: []FaultPhase{
+			{Name: "worker", Offset: 40 * time.Minute},
+			{Name: "postgres", Offset: 30 * time.Minute},
+		}},
+	}
+	err := validateFaults(cfg)
+	if err == nil || !strings.Contains(err.Error(), "increasing") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestValidateFaultsRejectsOffsetBeyondDuration(t *testing.T) {
+	cfg := Config{
+		Duration: time.Hour,
+		Faults: FaultsConfig{Plan: []FaultPhase{
+			{Name: "worker", Offset: 2 * time.Hour},
+		}},
+	}
+	err := validateFaults(cfg)
+	if err == nil || !strings.Contains(err.Error(), "duration") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestValidateStandardRejectsCustomFaultPlan(t *testing.T) {
+	cfg, err := LoadConfig("../../test/load/config/standard.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Faults = FaultsConfig{Plan: []FaultPhase{{Name: "worker", Offset: time.Hour}}}
+	err = ValidateStandard(cfg)
+	if err == nil || !strings.Contains(err.Error(), "fault") {
+		t.Fatalf("error = %v", err)
+	}
+}

@@ -25,6 +25,20 @@ type Config struct {
 	Burst            BurstConfig       `yaml:"burst"`
 	Sampling         SamplingConfig    `yaml:"sampling"`
 	Dynamic          DynamicConfig     `yaml:"dynamic"`
+	Faults           FaultsConfig      `yaml:"faults"`
+}
+
+// FaultsConfig optionally overrides the fault injection plan. Profiles that
+// omit it fall back to StandardFaultPlan. The standard qualification profile
+// must not override it: the fixed plan is part of the qualification spec.
+type FaultsConfig struct {
+	Plan []FaultPhase `yaml:"plan"`
+}
+
+type FaultPhase struct {
+	Name       string        `yaml:"name"`
+	OffsetText string        `yaml:"offset"`
+	Offset     time.Duration `yaml:"-"`
 }
 
 type DynamicConfig struct {

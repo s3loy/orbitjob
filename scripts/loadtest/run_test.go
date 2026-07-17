@@ -1,6 +1,10 @@
 package main
 
 import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -79,5 +83,80 @@ func TestBuildPhaseScheduleCyclesDefinitions(t *testing.T) {
 			t.Fatalf("duplicate idempotency key %s", ev.IdempotencyKey)
 		}
 		seen[ev.IdempotencyKey] = true
+	}
+}
+
+// waitForStats polls until want in-flight triggers settle or the deadline passes.
+func waitForStats(t *testing.T, engine *RunEngine, settled int64) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		triggered, accepted, rejected, _ := engine.Stats()
+		if accepted+rejected >= settled && triggered >= settled {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestRunEngineCountsSkippedWhenAtCapacity(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = fmt.Fprint(w, `{"run_id":"r","job_id":1,"tenant_id":"t1","status":"pending","created":true}`)
+	}))
+	defer srv.Close()
+
+	schedule := PhaseSchedule{Events: []TriggerEvent{
+		{At: 0, JobID: 1, Tenant: "t1", Phase: "p", IdempotencyKey: "k1"},
+		{At: 0, JobID: 2, Tenant: "t1", Phase: "p", IdempotencyKey: "k2"},
+	}}
+	engine := NewRunEngine(map[string]*APIClient{"t1": NewAPIClient(srv.URL, "k")}, schedule, map[string]int{"p": 1})
+	start := time.Now()
+	if err := engine.Run(context.Background(), func() time.Duration { return time.Since(start) }); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	waitForStats(t, engine, 1)
+
+	triggered, accepted, rejected, skipped := engine.Stats()
+	if triggered != 1 || skipped != 1 {
+		t.Fatalf("triggered=%d skipped=%d, want 1/1 (scheduled = triggered + skipped)", triggered, skipped)
+	}
+	if accepted != 1 || rejected != 0 {
+		t.Fatalf("accepted=%d rejected=%d, want 1/0", accepted, rejected)
+	}
+}
+
+func TestRunEngineClassifiesRejections(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	schedule := PhaseSchedule{Events: []TriggerEvent{
+		{At: 0, JobID: 1, Tenant: "t1", Phase: "p", IdempotencyKey: "k1"},
+		{At: 0, JobID: 1, Tenant: "t1", Phase: "p", IdempotencyKey: "k2"},
+		{At: 0, JobID: 0, Tenant: "t1", Phase: "p", IdempotencyKey: "k3"}, // placeholder: no client call
+	}}
+	engine := NewRunEngine(map[string]*APIClient{"t1": NewAPIClient(srv.URL, "k")}, schedule, map[string]int{})
+	start := time.Now()
+	if err := engine.Run(context.Background(), func() time.Duration { return time.Since(start) }); err != nil {
+		t.Fatal(err)
+	}
+	waitForStats(t, engine, 3)
+
+	_, accepted, rejected, skipped := engine.Stats()
+	if accepted != 0 || rejected != 3 || skipped != 0 {
+		t.Fatalf("accepted=%d rejected=%d skipped=%d, want 0/3/0", accepted, rejected, skipped)
+	}
+	breakdown := engine.Rejections()
+	if breakdown.RateLimited != 2 {
+		t.Fatalf("rate limited = %d, want 2", breakdown.RateLimited)
+	}
+	if breakdown.Other != 1 {
+		t.Fatalf("other = %d, want 1 (placeholder job)", breakdown.Other)
 	}
 }

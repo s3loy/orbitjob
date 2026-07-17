@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -62,5 +63,37 @@ func TestCreateJobRequiresCreatedStatus(t *testing.T) {
 	_, err := c.CreateJob(context.Background(), "load-alpha", map[string]any{"name": "x"})
 	if err == nil || !strings.Contains(err.Error(), "status 400") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestTriggerJobRateLimitReturnsTypedError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	c := NewAPIClient(srv.URL, "tenant-key")
+	_, err := c.TriggerJob(context.Background(), 7, "load-alpha", "v020-case-7")
+	var terr *TriggerError
+	if !errors.As(err, &terr) {
+		t.Fatalf("error type = %T, want *TriggerError", err)
+	}
+	if terr.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429", terr.StatusCode)
+	}
+}
+
+func TestTriggerJobTransportErrorHasZeroStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	srv.Close() // close before use so dials fail
+
+	c := NewAPIClient(srv.URL, "tenant-key")
+	_, err := c.TriggerJob(context.Background(), 7, "load-alpha", "v020-case-7")
+	var terr *TriggerError
+	if !errors.As(err, &terr) {
+		t.Fatalf("error type = %T, want *TriggerError", err)
+	}
+	if terr.StatusCode != 0 {
+		t.Fatalf("transport error status = %d, want 0", terr.StatusCode)
 	}
 }

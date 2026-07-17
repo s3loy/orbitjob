@@ -33,6 +33,22 @@ type TriggerResponse struct {
 	Created  bool   `json:"created"`
 }
 
+// TriggerError carries the HTTP status of a failed trigger so the run engine
+// can classify rejections. StatusCode 0 means the request never got a response
+// (dial failure, timeout, connection reset).
+type TriggerError struct {
+	JobID      int64
+	StatusCode int
+	Message    string
+}
+
+func (e *TriggerError) Error() string {
+	if e.StatusCode == 0 {
+		return fmt.Sprintf("trigger job %d: transport error: %s", e.JobID, e.Message)
+	}
+	return fmt.Sprintf("trigger job %d: status %d", e.JobID, e.StatusCode)
+}
+
 func (c *APIClient) CreateJob(ctx context.Context, tenant string, request map[string]any) (int64, error) {
 	body, err := json.Marshal(request)
 	if err != nil {
@@ -58,7 +74,7 @@ func (c *APIClient) CreateJob(ctx context.Context, tenant string, request map[st
 func (c *APIClient) TriggerJob(ctx context.Context, jobID int64, tenant, idempotencyKey string) (TriggerResponse, error) {
 	resp, err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/jobs/%d/trigger", jobID), tenant, idempotencyKey, nil)
 	if err != nil {
-		return TriggerResponse{}, err
+		return TriggerResponse{}, &TriggerError{JobID: jobID, StatusCode: 0, Message: err.Error()}
 	}
 	defer func() { _ = resp.Body.Close() }()
 	switch resp.StatusCode {
@@ -71,7 +87,7 @@ func (c *APIClient) TriggerJob(ctx context.Context, jobID int64, tenant, idempot
 	case http.StatusConflict:
 		return TriggerResponse{Created: false}, nil
 	default:
-		return TriggerResponse{}, fmt.Errorf("trigger job %d: status %d", jobID, resp.StatusCode)
+		return TriggerResponse{}, &TriggerError{JobID: jobID, StatusCode: resp.StatusCode}
 	}
 }
 

@@ -23,6 +23,28 @@ func StandardFaultPlan() []FaultSpec {
 	}
 }
 
+// knownFault reports whether name is a component the fault injector can target.
+func knownFault(name string) bool {
+	switch name {
+	case "scheduler", "dispatcher", "worker", "admin-api", "postgres":
+		return true
+	}
+	return false
+}
+
+// FaultPlanFromConfig returns the configured fault plan, or StandardFaultPlan
+// when the profile does not declare one.
+func FaultPlanFromConfig(cfg Config) []FaultSpec {
+	if len(cfg.Faults.Plan) == 0 {
+		return StandardFaultPlan()
+	}
+	plan := make([]FaultSpec, len(cfg.Faults.Plan))
+	for i, fault := range cfg.Faults.Plan {
+		plan[i] = FaultSpec{Name: fault.Name, Offset: fault.Offset}
+	}
+	return plan
+}
+
 func FaultNames(plan []FaultSpec) []string {
 	names := make([]string, len(plan))
 	for i, fault := range plan {

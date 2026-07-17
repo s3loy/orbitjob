@@ -52,3 +52,33 @@ func TestFaultInjectionCommands(t *testing.T) {
 		t.Fatalf("postgres should return nil command, not error: %v", err)
 	}
 }
+
+func TestFaultPlanFromConfigDefaultsToStandard(t *testing.T) {
+	plan := FaultPlanFromConfig(Config{})
+	standard := StandardFaultPlan()
+	if len(plan) != len(standard) {
+		t.Fatalf("default plan has %d faults, want %d", len(plan), len(standard))
+	}
+	for i := range standard {
+		if plan[i] != standard[i] {
+			t.Fatalf("fault %d = %+v, want %+v", i, plan[i], standard[i])
+		}
+	}
+}
+
+func TestFaultPlanFromConfigUsesCustomPlan(t *testing.T) {
+	cfg := Config{Faults: FaultsConfig{Plan: []FaultPhase{
+		{Name: "worker", Offset: 30 * time.Minute},
+		{Name: "postgres", Offset: 40 * time.Minute},
+	}}}
+	plan := FaultPlanFromConfig(cfg)
+	if len(plan) != 2 {
+		t.Fatalf("plan has %d faults, want 2", len(plan))
+	}
+	if plan[0].Name != "worker" || plan[0].Offset != 30*time.Minute {
+		t.Fatalf("fault 0 = %+v", plan[0])
+	}
+	if plan[1].Name != "postgres" || plan[1].Offset != 40*time.Minute {
+		t.Fatalf("fault 1 = %+v", plan[1])
+	}
+}

@@ -52,7 +52,7 @@ func runPreflight(args []string) error {
 	flags := flag.NewFlagSet("preflight", flag.ContinueOnError)
 	configPath := flags.String("config", "test/load/config/standard.yaml", "load config")
 	imagesPath := flags.String("images", "test/load/config/images.lock.yaml", "image lock")
-	profile := flags.String("profile", "standard", "load profile: standard|smoke")
+	profile := flags.String("profile", "standard", "load profile: standard|smoke|long")
 	checkOnly := flags.Bool("check-only", false, "skip image pulls and cluster mutations")
 	imagesOnly := flags.Bool("images-only", false, "validate image lock only")
 	if err := flags.Parse(args); err != nil {
@@ -154,7 +154,7 @@ func runPrepare(args []string) error {
 	flags := flag.NewFlagSet("prepare", flag.ContinueOnError)
 	configPath := flags.String("config", "test/load/config/standard.yaml", "load config")
 	imagesPath := flags.String("images", "test/load/config/images.lock.yaml", "image lock")
-	profile := flags.String("profile", "standard", "load profile: standard|smoke")
+	profile := flags.String("profile", "standard", "load profile: standard|smoke|long")
 	runID := flags.String("run-id", "", "run ID")
 	runRoot := flags.String("run-root", "test/load/runs", "run root")
 	apiURL := flags.String("api-url", os.Getenv("ORBITJOB_API_URL"), "Admin API URL")
@@ -171,7 +171,7 @@ func runPrepare(args []string) error {
 func runRun(args []string) error {
 	flags := flag.NewFlagSet("run", flag.ContinueOnError)
 	configPath := flags.String("config", "test/load/config/standard.yaml", "load config")
-	profile := flags.String("profile", "standard", "load profile: standard|smoke")
+	profile := flags.String("profile", "standard", "load profile: standard|smoke|long")
 	runID := flags.String("run-id", "", "run ID")
 	runRoot := flags.String("run-root", "test/load/runs", "run root")
 	apiURL := flags.String("api-url", os.Getenv("ORBITJOB_API_URL"), "Admin API URL")
@@ -266,13 +266,18 @@ func runRun(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	go injectFaults(ctx, start)
+	go injectFaults(ctx, start, FaultPlanFromConfig(cfg))
 	if err := engine.Run(ctx, func() time.Duration { return time.Since(start) }); err != nil && err != context.DeadlineExceeded {
 		return fmt.Errorf("run engine: %w", err)
 	}
 	engine.Stop()
-	triggered, accepted, rejected := engine.Stats()
-	fmt.Printf("run: triggered=%d accepted=%d rejected=%d\n", triggered, accepted, rejected)
+	triggered, accepted, rejected, skipped := engine.Stats()
+	fmt.Printf("run: triggered=%d accepted=%d rejected=%d skipped=%d\n", triggered, accepted, rejected, skipped)
+	if rejected > 0 {
+		breakdown := engine.Rejections()
+		fmt.Printf("run: rejections: rate_limited=%d server=%d transport=%d other=%d\n",
+			breakdown.RateLimited, breakdown.Server, breakdown.Transport, breakdown.Other)
+	}
 	return nil
 }
 
@@ -319,8 +324,8 @@ func patchDeploymentEnv(ctx context.Context, name string, env map[string]string)
 	return nil
 }
 
-func injectFaults(ctx context.Context, start time.Time) {
-	for _, fault := range StandardFaultPlan() {
+func injectFaults(ctx context.Context, start time.Time, plan []FaultSpec) {
+	for _, fault := range plan {
 		wait := fault.Offset - time.Since(start)
 		if wait > 0 {
 			select {
@@ -333,6 +338,7 @@ func injectFaults(ctx context.Context, start time.Time) {
 		if err != nil || len(cmd) == 0 {
 			continue
 		}
+		fmt.Printf("fault: injecting %s at %s\n", fault.Name, time.Since(start).Round(time.Second))
 		_ = exec.Command(cmd[0], cmd[1:]...).Run()
 		gate := RecoveryGate{Name: fault.Name, ReadyTimeout: 2 * time.Minute, BusinessTimeout: 5 * time.Minute}
 		_ = WaitForRecovery(ctx, gate, func(context.Context) bool { return true })
