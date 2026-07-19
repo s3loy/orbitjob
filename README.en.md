@@ -9,175 +9,81 @@
 
 [中文](./README.md)
 
-![Stone Badge](https://stone.professorlee.work/api/stone/s3loy/orbitjob)
+OrbitJob is a Kubernetes-first distributed job scheduling platform. PostgreSQL serves as the persistent state store for execution transactions. Four independent processes — `admin-api`, `scheduler`, `dispatcher`, and `worker` — handle the control plane, cron triggering, dispatch, and execution respectively.
 
-OrbitJob is a Kubernetes-first distributed job scheduler. PostgreSQL stores transactional execution state. Four processes—`admin-api`, `scheduler`, `dispatcher`, and `worker`—handle the control plane, triggering, dispatch, and execution.
+OrbitJob targets multi-tenant cron and API-triggered jobs, Kubernetes Job execution, HTTP health checks (Check/CheckRun), and SLI/SLO calculation with error budget alerts. Scheduling uses Claim/Lease at-least-once delivery semantics; handlers must be idempotent.
 
-Good fit: multi-tenant cron jobs, API-triggered jobs, Kubernetes Job execution, HTTP checks, and SLO calculation.
+The four processes coordinate through PostgreSQL: the `scheduler` scans due Jobs and creates Instances, the `dispatcher` assigns pending Instances to capable `worker` processes for execution, and the `admin-api` exposes the HTTP control plane. Multiple schedulers and workers compete via `FOR UPDATE SKIP LOCKED`. Cross-process election and discovery support both memory-based and etcd-based backends.
 
-Poor fit: millisecond-latency scheduling, exactly-once execution, or replacing a durable message queue with PostgreSQL `NOTIFY`. OrbitJob uses at-least-once Claim/Lease semantics, so handlers must be idempotent.
+## Getting Started
 
-## Available today
+Docker Compose v2 and `make` are required. Ensure ports `8080`, `9090`, `3000`, and `5432` are available. See [USAGE.md](./USAGE.md) for all deployment options, API examples, handler payloads, and troubleshooting. The quickest path is below.
 
-- Cron and manual triggers; fixed/exponential retry; misfire and concurrency policies
-- `exec`, `http`, `webhook`, `pg_notify`, and `container` handlers
-- Kubernetes Job execution with digest checks, RBAC, and a restricted Pod security context
-- API-key authentication, tenant isolation, PostgreSQL roles, RLS, and scoped `SECURITY DEFINER` entry points
-- Checksum-aware migration runner, advisory locking, a formal v0.2.0 baseline, and pre-release database reset enforcement
-- Checks, CheckRuns, SLIs, SLOs, error budgets, and burn-rate alerts
-- Docker Compose, a Helm Chart, and kind install/upgrade verification
-- Prometheus metrics, Grafana dashboards, structured logs, and trace IDs
-- In-process and etcd election/discovery
-
-Not delivered yet: Operator, CRDs, Kubernetes Lease, PostgreSQL epoch fencing, Workflow, and Serverless. Helm currently installs regular Kubernetes workloads; CRD specs are not yet the declaration authority.
-
-## Design choices
-
-- PostgreSQL is the persistent state source. Transactions, `FOR UPDATE SKIP LOCKED`, and optimistic `version` checks protect state transitions.
-- Multiple schedulers and workers can claim rows concurrently, but throughput remains bounded by PostgreSQL connections and hot rows.
-- Runtime processes use separate admin/runtime database roles. Pre-authentication lookup and cross-tenant scheduling go through narrowly granted database functions.
-- The container handler creates `batch/v1` Jobs. Pods run as UID 65534, disable privilege escalation, drop all capabilities, and use a read-only root filesystem.
-- Kubernetes Lease is not implemented. Use etcd when a deployment needs cross-process election or discovery.
-
-## Docker Compose quick start
-
-You need Docker Compose v2 and `make`:
-
-> **v0.2.0 database reset requirement**
->
-> v0.2.0 squashes the pre-release `0001`–`0011` migration history into one formal baseline. Existing development databases and named volumes cannot be upgraded in place. Before starting this version for the first time, run `make docker-reset`, then run `make docker-up`.
->
-> Old development histories are rejected with:
->
-> ```text
-> unsupported pre-release schema history; recreate the database for v0.2.0
-> ```
->
-> Do not edit `schema_migrations` or insert a fabricated baseline row.
+### Docker Compose
 
 ```bash
 make setup
 make docker-up
 ```
 
-`make setup` creates one installation-level database configuration. Bundled PostgreSQL needs no DSN input. Admin and runtime processes receive their least-privilege connections automatically. See [`docs/database-setup.md`](docs/database-setup.md) for the setup contract.
-
 ```bash
 export ORBITJOB_API_KEY="$(make --no-print-directory bootstrap-key)"
 curl -fsS http://localhost:8080/healthz
-curl -fsS \
-  -H "Authorization: Bearer $ORBITJOB_API_KEY" \
-  http://localhost:8080/api/v1/tenants
+curl -fsS -H "Authorization: Bearer $ORBITJOB_API_KEY" http://localhost:8080/api/v1/tenants
 ```
 
-Local endpoints:
+`make setup` creates an installation-level database configuration. The bundled PostgreSQL requires no DSN. The Admin API listens on `8080` and serves Prometheus metrics at `/metrics` and the OpenAPI schema at `/openapi.json`.
 
-| Service | URL |
-|---|---|
-| Admin API | <http://localhost:8080> |
-| OpenAPI | <http://localhost:8080/openapi.json> |
-| Prometheus | <http://localhost:9090> |
-| Grafana | <http://localhost:3000> |
+### Helm
 
 ```bash
-make docker-status
-make grafana-password
-make docker-down          # preserve data
-make docker-reset         # delete volumes after confirmation
-```
-
-Enable optional services:
-
-```bash
-docker compose --profile coordination-etcd up -d
-docker compose --profile logs up -d
-```
-
-Starting the etcd container does not switch the runtime automatically. Set `ETCD_ENABLED=true` and `ETCD_ENDPOINTS` as well.
-
-## Helm and Kubernetes
-
-The Chart is version `0.2.0` and lives under `charts/orbitjob`. It installs owner-init, migration, bootstrap, all four runtime processes, RBAC, and a task namespace for container Jobs. It does not install PostgreSQL.
-
-One installation uses one `orbitjob-database` Secret. Every replica inherits it, so scaling does not require another DSN. The setup tool generates this Secret from one bootstrap DSN; see [`docs/database-setup.md`](docs/database-setup.md).
-
-```bash
-make helm-check
-
 helm upgrade --install orbitjob charts/orbitjob \
-  --namespace orbitjob-system \
-  --create-namespace \
+  --namespace orbitjob-system --create-namespace \
   -f values.production.yaml
 ```
 
-Recommended production setting:
+The Chart is version `0.2.0`. It installs four runtime Deployments, RBAC, and a container task namespace. PostgreSQL is not included. One installation uses one `orbitjob-database` Secret shared by all replicas. See [`docs/database-setup.md`](docs/database-setup.md) for the database configuration workflow.
 
-```yaml
-worker:
-  containerExecution:
-    requireDigest: true
-```
+## Developing
 
-This rejects workload images that use a mutable tag without an `@sha256:` digest.
-
-Run the local kind verification:
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for branch strategy, code conventions, testing layers, and the PR process.
 
 ```bash
-make kind-up
-make kind-v020-verify
-make kind-down
+git clone https://github.com/s3loy/orbitjob.git
+cd orbitjob
+
+make test          # unit tests
+make test-cover    # coverage
+make check         # lint + vet + race + openapi-check + tidy-check
+make integration   # integration tests (requires TEST_DATABASE_DSN)
 ```
 
-The script covers first install, repeated upgrades, and migration-failure blocking.
+## Features
 
-## API example
+- Cron and manual triggers; fixed and exponential retry; misfire and concurrency policies
+- Five handler types: `exec`, `http`, `webhook`, `pg_notify`, and `container`
+- Kubernetes Job container execution with image digest verification, RBAC, and a restricted Pod Security Context
+- API key authentication, tenant isolation, PostgreSQL roles, RLS, and `SECURITY DEFINER` entry-point functions
+- Checks, CheckRuns, SLIs, SLOs, error budgets, and burn-rate alerts
+- Prometheus metrics, Grafana dashboard, structured logging, and trace ID propagation
+- Memory-based and etcd-based election and discovery
 
-```bash
-export ORBITJOB_API=http://localhost:8080
-export AUTH="Authorization: Bearer $ORBITJOB_API_KEY"
+Not yet delivered: Operator, CRD, Kubernetes Lease, PG epoch fencing, Workflow, and Serverless.
 
-curl -sS -X POST "$ORBITJOB_API/api/v1/jobs" \
-  -H "$AUTH" -H 'Content-Type: application/json' \
-  -d '{
-    "name":"daily-report",
-    "trigger_type":"cron",
-    "cron_expr":"0 9 * * *",
-    "timezone":"UTC",
-    "handler_type":"http",
-    "handler_payload":{
-      "url":"https://example.com/report",
-      "method":"POST",
-      "body":"{\"source\":\"orbitjob\"}"
-    },
-    "timeout_sec":30,
-    "retry_limit":3,
-    "concurrency_policy":"forbid"
-  }'
-```
+## Documentation
 
-The Admin API uses one error envelope:
+| Document | Contents |
+|---|---|
+| [USAGE.md](./USAGE.md) | Deployment options, Docker Compose / Helm / standalone, full API examples, handler payloads, Check/SLI/SLO operations, monitoring and troubleshooting |
+| [CONTRIBUTING.md](./CONTRIBUTING.md) | Branch naming, dependency direction, test layers, migration conventions, commit format, PR template |
+| [SECURITY.md](./SECURITY.md) | Security model, vulnerability reporting, PostgreSQL roles and RLS boundaries, container security constraints |
+| [docs/database-setup.md](docs/database-setup.md) | Bundled / external PostgreSQL configuration, TLS, Kubernetes Secret contract |
+| [api/openapi.yaml](./api/openapi.yaml) | API schema |
 
-```json
-{"error":{"code":"VALIDATION_ERROR","message":"is required","field":"name"}}
-```
+## Community
 
-See [USAGE.md](./USAGE.md) for curl examples, handler payloads, the Helm Secret contract, and troubleshooting. See [api/openapi.yaml](./api/openapi.yaml) for request and response schemas.
-
-## Development and verification
-
-See `go.mod` for the Go version and dependencies.
-
-```bash
-make test
-make test-cover
-make check
-make integration # requires TEST_DATABASE_DSN
-make helm-check
-```
-
-`make check` runs golangci-lint, vet, race tests, the OpenAPI synchronization check, and the `go mod tidy` check.
-
-Create development branches from `dev` and open pull requests back to `dev`. See [CONTRIBUTING.md](./CONTRIBUTING.md) for commit and coverage rules. See [SECURITY.md](./SECURITY.md) for reporting and the current database security boundary.
+- [GitHub Issues](https://github.com/s3loy/orbitjob/issues) — report bugs or request features
+- [SECURITY.md](./SECURITY.md) — do not disclose vulnerabilities publicly; follow the reporting process in this file
 
 ## License
 

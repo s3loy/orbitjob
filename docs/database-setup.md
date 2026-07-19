@@ -4,7 +4,7 @@ OrbitJob 把数据库配置放在 installation 层。配置一次，admin-api、
 
 ## Bundled PostgreSQL
 
-Docker Compose 自带 PostgreSQL。你不需要写 DSN：
+Docker Compose 自带 PostgreSQL，不需要写 DSN：
 
 ```bash
 make setup
@@ -17,7 +17,7 @@ make docker-up
 - `.runtime/database.env`：migrator、admin、runtime 的派生连接配置
 - `.runtime/database.json`：installation 状态，用于重复 setup 时复用密码
 
-两个文件目录都被 Git 忽略。credential 文件权限是 `0600`。
+两个文件目录都被 Git 忽略，凭据文件权限为 `0600`。
 
 再次运行 `make setup` 不会修改密码：
 
@@ -25,7 +25,7 @@ make docker-up
 Existing database configuration is valid. Runtime configuration refreshed.
 ```
 
-如果要从头开始，运行 `make docker-reset`。`make env-clean` 也会同时删除 `.runtime/`，避免 PostgreSQL owner 密码与 installation state 分叉。
+如需完全重置为初始状态，运行 `make docker-reset`。`make env-clean` 也会同时删除 `.runtime/`，避免 PostgreSQL owner 密码与 installation state 分叉。
 
 ## External PostgreSQL
 
@@ -62,8 +62,8 @@ orbitjob_runtime
 Kubernetes 中，一次 installation 使用一个 `orbitjob-database` Secret。所有 Pod 引用同一份 Secret。把 worker 从 1 扩到 10 不需要再次配置数据库：
 
 ```bash
-kubectl scale deployment/orbitjob-worker -n orbitjob --replicas=10
-kubectl rollout status deployment/orbitjob-worker -n orbitjob
+kubectl scale deployment/orbitjob-worker -n orbitjob-system --replicas=10
+kubectl rollout status deployment/orbitjob-worker -n orbitjob-system
 ```
 
 Chart 只接收 Secret 名和固定 key 名，不要求你同时填写 password 和 DSN。`deploy/kind/verify-v020.sh` 展示了完整安装流程。
