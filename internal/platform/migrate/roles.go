@@ -109,7 +109,7 @@ var passwordAlreadyCorrect = func(ctx context.Context, db *sql.DB, role, passwor
 		User:     url.UserPassword(role, password),
 		Host:     net.JoinHostPort(host, port),
 		Path:     "/" + dbname,
-		RawQuery: "sslmode=disable&connect_timeout=3",
+		RawQuery: "sslmode=prefer&connect_timeout=3",
 	}
 	testDB, err := sql.Open("postgres", u.String())
 	if err != nil {
