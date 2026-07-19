@@ -34,13 +34,18 @@ func NewBudgetAlertReadRepository(db *sql.DB) *BudgetAlertReadRepository {
 
 // Get retrieves a budget alert by ID.
 func (r *BudgetAlertReadRepository) Get(ctx context.Context, tenantID string, id int64) (sloalertquery.BudgetAlertItem, error) {
-	var row budgetAlertRow
+	tx, err := WithTenant(ctx, r.db, tenantID)
+	if err != nil {
+		return sloalertquery.BudgetAlertItem{}, fmt.Errorf("begin budget_alert get tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
 
-	err := r.db.QueryRowContext(ctx, `
-		SELECT id, tenant_id, slo_id, budget_id, alert_type, burn_rate, status, triggered_at, resolved_at
-		FROM budget_alerts
-		WHERE tenant_id = $1 AND id = $2
-	`, tenantID, id).Scan(
+	var row budgetAlertRow
+	err = tx.QueryRowContext(ctx, `
+			SELECT id, tenant_id, slo_id, budget_id, alert_type, burn_rate, status, triggered_at, resolved_at
+			FROM budget_alerts
+			WHERE tenant_id = $1 AND id = $2
+		`, tenantID, id).Scan(
 		&row.ID, &row.TenantID, &row.SLOID, &row.BudgetID, &row.AlertType,
 		&row.BurnRate, &row.Status, &row.TriggeredAt, &row.ResolvedAt,
 	)
@@ -50,11 +55,19 @@ func (r *BudgetAlertReadRepository) Get(ctx context.Context, tenantID string, id
 	if err != nil {
 		return sloalertquery.BudgetAlertItem{}, fmt.Errorf("get budget alert: %w", err)
 	}
+
+	_ = tx.Commit()
 	return mapBudgetAlertRow(row), nil
 }
 
 // List retrieves a paginated list of budget alerts.
 func (r *BudgetAlertReadRepository) List(ctx context.Context, tenantID string, sloID *int64, status *string, limit, offset int) ([]sloalertquery.BudgetAlertItem, int64, error) {
+	tx, err := WithTenant(ctx, r.db, tenantID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("begin budget_alert list tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	var total int64
 	countQuery := `SELECT COUNT(*) FROM budget_alerts WHERE tenant_id = $1`
 	countArgs := []any{tenantID}
@@ -70,14 +83,14 @@ func (r *BudgetAlertReadRepository) List(ctx context.Context, tenantID string, s
 		countArgs = append(countArgs, *status)
 	}
 
-	if err := r.db.QueryRowContext(ctx, countQuery, countArgs...).Scan(&total); err != nil {
+	if err = tx.QueryRowContext(ctx, countQuery, countArgs...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count budget alerts: %w", err)
 	}
 
 	listQuery := `
-		SELECT id, tenant_id, slo_id, budget_id, alert_type, burn_rate, status, triggered_at, resolved_at
-		FROM budget_alerts
-		WHERE tenant_id = $1`
+			SELECT id, tenant_id, slo_id, budget_id, alert_type, burn_rate, status, triggered_at, resolved_at
+			FROM budget_alerts
+			WHERE tenant_id = $1`
 	listArgs := []any{tenantID}
 	argIdx := 2
 
@@ -94,7 +107,7 @@ func (r *BudgetAlertReadRepository) List(ctx context.Context, tenantID string, s
 	listQuery += fmt.Sprintf(` ORDER BY triggered_at DESC LIMIT $%d OFFSET $%d`, argIdx, argIdx+1)
 	listArgs = append(listArgs, limit, offset)
 
-	rows, err := r.db.QueryContext(ctx, listQuery, listArgs...)
+	rows, err := tx.QueryContext(ctx, listQuery, listArgs...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list budget alerts: %w", err)
 	}
@@ -116,6 +129,7 @@ func (r *BudgetAlertReadRepository) List(ctx context.Context, tenantID string, s
 		return nil, 0, fmt.Errorf("iterate budget alerts: %w", err)
 	}
 
+	_ = tx.Commit()
 	return alerts, total, nil
 }
 

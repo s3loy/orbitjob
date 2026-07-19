@@ -37,9 +37,12 @@ func TestCheckRepository_Get(t *testing.T) {
 		5, labelsJSON, nil, 1, now, now,
 	)
 
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config`).WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT (.+) FROM checks`).
 		WithArgs("default", int64(1)).
 		WillReturnRows(rows)
+	mock.ExpectCommit()
 
 	snap, err := repo.Get(context.Background(), "default", 1)
 	if err != nil {
@@ -73,9 +76,12 @@ func TestCheckRepository_Get_NotFound(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	repo := NewCheckRepository(db)
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config`).WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT (.+) FROM checks`).
 		WithArgs("default", int64(999)).
 		WillReturnError(sql.ErrNoRows)
+	mock.ExpectRollback()
 
 	_, err = repo.Get(context.Background(), "default", 999)
 	if err == nil {
@@ -101,9 +107,12 @@ func TestCheckRepository_Get_DBError(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	repo := NewCheckRepository(db)
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config`).WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT (.+) FROM checks`).
 		WithArgs("default", int64(1)).
 		WillReturnError(errors.New("db down"))
+	mock.ExpectRollback()
 
 	_, err = repo.Get(context.Background(), "default", 1)
 	if err == nil {
@@ -124,6 +133,9 @@ func TestCheckRepository_List(t *testing.T) {
 	repo := NewCheckRepository(db)
 	now := time.Now()
 
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config`).WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
+
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM checks`).
 		WithArgs("default", nil).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
@@ -137,6 +149,7 @@ func TestCheckRepository_List(t *testing.T) {
 	mock.ExpectQuery(`SELECT (.+) FROM checks`).
 		WithArgs("default", nil, 20, 0).
 		WillReturnRows(rows)
+	mock.ExpectCommit()
 
 	items, total, err := repo.List(context.Background(), checkquery.ListChecksInput{
 		TenantID: "default",

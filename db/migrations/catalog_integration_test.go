@@ -96,7 +96,9 @@ func TestV020SecurityDefinerFunctionMatrix(t *testing.T) {
 		{"public.orbitjob_list_active_tenant_ids()", "orbitjob_runtime", true},
 		{"public.orbitjob_bootstrap_default(text,text,text,text,text,text,text,jsonb)", "orbitjob_admin", true},
 		{"public.orbitjob_bootstrap_default(text,text,text,text,text,text,text,jsonb)", "orbitjob_runtime", false},
-	} {
+			{"public.orbitjob_find_key_tenant(text)", "orbitjob_admin", true},
+			{"public.orbitjob_find_key_tenant(text)", "orbitjob_runtime", false},
+		} {
 		var allowed bool
 		if err := db.QueryRowContext(ctx, `SELECT has_function_privilege($1,$2,'EXECUTE')`, tt.role, tt.signature).Scan(&allowed); err != nil {
 			t.Fatalf("query %s %s: %v", tt.role, tt.signature, err)
@@ -111,7 +113,7 @@ func TestV020SecurityDefinerFunctionMatrix(t *testing.T) {
 		FROM pg_proc p
 		JOIN pg_namespace n ON n.oid=p.pronamespace
 		JOIN pg_roles r ON r.oid=p.proowner
-		WHERE n.nspname='public' AND p.proname IN ('orbitjob_auth_api_key','orbitjob_list_active_tenant_ids','orbitjob_bootstrap_default')
+		WHERE n.nspname='public' AND p.proname IN ('orbitjob_auth_api_key','orbitjob_list_active_tenant_ids','orbitjob_bootstrap_default','orbitjob_find_key_tenant')
 	`)
 	if err != nil {
 		t.Fatal(err)
@@ -129,7 +131,7 @@ func TestV020SecurityDefinerFunctionMatrix(t *testing.T) {
 			t.Errorf("%s owner=%s security=%v config=%s", name, owner, securityDefiner, config)
 		}
 	}
-	if count != 3 {
+	if count != 4 {
 		t.Fatalf("restricted function count=%d", count)
 	}
 

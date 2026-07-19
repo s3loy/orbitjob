@@ -24,6 +24,8 @@ func TestV020MigrationFileSet(t *testing.T) {
 		"0001_v020_baseline.up.sql",
 		"0002_grant_runtime_tenants_select.down.sql",
 		"0002_grant_runtime_tenants_select.up.sql",
+		"0003_find_key_tenant.down.sql",
+		"0003_find_key_tenant.up.sql",
 	}
 	if !reflect.DeepEqual(files, want) {
 		t.Fatalf("migration files = %v, want %v", files, want)

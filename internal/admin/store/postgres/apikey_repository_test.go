@@ -307,7 +307,7 @@ func TestAPIKeyRepository_FindKeyTenant(t *testing.T) {
 
 	repo := NewAPIKeyRepository(db)
 	rows := sqlmock.NewRows([]string{"tenant_id"}).AddRow("test-team")
-	mock.ExpectQuery(`SELECT tenant_id FROM api_keys`).
+	mock.ExpectQuery(`SELECT tenant_id FROM orbitjob_find_key_tenant\(\$1\)`).
 		WithArgs("01HZX").
 		WillReturnRows(rows)
 
@@ -331,7 +331,7 @@ func TestAPIKeyRepository_FindKeyTenant_NotFound(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	repo := NewAPIKeyRepository(db)
-	mock.ExpectQuery(`SELECT tenant_id FROM api_keys`).
+	mock.ExpectQuery(`SELECT tenant_id FROM orbitjob_find_key_tenant\(\$1\)`).
 		WithArgs("01HZX").
 		WillReturnError(sql.ErrNoRows)
 
@@ -357,7 +357,7 @@ func TestAPIKeyRepository_RevokeCrossTenant(t *testing.T) {
 
 	repo := NewAPIKeyRepository(db)
 	// Step 1: FindKeyTenant
-	mock.ExpectQuery(`SELECT tenant_id FROM api_keys`).
+	mock.ExpectQuery(`SELECT tenant_id FROM orbitjob_find_key_tenant\(\$1\)`).
 		WithArgs("01HZX").
 		WillReturnRows(sqlmock.NewRows([]string{"tenant_id"}).AddRow("test-team"))
 	// Step 2: Revoke in test-team context

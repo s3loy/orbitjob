@@ -286,10 +286,13 @@ func TestJobRepository_GetQuota_Success(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config`).WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
 	rows := sqlmock.NewRows([]string{"quotas"}).AddRow(raw)
 	mock.ExpectQuery(`SELECT quotas FROM tenants WHERE id = \$1`).
 		WithArgs("default").
 		WillReturnRows(rows)
+	mock.ExpectCommit()
 
 	repo := NewJobRepository(db)
 	result, err := repo.GetQuota(context.Background(), "default")
@@ -311,9 +314,12 @@ func TestJobRepository_GetQuota_TenantNotFound(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config`).WithArgs("missing-tenant").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT quotas FROM tenants WHERE id = \$1`).
 		WithArgs("missing-tenant").
 		WillReturnError(sql.ErrNoRows)
+	mock.ExpectRollback()
 
 	repo := NewJobRepository(db)
 	result, err := repo.GetQuota(context.Background(), "missing-tenant")
@@ -332,11 +338,14 @@ func TestJobRepository_GetQuota_EmptyQuota(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config`).WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
 	// Empty JSON bytes -> treated as nil quotas
 	rows := sqlmock.NewRows([]string{"quotas"}).AddRow([]byte{})
 	mock.ExpectQuery(`SELECT quotas FROM tenants WHERE id = \$1`).
 		WithArgs("default").
 		WillReturnRows(rows)
+	mock.ExpectCommit()
 
 	repo := NewJobRepository(db)
 	result, err := repo.GetQuota(context.Background(), "default")
@@ -355,9 +364,12 @@ func TestJobRepository_GetQuota_DBError(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config`).WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT quotas FROM tenants WHERE id = \$1`).
 		WithArgs("default").
 		WillReturnError(errors.New("connection refused"))
+	mock.ExpectRollback()
 
 	repo := NewJobRepository(db)
 	_, err = repo.GetQuota(context.Background(), "default")
@@ -373,10 +385,13 @@ func TestJobRepository_GetQuota_InvalidJSON(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config`).WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
 	rows := sqlmock.NewRows([]string{"quotas"}).AddRow([]byte("{invalid"))
 	mock.ExpectQuery(`SELECT quotas FROM tenants WHERE id = \$1`).
 		WithArgs("default").
 		WillReturnRows(rows)
+	mock.ExpectRollback()
 
 	repo := NewJobRepository(db)
 	_, err = repo.GetQuota(context.Background(), "default")

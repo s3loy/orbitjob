@@ -1279,6 +1279,11 @@ func (h *Handler) ListSLOAlerts(c *gin.Context) {
 
 // CreateTenant handles tenant creation requests.
 func (h *Handler) CreateTenant(c *gin.Context) {
+	_, ok := requireTenantID(c, "")
+	if !ok {
+		return
+	}
+
 	var req CreateTenantRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
@@ -1346,19 +1351,24 @@ func (h *Handler) CreateAPIKey(c *gin.Context) {
 		return
 	}
 
+	tenantID, ok := requireTenantID(c, "")
+	if !ok {
+		return
+	}
+
 	var req CreateAPIKeyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
 		return
 	}
 
-	out, err := h.createAPIKeyUC.Create(c.Request.Context(), req.ToCreateInput(pathReq.ID))
+	out, err := h.createAPIKeyUC.Create(c.Request.Context(), req.ToCreateInput(tenantID))
 	if err != nil {
 		writeAPIError(c, err)
 		return
 	}
 
-	metrics.APIKeysTotal.WithLabelValues(pathReq.ID).Inc()
+	metrics.APIKeysTotal.WithLabelValues(tenantID).Inc()
 	c.JSON(stdhttp.StatusCreated, out)
 }
 
@@ -1370,7 +1380,12 @@ func (h *Handler) ListAPIKeys(c *gin.Context) {
 		return
 	}
 
-	out, err := h.listAPIKeysUC.List(c.Request.Context(), apikeyquery.ListInput{TenantID: pathReq.ID})
+	tenantID, ok := requireTenantID(c, "")
+	if !ok {
+		return
+	}
+
+	out, err := h.listAPIKeysUC.List(c.Request.Context(), apikeyquery.ListInput{TenantID: tenantID})
 	if err != nil {
 		writeAPIError(c, err)
 		return

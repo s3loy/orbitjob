@@ -25,9 +25,9 @@ func (r *APIKeyRepository) Create(ctx context.Context, tenantID, id, keyHash, ke
 	defer func() { _ = tx.Rollback() }()
 
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO api_keys (id, tenant_id, key_hash, key_prefix)
-		VALUES ($1, $2, $3, $4)
-	`, id, tenantID, keyHash, keyPrefix)
+			INSERT INTO api_keys (id, tenant_id, key_hash, key_prefix)
+			VALUES ($1, $2, $3, $4)
+		`, id, tenantID, keyHash, keyPrefix)
 	if err != nil {
 		return fmt.Errorf("insert api key: %w", err)
 	}
@@ -45,11 +45,11 @@ func (r *APIKeyRepository) ListByTenant(ctx context.Context, tenantID string) ([
 	defer func() { _ = tx.Rollback() }()
 
 	rows, err := tx.QueryContext(ctx, `
-		SELECT id, key_prefix, created_at, revoked_at
-		FROM api_keys
-		WHERE tenant_id = $1
-		ORDER BY created_at DESC
-	`, tenantID)
+			SELECT id, key_prefix, created_at, revoked_at
+			FROM api_keys
+			WHERE tenant_id = $1
+			ORDER BY created_at DESC
+		`, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("list api keys: %w", err)
 	}
@@ -76,13 +76,11 @@ func (r *APIKeyRepository) ListByTenant(ctx context.Context, tenantID string) ([
 }
 
 // FindKeyTenant returns the tenant that owns the given API key.
-// This query bypasses RLS — only call for admin cross-tenant operations.
+// Uses the orbitjob_find_key_tenant SECURITY DEFINER function to bypass RLS
+// for cross-tenant admin operations.
 func (r *APIKeyRepository) FindKeyTenant(ctx context.Context, id string) (string, error) {
 	var tenantID string
-	err := r.db.QueryRowContext(ctx, `
-		SELECT tenant_id FROM api_keys
-		WHERE id = $1 AND revoked_at IS NULL
-	`, id).Scan(&tenantID)
+	err := r.db.QueryRowContext(ctx, `SELECT tenant_id FROM orbitjob_find_key_tenant($1)`, id).Scan(&tenantID)
 	if err == sql.ErrNoRows {
 		return "", &resource.NotFoundError{Resource: "api_key", ID: id}
 	}
@@ -112,9 +110,9 @@ func (r *APIKeyRepository) Revoke(ctx context.Context, tenantID, id string) erro
 
 	now := time.Now().UTC()
 	res, err := tx.ExecContext(ctx, `
-		UPDATE api_keys SET revoked_at = $1
-		WHERE id = $2 AND tenant_id = $3 AND revoked_at IS NULL
-	`, now, id, tenantID)
+			UPDATE api_keys SET revoked_at = $1
+			WHERE id = $2 AND tenant_id = $3 AND revoked_at IS NULL
+		`, now, id, tenantID)
 	if err != nil {
 		return fmt.Errorf("revoke api key: %w", err)
 	}

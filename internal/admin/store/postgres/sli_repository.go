@@ -25,11 +25,17 @@ func (r *SLIReadRepository) Get(ctx context.Context, tenantID string, id int64) 
 	var snap sli.Snapshot
 	var sourceConfigRaw, goodEventRaw []byte
 
-	err := r.db.QueryRowContext(ctx, `
-		SELECT id, tenant_id, name, description, sli_type, source_type, source_config, aggregation, good_event_criteria, version, created_at, updated_at
-		FROM slis
-		WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
-	`, tenantID, id).Scan(
+	tx, err := WithTenant(ctx, r.db, tenantID)
+	if err != nil {
+		return snap, fmt.Errorf("begin sli get tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	err = tx.QueryRowContext(ctx, `
+			SELECT id, tenant_id, name, description, sli_type, source_type, source_config, aggregation, good_event_criteria, version, created_at, updated_at
+			FROM slis
+			WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
+		`, tenantID, id).Scan(
 		&snap.ID, &snap.TenantID, &snap.Name, &snap.Description, &snap.SLIType, &snap.SourceType,
 		&sourceConfigRaw, &snap.Aggregation, &goodEventRaw, &snap.Version, &snap.CreatedAt, &snap.UpdatedAt,
 	)
@@ -51,25 +57,32 @@ func (r *SLIReadRepository) Get(ctx context.Context, tenantID string, id int64) 
 		}
 	}
 
+	_ = tx.Commit()
 	return snap, nil
 }
 
 // List retrieves a paginated list of SLIs.
 func (r *SLIReadRepository) List(ctx context.Context, tenantID string, limit, offset int) ([]sli.Snapshot, int64, error) {
+	tx, err := WithTenant(ctx, r.db, tenantID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("begin sli list tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	var total int64
-	if err := r.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM slis WHERE tenant_id = $1 AND deleted_at IS NULL
-	`, tenantID).Scan(&total); err != nil {
+	if err = tx.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM slis WHERE tenant_id = $1 AND deleted_at IS NULL
+		`, tenantID).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count slis: %w", err)
 	}
 
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, tenant_id, name, description, sli_type, source_type, source_config, aggregation, good_event_criteria, version, created_at, updated_at
-		FROM slis
-		WHERE tenant_id = $1 AND deleted_at IS NULL
-		ORDER BY id DESC
-		LIMIT $2 OFFSET $3
-	`, tenantID, limit, offset)
+	rows, err := tx.QueryContext(ctx, `
+			SELECT id, tenant_id, name, description, sli_type, source_type, source_config, aggregation, good_event_criteria, version, created_at, updated_at
+			FROM slis
+			WHERE tenant_id = $1 AND deleted_at IS NULL
+			ORDER BY id DESC
+			LIMIT $2 OFFSET $3
+		`, tenantID, limit, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list slis: %w", err)
 	}
@@ -102,5 +115,6 @@ func (r *SLIReadRepository) List(ctx context.Context, tenantID string, limit, of
 		return nil, 0, fmt.Errorf("iterate slis: %w", err)
 	}
 
+	_ = tx.Commit()
 	return slis, total, nil
 }

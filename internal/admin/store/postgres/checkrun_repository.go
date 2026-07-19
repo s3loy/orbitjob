@@ -22,12 +22,19 @@ func NewCheckRunRepository(db *sql.DB) *CheckRunRepository {
 func (r *CheckRunRepository) Get(ctx context.Context, tenantID string, id int64) (checkrunquery.GetResult, error) {
 	var snap checkrun.Snapshot
 	var outputBytes, evalResultBytes []byte
-	err := r.db.QueryRowContext(ctx, `
-		SELECT id, run_id::text, tenant_id, check_id, status, severity, output, evaluation_result,
-		       scheduled_at, started_at, finished_at, duration_ms, version, created_at
-		FROM check_runs
-		WHERE tenant_id = $1 AND id = $2
-	`, tenantID, id).Scan(
+
+	tx, err := WithTenant(ctx, r.db, tenantID)
+	if err != nil {
+		return checkrunquery.GetResult{}, fmt.Errorf("begin check_run get tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	err = tx.QueryRowContext(ctx, `
+			SELECT id, run_id::text, tenant_id, check_id, status, severity, output, evaluation_result,
+			       scheduled_at, started_at, finished_at, duration_ms, version, created_at
+			FROM check_runs
+			WHERE tenant_id = $1 AND id = $2
+		`, tenantID, id).Scan(
 		&snap.ID, &snap.RunID, &snap.TenantID, &snap.CheckID, &snap.Status, &snap.Severity,
 		&outputBytes, &evalResultBytes, &snap.ScheduledAt, &snap.StartedAt, &snap.FinishedAt,
 		&snap.DurationMs, &snap.Version, &snap.CreatedAt,
@@ -53,6 +60,7 @@ func (r *CheckRunRepository) Get(ctx context.Context, tenantID string, id int64)
 		}
 	}
 
+	_ = tx.Commit()
 	return toGetResult(snap), nil
 }
 
@@ -65,26 +73,32 @@ func (r *CheckRunRepository) List(ctx context.Context, in checkrunquery.ListChec
 		limit = 100
 	}
 
+	tx, err := WithTenant(ctx, r.db, in.TenantID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("begin check_run list tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	var total int
-	err := r.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM check_runs
-		WHERE tenant_id = $1
-		  AND ($2::bigint IS NULL OR check_id = $2)
-		  AND ($3::text IS NULL OR status = $3)
-	`, in.TenantID, in.CheckID, in.Status).Scan(&total)
+	err = tx.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM check_runs
+			WHERE tenant_id = $1
+			  AND ($2::bigint IS NULL OR check_id = $2)
+			  AND ($3::text IS NULL OR status = $3)
+		`, in.TenantID, in.CheckID, in.Status).Scan(&total)
 	if err != nil {
 		return nil, 0, fmt.Errorf("count check_runs: %w", err)
 	}
 
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, run_id::text, check_id, status, severity, duration_ms, created_at
-		FROM check_runs
-		WHERE tenant_id = $1
-		  AND ($2::bigint IS NULL OR check_id = $2)
-		  AND ($3::text IS NULL OR status = $3)
-		ORDER BY created_at DESC
-		LIMIT $4 OFFSET $5
-	`, in.TenantID, in.CheckID, in.Status, limit, in.Offset)
+	rows, err := tx.QueryContext(ctx, `
+			SELECT id, run_id::text, check_id, status, severity, duration_ms, created_at
+			FROM check_runs
+			WHERE tenant_id = $1
+			  AND ($2::bigint IS NULL OR check_id = $2)
+			  AND ($3::text IS NULL OR status = $3)
+			ORDER BY created_at DESC
+			LIMIT $4 OFFSET $5
+		`, in.TenantID, in.CheckID, in.Status, limit, in.Offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list check_runs: %w", err)
 	}
@@ -114,6 +128,7 @@ func (r *CheckRunRepository) List(ctx context.Context, in checkrunquery.ListChec
 		return nil, 0, fmt.Errorf("iterate check_runs: %w", err)
 	}
 
+	_ = tx.Commit()
 	return items, total, nil
 }
 

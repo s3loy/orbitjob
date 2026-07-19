@@ -97,7 +97,7 @@ func applyV020Baseline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
-	if result.CurrentVersion != 2 || result.Noop || len(result.Applied) != 2 {
+	if result.CurrentVersion != 3 || result.Noop || len(result.Applied) != 3 {
 		t.Fatalf("Execute() result = %#v", result)
 	}
 }

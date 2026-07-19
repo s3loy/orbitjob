@@ -22,13 +22,20 @@ func NewCheckRepository(db *sql.DB) *CheckRepository {
 func (r *CheckRepository) Get(ctx context.Context, tenantID string, id int64) (domaincheck.Snapshot, error) {
 	var snap domaincheck.Snapshot
 	var checkConfigBytes, assertionBytes, labelsBytes []byte
-	err := r.db.QueryRowContext(ctx, `
-		SELECT id, name, description, tenant_id, status, check_type, check_config, assertion_rules,
-		       schedule_type, cron_expr, interval_sec, timezone, timeout_sec, retry_limit,
-		       priority, labels, next_run_at, version, created_at, updated_at
-		FROM checks
-		WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
-	`, tenantID, id).Scan(
+
+	tx, err := WithTenant(ctx, r.db, tenantID)
+	if err != nil {
+		return domaincheck.Snapshot{}, fmt.Errorf("begin check get tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	err = tx.QueryRowContext(ctx, `
+			SELECT id, name, description, tenant_id, status, check_type, check_config, assertion_rules,
+			       schedule_type, cron_expr, interval_sec, timezone, timeout_sec, retry_limit,
+			       priority, labels, next_run_at, version, created_at, updated_at
+			FROM checks
+			WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
+		`, tenantID, id).Scan(
 		&snap.ID, &snap.Name, &snap.Description, &snap.TenantID, &snap.Status, &snap.CheckType,
 		&checkConfigBytes, &assertionBytes, &snap.ScheduleType, &snap.CronExpr, &snap.IntervalSec,
 		&snap.Timezone, &snap.TimeoutSec, &snap.RetryLimit, &snap.Priority, &labelsBytes,
@@ -60,6 +67,7 @@ func (r *CheckRepository) Get(ctx context.Context, tenantID string, id int64) (d
 		}
 	}
 
+	_ = tx.Commit()
 	return snap, nil
 }
 
@@ -72,24 +80,30 @@ func (r *CheckRepository) List(ctx context.Context, in checkquery.ListChecksInpu
 		limit = 100
 	}
 
+	tx, err := WithTenant(ctx, r.db, in.TenantID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("begin check list tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	var total int
-	err := r.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM checks
-		WHERE tenant_id = $1 AND deleted_at IS NULL
-		  AND ($2::text IS NULL OR status = $2)
-	`, in.TenantID, in.Status).Scan(&total)
+	err = tx.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM checks
+			WHERE tenant_id = $1 AND deleted_at IS NULL
+			  AND ($2::text IS NULL OR status = $2)
+		`, in.TenantID, in.Status).Scan(&total)
 	if err != nil {
 		return nil, 0, fmt.Errorf("count checks: %w", err)
 	}
 
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, name, description, tenant_id, status, check_type, schedule_type, next_run_at, version, created_at
-		FROM checks
-		WHERE tenant_id = $1 AND deleted_at IS NULL
-		  AND ($2::text IS NULL OR status = $2)
-		ORDER BY id DESC
-		LIMIT $3 OFFSET $4
-	`, in.TenantID, in.Status, limit, in.Offset)
+	rows, err := tx.QueryContext(ctx, `
+			SELECT id, name, description, tenant_id, status, check_type, schedule_type, next_run_at, version, created_at
+			FROM checks
+			WHERE tenant_id = $1 AND deleted_at IS NULL
+			  AND ($2::text IS NULL OR status = $2)
+			ORDER BY id DESC
+			LIMIT $3 OFFSET $4
+		`, in.TenantID, in.Status, limit, in.Offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list checks: %w", err)
 	}
@@ -119,5 +133,6 @@ func (r *CheckRepository) List(ctx context.Context, in checkquery.ListChecksInpu
 		return nil, 0, fmt.Errorf("iterate checks: %w", err)
 	}
 
+	_ = tx.Commit()
 	return items, total, nil
 }
