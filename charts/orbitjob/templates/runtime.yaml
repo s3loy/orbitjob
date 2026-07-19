@@ -57,8 +57,22 @@ spec:
               containerPort: {{ if eq $name "admin-api" }}8080{{ else if eq $name "scheduler" }}6060{{ else }}6061{{ end }}
           readinessProbe:
             httpGet: {path: /healthz, port: health}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 3
           livenessProbe:
             httpGet: {path: /healthz, port: health}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          startupProbe:
+            httpGet: {path: /healthz, port: health}
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 12
           resources:
 {{ toYaml $.Values.runtimeResources | indent 12 }}
           securityContext:
