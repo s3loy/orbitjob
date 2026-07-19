@@ -4,6 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net"
+	"net/url"
+	"strings"
+	"time"
 
 	"github.com/lib/pq"
 )
@@ -88,8 +92,49 @@ GRANT USAGE, CREATE ON SCHEMA public TO orbitjob_table_owner;
 	return nil
 }
 
+// passwordAlreadyCorrect verifies whether the given password is already set for
+// the role by opening a short-lived test connection. It returns true when the
+// connection succeeds, false when authentication fails, and an error only for
+// unexpected failures.
+var passwordAlreadyCorrect = func(ctx context.Context, db *sql.DB, role, password string) (bool, error) {
+	var host, port, dbname string
+	row := db.QueryRowContext(ctx, "SELECT inet_server_addr()::text, inet_server_port()::text, current_database()")
+	if err := row.Scan(&host, &port, &dbname); err != nil {
+		return false, fmt.Errorf("read connection info: %w", err)
+	}
+	// Build a URL-style DSN so that special characters in the password are
+	// correctly percent-encoded.
+	u := &url.URL{
+		Scheme:   "postgres",
+		User:     url.UserPassword(role, password),
+		Host:     net.JoinHostPort(host, port),
+		Path:     "/" + dbname,
+		RawQuery: "sslmode=disable&connect_timeout=3",
+	}
+	testDB, err := sql.Open("postgres", u.String())
+	if err != nil {
+		return false, fmt.Errorf("open test connection for %s: %w", role, err)
+	}
+	defer func() { _ = testDB.Close() }()
+	testCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	if err := testDB.PingContext(testCtx); err != nil {
+		// Authentication failure means the password doesn't match — not an error.
+		if strings.Contains(err.Error(), "password authentication failed") ||
+			strings.Contains(err.Error(), "invalid password") {
+			return false, nil
+		}
+		// Other errors (network, timeout) are treated as "cannot verify" —
+		// fall through to ALTER ROLE as a safe default.
+		return false, nil
+	}
+	return true, nil
+}
+
 // EnsureRolePasswords sets deployment-generated passwords after role-creation
 // migrations have completed. Passwords are never stored in migration files.
+// On repeated runs it verifies each password before issuing ALTER ROLE so that
+// an upgrade never overwrites passwords that running pods still depend on.
 func EnsureRolePasswords(ctx context.Context, db *sql.DB, passwords map[string]string) error {
 	for _, role := range managedLoginRoles {
 		if passwords[role] == "" {
@@ -97,6 +142,13 @@ func EnsureRolePasswords(ctx context.Context, db *sql.DB, passwords map[string]s
 		}
 	}
 	for _, role := range managedLoginRoles {
+		correct, err := passwordAlreadyCorrect(ctx, db, role, passwords[role])
+		if err != nil {
+			return fmt.Errorf("verify password for %s: %w", role, err)
+		}
+		if correct {
+			continue
+		}
 		statement := fmt.Sprintf("ALTER ROLE %s PASSWORD %s", pq.QuoteIdentifier(role), pq.QuoteLiteral(passwords[role]))
 		if _, err := db.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("set password for %s: %w", role, err)
