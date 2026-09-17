@@ -1,0 +1,7 @@
+# Legacy coverage debt. Packages listed here only warn; they do not block merge.
+# Remove a line once the package is fixed; never add new lines.
+#
+# Format: <package path>
+orbitjob/internal/admin/store/postgres
+orbitjob/internal/core/store/postgres
+orbitjob/internal/core/domain/check
