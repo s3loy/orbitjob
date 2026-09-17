@@ -38,10 +38,6 @@ func TestComputeTuning_StandardResources(t *testing.T) {
 		TaskNamespaceMemGiLimit: 8,
 		TaskCPULimit:            0.5,
 		TaskMemLimitGi:          0.25,
-		WorkerCPULimit:          2,
-		WorkerMemLimitGi:        1,
-		AdminAPICPULimit:        1,
-		AdminAPIMemLimitGi:      0.5,
 	}
 
 	params, err := ComputeTuning(snap, cfg, rm)
@@ -49,19 +45,19 @@ func TestComputeTuning_StandardResources(t *testing.T) {
 		t.Fatalf("ComputeTuning error: %v", err)
 	}
 
-	if params.EffectiveWorkerCapacityMax != 14 {
+	if params.EffectiveTaskCapacityMax != 14 {
 		// availableCPU = min(10, 10-1=9) = 9; availableMem = min(8, 8-2=6)=6
 		// cpuBound = 9/0.5=18; memBound=6/0.25=24; raw=18; *0.8=14.4 -> 14
-		t.Fatalf("EffectiveWorkerCapacityMax = %d, want 14", params.EffectiveWorkerCapacityMax)
+		t.Fatalf("EffectiveWorkerCapacityMax = %d, want 14", params.EffectiveTaskCapacityMax)
 	}
-	if params.RecommendedWorkerCapacity != params.EffectiveWorkerCapacityMax {
+	if params.RecommendedTaskCapacity != params.EffectiveTaskCapacityMax {
 		t.Fatalf("RecommendedWorkerCapacity mismatch")
 	}
-	if params.EstimatedCronInstances == 0 {
+	if params.EstimatedCronRuns == 0 {
 		t.Fatalf("expected cron instances > 0")
 	}
-	if params.EstimatedManualInstances < cfg.MinimumInstances-params.EstimatedCronInstances {
-		t.Fatalf("manual instances %d below requirement %d", params.EstimatedManualInstances, cfg.MinimumInstances-params.EstimatedCronInstances)
+	if params.EstimatedManualRuns < cfg.MinimumInstances-params.EstimatedCronRuns {
+		t.Fatalf("manual instances %d below requirement %d", params.EstimatedManualRuns, cfg.MinimumInstances-params.EstimatedCronRuns)
 	}
 	if params.RecommendedTriggerRPSPerTenant < 10 {
 		t.Fatalf("trigger RPS per tenant too low: %d", params.RecommendedTriggerRPSPerTenant)
@@ -98,20 +94,16 @@ func TestComputeTuning_SmokeResources(t *testing.T) {
 		TaskNamespaceMemGiLimit: 8,
 		TaskCPULimit:            0.5,
 		TaskMemLimitGi:          0.25,
-		WorkerCPULimit:          2,
-		WorkerMemLimitGi:        1,
-		AdminAPICPULimit:        1,
-		AdminAPIMemLimitGi:      0.5,
 	}
 
 	params, err := ComputeTuning(snap, cfg, rm)
 	if err != nil {
 		t.Fatalf("ComputeTuning error: %v", err)
 	}
-	if params.EffectiveWorkerCapacityMax != 8 {
+	if params.EffectiveTaskCapacityMax != 8 {
 		// availableCPU = min(10, 6-1=5) = 5; availableMem = min(8, 8-2=6)=6
 		// cpuBound = 5/0.5=10; memBound=6/0.25=24; raw=10; *0.8=8
-		t.Fatalf("EffectiveWorkerCapacityMax = %d, want 8", params.EffectiveWorkerCapacityMax)
+		t.Fatalf("EffectiveWorkerCapacityMax = %d, want 8", params.EffectiveTaskCapacityMax)
 	}
 }
 

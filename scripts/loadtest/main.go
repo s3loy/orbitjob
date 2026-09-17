@@ -34,8 +34,6 @@ func main() {
 		err = runReport(os.Args[2:])
 	case "clean":
 		err = runClean(os.Args[2:])
-	case "monitor":
-		err = runMonitor(os.Args[2:])
 	case "reset":
 		err = runReset(os.Args[2:])
 	default:
@@ -100,8 +98,23 @@ func runPreflight(args []string) error {
 			return fmt.Errorf("INCONCLUSIVE: %s", gitEvaluation.Message)
 		}
 	}
+	// A qualification run has to stay awake; on darwin the caffeinate assertion
+	// only does that on AC power (sleep.go), so refuse a battery up front.
+	if err := requireACPower(context.Background(), cfg); err != nil {
+		return err
+	}
 	fmt.Printf("preflight: profile=%s Docker capacity >= %d CPU / %.0f GiB\n", *profile, minCPU, float64(minMemBytes)/(1<<30))
 	fmt.Printf("preflight: configuration and image lock valid\n")
+	// A profile with no gate cannot fail one, so only static profiles that
+	// declare minimum_instances are estimated.
+	if cfg.MinimumInstances > 0 {
+		if estimate, ok := EstimateStaticRuns(cfg); ok {
+			if estimate.Total < cfg.MinimumInstances {
+				return fmt.Errorf("INCONCLUSIVE: static schedule can produce about %d instances (manual %d + burst %d + cron %d), below the minimum_instances gate of %d; the phases or rates cannot qualify this profile", estimate.Total, estimate.Manual, estimate.Burst, estimate.Cron, cfg.MinimumInstances)
+			}
+			fmt.Printf("preflight: static instance estimate ~%d (manual %d + burst %d + cron %d) >= minimum_instances %d\n", estimate.Total, estimate.Manual, estimate.Burst, estimate.Cron, cfg.MinimumInstances)
+		}
+	}
 	if *checkOnly {
 		return nil
 	}
@@ -120,6 +133,12 @@ func runGenerate(args []string) error {
 	}
 	cfg, err := LoadConfig(*configPath)
 	if err != nil {
+		return err
+	}
+	// The same tenant-mode gate preflight, prepare and run apply. Without it
+	// generate happily writes a manifest for a profile the next step refuses,
+	// which reads as a failure of the next step rather than of the profile.
+	if err := ValidateTenants(cfg); err != nil {
 		return err
 	}
 	lock, err := LoadImageLock(*imagesPath)
@@ -176,7 +195,7 @@ func runRun(args []string) error {
 	runRoot := flags.String("run-root", "test/load/runs", "run root")
 	apiURL := flags.String("api-url", os.Getenv("ORBITJOB_API_URL"), "Admin API URL")
 	prometheusURL := flags.String("prometheus-url", "http://localhost:9090", "Prometheus URL for feedback controller")
-	tuneDeployments := flags.Bool("tune-deployments", false, "patch worker/admin-api env from resource model")
+	tuneDeployments := flags.Bool("tune-deployments", false, "patch admin-api env from resource model")
 	dryRunTuning := flags.Bool("dry-run-tuning", false, "print computed tuning and exit")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -223,18 +242,15 @@ func runRun(args []string) error {
 		if err != nil {
 			return fmt.Errorf("compute tuning: %w", err)
 		}
-		printTuning(params)
 		if *dryRunTuning {
 			return nil
 		}
 		if *tuneDeployments {
-			if err := patchDeploymentEnv(context.Background(), "orbitjob-worker", map[string]string{
-				"WORKER_CAPACITY":                   strconv.Itoa(params.RecommendedWorkerCapacity),
-				"WORKER_CAPACITY_MAX":               strconv.Itoa(params.EffectiveWorkerCapacityMax),
-				"WORKER_ADAPTIVE_CAPACITY_ENABLED": "false",
-			}); err != nil {
-				return fmt.Errorf("patch worker: %w", err)
-			}
+			// There is no worker deployment to size any more; execution
+			// concurrency is bounded by the task namespace quota, which the
+			// load tool applies to itself through MaxActive. The only
+			// control-plane knob left to patch is the admin API's trigger rate
+			// limit, which caps how fast the generator can submit.
 			if err := patchDeploymentEnv(context.Background(), "orbitjob-admin-api", map[string]string{
 				"RATELIMIT_TRIGGER_RPS": strconv.Itoa(params.RecommendedTriggerRPSPerTenant),
 			}); err != nil {
@@ -261,6 +277,8 @@ func runRun(args []string) error {
 	}
 
 	start := time.Now()
+	release := holdSleepAssertion()
+	defer release()
 	timeout := cfg.Duration + 30*time.Minute
 	if cfg.DynamicTuningEnabled() {
 		// Allow stretched schedule when under pressure.
@@ -273,10 +291,17 @@ func runRun(args []string) error {
 	go injectFaults(ctx, start, FaultPlanFromConfig(cfg), faults)
 	runErr := engine.Run(ctx, func() time.Duration { return time.Since(start) })
 	engine.Stop()
+	reportSuspension(start, time.Since(start))
 	triggered, accepted, rejected, skipped := engine.Stats()
 	fmt.Printf("run: triggered=%d accepted=%d rejected=%d skipped=%d\n", triggered, accepted, rejected, skipped)
+	if canceled, failed := engine.CancelStats(); canceled > 0 || failed > 0 {
+		fmt.Printf("run: canceled=%d cancel_failed=%d\n", canceled, failed)
+	}
 	stats := RunStats{
 		RunID:           *runID,
+		Profile:         cfg.Profile,
+		Seed:            cfg.Seed,
+		Qualification:   cfg.Qualification,
 		StartedAt:       start,
 		FinishedAt:      time.Now(),
 		ScheduledEvents: len(schedule.Events),
@@ -305,10 +330,10 @@ func runRun(args []string) error {
 }
 
 func printTuning(params TuningParameters) {
-	fmt.Printf("tuning: worker_capacity_max=%d worker_capacity=%d trigger_rps_per_tenant=%d\n",
-		params.EffectiveWorkerCapacityMax, params.RecommendedWorkerCapacity, params.RecommendedTriggerRPSPerTenant)
+	fmt.Printf("tuning: task_capacity_max=%d task_capacity=%d trigger_rps_per_tenant=%d\n",
+		params.EffectiveTaskCapacityMax, params.RecommendedTaskCapacity, params.RecommendedTriggerRPSPerTenant)
 	fmt.Printf("tuning: estimated_manual=%d estimated_cron=%d\n",
-		params.EstimatedManualInstances, params.EstimatedCronInstances)
+		params.EstimatedManualRuns, params.EstimatedCronRuns)
 	fmt.Println("tuning: phase_rates")
 	for name, rate := range params.PhaseRates {
 		fmt.Printf("  %s: rate=%d/min max_active=%d\n", name, rate, params.MaxActive[name])
@@ -331,7 +356,7 @@ func patchDeploymentEnv(ctx context.Context, name string, env map[string]string)
 	if len(env) == 0 {
 		return nil
 	}
-	args := []string{"set", "env", "deployment", name, "-n", "orbitjob"}
+	args := []string{"set", "env", "deployment", name, "-n", WorkloadNamespace()}
 	for k, v := range env {
 		args = append(args, fmt.Sprintf("%s=%s", k, v))
 	}
@@ -339,7 +364,7 @@ func patchDeploymentEnv(ctx context.Context, name string, env map[string]string)
 	if err != nil {
 		return fmt.Errorf("kubectl %s: %s", args, strings.TrimSpace(string(out)))
 	}
-	waitArgs := []string{"rollout", "status", "deployment", name, "-n", "orbitjob", "--timeout=120s"}
+	waitArgs := []string{"rollout", "status", "deployment", name, "-n", WorkloadNamespace(), "--timeout=120s"}
 	out, err = exec.CommandContext(ctx, "kubectl", waitArgs...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("kubectl rollout %s: %s", name, strings.TrimSpace(string(out)))
@@ -357,7 +382,8 @@ func injectFaults(ctx context.Context, start time.Time, plan []FaultSpec, rec *F
 			case <-time.After(wait):
 			}
 		}
-		cmd, restore, err := FaultInjectionPlan(fault.Name, "orbitjob")
+		namespace := FaultNamespace(fault.Name)
+		cmd, restore, err := FaultInjectionPlan(fault.Name, namespace)
 		if err != nil || len(cmd) == 0 {
 			if err != nil {
 				rec.add(FaultRecord{Name: fault.Name, InjectedAt: time.Now().UTC().Format(time.RFC3339), InjectError: err.Error()})
@@ -373,11 +399,17 @@ func injectFaults(ctx context.Context, start time.Time, plan []FaultSpec, rec *F
 			fmt.Printf("fault: %s injection failed: %s\n", fault.Name, record.InjectError)
 			continue
 		}
-		if fault.DisconnectFor > 0 && len(restore) > 0 {
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(fault.DisconnectFor):
+		// A restore step runs whenever one exists. Gating it on DisconnectFor
+		// meant a fault declared in a config -- which carries only a name and an
+		// offset -- scaled PostgreSQL to zero and left it there: the plan
+		// supplies no DisconnectFor, so the branch never ran.
+		if len(restore) > 0 {
+			if fault.DisconnectFor > 0 {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(fault.DisconnectFor):
+				}
 			}
 			if out, err := exec.Command(restore[0], restore[1:]...).CombinedOutput(); err != nil {
 				record.InjectError = fmt.Sprintf("restore: %v: %s", err, strings.TrimSpace(string(out)))
@@ -387,7 +419,7 @@ func injectFaults(ctx context.Context, start time.Time, plan []FaultSpec, rec *F
 			}
 		}
 		gate := RecoveryGate{Name: fault.Name, ReadyTimeout: 2 * time.Minute, BusinessTimeout: 5 * time.Minute}
-		if err := WaitForRecovery(ctx, gate, deploymentReadyCheck(fault.Name, "orbitjob")); err != nil {
+		if err := WaitForRecovery(ctx, gate, deploymentReadyCheck(fault.Name, namespace)); err != nil {
 			record.InjectError = err.Error()
 		}
 		record.RecoveredSeconds = time.Since(injectStart).Seconds()
@@ -494,63 +526,13 @@ func writeStableJSON(path string, value any) error {
 	return os.WriteFile(path, data, 0o600)
 }
 
-func runMonitor(args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("monitor requires deploy|status|cleanup")
-	}
-	switch args[0] {
-	case "deploy":
-		return monitorDeploy()
-	case "status":
-		return monitorStatus()
-	case "cleanup":
-		return monitorCleanup()
-	default:
-		return fmt.Errorf("unknown monitor action %q: deploy|status|cleanup", args[0])
-	}
-}
-
-func monitorDeploy() error {
-	// Apply the whole directory so new manifests (dashboards, exporters) are
-	// picked up without touching this list.
-	if err := kubectlApply("deploy/monitoring"); err != nil {
-		return fmt.Errorf("apply monitoring: %w", err)
-	}
-	if err := kubectlWait("deployment/prometheus", "monitoring", 3*time.Minute); err != nil {
-		return fmt.Errorf("wait prometheus: %w", err)
-	}
-	if err := kubectlWait("deployment/grafana", "monitoring", 3*time.Minute); err != nil {
-		return fmt.Errorf("wait grafana: %w", err)
-	}
-	if err := kubectlWait("deployment/orbitjob-postgres-exporter", "orbitjob", 3*time.Minute); err != nil {
-		return fmt.Errorf("wait postgres exporter: %w", err)
-	}
-	fmt.Println("monitor: prometheus + grafana + postgres exporter deployed")
-	fmt.Println("monitor: view with port-forward:")
-	fmt.Println("  kubectl port-forward -n monitoring svc/grafana 3000:3000  (admin/admin)")
-	fmt.Println("  kubectl port-forward -n monitoring svc/prometheus 9090:9090")
-	return nil
-}
-
-func monitorStatus() error {
-	out, err := exec.Command("kubectl", "get", "pods", "-n", "monitoring").CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("get pods: %s", strings.TrimSpace(string(out)))
-	}
-	fmt.Print(string(out))
-	return nil
-}
-
-func monitorCleanup() error {
-	out, err := exec.Command("kubectl", "delete", "-f", "deploy/monitoring", "--ignore-not-found").CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("delete monitoring: %s", strings.TrimSpace(string(out)))
-	}
-	fmt.Println("monitor: removed")
-	return nil
-}
-
 func validateProfile(profile string, cfg Config) error {
+	// Tenant-mode validation runs before the profile switch so a profile
+	// declaring an unsupported runtime is refused with that reason even when
+	// the profile name itself is not one the switch knows.
+	if err := ValidateTenants(cfg); err != nil {
+		return err
+	}
 	switch profile {
 	case "standard":
 		return ValidateStandard(cfg)
@@ -564,5 +546,5 @@ func validateProfile(profile string, cfg Config) error {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: loadtest <preflight|generate|prepare|run|verify|report|clean|monitor|reset> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: loadtest <preflight|generate|prepare|run|verify|report|clean|reset> [flags]")
 }

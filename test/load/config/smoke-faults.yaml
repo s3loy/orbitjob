@@ -1,3 +1,13 @@
+# Smoke profile with fault injection.
+#
+# smoke.yaml declares no faults, so it silently inherits the standard plan whose
+# offsets (180-220m) are far past a 30-minute run: the fault path had no
+# coverage at all, and two bugs lived in it undetected. This config exercises
+# it in half an hour instead of the four the standard profile needs.
+#
+# The faults sit in the recovery phase so they do not disturb the rate
+# measurements the earlier phases exist for.
+#
 profile: smoke
 qualification: false
 seed: smoke-1
@@ -47,6 +57,10 @@ burst:
   offset: 1m
   count: 30
   submit_within: 20s
+faults:
+  plan:
+    - {name: operator, offset: 25m}
+    - {name: postgres, offset: 27m}
 sampling:
   readiness: 10s
   kubernetes_objects: 15s
