@@ -3,7 +3,7 @@
 # ============================================================
 # Builder base: shared module cache
 # ============================================================
-FROM golang:1.26-alpine AS base
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS base
 RUN apk add --no-cache git ca-certificates tzdata
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -13,47 +13,48 @@ RUN --mount=type=cache,target=/go/pkg/mod go mod download
 # Build stages
 # ============================================================
 FROM base AS build-admin
-COPY . .
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -trimpath -ldflags="-s -w" -o /out/admin-api ./cmd/admin-api/
-
-FROM base AS build-scheduler
-COPY . .
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -trimpath -ldflags="-s -w" -o /out/scheduler ./cmd/scheduler/
-
-FROM base AS build-dispatcher
-COPY . .
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -trimpath -ldflags="-s -w" -o /out/dispatcher ./cmd/dispatcher/
-
-FROM base AS build-worker
 ARG TARGETOS=linux
 ARG TARGETARCH
 COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -trimpath -ldflags="-s -w" -o /out/worker ./cmd/worker/
+    go build -trimpath -ldflags="-s -w" -o /out/admin-api ./cmd/admin-api/
 
-FROM base AS build-healthcheck
+FROM base AS build-scheduler
+ARG TARGETOS=linux
+ARG TARGETARCH
 COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o /out/scheduler ./cmd/scheduler/
+
+FROM base AS build-operator
+ARG TARGETOS=linux
+ARG TARGETARCH
+COPY . .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o /out/operator ./cmd/operator/
+
+FROM base AS build-healthcheck
+ARG TARGETOS=linux
+ARG TARGETARCH
+COPY . .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w" -o /out/healthcheck ./cmd/healthcheck/
 
 FROM base AS build-bootstrap
+ARG TARGETOS=linux
+ARG TARGETARCH
 COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w" -o /out/bootstrap ./cmd/bootstrap/
 
 FROM base AS build-migrate
@@ -93,24 +94,6 @@ COPY --from=build-scheduler /out/scheduler /scheduler
 USER 65534:65534
 ENTRYPOINT ["/scheduler"]
 
-FROM scratch AS dispatcher
-COPY --from=build-dispatcher /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=build-dispatcher /usr/share/zoneinfo /usr/share/zoneinfo
-COPY --from=build-dispatcher /etc/passwd /etc/passwd
-COPY --from=build-healthcheck /out/healthcheck /healthcheck
-COPY --from=build-dispatcher /out/dispatcher /dispatcher
-USER 65534:65534
-ENTRYPOINT ["/dispatcher"]
-
-FROM scratch AS worker
-COPY --from=build-worker /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=build-worker /usr/share/zoneinfo /usr/share/zoneinfo
-COPY --from=build-worker /etc/passwd /etc/passwd
-COPY --from=build-healthcheck /out/healthcheck /healthcheck
-COPY --from=build-worker /out/worker /worker
-USER 65534:65534
-ENTRYPOINT ["/worker"]
-
 FROM scratch AS bootstrap
 COPY --from=build-bootstrap /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=build-bootstrap /usr/share/zoneinfo /usr/share/zoneinfo
@@ -118,3 +101,11 @@ COPY --from=build-bootstrap /etc/passwd /etc/passwd
 COPY --from=build-bootstrap /out/bootstrap /bootstrap
 USER 65534:65534
 ENTRYPOINT ["/bootstrap"]
+
+FROM scratch AS operator
+COPY --from=build-operator /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=build-operator /usr/share/zoneinfo /usr/share/zoneinfo
+COPY --from=build-operator /etc/passwd /etc/passwd
+COPY --from=build-operator /out/operator /operator
+USER 65534:65534
+ENTRYPOINT ["/operator"]
