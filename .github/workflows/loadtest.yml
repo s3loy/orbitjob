@@ -110,20 +110,23 @@ jobs:
       - name: Record start time
         run: echo "STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
 
-      - name: Setup Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
       # A kind node plus six container images plus a PostgreSQL takes more room
       # than a hosted runner has free by default. These are the toolchains the
-      # runner image ships and this job does not use.
+      # runner image ships and this job does not use. This step MUST run
+      # before Setup Go: setup installs the toolchain into
+      # $AGENT_TOOLSDIRECTORY, and pruning that directory afterwards deletes
+      # the Go binary out of the PATH (the first CI smoke run failed here).
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
                       /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
           df -h /
+
+      - name: Setup Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
 
       - name: Install kind
         run: |
