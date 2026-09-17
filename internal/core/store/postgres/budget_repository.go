@@ -26,11 +26,10 @@ func (r *BudgetRepository) Upsert(ctx context.Context, tenantID string, budget s
 	if err != nil {
 		return budget, fmt.Errorf("begin upsert tx: %w", err)
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
+	// Unconditional: Rollback after a successful Commit is a no-op, and a
+	// deferred check on err leaks the transaction the day an early return
+	// leaves err nil with the commit not yet reached.
+	defer func() { _ = tx.Rollback() }()
 
 	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID); err != nil {
 		return budget, fmt.Errorf("set tenant context: %w", err)
@@ -73,11 +72,7 @@ func (r *BudgetRepository) GetCurrent(ctx context.Context, tenantID string, sloI
 	if err != nil {
 		return budget, fmt.Errorf("begin get tx: %w", err)
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
+	defer func() { _ = tx.Rollback() }()
 
 	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID); err != nil {
 		return budget, fmt.Errorf("set tenant context: %w", err)

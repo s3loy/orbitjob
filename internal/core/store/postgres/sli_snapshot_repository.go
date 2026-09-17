@@ -44,9 +44,12 @@ func (r *SLISnapshotRepository) IncrementSnapshot(ctx context.Context, tenantID 
 		return fmt.Errorf("set tenant context: %w", err)
 	}
 
+	// $5 is cast explicitly at both uses: the good_events_count column deduces
+	// bigint while the sli_value expression would deduce decimal, and one
+	// parameter inferred as two types is refused (42P08) at execute time.
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO sli_snapshots (tenant_id, sli_id, window_start, window_end, good_events_count, total_events_count, sli_value)
-		VALUES ($1, $2, $3, $4, $5, 1, $5::decimal / 1)
+		VALUES ($1, $2, $3, $4, $5::bigint, 1, $5::bigint::decimal / 1)
 		ON CONFLICT (tenant_id, sli_id, window_start)
 		DO UPDATE SET
 			good_events_count = sli_snapshots.good_events_count + EXCLUDED.good_events_count,

@@ -61,6 +61,7 @@ func NormalizeCreate(in CreateInput) (CreateSpec, error) {
 	return CreateSpec{
 		Name:              name,
 		Description:       in.Description,
+		ResourceGroupID:   strings.TrimSpace(in.ResourceGroupID),
 		SLIID:             in.SLIID,
 		Target:            in.Target,
 		WindowType:        windowType,

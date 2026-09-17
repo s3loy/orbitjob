@@ -28,11 +28,11 @@ func (r *SLIRepository) Create(ctx context.Context, tenantID string, spec sli.Cr
 	if err != nil {
 		return snap, fmt.Errorf("begin create tx: %w", err)
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
+	// The release must not depend on the outer err variable: error returns
+	// that bypass it (shadowed unmarshal errors, non-err not-found returns)
+	// used to leave the transaction open and pin a pooled connection. Rollback
+	// after a successful commit is a no-op.
+	defer func() { _ = tx.Rollback() }()
 
 	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID); err != nil {
 		return snap, fmt.Errorf("set tenant context: %w", err)
@@ -50,10 +50,11 @@ func (r *SLIRepository) Create(ctx context.Context, tenantID string, spec sli.Cr
 
 	var sourceConfigRaw, goodEventRaw []byte
 	err = tx.QueryRowContext(ctx, `
-		INSERT INTO slis (tenant_id, name, description, sli_type, source_type, source_config, aggregation, good_event_criteria)
-		VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8::jsonb)
+		INSERT INTO slis (tenant_id, name, description, sli_type, source_type, source_config, aggregation, good_event_criteria, resource_group_id)
+		VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8::jsonb, $9)
 		RETURNING id, tenant_id, name, description, sli_type, source_type, source_config, aggregation, good_event_criteria, version, created_at, updated_at
-	`, tenantID, spec.Name, spec.Description, spec.SLIType, spec.SourceType, sourceConfigBytes, spec.Aggregation, goodEventBytes).Scan(
+	`, tenantID, spec.Name, spec.Description, spec.SLIType, spec.SourceType, sourceConfigBytes, spec.Aggregation, goodEventBytes,
+		nullableGroup(spec.ResourceGroupID)).Scan(
 		&snap.ID, &snap.TenantID, &snap.Name, &snap.Description, &snap.SLIType, &snap.SourceType,
 		&sourceConfigRaw, &snap.Aggregation, &goodEventRaw, &snap.Version, &snap.CreatedAt, &snap.UpdatedAt,
 	)
@@ -80,16 +81,14 @@ func (r *SLIRepository) Create(ctx context.Context, tenantID string, spec sli.Cr
 }
 
 // Delete soft-deletes an SLI.
-func (r *SLIRepository) Delete(ctx context.Context, tenantID string, id int64, version int) error {
+func (r *SLIRepository) Delete(ctx context.Context, tenantID, resourceGroupID string, id int64, version int) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin delete tx: %w", err)
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
+	// Same unconditional release as Create: the not-found return below never
+	// assigns err, and the transaction must be released regardless.
+	defer func() { _ = tx.Rollback() }()
 
 	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID); err != nil {
 		return fmt.Errorf("set tenant context: %w", err)
@@ -98,7 +97,8 @@ func (r *SLIRepository) Delete(ctx context.Context, tenantID string, id int64, v
 	result, err := tx.ExecContext(ctx, `
 		UPDATE slis SET deleted_at = now(), version = version + 1
 		WHERE tenant_id = $1 AND id = $2 AND version = $3 AND deleted_at IS NULL
-	`, tenantID, id, version)
+		  AND ($4::text IS NULL OR resource_group_id = $4)
+	`, tenantID, id, version, nullableGroup(resourceGroupID))
 	if err != nil {
 		return fmt.Errorf("delete sli: %w", err)
 	}
@@ -118,32 +118,34 @@ func (r *SLIRepository) Delete(ctx context.Context, tenantID string, id int64, v
 	return nil
 }
 
-// FindByCheckID finds all SLIs that source from the given check ID.
-func (r *SLIRepository) FindByCheckID(ctx context.Context, tenantID string, checkID int64) ([]sli.Snapshot, error) {
+// FindBySourceUID finds all SLIs that source from the given definition
+// identity. SLI events derive from the run ledger (source_type job_run), so
+// the lookup matches the source_uid the ledger stores on every run -- e.g.
+// "check-42" for a check, or a ScheduledJob's CR UID.
+func (r *SLIRepository) FindBySourceUID(ctx context.Context, tenantID, sourceUID string) ([]sli.Snapshot, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("begin find tx: %w", err)
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
+	defer func() { _ = tx.Rollback() }()
 
 	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID); err != nil {
 		return nil, fmt.Errorf("set tenant context: %w", err)
 	}
 
-	// Query SLIs where source_config contains the check_id.
+	// The containment match keys the SLI to its source definition the same way
+	// the ledger keys a run: one source_uid string. The explicit cast keeps
+	// Postgres from having to infer the parameter type inside the polymorphic
+	// jsonb_build_object call.
 	rows, err := tx.QueryContext(ctx, `
 		SELECT id, tenant_id, name, description, sli_type, source_type, source_config, aggregation, good_event_criteria, version, created_at, updated_at
 		FROM slis
 		WHERE tenant_id = $1 AND deleted_at IS NULL
-		  AND source_type = 'check_run'
-		  AND source_config @> jsonb_build_object('check_id', $2::int)
-	`, tenantID, checkID)
+		  AND source_type = 'job_run'
+		  AND source_config @> jsonb_build_object('source_uid', $2::text)
+	`, tenantID, sourceUID)
 	if err != nil {
-		return nil, fmt.Errorf("query slis by check_id: %w", err)
+		return nil, fmt.Errorf("query slis by source_uid: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
