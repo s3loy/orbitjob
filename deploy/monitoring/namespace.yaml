@@ -1,6 +1,8 @@
+# The namespace for the cluster observability stack (kube-prometheus-stack,
+# installed by `make monitoring-up`). Not loadtest-owned: the stack is
+# long-lived and its lifecycle belongs to the make targets, not to a loadtest
+# run.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: monitoring
-  labels:
-    app.kubernetes.io/managed-by: orbitjob-loadtest
