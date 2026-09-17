@@ -1,23 +1,19 @@
 package http
 
 import (
-	"strings"
-
 	"github.com/gin-gonic/gin"
 
-	"orbitjob/internal/domain/validation"
+	"orbitjob/internal/admin/http/middleware"
 )
 
-const actorIDHeader = "X-Actor-ID"
-
-func requiredActorID(c *gin.Context) (string, error) {
-	actorID := strings.TrimSpace(c.GetHeader(actorIDHeader))
-	if actorID == "" {
-		return "", validation.New("actor_id", "is required")
+// actorID identifies who performed an action, for the audit trail and the run
+// ledger's actor column. It is always the authenticated key's id: a
+// client-supplied actor header is unverified, and a trail naming whoever the
+// caller claimed to be answers the wrong question.
+func actorID(c *gin.Context) string {
+	p, ok := middleware.PrincipalFrom(c)
+	if !ok {
+		return ""
 	}
-	if len(actorID) > 128 {
-		return "", validation.New("actor_id", "must be <= 128 characters")
-	}
-
-	return actorID, nil
+	return p.KeyID
 }

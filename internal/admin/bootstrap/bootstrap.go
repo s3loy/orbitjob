@@ -25,8 +25,6 @@ const (
 	defaultTenantName   = "Default"
 	defaultTenantStatus = "active"
 
-	defaultAPIKeyPermissions = "{}"
-
 	defaultSecretName    = "bootstrap-api-key"
 	defaultSecretDataKey = "api-key"
 
@@ -99,9 +97,9 @@ func EnsureDefault(ctx context.Context, db *sql.DB, opts Options) (Result, error
 	res := Result{MaskedKey: maskKey(key)}
 	if err = tx.QueryRowContext(ctx, `
 		SELECT tenant_created, key_created
-		FROM orbitjob_bootstrap_default($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+		FROM orbitjob_bootstrap_default($1, $2, $3, $4, $5, $6, $7)
 	`, DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus,
-		DefaultAPIKeyID, string(hash), prefix, defaultAPIKeyPermissions,
+		DefaultAPIKeyID, string(hash), prefix,
 	).Scan(&res.TenantCreated, &res.KeyCreated); err != nil {
 		return Result{}, fmt.Errorf("ensure bootstrap defaults: %w", err)
 	}

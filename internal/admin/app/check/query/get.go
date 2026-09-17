@@ -8,7 +8,7 @@ import (
 )
 
 type checkGetter interface {
-	Get(ctx context.Context, tenantID string, id int64) (domaincheck.Snapshot, error)
+	Get(ctx context.Context, tenantID, resourceGroupID string, id int64) (domaincheck.Snapshot, error)
 }
 
 // GetResult is the result of getting a single check.
@@ -43,8 +43,8 @@ func NewGetCheckUseCase(repo checkGetter) *GetCheckUseCase {
 	return &GetCheckUseCase{repo: repo}
 }
 
-func (uc *GetCheckUseCase) Get(ctx context.Context, tenantID string, id int64) (GetResult, error) {
-	out, err := uc.repo.Get(ctx, tenantID, id)
+func (uc *GetCheckUseCase) Get(ctx context.Context, tenantID, resourceGroupID string, id int64) (GetResult, error) {
+	out, err := uc.repo.Get(ctx, tenantID, resourceGroupID, id)
 	if err != nil {
 		return GetResult{}, err
 	}

@@ -23,13 +23,7 @@ func TestNewRouter_WithAuth(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	handler := adminhttp.NewHandler(
-		&stubCreateJobUseCase{},
-		&stubListJobsUseCase{},
-		&stubGetJobUseCase{},
-		&stubUpdateJobUseCase{},
-		&stubChangeStatusUseCase{},
-	)
+	handler := adminhttp.NewHandler(nil, nil, nil)
 	auth := middleware.NewAuth(db)
 	router := newRouter(handler, auth, nil)
 
@@ -53,13 +47,7 @@ func TestNewRouter_WithRateLimiter(t *testing.T) {
 
 	rl := middleware.NewRateLimiter(context.Background())
 
-	handler := adminhttp.NewHandler(
-		&stubCreateJobUseCase{},
-		&stubListJobsUseCase{},
-		&stubGetJobUseCase{},
-		&stubUpdateJobUseCase{},
-		&stubChangeStatusUseCase{},
-	)
+	handler := adminhttp.NewHandler(nil, nil, nil)
 	router := newRouter(handler, nil, rl)
 
 	// Healthz is in groupPublic so rate limiting is skipped
@@ -82,13 +70,7 @@ func TestNewRouter_WithAuthAndRateLimiter(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	handler := adminhttp.NewHandler(
-		&stubCreateJobUseCase{},
-		&stubListJobsUseCase{},
-		&stubGetJobUseCase{},
-		&stubUpdateJobUseCase{},
-		&stubChangeStatusUseCase{},
-	)
+	handler := adminhttp.NewHandler(nil, nil, nil)
 	auth := middleware.NewAuth(db)
 	rl := middleware.NewRateLimiter(context.Background())
 

@@ -31,7 +31,7 @@ type stubCheckDeleter struct {
 	err          error
 }
 
-func (s *stubCheckDeleter) Delete(_ context.Context, tenantID string, id int64, version int) error {
+func (s *stubCheckDeleter) Delete(_ context.Context, tenantID, _ string, id int64, version int) error {
 	s.lastTenantID = tenantID
 	s.lastID = id
 	s.lastVersion = version
@@ -44,18 +44,23 @@ type stubCheckStatusChanger struct {
 	err        error
 }
 
-func (s *stubCheckStatusChanger) ChangeStatus(_ context.Context, _ string, _ int64, _ int, action string) (domaincheck.Snapshot, error) {
+func (s *stubCheckStatusChanger) ChangeStatus(_ context.Context, _, _ string, _ int64, _ int, action string) (domaincheck.Snapshot, error) {
 	s.lastAction = action
 	return s.out, s.err
 }
 
 func intPtr(i int) *int { return &i }
 
+// testTenantID is a valid tenant id: normalization requires exactly 26
+// characters, the width of the CHAR(26) ULID every tenants.id carries.
+const testTenantID = "00000000000000000000000001"
+
 func validCreateInput() CreateInput {
 	return CreateInput{
 		Name:         "check-1",
-		TenantID:     "t1",
+		TenantID:     testTenantID,
 		CheckType:    domaincheck.CheckTypeHTTPHealth,
+		CheckConfig:  map[string]any{"url": "http://api.local/health"},
 		ScheduleType: domaincheck.ScheduleTypeInterval,
 		IntervalSec:  intPtr(60),
 		Timezone:     "UTC",
@@ -66,7 +71,7 @@ func validCreateInput() CreateInput {
 func TestCreateCheck_Success(t *testing.T) {
 	now := time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC)
 	repo := &stubCheckCreator{out: domaincheck.Snapshot{
-		ID: 1, Name: "check-1", TenantID: "t1", Status: "active",
+		ID: 1, Name: "check-1", TenantID: testTenantID, Status: "active",
 		CheckType: domaincheck.CheckTypeHTTPHealth, ScheduleType: domaincheck.ScheduleTypeInterval,
 		Version: 1, CreatedAt: now, UpdatedAt: now,
 	}}
@@ -77,7 +82,7 @@ func TestCreateCheck_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.ID != 1 || result.Name != "check-1" || result.TenantID != "t1" {
+	if result.ID != 1 || result.Name != "check-1" || result.TenantID != testTenantID {
 		t.Fatalf("unexpected result: %+v", result)
 	}
 	if repo.in.Name != "check-1" {
@@ -190,7 +195,7 @@ func TestResumeCheck_RepoError(t *testing.T) {
 func TestCreateCheck_DefaultClock(t *testing.T) {
 	// Exercise the default realClock set by NewCreateCheckUseCase (not overridden).
 	repo := &stubCheckCreator{out: domaincheck.Snapshot{
-		ID: 1, Name: "check-1", TenantID: "t1", Status: "active",
+		ID: 1, Name: "check-1", TenantID: testTenantID, Status: "active",
 		CheckType: domaincheck.CheckTypeHTTPHealth, ScheduleType: domaincheck.ScheduleTypeInterval,
 		Version: 1, CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}}

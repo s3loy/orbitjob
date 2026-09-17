@@ -8,7 +8,7 @@ import (
 
 // sliLister lists SLIs.
 type sliLister interface {
-	List(ctx context.Context, tenantID string, limit, offset int) ([]sli.Snapshot, int64, error)
+	List(ctx context.Context, tenantID, resourceGroupID string, limit, offset int) ([]sli.Snapshot, int64, error)
 }
 
 // ListSLIsUseCase handles SLI listing.
@@ -24,8 +24,11 @@ func NewListSLIsUseCase(repo sliLister) *ListSLIsUseCase {
 // ListInput contains the parameters for listing.
 type ListInput struct {
 	TenantID string
-	Limit    int
-	Offset   int
+	// ResourceGroupID narrows the result to one resource group when the caller's
+	// key is scoped to one. Empty means unscoped: the whole tenant.
+	ResourceGroupID string
+	Limit           int
+	Offset          int
 }
 
 // ListItem is a single item in the list.
@@ -56,7 +59,7 @@ func (uc *ListSLIsUseCase) List(ctx context.Context, in ListInput) (ListResult, 
 		in.Limit = 100
 	}
 
-	slis, total, err := uc.repo.List(ctx, in.TenantID, in.Limit, in.Offset)
+	slis, total, err := uc.repo.List(ctx, in.TenantID, in.ResourceGroupID, in.Limit, in.Offset)
 	if err != nil {
 		return ListResult{}, err
 	}

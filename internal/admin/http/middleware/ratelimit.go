@@ -19,7 +19,6 @@ const (
 	groupRead    endpointGroup = "read"
 	groupWrite   endpointGroup = "write"
 	groupTrigger endpointGroup = "trigger"
-	groupAdmin   endpointGroup = "admin"
 	groupPublic  endpointGroup = "public"
 )
 
@@ -32,7 +31,6 @@ var defaultLimits = map[endpointGroup]groupConfig{
 	groupRead:    {rps: 100, burst: 100},
 	groupWrite:   {rps: 10, burst: 10},
 	groupTrigger: {rps: 5, burst: 5},
-	groupAdmin:   {rps: 5, burst: 5},
 }
 
 // RateLimiter implements per-tenant, per-endpoint-group token bucket rate limiting.
@@ -72,8 +70,6 @@ func groupEnvKey(g endpointGroup) string {
 		return "RATELIMIT_WRITE_RPS"
 	case groupTrigger:
 		return "RATELIMIT_TRIGGER_RPS"
-	case groupAdmin:
-		return "RATELIMIT_ADMIN_RPS"
 	default:
 		return ""
 	}
@@ -121,10 +117,11 @@ func classifyEndpoint(method, path string) endpointGroup {
 	switch path {
 	case "/healthz", "/openapi.json", "/metrics":
 		return groupPublic
-	case "/api/v1/jobs/:id/trigger":
+	// Trigger and cancel are the two run lifecycle actions: each one call
+	// reaches the Kubernetes API, so they share the tightest budget instead of
+	// the generic write one.
+	case "/api/v1/jobs/:id/trigger", "/api/v1/instances/:run_id/cancel":
 		return groupTrigger
-	case "/api/v1/instances/:run_id/cancel":
-		return groupAdmin
 	}
 
 	if method == "GET" || method == "HEAD" {

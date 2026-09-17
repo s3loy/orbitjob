@@ -53,7 +53,7 @@ func loadConfig() (config, error) {
 		}
 	case modeMigrate:
 		if _, exists := os.LookupEnv("MIGRATIONS_BASELINE_VERSION"); exists {
-			return config{}, fmt.Errorf("MIGRATIONS_BASELINE_VERSION has been removed; recreate pre-v0.2.0 development databases instead")
+			return config{}, fmt.Errorf("MIGRATIONS_BASELINE_VERSION has been removed; recreate pre-release development databases instead")
 		}
 		cfg.dsn = os.Getenv("MIGRATOR_DSN")
 		if cfg.dsn == "" {

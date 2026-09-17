@@ -8,7 +8,7 @@ import (
 
 // sliReader retrieves SLIs.
 type sliReader interface {
-	Get(ctx context.Context, tenantID string, id int64) (sli.Snapshot, error)
+	Get(ctx context.Context, tenantID, resourceGroupID string, id int64) (sli.Snapshot, error)
 }
 
 // GetSLIUseCase handles SLI retrieval.
@@ -42,8 +42,8 @@ type GetItem struct {
 }
 
 // Get retrieves a single SLI.
-func (uc *GetSLIUseCase) Get(ctx context.Context, tenantID string, id int64) (GetItem, error) {
-	snap, err := uc.repo.Get(ctx, tenantID, id)
+func (uc *GetSLIUseCase) Get(ctx context.Context, tenantID, resourceGroupID string, id int64) (GetItem, error) {
+	snap, err := uc.repo.Get(ctx, tenantID, resourceGroupID, id)
 	if err != nil {
 		return GetItem{}, err
 	}

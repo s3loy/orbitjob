@@ -21,20 +21,22 @@ type checkCreator interface {
 
 // CreateInput is the application-layer input for creating a check.
 type CreateInput struct {
-	Name           string
-	Description    *string
-	TenantID       string
-	CheckType      string
-	CheckConfig    map[string]any
-	AssertionRules []domaincheck.AssertionRule
-	ScheduleType   string
-	CronExpr       *string
-	IntervalSec    *int
-	Timezone       string
-	TimeoutSec     int
-	RetryLimit     int
-	Priority       int
-	Labels         map[string]any
+	Name        string
+	Description *string
+	TenantID    string
+	// ResourceGroupID is the creating key's scope, recorded on the row.
+	ResourceGroupID string
+	CheckType       string
+	CheckConfig     map[string]any
+	AssertionRules  []domaincheck.AssertionRule
+	ScheduleType    string
+	CronExpr        *string
+	IntervalSec     *int
+	Timezone        string
+	TimeoutSec      int
+	RetryLimit      int
+	Priority        int
+	Labels          map[string]any
 }
 
 // CreateResult is the application-layer result for creating a check.
@@ -72,20 +74,21 @@ func NewCreateCheckUseCase(repo checkCreator) *CreateCheckUseCase {
 
 func (uc *CreateCheckUseCase) Create(ctx context.Context, in CreateInput) (CreateResult, error) {
 	spec, err := domaincheck.NormalizeCreate(uc.clock.Now(), domaincheck.CreateInput{
-		Name:           in.Name,
-		Description:    in.Description,
-		TenantID:       in.TenantID,
-		CheckType:      in.CheckType,
-		CheckConfig:    in.CheckConfig,
-		AssertionRules: in.AssertionRules,
-		ScheduleType:   in.ScheduleType,
-		CronExpr:       in.CronExpr,
-		IntervalSec:    in.IntervalSec,
-		Timezone:       in.Timezone,
-		TimeoutSec:     in.TimeoutSec,
-		RetryLimit:     in.RetryLimit,
-		Priority:       in.Priority,
-		Labels:         in.Labels,
+		Name:            in.Name,
+		Description:     in.Description,
+		TenantID:        in.TenantID,
+		ResourceGroupID: in.ResourceGroupID,
+		CheckType:       in.CheckType,
+		CheckConfig:     in.CheckConfig,
+		AssertionRules:  in.AssertionRules,
+		ScheduleType:    in.ScheduleType,
+		CronExpr:        in.CronExpr,
+		IntervalSec:     in.IntervalSec,
+		Timezone:        in.Timezone,
+		TimeoutSec:      in.TimeoutSec,
+		RetryLimit:      in.RetryLimit,
+		Priority:        in.Priority,
+		Labels:          in.Labels,
 	})
 	if err != nil {
 		return CreateResult{}, err

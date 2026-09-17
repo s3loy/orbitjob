@@ -1,18 +1,31 @@
 package http
 
 import (
+	"context"
 	"strings"
 	"testing"
+
+	jobcommand "orbitjob/internal/admin/app/job/command"
+	query "orbitjob/internal/admin/app/job/query"
 )
 
+// stubListJobsForDoc is a non-nil list use case, which is what makes the
+// handler document and register the /jobs read routes. The trigger stub does
+// the same for the manual-run route.
+type stubListJobsForDoc struct{}
+
+func (s *stubListJobsForDoc) List(context.Context, query.ListInput) ([]query.ListItem, error) {
+	return nil, nil
+}
+
+type stubTriggerJobForDoc struct{}
+
+func (s *stubTriggerJobForDoc) Trigger(context.Context, jobcommand.TriggerInput) (jobcommand.TriggerResult, error) {
+	return jobcommand.TriggerResult{}, nil
+}
+
 func TestHandler_OpenAPIDocument(t *testing.T) {
-	handler := NewHandler(
-		&stubCreateJobUseCase{},
-		&stubListJobsUseCase{},
-		&stubGetJobUseCase{},
-		&stubUpdateJobUseCase{},
-		&stubChangeStatusUseCase{},
-	)
+	handler := NewHandler(&stubListJobsForDoc{}, nil, &stubTriggerJobForDoc{})
 
 	doc := handler.OpenAPIDocument()
 
@@ -42,6 +55,10 @@ func TestHandler_OpenAPIDocument(t *testing.T) {
 		t.Fatalf("expected /metrics response content type text/plain, got %+v", metricsPath.Get.Responses["200"].Content)
 	}
 
+	// A job definition is a projected Custom Resource: the read side is GET
+	// only. Creation and mutation happen in Kubernetes, so a POST on the
+	// collection must stay undocumented rather than imply a route that would
+	// write the ledger.
 	jobsPath, ok := doc.Paths["/api/v1/jobs"]
 	if !ok {
 		t.Fatal("expected /api/v1/jobs path to be documented")
@@ -49,14 +66,14 @@ func TestHandler_OpenAPIDocument(t *testing.T) {
 	if jobsPath.Get == nil {
 		t.Fatal("expected GET /api/v1/jobs operation")
 	}
-	if jobsPath.Post == nil {
-		t.Fatal("expected POST /api/v1/jobs operation")
+	if jobsPath.Post != nil {
+		t.Fatal("POST /api/v1/jobs must not be documented: definitions are not created over HTTP")
 	}
 	if !hasParameter(jobsPath.Get.Parameters, "tenant_id", "query") {
 		t.Fatalf("expected tenant_id query parameter, got %+v", jobsPath.Get.Parameters)
 	}
-	if got := parameterSchema(jobsPath.Get.Parameters, "tenant_id", "query").Default; got != "default" {
-		t.Fatalf("expected tenant_id default=%q, got %+v", "default", got)
+	if got := parameterSchema(jobsPath.Get.Parameters, "tenant_id", "query").Default; got != nil {
+		t.Fatalf("expected no tenant_id default, got %+v", got)
 	}
 	if got := parameterSchema(jobsPath.Get.Parameters, "limit", "query").Default; got != 50 {
 		t.Fatalf("expected limit default=%d, got %+v", 50, got)
@@ -65,62 +82,18 @@ func TestHandler_OpenAPIDocument(t *testing.T) {
 		t.Fatalf("expected %s response header on GET /api/v1/jobs", traceIDHeaderName)
 	}
 
-	createSchema, ok := doc.Components.Schemas["CreateJobRequest"]
+	triggerPath, ok := doc.Paths["/api/v1/jobs/{id}/trigger"]
 	if !ok {
-		t.Fatal("expected CreateJobRequest schema")
+		t.Fatal("expected /api/v1/jobs/{id}/trigger path to be documented")
 	}
-	if !containsString(createSchema.Required, "name") {
-		t.Fatalf("expected name to be required, got %+v", createSchema.Required)
+	if triggerPath.Post == nil {
+		t.Fatal("expected POST /api/v1/jobs/{id}/trigger operation")
 	}
-	if !containsString(createSchema.Required, "trigger_type") {
-		t.Fatalf("expected trigger_type to be required, got %+v", createSchema.Required)
+	if !hasParameter(triggerPath.Post.Parameters, "id", "path") {
+		t.Fatalf("expected id path parameter, got %+v", triggerPath.Post.Parameters)
 	}
-	if !containsString(createSchema.Required, "handler_type") {
-		t.Fatalf("expected handler_type to be required, got %+v", createSchema.Required)
-	}
-	if got := createSchema.Properties["trigger_type"].Enum; len(got) != 2 || got[0] != "cron" || got[1] != "manual" {
-		t.Fatalf("expected trigger_type enum [cron manual], got %+v", got)
-	}
-	if got := createSchema.Properties["timezone"].Default; got != "UTC" {
-		t.Fatalf("expected timezone default=%q, got %+v", "UTC", got)
-	}
-	if got := createSchema.Properties["tenant_id"].MaxLength; got == nil || *got != 64 {
-		t.Fatalf("expected tenant_id maxLength=%d, got %+v", 64, got)
-	}
-	if got := createSchema.Properties["timezone"].MaxLength; got == nil || *got != 64 {
-		t.Fatalf("expected timezone maxLength=%d, got %+v", 64, got)
-	}
-	if got := createSchema.Properties["timeout_sec"].Default; got != 60 {
-		t.Fatalf("expected timeout_sec default=%d, got %+v", 60, got)
-	}
-	if createSchema.Properties["cron_expr"].Description == "" {
-		t.Fatal("expected cron_expr to contain conditional validation description")
-	}
-
-	updatePath, ok := doc.Paths["/api/v1/jobs/{id}"]
-	if !ok {
-		t.Fatal("expected /api/v1/jobs/{id} path to be documented")
-	}
-	if updatePath.Put == nil {
-		t.Fatal("expected PUT /api/v1/jobs/{id} operation")
-	}
-	if updatePath.Put.RequestBody == nil {
-		t.Fatal("expected update operation request body")
-	}
-	if got := updatePath.Put.RequestBody.Content["application/json"].Schema.Ref; got != "#/components/schemas/UpdateJobRequest" {
-		t.Fatalf("expected update request schema ref, got %q", got)
-	}
-	if !hasParameter(updatePath.Put.Parameters, "X-Actor-ID", "header") {
-		t.Fatalf("expected X-Actor-ID header parameter, got %+v", updatePath.Put.Parameters)
-	}
-	if !hasParameter(updatePath.Put.Parameters, traceIDHeaderName, "header") {
-		t.Fatalf("expected %s header parameter, got %+v", traceIDHeaderName, updatePath.Put.Parameters)
-	}
-	if got := updatePath.Put.Responses["409"].Content["application/json"].Schema.Ref; got != "#/components/schemas/ErrorResponse" {
-		t.Fatalf("expected conflict response schema ref, got %q", got)
-	}
-	if !hasTraceHeader(updatePath.Put.Responses["409"]) {
-		t.Fatalf("expected %s response header on 409", traceIDHeaderName)
+	if !hasTraceHeader(triggerPath.Post.Responses["200"]) {
+		t.Fatalf("expected %s response header on POST trigger", traceIDHeaderName)
 	}
 }
 
@@ -154,7 +127,6 @@ func TestOpenAPIDocument_ErrorCodeEnum(t *testing.T) {
 		"NOT_FOUND",
 		"CONFLICT",
 		"RATE_LIMITED",
-		"QUOTA_EXHAUSTED",
 		"INTERNAL_ERROR",
 		"SERVICE_UNAVAILABLE",
 	}

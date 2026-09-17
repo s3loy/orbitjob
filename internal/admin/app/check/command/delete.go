@@ -4,12 +4,15 @@ import "context"
 
 type DeleteInput struct {
 	TenantID string
-	ID       int64
-	Version  int
+	// ResourceGroupID is the caller's own resource group scope, empty when the
+	// caller is not scoped to one.
+	ResourceGroupID string
+	ID              int64
+	Version         int
 }
 
 type checkDeleter interface {
-	Delete(ctx context.Context, tenantID string, id int64, version int) error
+	Delete(ctx context.Context, tenantID, resourceGroupID string, id int64, version int) error
 }
 
 type DeleteCheckUseCase struct {
@@ -21,5 +24,5 @@ func NewDeleteCheckUseCase(repo checkDeleter) *DeleteCheckUseCase {
 }
 
 func (uc *DeleteCheckUseCase) Delete(ctx context.Context, in DeleteInput) error {
-	return uc.repo.Delete(ctx, in.TenantID, in.ID, in.Version)
+	return uc.repo.Delete(ctx, in.TenantID, in.ResourceGroupID, in.ID, in.Version)
 }
