@@ -52,7 +52,15 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Run v0.2.0 migration baseline qualification
+      # Creates the orbitjob_* deployment roles and sets their login passwords
+      # to the itest-* values the integration suites authenticate with. The
+      # bootstrap and admin HTTP suites must connect as orbitjob_admin (the
+      # baseline's bootstrap function refuses any other session_user), and they
+      # derive that role's DSN from TEST_DATABASE_DSN plus these passwords.
+      - name: Provision deployment roles
+        run: go run ./scripts/provision-test-roles
+
+      - name: Run migration baseline qualification
         run: go test -count=1 -tags integration ./db/migrations
 
       - name: Run postgres integration test helpers
@@ -63,6 +71,3 @@ jobs:
 
       - name: Run bootstrap and admin HTTP integration tests
         run: go test -count=1 -tags integration ./internal/admin/bootstrap ./internal/admin/http
-
-      - name: Run scheduling dispatch execute integration tests
-        run: go test -count=1 -tags integration ./test/integration

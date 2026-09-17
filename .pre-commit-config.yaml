@@ -1,0 +1,55 @@
+# See https://pre-commit.com for more information
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      # --unsafe swaps in the loader that constructs arbitrary Python objects,
+      # which turns a crafted YAML file in the repo into code execution on
+      # whoever runs pre-commit. It was only ever needed to accept multiple
+      # documents in one file, and that has its own flag.
+      - id: check-yaml
+        args: ['--allow-multiple-documents']
+        exclude: '^charts/.*/templates/.*\.yaml$'
+      - id: check-added-large-files
+        args: ['--maxkb=1024']
+      - id: check-merge-conflict
+      - id: mixed-line-ending
+
+  - repo: local
+    hooks:
+      - id: go-fmt
+        name: go fmt
+        entry: sh -c 'find . -name "*.go" -not -path "./vendor/*" -exec gofmt -l -w {} + && git diff --exit-code'
+        language: system
+        files: \.go$
+        pass_filenames: false
+
+      - id: go-mod-tidy
+        name: go mod tidy
+        entry: sh -c 'go mod tidy && git diff --exit-code go.mod go.sum'
+        language: system
+        files: (go\.mod|go\.sum)$
+        pass_filenames: false
+
+      - id: golangci-lint
+        name: golangci-lint
+        entry: golangci-lint run --fix
+        language: system
+        files: \.go$
+        pass_filenames: false
+
+      - id: openapi-check
+        name: openapi check
+        entry: make openapi-check
+        language: system
+        files: ^internal/admin/http/.*\.go$
+        pass_filenames: false
+
+      - id: go-test
+        name: go test
+        entry: make test
+        language: system
+        files: \.go$
+        pass_filenames: false
