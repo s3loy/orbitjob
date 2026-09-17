@@ -52,21 +52,54 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'orbitjob_owner') THEN
     CREATE ROLE orbitjob_owner NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOINHERIT;
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'orbitjob_dispatcher') THEN
-    CREATE ROLE orbitjob_dispatcher NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOINHERIT;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'orbitjob_worker') THEN
-    CREATE ROLE orbitjob_worker NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOINHERIT;
-  END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'orbitjob_reader') THEN
     CREATE ROLE orbitjob_reader NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOINHERIT;
   END IF;
 END $$;
-ALTER ROLE orbitjob_table_owner NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOINHERIT;
-ALTER ROLE orbitjob_migrator LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOINHERIT;
-ALTER ROLE orbitjob_admin LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOINHERIT;
-ALTER ROLE orbitjob_runtime LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOINHERIT;
-ALTER ROLE orbitjob_operator NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOINHERIT;
+
+-- Verify the roles are hardened rather than re-asserting it.
+--
+-- These were unconditional ALTER ROLE statements. PostgreSQL lets only a
+-- superuser change SUPERUSER, CREATEROLE or BYPASSRLS, so running them meant
+-- owner-init required a superuser connection -- which is why the installation
+-- Secret carried a superuser DSN. The attributes are already correct on every
+-- role this function creates, so the ALTER only ever mattered for a role that
+-- had drifted, and that case needs a superuser regardless. Checking reports the
+-- drift instead of depending on the privilege to silently repair it.
+DO $$
+DECLARE
+  expected record;
+  actual record;
+BEGIN
+  FOR expected IN
+    SELECT * FROM (VALUES
+      ('orbitjob_table_owner', false),
+      ('orbitjob_migrator',    true),
+      ('orbitjob_admin',       true),
+      ('orbitjob_runtime',     true),
+      ('orbitjob_operator',    false),
+      ('orbitjob_owner',       false),
+      ('orbitjob_reader',      false)
+    ) AS t(role_name, can_login)
+  LOOP
+    SELECT rolsuper, rolbypassrls, rolcreaterole, rolinherit, rolcanlogin
+      INTO actual
+      FROM pg_roles WHERE rolname = expected.role_name;
+    CONTINUE WHEN NOT FOUND;
+
+    IF actual.rolsuper OR actual.rolbypassrls OR actual.rolcreaterole OR actual.rolinherit THEN
+      RAISE EXCEPTION
+        'role % is not hardened: rolsuper=%, rolbypassrls=%, rolcreaterole=%, rolinherit=%. A superuser has to repair it before owner-init can continue',
+        expected.role_name, actual.rolsuper, actual.rolbypassrls, actual.rolcreaterole, actual.rolinherit;
+    END IF;
+    IF actual.rolcanlogin <> expected.can_login THEN
+      RAISE EXCEPTION
+        'role % has LOGIN=%, expected %. A superuser has to repair it before owner-init can continue',
+        expected.role_name, actual.rolcanlogin, expected.can_login;
+    END IF;
+  END LOOP;
+END $$;
+
 DO $$
 DECLARE
   membership record;

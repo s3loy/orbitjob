@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,10 +18,10 @@ import (
 )
 
 var testPasswords = map[string]string{
-	"orbitjob_migrator": "v020-test-migrator",
-	"orbitjob_admin":    "v020-test-admin",
-	"orbitjob_runtime":  "v020-test-runtime",
-	"orbitjob_operator": "v020-test-operator",
+	"orbitjob_migrator": "itest-migrator",
+	"orbitjob_admin":    "itest-admin",
+	"orbitjob_runtime":  "itest-runtime",
+	"orbitjob_operator": "itest-operator",
 }
 
 func testOwnerDSN(t *testing.T) string {
@@ -82,7 +83,7 @@ func resetPublicSchema(t *testing.T) {
 	}
 }
 
-func applyV020Baseline(t *testing.T) {
+func applyAllMigrations(t *testing.T) {
 	t.Helper()
 	prepareMigrationRoles(t)
 	resetPublicSchema(t)
@@ -97,7 +98,73 @@ func applyV020Baseline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
-	if result.CurrentVersion != 3 || result.Noop || len(result.Applied) != 3 {
+	expectedVersion := migrations[len(migrations)-1].Version
+	if result.CurrentVersion != expectedVersion || result.Noop || len(result.Applied) != len(migrations) {
 		t.Fatalf("Execute() result = %#v", result)
 	}
+}
+
+// ownerDB opens the owner (superuser) connection. RLS does not apply to it, so
+// it is how a test seeds rows for more than one tenant; the isolation is then
+// observed through a non-owner connection.
+func ownerDB(t *testing.T) *sql.DB {
+	t.Helper()
+	return openMigrationDB(t, testOwnerDSN(t))
+}
+
+// withRoleConn runs fn on a single connection opened as role. A *sql.DB pools
+// connections, so a session setting such as SET app.tenant_id issued on the
+// pool may land on one connection and be read from another; every statement in
+// one tenant context must share a connection.
+func withRoleConn(t *testing.T, role string, fn func(ctx context.Context, conn *sql.Conn)) {
+	t.Helper()
+	db := openMigrationDB(t, testRoleDSN(t, role))
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("open connection as %s: %v", role, err)
+	}
+	defer func() { _ = conn.Close() }()
+	fn(ctx, conn)
+}
+
+// names runs a query expected to return one text column and returns every value.
+func names(t *testing.T, ctx context.Context, q interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}, query string) []string {
+	t.Helper()
+	rows, err := q.QueryContext(ctx, query)
+	if err != nil {
+		t.Fatalf("query %q: %v", query, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		out = append(out, name)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate: %v", err)
+	}
+	return out
+}
+
+// baselineStructuralAssertion returns the in-file catalog assertion block. The
+// tests that probe the assertion run this exact text rather than a copy, so a
+// weakened assertion fails the probe.
+func baselineStructuralAssertion(t *testing.T) string {
+	t.Helper()
+	const begin = "-- BEGIN structural catalog assertion"
+	const end = "-- END structural catalog assertion"
+	text := string(readBaseline(t))
+	from := strings.Index(text, begin)
+	to := strings.Index(text, end)
+	if from < 0 || to < 0 || to < from {
+		t.Fatalf("baseline is missing the structural catalog assertion block")
+	}
+	return text[from : to+len(end)]
 }

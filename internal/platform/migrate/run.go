@@ -10,7 +10,7 @@ import (
 
 const (
 	advisoryLockID                    int64 = 0x4f524249544a4f42 // ORBITJOB
-	UnsupportedPreReleaseHistoryError       = "unsupported pre-release schema history; recreate the database for v0.2.0"
+	UnsupportedPreReleaseHistoryError       = "unsupported pre-release schema history; recreate the database"
 )
 
 type Logger interface {
@@ -75,7 +75,7 @@ func Execute(ctx context.Context, db *sql.DB, migrations []Migration, options Op
 	`).Scan(&migrationTable, &jobsTable); err != nil {
 		return Result{}, fmt.Errorf("inspect existing schema: %w", err)
 	}
-	if isV020BaselineSet(migrations) && !migrationTable.Valid && jobsTable.Valid {
+	if isBaselineSet(migrations) && !migrationTable.Valid && jobsTable.Valid {
 		return Result{}, errors.New(UnsupportedPreReleaseHistoryError)
 	}
 
@@ -151,12 +151,12 @@ func Execute(ctx context.Context, db *sql.DB, migrations []Migration, options Op
 	return result, nil
 }
 
-func isV020BaselineSet(migrations []Migration) bool {
-	return len(migrations) == 1 && migrations[0].Version == 1 && migrations[0].Name == "v020_baseline"
+func isBaselineSet(migrations []Migration) bool {
+	return len(migrations) == 1 && migrations[0].Version == 1 && migrations[0].Name == "baseline"
 }
 
 func classifyExistingHistory(migrations []Migration, applied []AppliedMigration, jobsExists bool) error {
-	if !isV020BaselineSet(migrations) {
+	if !isBaselineSet(migrations) {
 		return validateChecksums(migrations, applied)
 	}
 	if len(applied) == 0 {
@@ -165,7 +165,7 @@ func classifyExistingHistory(migrations []Migration, applied []AppliedMigration,
 		}
 		return nil
 	}
-	if len(applied) != 1 || applied[0].Version != 1 || applied[0].Name != "v020_baseline" {
+	if len(applied) != 1 || applied[0].Version != 1 || applied[0].Name != "baseline" {
 		return errors.New(UnsupportedPreReleaseHistoryError)
 	}
 	if applied[0].Checksum != migrations[0].Checksum {
