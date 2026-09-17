@@ -1,0 +1,96 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: jobruns.workloads.orbitjob.io
+spec:
+  group: workloads.orbitjob.io
+  scope: Namespaced
+  names:
+    plural: jobruns
+    singular: jobrun
+    kind: JobRun
+    shortNames: [jr]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            spec:
+              type: object
+              required: [scheduledJobRef, definitionRevision, trigger, actor, occurrenceKey]
+              properties:
+                scheduledJobRef:
+                  type: object
+                  required: [name, uid]
+                  properties:
+                    name: {type: string, minLength: 1}
+                    uid: {type: string, minLength: 1}
+                definitionRevision: {type: integer, format: int64, minimum: 1}
+                # Schedule, Manual and Retry are the classic trigger surface;
+                # Check marks a run the check scheduler fired for a probe-style
+                # definition; Workflow marks a step run created by the operator's
+                # workflow walker (an ordinary run of the referenced definition,
+                # grouped to its workflow run by the ledger's workflow_run_id);
+                # Function marks an invocation fired by the HTTP function
+                # surface. Each value exists so ledger readers can select or
+                # exclude that traffic without parsing source_uid strings; a
+                # Check, Workflow or Function CR is still refused unless its run
+                # row was committed first (by the check scheduler, the workflow
+                # walker, or -- for Function, like Manual -- not at all, since
+                # the API publishes Function CRs CR-first).
+                trigger: {type: string, enum: [Schedule, Manual, Retry, Check, Workflow, Function]}
+                # Who asked for the run. Required and non-empty: the ledger's
+                # actor column is NOT NULL with a non-empty CHECK, and a run
+                # whose triggerer cannot be named is the one answer the product
+                # exists to give. maxLength matches the column width.
+                #
+                # Trust boundary: the operator cannot tell an API-written JobRun
+                # from a hand-written one, so it trusts this field. The value is
+                # only as trustworthy as who may write a JobRun in a tenant
+                # namespace, which is why that write is granted to the admin API
+                # alone (create, get, patch -- the patch exists for cancel
+                # requests and only ever sets spec.cancelRequested) and the
+                # actor travels here, in a schema-validated spec field, rather
+                # than a free-text annotation admission cannot reject. Nothing
+                # on this path makes the value unforgeable to a writer that
+                # holds the grant; a mutating admission webhook stamping
+                # spec.actor from request.userInfo.username would be the one
+                # place to do it.
+                actor: {type: string, minLength: 1, maxLength: 255}
+                occurrenceKey: {type: string, minLength: 1}
+                # Bounds the run; projected onto the Kubernetes Job as
+                # activeDeadlineSeconds so it survives an operator outage.
+                timeoutSeconds: {type: integer, format: int32, minimum: 0}
+                # The user's stop intent. The run only reaches Canceled once the
+                # Kubernetes Job is observed gone.
+                cancelRequested: {type: boolean}
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                  enum: [Pending, CreatingAttempt, Running, RetryWaiting, Succeeded, Failed, CancelRequested, Canceled, CancelUnknown]
+                attempt: {type: integer, format: int32, minimum: 0}
+                kubernetesJobRef:
+                  type: object
+                  properties:
+                    name: {type: string}
+                    uid: {type: string}
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    required: [type, status]
+                    properties:
+                      type: {type: string}
+                      status: {type: string, enum: ["True", "False", Unknown]}
+                      reason: {type: string}
+                      message: {type: string}
+                      lastTransitionTime: {type: string, format: date-time}
+                startedAt: {type: string, format: date-time}
+                completedAt: {type: string, format: date-time}
+      subresources: {status: {}}
