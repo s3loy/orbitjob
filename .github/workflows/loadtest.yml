@@ -5,18 +5,40 @@
 # silently stretched a 30-minute schedule to nearly two hours, and nobody
 # noticed until the timings were compared against the clock.
 #
-# It is manual for now. A load test is a wall-clock commitment, and putting a
-# four-hour job on a schedule before it has been proven once by hand is how a
-# repository ends up with a nightly job everybody ignores.
+# Both profiles have since been proven against a real installation, so the
+# wall-clock commitment is now scheduled:
 #
-#   smoke    ~40 minutes total, non-qualifying
-#   standard ~4 hours of schedule plus setup, settle and verify
+#   smoke    nightly, 02:30 UTC            ~40 minutes, non-qualifying
+#   standard weekly, Saturday 22:00 UTC    ~4 hours of schedule plus setup,
+#                                          settle and verify; qualifying
 #
-# `long` is not offered: it is eight hours of schedule alone, and a hosted job
-# is capped at six.
+# The standard run gets its own night rather than following smoke on the
+# same night: behind the shared concurrency group the two would serialize
+# into one ~6.5-hour runner occupation, and standard's own verify phase
+# already covers what a follow-up smoke would re-prove. Weekly rather than
+# nightly standard, because a qualifying run costs GitHub-hosted runner
+# time by the hour and the profile exists to catch drift, not to be a
+# daily status light.
+#
+# Manual workflow_dispatch keeps both profiles available ad hoc; its input
+# overrides the schedule's choice.
+#
+# `long` is not offered on hosted runners: it is eight hours of schedule
+# alone, and a GitHub-hosted job is hard-capped at 360 minutes (6 hours),
+# so 8h cannot fit even before install, settle and verify are counted. The
+# soak runs on the always-on dev cluster instead (docs/loadtest-guide.md).
+#
+# Scheduled workflows fire only from the default branch.
 name: Load Test
 
 on:
+  schedule:
+    # Weekly smoke: off-peak UTC (evening Americas, small hours Europe).
+    - cron: "30 2 * * 3"
+    # Weekly qualification: standard profile, Saturday night UTC, finishing
+    # before Sunday morning in Europe. Manual runs stay available any time
+    # via workflow_dispatch on any branch.
+    - cron: "0 22 * * 6"
   workflow_dispatch:
     inputs:
       profile:
@@ -29,6 +51,8 @@ on:
 permissions:
   contents: read
 
+# One profile at a time, and nothing cancelled: a killed profile leaves a
+# verdict file that looks like an execution failure.
 concurrency:
   group: loadtest
   cancel-in-progress: false
@@ -39,18 +63,50 @@ env:
   HELM_VERSION: "v4.2.4"
 
 jobs:
-  loadtest:
-    name: Load test (${{ inputs.profile }})
+  # Scheduled events carry no inputs, so the profile is resolved once, here:
+  # a manual dispatch takes its input, the Saturday cron means standard, and
+  # any other trigger is the nightly smoke. The decision is a job output
+  # because timeout-minutes cannot read a job-level env.
+  plan:
+    name: Resolve profile
     runs-on: ubuntu-latest
+    outputs:
+      profile: ${{ steps.profile.outputs.profile }}
+    steps:
+      - id: profile
+        env:
+          REQUESTED: ${{ inputs.profile }}
+          SCHEDULE: ${{ github.event.schedule }}
+          STANDARD_CRON: "0 22 * * 6"
+        run: |
+          if [ -n "$REQUESTED" ]; then
+            echo "profile=$REQUESTED" >> "$GITHUB_OUTPUT"
+          elif [ "$SCHEDULE" = "$STANDARD_CRON" ]; then
+            echo "profile=standard" >> "$GITHUB_OUTPUT"
+          else
+            echo "profile=smoke" >> "$GITHUB_OUTPUT"
+          fi
+
+  loadtest:
+    name: Load test (${{ needs.plan.outputs.profile }})
+    needs: [plan]
+    runs-on: ubuntu-latest
+    env:
+      PROFILE: ${{ needs.plan.outputs.profile }}
     # A profile that runs out of time should say so, not be killed mid-run and
     # leave a verdict file that looks like an execution failure. A hosted job
-    # is capped at six hours, so standard's four-hour schedule plus install,
-    # settle and verify has to fit under 350.
-    timeout-minutes: ${{ inputs.profile == 'standard' && 350 || 90 }}
+    # is capped at six hours (360 minutes), so standard's four-hour schedule
+    # plus install, settle and verify has to fit under 350.
+    timeout-minutes: ${{ needs.plan.outputs.profile == 'standard' && 350 || 90 }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
 
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+      - name: Record start time
+        run: echo "STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+
+      - name: Setup Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -88,8 +144,6 @@ jobs:
       # the input allows can never reach a shell. The script validates it
       # against the same two names as well.
       - name: Run the profile
-        env:
-          PROFILE: ${{ inputs.profile }}
         run: ./scripts/loadtest-ci.sh "$PROFILE"
 
       # The run directory holds the manifest, the stats, the verdict and the
@@ -98,7 +152,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: loadtest-${{ inputs.profile }}-${{ github.run_id }}
+          name: loadtest-${{ needs.plan.outputs.profile }}-${{ github.run_id }}
           path: test/load/runs/
           retention-days: 14
 
@@ -110,3 +164,38 @@ jobs:
             kubectl get pods -n "$namespace" -o wide || true
             kubectl get events -n "$namespace" --sort-by=.lastTimestamp | tail -30 || true
           done
+
+      # One glanceable block on the run page: profile, duration, what the
+      # verifier decided, and where the artifact landed. report.md is embedded
+      # so nobody has to download the artifact to learn the outcome.
+      - name: Write the job summary
+        if: always()
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          run_dir="$(ls -1dt test/load/runs/*/ 2>/dev/null | head -1)"
+          verdict="none (job ended before the verifier ran)"
+          if [ -n "$run_dir" ] && [ -f "${run_dir}result.json" ]; then
+            verdict="$(jq -r '.verdict // "unknown"' "${run_dir}result.json")"
+          fi
+          duration="unknown"
+          if [ -n "${STARTED_AT:-}" ]; then
+            duration="$(( ($(date +%s) - STARTED_AT) / 60 )) min"
+          fi
+          {
+            echo "## Load test"
+            echo
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Profile | ${PROFILE} |"
+            echo "| Verdict | ${verdict} |"
+            echo "| Job outcome | ${{ job.status }} |"
+            echo "| Duration | ${duration} |"
+            echo "| Run artifact | ${RUN_URL} |"
+            echo
+            if [ -n "$run_dir" ] && [ -f "${run_dir}report.md" ]; then
+              echo "### Report"
+              echo
+              cat "${run_dir}report.md"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
