@@ -20,6 +20,7 @@ cjk = re.compile(
     "\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]"
 )
 exempt = "README.zh.md"
+offenders = []
 for path in sys.stdin.read().splitlines():
     if not path or path == exempt:
         continue
@@ -34,7 +35,10 @@ for path in sys.stdin.read().splitlines():
     except UnicodeDecodeError:
         continue
     if cjk.search(text):
-        print(path)
+        offenders.append(path)
+for path in offenders:
+    print(path)
+sys.exit(1 if offenders else 0)
 '); then
 	echo "Staged files contain CJK characters (only README.zh.md is exempt):"
 	printf '%s\n' "$hits"
