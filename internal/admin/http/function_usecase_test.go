@@ -13,6 +13,13 @@ import (
 	"orbitjob/internal/domain/resource"
 )
 
+// usecaseTestTenant is a 26-character tenant id, the shape tenants.id values
+// take and the read model's inputs validate.
+const (
+	usecaseTestTenant  = "01JBB0W9YRXG4SZV2QKM78N3PD"
+	usecaseTestTenantB = "01JBB0W9YRXG4SZV2QKM78N3PE"
+)
+
 // Use-case coverage for the function surface, over in-memory implementations
 // of the consumer-side store interfaces. The real repositories land with the
 // storage workstream against the core contracts; these fakes exist so the
@@ -105,7 +112,7 @@ func (f *fakeJobRunPublisher) Get(ctx context.Context, namespace, name string) (
 
 func invokeTestDef() domainfunction.Definition {
 	return domainfunction.Definition{
-		ID: 3, TenantID: "tenant-a", Name: "resize",
+		ID: 3, TenantID: usecaseTestTenant, Name: "resize",
 		Status:         domainfunction.StatusActive,
 		Image:          "registry.example/resize@sha256:abcd",
 		TimeoutSeconds: 30, RetryLimit: 1, Version: 2,
@@ -128,7 +135,7 @@ func TestInvokeFunctionUseCase_PublishesFunctionTriggerCR(t *testing.T) {
 	uc := newTestInvokeUC(invokeTestDef(), functionRevision{ID: 41, Namespace: "orbitjob"}, publisher)
 
 	out, err := uc.Invoke(context.Background(), FunctionInvokeInput{
-		FunctionID: 3, TenantID: "tenant-a", ActorID: "key-123",
+		FunctionID: 3, TenantID: usecaseTestTenant, ActorID: "key-123",
 	})
 	if err != nil {
 		t.Fatalf("invoke: %v", err)
@@ -175,13 +182,13 @@ func TestInvokeFunctionUseCase_IdempotencyKeyResolvesSameRun(t *testing.T) {
 	uc := newTestInvokeUC(invokeTestDef(), functionRevision{ID: 41, Namespace: "orbitjob"}, publisher)
 
 	first, err := uc.Invoke(context.Background(), FunctionInvokeInput{
-		FunctionID: 3, TenantID: "tenant-a", ActorID: "key-123", IdempotencyKey: "idem-1",
+		FunctionID: 3, TenantID: usecaseTestTenant, ActorID: "key-123", IdempotencyKey: "idem-1",
 	})
 	if err != nil {
 		t.Fatalf("first invoke: %v", err)
 	}
 	second, err := uc.Invoke(context.Background(), FunctionInvokeInput{
-		FunctionID: 3, TenantID: "tenant-a", ActorID: "key-123", IdempotencyKey: "idem-1",
+		FunctionID: 3, TenantID: usecaseTestTenant, ActorID: "key-123", IdempotencyKey: "idem-1",
 	})
 	if err != nil {
 		t.Fatalf("second invoke: %v", err)
@@ -192,7 +199,7 @@ func TestInvokeFunctionUseCase_IdempotencyKeyResolvesSameRun(t *testing.T) {
 	}
 
 	third, err := uc.Invoke(context.Background(), FunctionInvokeInput{
-		FunctionID: 3, TenantID: "tenant-a", ActorID: "key-123",
+		FunctionID: 3, TenantID: usecaseTestTenant, ActorID: "key-123",
 	})
 	if err != nil {
 		t.Fatalf("unkeyed invoke: %v", err)
@@ -208,7 +215,7 @@ func TestInvokeFunctionUseCase_PausedFunctionIsConflict(t *testing.T) {
 	uc := newTestInvokeUC(def, functionRevision{ID: 41, Namespace: "orbitjob"}, &fakeJobRunPublisher{})
 
 	_, err := uc.Invoke(context.Background(), FunctionInvokeInput{
-		FunctionID: 3, TenantID: "tenant-a", ActorID: "key-123",
+		FunctionID: 3, TenantID: usecaseTestTenant, ActorID: "key-123",
 	})
 	var conflict *resource.ConflictError
 	if !errors.As(err, &conflict) {
@@ -223,7 +230,7 @@ func TestInvokeFunctionUseCase_MissingRevisionIsConflict(t *testing.T) {
 	uc := newTestInvokeUC(invokeTestDef(), functionRevision{ID: 0, Namespace: "orbitjob"}, &fakeJobRunPublisher{})
 
 	_, err := uc.Invoke(context.Background(), FunctionInvokeInput{
-		FunctionID: 3, TenantID: "tenant-a", ActorID: "key-123",
+		FunctionID: 3, TenantID: usecaseTestTenant, ActorID: "key-123",
 	})
 	var conflict *resource.ConflictError
 	if !errors.As(err, &conflict) {
@@ -237,7 +244,7 @@ func TestInvokeFunctionUseCase_ScopedCallerCannotSeeOtherGroups(t *testing.T) {
 	uc := newTestInvokeUC(def, functionRevision{ID: 41, Namespace: "orbitjob"}, &fakeJobRunPublisher{})
 
 	_, err := uc.Invoke(context.Background(), FunctionInvokeInput{
-		FunctionID: 3, TenantID: "tenant-a", ActorID: "key-123", ResourceGroupID: "group-2",
+		FunctionID: 3, TenantID: usecaseTestTenant, ActorID: "key-123", ResourceGroupID: "group-2",
 	})
 	var notFound *resource.NotFoundError
 	if !errors.As(err, &notFound) {
@@ -257,7 +264,7 @@ func TestInvokeFunctionUseCase_WaitPollsToTerminalPhase(t *testing.T) {
 	uc := newTestInvokeUC(invokeTestDef(), functionRevision{ID: 41, Namespace: "orbitjob"}, publisher)
 
 	out, err := uc.Invoke(context.Background(), FunctionInvokeInput{
-		FunctionID: 3, TenantID: "tenant-a", ActorID: "key-123", WaitSeconds: 5,
+		FunctionID: 3, TenantID: usecaseTestTenant, ActorID: "key-123", WaitSeconds: 5,
 	})
 	if err != nil {
 		t.Fatalf("invoke with wait: %v", err)
@@ -283,7 +290,7 @@ func TestInvokeFunctionUseCase_WaitExpiryStillReturnsReference(t *testing.T) {
 	uc := newTestInvokeUC(invokeTestDef(), functionRevision{ID: 41, Namespace: "orbitjob"}, publisher)
 
 	out, err := uc.Invoke(context.Background(), FunctionInvokeInput{
-		FunctionID: 3, TenantID: "tenant-a", ActorID: "key-123", WaitSeconds: 1,
+		FunctionID: 3, TenantID: usecaseTestTenant, ActorID: "key-123", WaitSeconds: 1,
 	})
 	if err != nil {
 		t.Fatalf("invoke with expiring wait: %v", err)
@@ -297,7 +304,7 @@ func TestInvokeFunctionUseCase_RejectsWaitOverCap(t *testing.T) {
 	uc := newTestInvokeUC(invokeTestDef(), functionRevision{ID: 41, Namespace: "orbitjob"}, &fakeJobRunPublisher{})
 
 	_, err := uc.Invoke(context.Background(), FunctionInvokeInput{
-		FunctionID: 3, TenantID: "tenant-a", ActorID: "key-123", WaitSeconds: 61,
+		FunctionID: 3, TenantID: usecaseTestTenant, ActorID: "key-123", WaitSeconds: 61,
 	})
 	if err == nil {
 		t.Fatal("expected a validation error for a wait over the cap")
@@ -307,13 +314,13 @@ func TestInvokeFunctionUseCase_RejectsWaitOverCap(t *testing.T) {
 func TestListFunctionsUseCase_GroupVisibility(t *testing.T) {
 	store := &fakeFunctionStore{}
 	store.seed(
-		domainfunction.Definition{ID: 1, TenantID: "tenant-a", Name: "ungrouped", Status: "active"},
-		domainfunction.Definition{ID: 2, TenantID: "tenant-a", Name: "mine", ResourceGroupID: "group-9", Status: "active"},
-		domainfunction.Definition{ID: 3, TenantID: "tenant-b", Name: "theirs", Status: "active"},
+		domainfunction.Definition{ID: 1, TenantID: usecaseTestTenant, Name: "ungrouped", Status: "active"},
+		domainfunction.Definition{ID: 2, TenantID: usecaseTestTenant, Name: "mine", ResourceGroupID: "group-9", Status: "active"},
+		domainfunction.Definition{ID: 3, TenantID: usecaseTestTenantB, Name: "theirs", Status: "active"},
 	)
 
 	unscoped, err := (&ListFunctionsUseCase{lister: store}).List(context.Background(),
-		FunctionListInput{TenantID: "tenant-a"})
+		FunctionListInput{TenantID: usecaseTestTenant})
 	if err != nil {
 		t.Fatalf("unscoped list: %v", err)
 	}
@@ -322,7 +329,7 @@ func TestListFunctionsUseCase_GroupVisibility(t *testing.T) {
 	}
 
 	scoped, err := (&ListFunctionsUseCase{lister: store}).List(context.Background(),
-		FunctionListInput{TenantID: "tenant-a", ResourceGroupID: "group-9"})
+		FunctionListInput{TenantID: usecaseTestTenant, ResourceGroupID: "group-9"})
 	if err != nil {
 		t.Fatalf("scoped list: %v", err)
 	}
@@ -333,36 +340,36 @@ func TestListFunctionsUseCase_GroupVisibility(t *testing.T) {
 
 func TestGetFunctionUseCase_VisibilityAndNotFound(t *testing.T) {
 	store := &fakeFunctionStore{}
-	store.seed(domainfunction.Definition{ID: 2, TenantID: "tenant-a", ResourceGroupID: "group-9", Name: "mine"})
+	store.seed(domainfunction.Definition{ID: 2, TenantID: usecaseTestTenant, ResourceGroupID: "group-9", Name: "mine"})
 
-	if _, err := (GetFunctionUseCase{reader: store}).Get(context.Background(),
-		FunctionGetInput{ID: 2, TenantID: "tenant-a"}); err != nil {
+	if _, err := (&GetFunctionUseCase{reader: store}).Get(context.Background(),
+		FunctionGetInput{ID: 2, TenantID: usecaseTestTenant}); err != nil {
 		t.Fatalf("unscoped get: %v", err)
 	}
-	if _, err := (GetFunctionUseCase{reader: store}).Get(context.Background(),
-		FunctionGetInput{ID: 2, TenantID: "tenant-a", ResourceGroupID: "group-2"}); err == nil {
+	if _, err := (&GetFunctionUseCase{reader: store}).Get(context.Background(),
+		FunctionGetInput{ID: 2, TenantID: usecaseTestTenant, ResourceGroupID: "group-2"}); err == nil {
 		t.Fatal("expected not-found for a function outside the caller's group")
 	}
-	if _, err := (GetFunctionUseCase{reader: store}).Get(context.Background(),
-		FunctionGetInput{ID: 99, TenantID: "tenant-a"}); err == nil {
+	if _, err := (&GetFunctionUseCase{reader: store}).Get(context.Background(),
+		FunctionGetInput{ID: 99, TenantID: usecaseTestTenant}); err == nil {
 		t.Fatal("expected not-found for a missing function")
 	}
 }
 
 func TestFunctionRunReads_VerifyFunctionFirst(t *testing.T) {
 	store := &fakeFunctionStore{}
-	store.seed(domainfunction.Definition{ID: 3, TenantID: "tenant-a", Name: "resize"})
+	store.seed(domainfunction.Definition{ID: 3, TenantID: usecaseTestTenant, Name: "resize"})
 	runs := &fakeFunctionRuns{
 		byFunction: map[int64][]domainfunction.FunctionRun{
-			3: {{ID: 1, RunID: "uuid-1", TenantID: "tenant-a", FunctionID: 3, Status: "success"}},
+			3: {{ID: 1, RunID: "uuid-1", TenantID: usecaseTestTenant, FunctionID: 3, Status: "success"}},
 		},
 		byRunID: map[string]domainfunction.FunctionRun{
-			"uuid-1": {ID: 1, RunID: "uuid-1", TenantID: "tenant-a", FunctionID: 3, Status: "success"},
+			"uuid-1": {ID: 1, RunID: "uuid-1", TenantID: usecaseTestTenant, FunctionID: 3, Status: "success"},
 		},
 	}
 
-	items, err := (ListFunctionRunsUseCase{runs: runs, reader: store}).List(context.Background(),
-		FunctionRunListInput{FunctionID: 3, TenantID: "tenant-a"})
+	items, err := (&ListFunctionRunsUseCase{runs: runs, reader: store}).List(context.Background(),
+		FunctionRunListInput{FunctionID: 3, TenantID: usecaseTestTenant})
 	if err != nil {
 		t.Fatalf("list runs: %v", err)
 	}
@@ -370,8 +377,8 @@ func TestFunctionRunReads_VerifyFunctionFirst(t *testing.T) {
 		t.Fatalf("unexpected run list: %+v", items)
 	}
 
-	item, err := (GetFunctionRunUseCase{runs: runs, reader: store}).Get(context.Background(),
-		FunctionRunGetInput{FunctionID: 3, RunID: "uuid-1", TenantID: "tenant-a"})
+	item, err := (&GetFunctionRunUseCase{runs: runs, reader: store}).Get(context.Background(),
+		FunctionRunGetInput{FunctionID: 3, RunID: "uuid-1", TenantID: usecaseTestTenant})
 	if err != nil {
 		t.Fatalf("get run: %v", err)
 	}
@@ -381,12 +388,12 @@ func TestFunctionRunReads_VerifyFunctionFirst(t *testing.T) {
 
 	// A run id belonging to another function is not found -- the route names
 	// both ids, and both must match.
-	if _, err := (GetFunctionRunUseCase{runs: runs, reader: store}).Get(context.Background(),
-		FunctionRunGetInput{FunctionID: 4, RunID: "uuid-1", TenantID: "tenant-a"}); err == nil {
+	if _, err := (&GetFunctionRunUseCase{runs: runs, reader: store}).Get(context.Background(),
+		FunctionRunGetInput{FunctionID: 4, RunID: "uuid-1", TenantID: usecaseTestTenant}); err == nil {
 		t.Fatal("expected not-found for another function's run")
 	}
-	if _, err := (ListFunctionRunsUseCase{runs: runs, reader: store}).List(context.Background(),
-		FunctionRunListInput{FunctionID: 99, TenantID: "tenant-a"}); err == nil {
+	if _, err := (&ListFunctionRunsUseCase{runs: runs, reader: store}).List(context.Background(),
+		FunctionRunListInput{FunctionID: 99, TenantID: usecaseTestTenant}); err == nil {
 		t.Fatal("expected not-found listing runs of a missing function")
 	}
 }
