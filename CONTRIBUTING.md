@@ -117,6 +117,35 @@ make kind-v020-verify
 make bench
 ```
 
+## Local hooks
+
+Commits are gated locally by [pre-commit](https://pre-commit.com) hooks that run CI's fast checks scoped to what you stage. One-time setup:
+
+```bash
+pip3 install pre-commit
+make hooks
+```
+
+`make hooks` runs `pre-commit install`, which wires both the pre-commit and commit-msg hooks. No gate touches unstaged or unrelated files. The gates that rewrite files — trailing-whitespace, end-of-file-fixer, mixed-line-ending, go-fmt — exit non-zero after fixing: review the changes, `git add` them, and commit again.
+
+| Gate | Triggers on | Fails when |
+|---|---|---|
+| trailing-whitespace, end-of-file-fixer, mixed-line-ending | every commit | fixable whitespace, EOF-newline or line-ending issues (fixed; re-stage) |
+| check-yaml | every commit | a YAML file does not parse (multi-doc allowed; chart templates excluded) |
+| check-added-large-files | every commit | a staged file exceeds 1 MB |
+| check-merge-conflict | every commit | conflict markers are staged |
+| go-fmt | staged `*.go` | `gofmt` rewrote a staged file (fixed; re-stage) |
+| go-vet | staged `*.go` | `go vet` flags a package containing staged files |
+| no-cjk | every commit | CJK characters appear outside `README.zh.md` |
+| no-artifacts | every commit | root binaries (`operator`, `orbitjob`), `smoke-test-results.md` or `bench.txt`/`bench-*.txt` are staged |
+| openapi-drift | `api/openapi.yaml`, `internal/admin/http/` or a domain `create_input.go` staged | `make openapi-check` reports spec drift |
+| chart-gate | `charts/` staged | `make helm-check` fails |
+| commit-msg | every commit | subject is empty, longer than 72 characters, or a `WIP` marker |
+
+The heavyweight suites stay in CI — lint, unit/race/coverage, the integration suites, benchmark comparison, image builds; the pipeline map is `docs/ci.md`. Run `make check` before pushing rather than expecting the hooks to run the world.
+
+Bypass with `git commit --no-verify`, but only in documented emergencies — a release cherry-pick out of a broken tree, or a failure caused by a hook itself — and say so in the commit or PR description. Never use it to skip a failure you have not read.
+
 ## OpenAPI
 
 HTTP route、请求字段、enum 或错误响应变更后需更新 `api/openapi.yaml`：

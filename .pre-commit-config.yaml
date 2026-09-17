@@ -1,4 +1,14 @@
-# See https://pre-commit.com for more information
+# Local commit gates. One-time setup: `pip3 install pre-commit`, then
+# `make hooks` (runs `pre-commit install`; default_install_hook_types below
+# wires both the pre-commit and commit-msg hooks). See CONTRIBUTING.md,
+# "Local hooks".
+#
+# Discipline: every gate is staged-files-only. Gates that rewrite files
+# (trailing-whitespace, end-of-file-fixer, mixed-line-ending, go-fmt) exit
+# non-zero after fixing so the committer re-stages; no gate touches unstaged
+# or unrelated files. The heavyweight suites (lint, full tests, integration,
+# images) stay in CI — docs/ci.md; run `make check` before pushing.
+default_install_hook_types: [pre-commit, commit-msg]
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.6.0
@@ -19,37 +29,53 @@ repos:
 
   - repo: local
     hooks:
+      # gofmt exactly the staged *.go files, then fail so they get re-staged.
       - id: go-fmt
-        name: go fmt
-        entry: sh -c 'find . -name "*.go" -not -path "./vendor/*" -exec gofmt -l -w {} + && git diff --exit-code'
+        name: gofmt (staged files)
+        entry: scripts/hooks/go-fmt.sh
         language: system
         files: \.go$
         pass_filenames: false
 
-      - id: go-mod-tidy
-        name: go mod tidy
-        entry: sh -c 'go mod tidy && git diff --exit-code go.mod go.sum'
-        language: system
-        files: (go\.mod|go\.sum)$
-        pass_filenames: false
-
-      - id: golangci-lint
-        name: golangci-lint
-        entry: golangci-lint run --fix
+      # go vet only the packages that contain staged Go files.
+      - id: go-vet
+        name: go vet (staged packages)
+        entry: scripts/hooks/go-vet.sh
         language: system
         files: \.go$
         pass_filenames: false
 
-      - id: openapi-check
-        name: openapi check
-        entry: make openapi-check
+      # English-uniform tree; README.zh.md is the sanctioned exception.
+      - id: no-cjk
+        name: no CJK characters (README.zh.md exempt)
+        entry: scripts/hooks/no-cjk.sh
         language: system
-        files: ^internal/admin/http/.*\.go$
         pass_filenames: false
 
-      - id: go-test
-        name: go test
-        entry: make test
+      # Keep root binaries and bench/load-test debris out of history.
+      - id: no-artifacts
+        name: no build artifacts in the index
+        entry: scripts/hooks/no-artifacts.sh
         language: system
-        files: \.go$
         pass_filenames: false
+
+      # Regenerate-and-diff the API spec whenever its inputs move.
+      - id: openapi-drift
+        name: openapi spec drift
+        entry: scripts/hooks/openapi-drift.sh
+        language: system
+        pass_filenames: false
+
+      # Lint + render + assert the chart whenever charts/ moves.
+      - id: chart-gate
+        name: helm chart gate
+        entry: scripts/hooks/chart-gate.sh
+        language: system
+        pass_filenames: false
+
+      # Subject: non-empty, <= 72 chars, no WIP prefix.
+      - id: commit-msg
+        name: commit message discipline
+        entry: scripts/hooks/commit-msg.sh
+        language: system
+        stages: [commit-msg]
