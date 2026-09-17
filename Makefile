@@ -1,5 +1,5 @@
 .PHONY: dev build build-all test test-cover test-cover-check test-race bench bench-etcd-memory bench-etcd integration
-.PHONY: lint vet check openapi-check openapi-gen tidy-check
+.PHONY: lint vet check openapi-check openapi-gen tidy-check hooks
 .PHONY: docker-build kind-load observability-status
 .PHONY: kind-up kind-db kind-status kind-down kind-verify kind-env
 .PHONY: helm-migrations-sync helm-migrations-check helm-check
@@ -10,6 +10,20 @@
 
 DEV_DSN      ?= postgres://postgres:postgres@localhost:5432/orbitjob?sslmode=disable
 DATABASE_URL ?= postgres://postgres:postgres@localhost:5432/orbitjob?sslmode=disable
+
+# ---- Local commit hooks ----
+# One-time setup after cloning: `pip3 install pre-commit` (the framework stays
+# the standard Python tool, not a Go dependency), then wire the git hooks.
+# `pre-commit install` also installs the commit-msg hook, via
+# default_install_hook_types in .pre-commit-config.yaml. Bypassing with
+# `git commit --no-verify` is for documented emergencies only (CONTRIBUTING.md).
+hooks:
+	@if ! command -v pre-commit >/dev/null 2>&1; then \
+		echo "pre-commit is not installed. One-time setup:"; \
+		echo "  pip3 install pre-commit"; \
+		exit 1; \
+	fi
+	pre-commit install
 
 # ---- Build ----
 build:
