@@ -8,17 +8,19 @@ import (
 )
 
 type FaultSpec struct {
-	Name                    string
-	Offset                  time.Duration
-	DisconnectFor           time.Duration
-	RequireActiveContainers int
+	Name          string
+	Offset        time.Duration
+	DisconnectFor time.Duration
 }
 
+// StandardFaultPlan faults every surviving control-plane component in turn.
+//
+// The dispatcher and worker Deployments this plan used to fault are gone; the
+// operator now hosts the execution path they owned, so it takes their slot.
 func StandardFaultPlan() []FaultSpec {
 	return []FaultSpec{
 		{Name: "scheduler", Offset: 180 * time.Minute},
-		{Name: "dispatcher", Offset: 190 * time.Minute},
-		{Name: "worker", Offset: 200 * time.Minute, RequireActiveContainers: 20},
+		{Name: "operator", Offset: 190 * time.Minute},
 		{Name: "admin-api", Offset: 210 * time.Minute},
 		{Name: "postgres", Offset: 220 * time.Minute, DisconnectFor: 30 * time.Second},
 	}
@@ -27,7 +29,7 @@ func StandardFaultPlan() []FaultSpec {
 // knownFault reports whether name is a component the fault injector can target.
 func knownFault(name string) bool {
 	switch name {
-	case "scheduler", "dispatcher", "worker", "admin-api", "postgres":
+	case "scheduler", "operator", "admin-api", "postgres":
 		return true
 	}
 	return false
@@ -63,15 +65,14 @@ type RecoveryGate struct {
 func StandardRecoveryGates() []RecoveryGate {
 	return []RecoveryGate{
 		{Name: "scheduler", ReadyTimeout: 2 * time.Minute, BusinessTimeout: 5 * time.Minute},
-		{Name: "dispatcher", ReadyTimeout: 2 * time.Minute, BusinessTimeout: 5 * time.Minute},
-		{Name: "worker", ReadyTimeout: 2 * time.Minute, BusinessTimeout: 10 * time.Minute},
+		{Name: "operator", ReadyTimeout: 2 * time.Minute, BusinessTimeout: 10 * time.Minute},
 		{Name: "admin-api", ReadyTimeout: 2 * time.Minute, BusinessTimeout: 3 * time.Minute},
 		{Name: "postgres", ReadyTimeout: 3 * time.Minute, BusinessTimeout: 10 * time.Minute},
 	}
 }
 
 func ValidateFaultOrder(plan []FaultSpec) error {
-	want := []string{"scheduler", "dispatcher", "worker", "admin-api", "postgres"}
+	want := []string{"scheduler", "operator", "admin-api", "postgres"}
 	if len(plan) != len(want) {
 		return fmt.Errorf("fault plan has %d faults, want %d", len(plan), len(want))
 	}
@@ -95,6 +96,19 @@ func FaultInjectionCommand(name, namespace string) ([]string, error) {
 	return inject, err
 }
 
+// FaultNamespace returns the namespace a fault's target lives in.
+//
+// The control plane and PostgreSQL sit in different namespaces, so one
+// namespace for every fault is wrong for at least one of them: a postgres fault
+// addressed to the control-plane namespace scales a Deployment that is not
+// there, and the injection reports success while nothing happened.
+func FaultNamespace(name string) string {
+	if name == "postgres" {
+		return DatabaseNamespace()
+	}
+	return WorkloadNamespace()
+}
+
 // FaultInjectionPlan returns the inject command and, for faults with a
 // DisconnectFor window, the restore command that undoes it. Components without
 // a restore step recover on their own (rollout restart, pod delete).
@@ -102,10 +116,8 @@ func FaultInjectionPlan(name, namespace string) (inject, restore []string, err e
 	switch name {
 	case "scheduler":
 		return []string{"kubectl", "rollout", "restart", "deployment/orbitjob-scheduler", "-n", namespace}, nil, nil
-	case "dispatcher":
-		return []string{"kubectl", "rollout", "restart", "deployment/orbitjob-dispatcher", "-n", namespace}, nil, nil
-	case "worker":
-		return []string{"kubectl", "delete", "pod", "-n", namespace, "-l", "app.kubernetes.io/name=orbitjob-worker"}, nil, nil
+	case "operator":
+		return []string{"kubectl", "rollout", "restart", "deployment/orbitjob-operator", "-n", namespace}, nil, nil
 	case "admin-api":
 		return []string{"kubectl", "rollout", "restart", "deployment/orbitjob-admin-api", "-n", namespace}, nil, nil
 	case "postgres":

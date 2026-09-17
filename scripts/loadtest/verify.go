@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -16,21 +17,40 @@ import (
 	"github.com/lib/pq"
 )
 
-// terminalStatuses are the states an instance never leaves once reached.
-var terminalStatuses = map[string]bool{"success": true, "failed": true, "canceled": true}
+// The run lifecycle the ledger records. These mirror the phases the operator
+// writes into job_run_control_plane; the load tool does not import the domain
+// package, and a drift here is a verify failure, not a silent mismatch.
+const (
+	phaseSucceeded = "Succeeded"
+	phaseFailed    = "Failed"
+	phaseCanceled  = "Canceled"
+)
+
+// terminalPhases are the states a run never leaves once reached.
+var terminalPhases = map[string]bool{phaseSucceeded: true, phaseFailed: true, phaseCanceled: true}
+
+// scenarioToLedgerPhase translates a scenario's terminal_state into the phase
+// the ledger records. A scenario expecting "canceled" ends Canceled only
+// because the load generator issues the cancel itself.
+var scenarioToLedgerPhase = map[string]string{
+	"success":  phaseSucceeded,
+	"failed":   phaseFailed,
+	"canceled": phaseCanceled,
+}
 
 func VerifyCorrectness(evidence Evidence) []CheckResult {
 	return []CheckResult{
-		checkDuplicateTokens(evidence.Attempts),
+		checkDuplicateSucceededAttempts(evidence.Attempts),
 		checkTenantLeak(evidence.TenantReads),
 		checkDuplicateLedger(evidence.Ledger),
 		checkTerminalRegression(evidence.Regressions),
 		checkExpectedTerminal(evidence.TerminalMismatches),
+		checkJobRunCRsPresent(evidence.MissingCRs, evidence.MissingCRSamples),
 	}
 }
 
-func EvaluateQualification(run RunRecord, evidence Evidence, minimumInstances int) Result {
-	result := Result{SchemaVersion: "v020-result/v1", RunID: run.RunID, Qualification: run.Qualification}
+func EvaluateQualification(run RunRecord, evidence Evidence, minimumRuns int) Result {
+	result := Result{RunID: run.RunID, Qualification: run.Qualification}
 
 	correctness := VerifyCorrectness(evidence)
 	result.Checks = correctness
@@ -60,14 +80,7 @@ func EvaluateQualification(run RunRecord, evidence Evidence, minimumInstances in
 
 	if evidence.InFlight > 0 {
 		result.Verdict = VerdictInconclusive
-		result.Reason = fmt.Sprintf("%d instances not in a terminal state at verify time", evidence.InFlight)
-		result.CompletedAt = time.Now()
-		return result
-	}
-
-	if evidence.MissingDefinitions > 0 {
-		result.Verdict = VerdictInconclusive
-		result.Reason = fmt.Sprintf("%d created definitions have no instances", evidence.MissingDefinitions)
+		result.Reason = fmt.Sprintf("%d runs not in a terminal state at verify time", evidence.InFlight)
 		result.CompletedAt = time.Now()
 		return result
 	}
@@ -75,13 +88,30 @@ func EvaluateQualification(run RunRecord, evidence Evidence, minimumInstances in
 	if !run.Qualification {
 		result.Verdict = VerdictPass
 		result.Reason = "non-standard run completed"
+		if evidence.MissingDefinitions > 0 {
+			// Coverage is reported, not judged. A smoke profile emits about 500
+			// events across a corpus of 1200 definitions, so it can never touch
+			// them all -- the gates below treat that as inconclusive, which is
+			// right for a qualification run and wrong here.
+			result.Reason = fmt.Sprintf("non-standard run completed; %d created definitions were never triggered", evidence.MissingDefinitions)
+		}
 		result.CompletedAt = time.Now()
 		return result
 	}
 
-	if evidence.QualifiedInstances < minimumInstances {
+	// Coverage gates. These say the run did not exercise enough to conclude
+	// anything, which is a statement about the run rather than about the
+	// system, so they apply only where the profile claims to be exhaustive.
+	if evidence.MissingDefinitions > 0 {
+		result.Verdict = VerdictInconclusive
+		result.Reason = fmt.Sprintf("%d created definitions have no runs", evidence.MissingDefinitions)
+		result.CompletedAt = time.Now()
+		return result
+	}
+
+	if evidence.QualifiedRuns < minimumRuns {
 		result.Verdict = VerdictFail
-		result.Reason = fmt.Sprintf("qualified instances %d < %d", evidence.QualifiedInstances, minimumInstances)
+		result.Reason = fmt.Sprintf("qualified runs %d < %d", evidence.QualifiedRuns, minimumRuns)
 		result.CompletedAt = time.Now()
 		return result
 	}
@@ -93,11 +123,13 @@ func EvaluateQualification(run RunRecord, evidence Evidence, minimumInstances in
 }
 
 type Evidence struct {
-	Instances          int // instances belonging to this run's definitions
-	QualifiedInstances int // instances in their expected terminal state
-	InFlight           int // instances not yet in a terminal state
-	MissingDefinitions int // created definitions with zero instances
-	Attempts           []Attempt
+	Runs               int // runs belonging to this run's definitions
+	QualifiedRuns      int // runs in their expected terminal state with their CR present
+	InFlight           int // runs not yet in a terminal state
+	MissingDefinitions int // created definitions with zero runs
+	MissingCRs         int // terminal ledger runs whose JobRun custom resource is gone
+	MissingCRSamples   []string
+	Attempts           []RunAttempt
 	TenantReads        []TenantRead
 	Ledger             []LedgerEntry
 	Regressions        []Regression
@@ -106,10 +138,12 @@ type Evidence struct {
 	Truncated          bool
 }
 
-type Attempt struct {
-	InstanceID int64
-	Token      string
-	Valid      bool
+// RunAttempt is one platform attempt of one run: an attempt is one Kubernetes
+// Job, and at most one of a run's attempts may have succeeded.
+type RunAttempt struct {
+	RunID         int64
+	AttemptNumber int
+	Succeeded     bool
 }
 
 type TenantRead struct {
@@ -123,36 +157,39 @@ type LedgerEntry struct {
 	Operation      string
 }
 
-// Regression is a terminal-state violation recovered from audit_events: an
-// instance that left a terminal status after reaching it.
+// Regression is a terminal-state violation recovered from the audit log: a run
+// that left a terminal phase after reaching it.
 type Regression struct {
 	ResourceID string
 	From       string
 	To         string
 }
 
-// TerminalMismatch counts instances of one definition that terminated in a
-// state other than the definition's Expected.TerminalState.
+// TerminalMismatch counts the runs of one definition that terminated in a
+// phase other than the definition's expected terminal state.
 type TerminalMismatch struct {
-	CaseID   string
-	JobID    int64
-	Expected string
-	Actual   string
-	Count    int
+	CaseID     string
+	RevisionID int64
+	Expected   string
+	Actual     string
+	Count      int
 }
 
-func checkDuplicateTokens(attempts []Attempt) CheckResult {
-	seen := map[int64]string{}
+// checkDuplicateSucceededAttempts fails a run that has two successful
+// attempts: each attempt is one Kubernetes Job, so two succeeded means the
+// same occurrence executed twice.
+func checkDuplicateSucceededAttempts(attempts []RunAttempt) CheckResult {
+	succeeded := map[int64]bool{}
 	for _, attempt := range attempts {
-		if !attempt.Valid {
+		if !attempt.Succeeded {
 			continue
 		}
-		if prev, ok := seen[attempt.InstanceID]; ok && prev != attempt.Token {
-			return CheckResult{ID: "duplicate-valid-attempt-token", Status: VerdictFail, Message: fmt.Sprintf("instance %d has two valid tokens", attempt.InstanceID)}
+		if succeeded[attempt.RunID] {
+			return CheckResult{ID: "duplicate-succeeded-attempt", Status: VerdictFail, Message: fmt.Sprintf("run %d has two succeeded attempts", attempt.RunID)}
 		}
-		seen[attempt.InstanceID] = attempt.Token
+		succeeded[attempt.RunID] = true
 	}
-	return CheckResult{ID: "duplicate-valid-attempt-token", Status: VerdictPass}
+	return CheckResult{ID: "duplicate-succeeded-attempt", Status: VerdictPass}
 }
 
 func checkTenantLeak(reads []TenantRead) CheckResult {
@@ -179,7 +216,7 @@ func checkTerminalRegression(regressions []Regression) CheckResult {
 	if len(regressions) > 0 {
 		first := regressions[0]
 		return CheckResult{ID: "terminal-regression", Status: VerdictFail,
-			Message: fmt.Sprintf("%d terminal regressions; first: instance %s went %s -> %s", len(regressions), first.ResourceID, first.From, first.To)}
+			Message: fmt.Sprintf("%d terminal regressions; first: run %s went %s -> %s", len(regressions), first.ResourceID, first.From, first.To)}
 	}
 	return CheckResult{ID: "terminal-regression", Status: VerdictPass}
 }
@@ -188,18 +225,35 @@ func checkExpectedTerminal(mismatches []TerminalMismatch) CheckResult {
 	if len(mismatches) > 0 {
 		first := mismatches[0]
 		return CheckResult{ID: "expected-terminal-state", Status: VerdictFail,
-			Message: fmt.Sprintf("%d definitions terminated in unexpected states; first: %s expected %s, got %s x%d",
+			Message: fmt.Sprintf("%d definitions terminated in unexpected phases; first: %s expected %s, got %s x%d",
 				len(mismatches), first.CaseID, first.Expected, first.Actual, first.Count)}
 	}
 	return CheckResult{ID: "expected-terminal-state", Status: VerdictPass}
 }
 
+// checkJobRunCRsPresent fails when a terminal ledger run has no JobRun custom
+// resource. Generated definitions raise their history limits high enough that
+// retention prunes nothing during the run, so a missing CR means the cluster
+// lost the object or deleted it out from under the ledger.
+func checkJobRunCRsPresent(missing int, samples []string) CheckResult {
+	if missing > 0 {
+		return CheckResult{ID: "jobrun-cr-present", Status: VerdictFail,
+			Message: fmt.Sprintf("%d terminal runs have no JobRun custom resource; first: %s", missing, strings.Join(samples, ", "))}
+	}
+	return CheckResult{ID: "jobrun-cr-present", Status: VerdictPass}
+}
+
 // CollectEvidence reads correctness evidence from the OrbitJob database, the
-// load fixture ledger, and cross-tenant Admin API probes. It never mutates
-// OrbitJob state. The orbitjob DSN must be read-only. Instance counting is
-// scoped to the run's created definitions: a full-table count would let
-// leftovers from earlier runs feed the qualification gate.
-func CollectEvidence(ctx context.Context, orbitjobDSN, fixtureURL, apiURL string, tenantKeys map[string]string, created []CreatedDefinition, definitions []Definition) (Evidence, error) {
+// JobRun custom resources, the load fixture ledger, and cross-tenant Admin API
+// probes. It never mutates OrbitJob state. Run counting is scoped to the
+// run's created definitions: a full-table count would let leftovers from
+// earlier runs feed the qualification gate.
+//
+// The ledger is row-level-security protected. Every per-tenant query runs in a
+// transaction that first sets app.tenant_id to that tenant's ULID, and the
+// queries also scope by this run's revision ids, so the verdict cannot depend
+// on rows another tenant or another run wrote.
+func CollectEvidence(ctx context.Context, orbitjobDSN, fixtureURL, apiURL string, tenantKeys, tenantNamespaces map[string]string, created []CreatedDefinition, definitions []Definition) (Evidence, error) {
 	var e Evidence
 
 	expectedByCase := make(map[string]string, len(definitions))
@@ -208,15 +262,22 @@ func CollectEvidence(ctx context.Context, orbitjobDSN, fixtureURL, apiURL string
 		if terminal == "" {
 			terminal = "success"
 		}
-		expectedByCase[def.CaseID] = terminal
+		expected, ok := scenarioToLedgerPhase[terminal]
+		if !ok {
+			return e, fmt.Errorf("scenario terminal state %q has no ledger phase", terminal)
+		}
+		expectedByCase[def.CaseID] = expected
 	}
-	jobIDs := make([]int64, 0, len(created))
-	expectedByJob := make(map[int64]string, len(created))
-	caseByJob := make(map[int64]string, len(created))
+
+	// Per-tenant revision scoping: the DB queries and the CR cross-check both
+	// address one tenant's definitions at a time.
+	tenantRevisions := map[string][]int64{}
+	expectedByRevision := make(map[int64]string, len(created))
+	caseByRevision := make(map[int64]string, len(created))
 	for _, cd := range created {
-		jobIDs = append(jobIDs, cd.JobID)
-		expectedByJob[cd.JobID] = expectedByCase[cd.CaseID]
-		caseByJob[cd.JobID] = cd.CaseID
+		tenantRevisions[cd.Tenant] = append(tenantRevisions[cd.Tenant], cd.RevisionID)
+		expectedByRevision[cd.RevisionID] = expectedByCase[cd.CaseID]
+		caseByRevision[cd.RevisionID] = cd.CaseID
 	}
 
 	odb, err := sql.Open("postgres", orbitjobDSN)
@@ -225,121 +286,86 @@ func CollectEvidence(ctx context.Context, orbitjobDSN, fixtureURL, apiURL string
 	}
 	defer func() { _ = odb.Close() }()
 
-	// Instance counts by status, scoped to this run's definitions.
-	statusCounts := map[int64]map[string]int{}
-	rows, err := odb.QueryContext(ctx, `
-		SELECT job_id, status, count(*) FROM job_instances
-		WHERE job_id = ANY($1)
-		GROUP BY job_id, status
-	`, pq.Array(jobIDs))
-	if err != nil {
-		return e, fmt.Errorf("count instances by status: %w", err)
-	}
-	for rows.Next() {
-		var jobID int64
-		var status string
-		var count int
-		if err := rows.Scan(&jobID, &status, &count); err != nil {
-			_ = rows.Close()
-			return e, fmt.Errorf("scan instance count: %w", err)
+	// Run counts by phase, per tenant, scoped to this run's revisions and to
+	// the tenant the RLS guard names.
+	runsByRevision := map[int64][]ledgerRun{}
+	for tenant, revisions := range tenantRevisions {
+		rows, err := queryTenantRuns(ctx, odb, tenant, revisions)
+		if err != nil {
+			return e, err
 		}
-		if statusCounts[jobID] == nil {
-			statusCounts[jobID] = map[string]int{}
+		for _, row := range rows {
+			runsByRevision[row.revisionID] = append(runsByRevision[row.revisionID], row)
 		}
-		statusCounts[jobID][status] = count
-		e.Instances += count
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return e, fmt.Errorf("iterate instance counts: %w", err)
-	}
-	_ = rows.Close()
 
-	mismatchCounts := map[int64]map[string]int{}
+		attempts, err := queryTenantAttempts(ctx, odb, tenant, revisions)
+		if err != nil {
+			return e, err
+		}
+		e.Attempts = append(e.Attempts, attempts...)
+
+		regressions, err := queryTenantRegressions(ctx, odb, tenant)
+		if err != nil {
+			return e, err
+		}
+		e.Regressions = append(e.Regressions, regressions...)
+	}
+
+	// Classify each created definition's runs against its expectation.
 	for _, cd := range created {
-		counts := statusCounts[cd.JobID]
-		if len(counts) == 0 {
+		rows := runsByRevision[cd.RevisionID]
+		if len(rows) == 0 {
 			e.MissingDefinitions++
 			continue
 		}
-		expected := expectedByJob[cd.JobID]
-		if expected == "" {
-			expected = "success"
-		}
-		for status, count := range counts {
+		expected := expectedByRevision[cd.RevisionID]
+		mismatches := map[string]int{}
+		for _, row := range rows {
+			e.Runs++
 			switch {
-			case !terminalStatuses[status]:
-				e.InFlight += count
-			case status == expected:
-				e.QualifiedInstances += count
+			case !terminalPhases[row.phase]:
+				e.InFlight++
+			case row.phase == expected:
+				e.QualifiedRuns++
 			default:
-				if mismatchCounts[cd.JobID] == nil {
-					mismatchCounts[cd.JobID] = map[string]int{}
-				}
-				mismatchCounts[cd.JobID][status] += count
+				mismatches[row.phase]++
 			}
 		}
-	}
-	for jobID, byStatus := range mismatchCounts {
-		for status, count := range byStatus {
+		for phase, count := range mismatches {
 			e.TerminalMismatches = append(e.TerminalMismatches, TerminalMismatch{
-				CaseID:   caseByJob[jobID],
-				JobID:    jobID,
-				Expected: expectedByJob[jobID],
-				Actual:   status,
-				Count:    count,
+				CaseID:     cd.CaseID,
+				RevisionID: cd.RevisionID,
+				Expected:   expected,
+				Actual:     phase,
+				Count:      count,
 			})
 		}
 	}
 
-	// Attempt tokens for the duplicate-execution check.
-	rows, err = odb.QueryContext(ctx, "SELECT instance_id, attempt_no, status FROM job_instance_attempts WHERE status IN ('success','running')")
+	// CR cross-check: list the JobRun objects in each tenant's namespace and
+	// require one for every terminal run the ledger reports, canceled runs
+	// included. Generated definitions raise retention high enough that nothing
+	// is pruned mid-run, so a terminal row without its object is a finding.
+	// A namespace read failure is an evidence gap instead: the difference
+	// between "the cluster lost an object" and "we could not look" matters.
+	crPresent, err := collectCRNames(ctx, tenantNamespaces)
 	if err != nil {
-		return e, fmt.Errorf("query attempts: %w", err)
-	}
-	for rows.Next() {
-		var instID int64
-		var attemptNo int
-		var status string
-		if err := rows.Scan(&instID, &attemptNo, &status); err != nil {
-			_ = rows.Close()
-			return e, err
+		e.MissingSources = append(e.MissingSources, err.Error())
+	} else {
+		for _, cd := range created {
+			for _, row := range runsByRevision[cd.RevisionID] {
+				if !terminalPhases[row.phase] {
+					continue
+				}
+				if !crPresent[jobRunCRName(cd.CaseID, row.occurrenceKey)] {
+					e.MissingCRs++
+					if len(e.MissingCRSamples) < 5 {
+						e.MissingCRSamples = append(e.MissingCRSamples, jobRunCRName(cd.CaseID, row.occurrenceKey))
+					}
+				}
+			}
 		}
-		e.Attempts = append(e.Attempts, Attempt{InstanceID: instID, Token: fmt.Sprintf("attempt-%d", attemptNo), Valid: status == "success"})
 	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return e, fmt.Errorf("iterate attempts: %w", err)
-	}
-	_ = rows.Close()
-
-	// Terminal regressions from the audit log: an instance that left a
-	// terminal status after reaching it. audit_events survives runs, so scope
-	// to this run's job ids via the instances table join.
-	rows, err = odb.QueryContext(ctx, `
-		SELECT ae.resource_id, ae.diff->>'from_status', ae.diff->>'to_status'
-		FROM audit_events ae
-		WHERE ae.event_type = 'instance.status_changed'
-		  AND ae.diff->>'from_status' IN ('success','failed','canceled')
-		  AND ae.diff->>'to_status' <> ae.diff->>'from_status'
-		  AND ae.created_at > now() - interval '1 day'
-	`)
-	if err != nil {
-		return e, fmt.Errorf("query regressions: %w", err)
-	}
-	for rows.Next() {
-		var r Regression
-		if err := rows.Scan(&r.ResourceID, &r.From, &r.To); err != nil {
-			_ = rows.Close()
-			return e, fmt.Errorf("scan regression: %w", err)
-		}
-		e.Regressions = append(e.Regressions, r)
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return e, fmt.Errorf("iterate regressions: %w", err)
-	}
-	_ = rows.Close()
 
 	// Cross-tenant probes: every actor reads up to three foreign definitions.
 	// Only 200 counts as a leak; 403/404 are expected denials; anything else
@@ -351,7 +377,7 @@ func CollectEvidence(ctx context.Context, orbitjobDSN, fixtureURL, apiURL string
 			if def.Tenant == actor || probed >= 3 {
 				continue
 			}
-			_, err := client.GetJob(ctx, def.JobID, def.Tenant)
+			_, err := client.GetJob(ctx, def.RevisionID)
 			status := 200
 			if err != nil {
 				var aerr *APIError
@@ -404,6 +430,175 @@ func CollectEvidence(ctx context.Context, orbitjobDSN, fixtureURL, apiURL string
 	return e, nil
 }
 
+// ledgerRun is one job_run_control_plane row the verifier needs: its phase,
+// the revision that owns it, and the occurrence key that names its JobRun
+// object.
+type ledgerRun struct {
+	id            int64
+	revisionID    int64
+	phase         string
+	occurrenceKey string
+}
+
+// queryTenantRuns reads the run rows of one tenant's revisions inside a
+// transaction scoped by app.tenant_id. The RLS guard is defense in depth --
+// the query also filters by this run's revision ids -- but a reader that
+// touched another tenant's rows would be a finding on its own.
+func queryTenantRuns(ctx context.Context, odb *sql.DB, tenant string, revisions []int64) ([]ledgerRun, error) {
+	rows := []ledgerRun{}
+	err := withTenantTx(ctx, odb, tenant, func(tx *sql.Tx) error {
+		result, err := tx.QueryContext(ctx, `
+			SELECT id, revision_id, phase, occurrence_key
+			FROM job_run_control_plane
+			WHERE revision_id = ANY($1)
+		`, pq.Array(revisions))
+		if err != nil {
+			return err
+		}
+		defer func() { _ = result.Close() }()
+		for result.Next() {
+			var row ledgerRun
+			if err := result.Scan(&row.id, &row.revisionID, &row.phase, &row.occurrenceKey); err != nil {
+				return fmt.Errorf("scan run row: %w", err)
+			}
+			rows = append(rows, row)
+		}
+		return result.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("query runs for tenant %s: %w", tenant, err)
+	}
+	return rows, nil
+}
+
+// queryTenantAttempts reads the attempt trail of one tenant's runs. Each
+// attempt is one Kubernetes Job.
+func queryTenantAttempts(ctx context.Context, odb *sql.DB, tenant string, revisions []int64) ([]RunAttempt, error) {
+	attempts := []RunAttempt{}
+	err := withTenantTx(ctx, odb, tenant, func(tx *sql.Tx) error {
+		result, err := tx.QueryContext(ctx, `
+			SELECT a.run_id, a.attempt_number, a.phase
+			FROM job_run_attempts_control_plane a
+			JOIN job_run_control_plane r ON r.id = a.run_id
+			WHERE r.revision_id = ANY($1)
+		`, pq.Array(revisions))
+		if err != nil {
+			return err
+		}
+		defer func() { _ = result.Close() }()
+		for result.Next() {
+			var attempt RunAttempt
+			var phase string
+			if err := result.Scan(&attempt.RunID, &attempt.AttemptNumber, &phase); err != nil {
+				return fmt.Errorf("scan attempt row: %w", err)
+			}
+			attempt.Succeeded = phase == phaseSucceeded
+			attempts = append(attempts, attempt)
+		}
+		return result.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("query attempts for tenant %s: %w", tenant, err)
+	}
+	return attempts, nil
+}
+
+// queryTenantRegressions reads terminal-phase violations from the audit log:
+// a run that left a terminal phase after reaching it. audit_events survives
+// runs, so the window bounds how far back the scan reaches.
+func queryTenantRegressions(ctx context.Context, odb *sql.DB, tenant string) ([]Regression, error) {
+	regressions := []Regression{}
+	err := withTenantTx(ctx, odb, tenant, func(tx *sql.Tx) error {
+		result, err := tx.QueryContext(ctx, `
+			SELECT resource_id, diff->>'from_phase', diff->>'to_phase'
+			FROM audit_events
+			WHERE event_type = 'job_run.status_changed'
+			  AND diff->>'from_phase' IN ('Succeeded','Failed','Canceled')
+			  AND diff->>'to_phase' IS DISTINCT FROM diff->>'from_phase'
+			  AND created_at > now() - interval '1 day'
+		`)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = result.Close() }()
+		for result.Next() {
+			var r Regression
+			if err := result.Scan(&r.ResourceID, &r.From, &r.To); err != nil {
+				return fmt.Errorf("scan regression: %w", err)
+			}
+			regressions = append(regressions, r)
+		}
+		return result.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("query regressions for tenant %s: %w", tenant, err)
+	}
+	return regressions, nil
+}
+
+// withTenantTx runs fn in a transaction that first sets app.tenant_id to the
+// tenant's ULID, the same guard the RLS policies bind to. The setting is
+// transaction-local, so it cannot leak to the next borrower of the pooled
+// connection. A tenant id that is not a well-formed ULID is refused before
+// anything is sent: there is no tenant value to fall back to.
+func withTenantTx(ctx context.Context, odb *sql.DB, tenant string, fn func(*sql.Tx) error) error {
+	if err := validateTenantID(tenant); err != nil {
+		return err
+	}
+	tx, err := odb.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.tenant_id', $1, true)`, tenant); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("set tenant guard: %w", err)
+	}
+	if err := fn(tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	// Read-only evidence: rollback rather than commit, so the transaction can
+	// never be mistaken for a writer.
+	if err := tx.Rollback(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// jobRunCRName mirrors the operator's JobRun naming rule: the scheduled job's
+// name plus the first eight characters of the occurrence key.
+func jobRunCRName(scheduledJobName, occurrenceKey string) string {
+	suffix := occurrenceKey
+	if len(suffix) > 8 {
+		suffix = suffix[:8]
+	}
+	if suffix == "" {
+		suffix = "unknown"
+	}
+	return scheduledJobName + "-" + suffix
+}
+
+// collectCRNames lists the JobRun custom resources per tenant namespace and
+// returns the set of object names. A namespace read failure is reported as a
+// missing evidence source, not as missing CRs: the difference between "the
+// cluster lost an object" and "we could not look" matters.
+func collectCRNames(ctx context.Context, tenantNamespaces map[string]string) (map[string]bool, error) {
+	present := map[string]bool{}
+	for _, namespace := range tenantNamespaces {
+		out, err := exec.CommandContext(ctx, "kubectl", "get", "jobruns", "-n", namespace,
+			"-o", `jsonpath={range .items[*]}{.metadata.name}{"\n"}{end}`).CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("jobruns:%s", namespace)
+		}
+		for _, name := range strings.Split(string(out), "\n") {
+			if name = strings.TrimSpace(name); name != "" {
+				present[name] = true
+			}
+		}
+	}
+	return present, nil
+}
+
 func runVerify(args []string) error {
 	flags := flag.NewFlagSet("verify", flag.ContinueOnError)
 	runID := flags.String("run-id", "", "run ID")
@@ -427,6 +622,10 @@ func runVerify(args []string) error {
 	if err != nil {
 		return fmt.Errorf("load tenant keys: %w", err)
 	}
+	tenantNamespaces, err := loadTenantNamespaces(filepath.Join(runDir, "tenant-namespaces.json"))
+	if err != nil {
+		return fmt.Errorf("load tenant namespaces: %w", err)
+	}
 	created, err := loadCreatedDefinitions(filepath.Join(runDir, "created-definitions.json"))
 	if err != nil {
 		return fmt.Errorf("load created definitions: %w", err)
@@ -438,7 +637,7 @@ func runVerify(args []string) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
-	evidence, err := CollectEvidence(ctx, *orbitjobDSN, *fixtureURL, *apiURL, tenantKeys, created, definitions)
+	evidence, err := CollectEvidence(ctx, *orbitjobDSN, *fixtureURL, *apiURL, tenantKeys, tenantNamespaces, created, definitions)
 	if err != nil {
 		return fmt.Errorf("collect evidence: %w", err)
 	}
@@ -449,11 +648,16 @@ func runVerify(args []string) error {
 	}
 	evidence.Truncated = !stats.Completed
 
+	profile, seed, qualification, err := resolveRunIdentity(stats, cfg, *runID)
+	if err != nil {
+		return err
+	}
+
 	run := RunRecord{
 		RunID:         *runID,
-		Profile:       cfg.Profile,
-		Qualification: cfg.Qualification,
-		Seed:          cfg.Seed,
+		Profile:       profile,
+		Qualification: qualification,
+		Seed:          seed,
 		Commit:        gitCommit(),
 		Dirty:         gitDirty(),
 		StartedAt:     stats.StartedAt,
@@ -470,8 +674,8 @@ func runVerify(args []string) error {
 	if err := writeStableJSON(filepath.Join(runDir, "result.json"), result); err != nil {
 		return err
 	}
-	fmt.Printf("verify: verdict=%s reason=%s instances=%d qualified=%d in_flight=%d\n",
-		result.Verdict, result.Reason, evidence.Instances, evidence.QualifiedInstances, evidence.InFlight)
+	fmt.Printf("verify: verdict=%s reason=%s runs=%d qualified=%d in_flight=%d\n",
+		result.Verdict, result.Reason, evidence.Runs, evidence.QualifiedRuns, evidence.InFlight)
 	return nil
 }
 
@@ -492,6 +696,18 @@ func loadTenantKeys(path string) (map[string]string, error) {
 		return nil, err
 	}
 	return keys, nil
+}
+
+func loadTenantNamespaces(path string) (map[string]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var namespaces map[string]string
+	if err := json.Unmarshal(data, &namespaces); err != nil {
+		return nil, err
+	}
+	return namespaces, nil
 }
 
 func loadCreatedDefinitions(path string) ([]CreatedDefinition, error) {
@@ -516,4 +732,28 @@ func loadRunStats(path string) (RunStats, error) {
 		return stats, fmt.Errorf("decode run stats: %w", err)
 	}
 	return stats, nil
+}
+
+// resolveRunIdentity decides what a run record should say about the run.
+//
+// The run writes down what it was; a config the caller passes here is checked
+// against that, never used to overwrite it. Getting this wrong is not cosmetic:
+// verifying a smoke run without --config used to relabel it a standard
+// qualification run, which is a false release record no later step can detect.
+//
+// Runs recorded before the profile was stored fall back to the passed config.
+func resolveRunIdentity(stats RunStats, cfg Config, runID string) (string, string, bool, error) {
+	if stats.Profile == "" {
+		return cfg.Profile, cfg.Seed, cfg.Qualification, nil
+	}
+	if stats.Profile != cfg.Profile {
+		return "", "", false, fmt.Errorf(
+			"run %s recorded profile %q but --config is %q; pass the config the run used",
+			runID, stats.Profile, cfg.Profile)
+	}
+	seed := stats.Seed
+	if seed == "" {
+		seed = cfg.Seed
+	}
+	return stats.Profile, seed, stats.Qualification, nil
 }

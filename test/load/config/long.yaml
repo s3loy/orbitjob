@@ -1,7 +1,6 @@
-schema_version: v020-load/v1
 profile: long
 qualification: false
-seed: v020-long-1
+seed: long-1
 duration: 8h
 minimum_instances: 0
 environment:
@@ -25,15 +24,18 @@ definitions:
     cron: 360
     webhook: 120
   cron_interval_minutes: 60
+# Tenant identifiers are ULIDs, matching tenants.id. Prefix digit marks the
+# profile (2=standard, 3=smoke, 4=long) so a tenant created by one profile can
+# never be confused with another's.
 tenants:
-  - long-alpha
-  - long-beta
-  - long-gamma
-  - long-adversarial
+  - 40000000000000000000000001
+  - 40000000000000000000000002
+  - 40000000000000000000000003
+  - 40000000000000000000000004
 # 8h soak: definitions are cycled so the schedule covers the full duration.
 # Cron jobs fire hourly for a steady baseline; manual triggers provide shape.
-# Rates are capped to worker pool capacity so jobs execute instead of being
-# rejected.
+# Rates are capped to the task namespace capacity so jobs execute instead of
+# being rejected.
 phases:
   - {name: warmup, offset: 0m, duration: 30m, rate_per_minute: 5, max_active: 5}
   - {name: correctness, offset: 30m, duration: 90m, rate_per_minute: 8, max_active: 10}
@@ -53,8 +55,7 @@ burst:
 faults:
   plan:
     - {name: scheduler, offset: 370m}
-    - {name: dispatcher, offset: 380m}
-    - {name: worker, offset: 390m}
+    - {name: operator, offset: 390m}
     - {name: admin-api, offset: 400m}
     - {name: postgres, offset: 410m}
 sampling:

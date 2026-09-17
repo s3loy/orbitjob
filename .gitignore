@@ -65,3 +65,6 @@ bench-*.err
 /operator
 /orbitjob
 /smoke-test-results.md
+
+# Load fixture TLS secret: generated at apply time by deploy/load/make-tls-cert.sh
+/deploy/load/fixture-tls-secret.yaml

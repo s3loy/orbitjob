@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -91,8 +92,8 @@ func ValidateStandard(c Config) error {
 	switch {
 	case !c.Qualification:
 		return errors.New("standard profile must set qualification=true")
-	case c.Seed != "v020-standard-1":
-		return fmt.Errorf("seed must be v020-standard-1")
+	case c.Seed != "standard-1":
+		return fmt.Errorf("seed must be standard-1")
 	case c.Duration != 4*time.Hour:
 		return fmt.Errorf("duration must be exactly 4h0m0s")
 	case c.Definitions.Total != 1200:
@@ -261,4 +262,53 @@ func sumCounts(values map[string]int) int {
 		total += value
 	}
 	return total
+}
+
+// EstimatedCronRuns is the cron baseline a profile produces: every
+// cron-triggered definition fires once per cron interval for the whole run.
+// Both ComputeTuning and the static preflight estimate use this one formula.
+func EstimatedCronRuns(cfg Config) int {
+	interval := time.Duration(cfg.Definitions.CronIntervalMinutes) * time.Minute
+	if interval <= 0 {
+		return 0
+	}
+	return cfg.Definitions.ProductTriggerTypes["cron"] * int(cfg.Duration/interval)
+}
+
+// ValidateTenants checks the tenant list itself: no empty entries, no
+// duplicates, and every entry shaped like a tenant identifier. Tenants.id is
+// a CHAR(26) ULID and the schema's foreign keys reject anything else, so a
+// slug that slipped into a profile fails here instead of at trigger time.
+func ValidateTenants(c Config) error {
+	seen := make(map[string]bool, len(c.Tenants))
+	for _, id := range c.Tenants {
+		if id == "" {
+			return errors.New("tenant id must not be empty")
+		}
+		if seen[id] {
+			return fmt.Errorf("tenant %q is listed more than once in tenants", id)
+		}
+		if err := validateTenantID(id); err != nil {
+			return err
+		}
+		seen[id] = true
+	}
+	return nil
+}
+
+// ulidAlphabet is Crockford base32 without I, L, O and U. A tenant identifier
+// must be exactly TenantIDLen characters drawn from it; anything else is a
+// slug or a typo, and neither is a tenant id.
+const ulidAlphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+func validateTenantID(id string) error {
+	if len(id) != TenantIDLen {
+		return fmt.Errorf("tenant %q must be a %d-character ULID, got %d characters", id, TenantIDLen, len(id))
+	}
+	for _, r := range id {
+		if !strings.ContainsRune(ulidAlphabet, r) {
+			return fmt.Errorf("tenant %q must be a %d-character ULID: rune %q is not in the ULID alphabet", id, TenantIDLen, r)
+		}
+	}
+	return nil
 }
