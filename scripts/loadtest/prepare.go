@@ -359,10 +359,13 @@ func quotedList(values []string) string {
 	return strings.Join(quoted, ",")
 }
 
-// ensureTenantNamespace creates the tenant's namespace with the same capacity
-// shape as the shared task namespace: this is where the operator renders the
-// Kubernetes Jobs for the tenant's runs, so the quota and limit range that
-// bounded the old shared namespace bound this one.
+// ensureTenantNamespace creates the tenant's namespace with the capacity shape
+// the shared task namespace uses, scaled up for the corpus: cron declarations
+// share an offset minute, so a cohort of heavy jobs can land in the same
+// second, and the shared shape's limits.cpu of 10 turned the first cohorts of
+// the 2026-09-18 smoke into deadline deaths (six expected-Succeeded runs in
+// one four-second window). Two concurrent 500m-limit pods per CPU of quota
+// absorbs a full cohort without changing what a single job may use.
 func ensureTenantNamespace(ctx context.Context, tenantID string) error {
 	namespace := TenantNamespace(tenantID)
 	manifest := fmt.Sprintf(`apiVersion: v1
@@ -379,9 +382,9 @@ metadata:
   namespace: %s
 spec:
   hard:
-    requests.cpu: 5
+    requests.cpu: 10
     requests.memory: 5Gi
-    limits.cpu: "10"
+    limits.cpu: "20"
     limits.memory: 8Gi
 ---
 apiVersion: v1
@@ -645,14 +648,18 @@ func diagnoseRevisionWait(tenants []string, declared map[string]string) string {
 	run("operator env OPERATOR_NAMESPACE_TENANTS", "get", "deployment", "orbitjob-operator",
 		"-n", WorkloadNamespace(),
 		"-o", "jsonpath={range .spec.template.spec.containers[*].env[*]}{.name}={.value}{'\\n'}{end}")
-	sample := ""
-	for caseID := range declared {
-		sample = caseID
+	// The sample must be read back from the namespace that owns it: declared
+	// maps case id -> tenant, and taking tenants[0] here yields a NotFound for
+	// a CR that exists one namespace over, which reads as a missing CR that is
+	// nothing of the sort.
+	sampleCase, sampleTenant := "", ""
+	for caseID, tenantID := range declared {
+		sampleCase, sampleTenant = caseID, tenantID
 		break
 	}
-	if sample != "" && len(tenants) > 0 {
-		run(fmt.Sprintf("sample CR %s", sample), "get", "scheduledjobs", sample,
-			"-n", TenantNamespace(tenants[0]), "-o", "yaml")
+	if sampleCase != "" {
+		run(fmt.Sprintf("sample CR %s", sampleCase), "get", "scheduledjobs", sampleCase,
+			"-n", TenantNamespace(sampleTenant), "-o", "yaml")
 	}
 	return b.String()
 }

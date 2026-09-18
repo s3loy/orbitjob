@@ -62,11 +62,15 @@ func runReset(args []string) error {
 	// other namespace this tool did not create are never matched.
 	namespaced, err := exec.Command("kubectl", "get", "namespace",
 		"-l", loadManagedByLabelKey+"="+loadManagedByLabelValue,
-		"-o", "jsonpath={range .items[*]}{.metadata.name} {end}").Output()
+		"-o", "json").Output()
 	if err != nil {
 		return fmt.Errorf("[FAIL] reset: list load namespaces: %s", strings.TrimSpace(string(namespaced)))
 	}
-	for _, namespace := range strings.Fields(string(namespaced)) {
+	namespaceNames, err := decodeKubeNames(namespaced)
+	if err != nil {
+		return fmt.Errorf("[FAIL] reset: list load namespaces: %v", err)
+	}
+	for _, namespace := range namespaceNames {
 		steps = append(steps, struct {
 			name string
 			cmd  []string

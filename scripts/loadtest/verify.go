@@ -586,14 +586,16 @@ func collectCRNames(ctx context.Context, tenantNamespaces map[string]string) (ma
 	present := map[string]bool{}
 	for _, namespace := range tenantNamespaces {
 		out, err := exec.CommandContext(ctx, "kubectl", "get", "jobruns", "-n", namespace,
-			"-o", `jsonpath={range .items[*]}{.metadata.name}{"\n"}{end}`).CombinedOutput()
+			"-o", "json").CombinedOutput()
 		if err != nil {
 			return nil, fmt.Errorf("jobruns:%s", namespace)
 		}
-		for _, name := range strings.Split(string(out), "\n") {
-			if name = strings.TrimSpace(name); name != "" {
-				present[name] = true
-			}
+		names, err := decodeKubeNames(out)
+		if err != nil {
+			return nil, fmt.Errorf("jobruns:%s", namespace)
+		}
+		for _, name := range names {
+			present[name] = true
 		}
 	}
 	return present, nil
