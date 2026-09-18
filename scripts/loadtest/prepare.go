@@ -492,6 +492,11 @@ func currentNamespaceTenants(ctx context.Context) (string, error) {
 // reports an active revision, and returns case id -> revision id. A CR with no
 // revision after the deadline means the operator did not accept the
 // declaration, which is a prepare failure, not a run-time surprise.
+//
+// The read is plain JSON, not a jsonpath template: a runner's kubectl renders
+// jsonpath inconsistently enough that a template this repo shipped once read
+// as empty on GitHub's runner while the same cluster answered the same query
+// in JSON. Structured decoding has no such variance.
 func waitRevisions(ctx context.Context, tenants []string, defs []Definition) (map[string]int64, error) {
 	declared := make(map[string]string, len(defs)) // case id -> tenant
 	for _, def := range defs {
@@ -501,27 +506,13 @@ func waitRevisions(ctx context.Context, tenants []string, defs []Definition) (ma
 	revisions := map[string]int64{}
 	for {
 		for _, tenantID := range tenants {
-			out, err := exec.CommandContext(ctx, "kubectl", "get", "scheduledjobs",
-				"-n", TenantNamespace(tenantID),
-				"-o", `jsonpath={range .items[*]}{.metadata.name}={.status.activeRevision} {"\n"}{end}`).CombinedOutput()
+			revisionsIn, err := scheduledJobRevisions(ctx, TenantNamespace(tenantID))
 			if err != nil {
-				return nil, fmt.Errorf("read scheduled jobs for tenant %s: %s", tenantID, strings.TrimSpace(string(out)))
+				return nil, fmt.Errorf("read scheduled jobs for tenant %s: %w", tenantID, err)
 			}
-			for _, line := range strings.Split(string(out), "\n") {
-				line = strings.TrimSpace(line)
-				if line == "" {
-					continue
-				}
-				parts := strings.SplitN(line, "=", 2)
-				if len(parts) != 2 || parts[1] == "" {
-					continue
-				}
-				var revision int64
-				if _, err := fmt.Sscanf(parts[1], "%d", &revision); err != nil {
-					continue
-				}
-				if revision > 0 {
-					revisions[parts[0]] = revision
+			for name, rev := range revisionsIn {
+				if rev > 0 {
+					revisions[name] = rev
 				}
 			}
 		}
@@ -588,6 +579,40 @@ func generateTLSManifest() error {
 		return fmt.Errorf("%s: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// scheduledJobList is the shape `kubectl get scheduledjobs -o json` returns,
+// narrowed to the two fields the revision wait reads.
+type scheduledJobList struct {
+	Items []struct {
+		Metadata struct {
+			Name string `json:"name"`
+		} `json:"metadata"`
+		Status struct {
+			ActiveRevision int64 `json:"activeRevision"`
+		} `json:"status"`
+	} `json:"items"`
+}
+
+// scheduledJobRevisions returns name -> activeRevision for every ScheduledJob
+// in one namespace. Parse errors are fatal, not skipped: a half-decoded read
+// would look exactly like "the operator never projected anything" and send
+// the wait into its deadline instead of reporting the real fault.
+func scheduledJobRevisions(ctx context.Context, namespace string) (map[string]int64, error) {
+	out, err := exec.CommandContext(ctx, "kubectl", "get", "scheduledjobs",
+		"-n", namespace, "-o", "json").Output()
+	if err != nil {
+		return nil, fmt.Errorf("kubectl get scheduledjobs -n %s: %v: %s", namespace, err, strings.TrimSpace(string(out)))
+	}
+	var list scheduledJobList
+	if err := json.Unmarshal(out, &list); err != nil {
+		return nil, fmt.Errorf("decode scheduledjobs in %s: %w", namespace, err)
+	}
+	revisions := make(map[string]int64, len(list.Items))
+	for _, item := range list.Items {
+		revisions[item.Metadata.Name] = item.Status.ActiveRevision
+	}
+	return revisions, nil
 }
 
 // diagnoseRevisionWait snapshots the cluster state a revision wait depends
