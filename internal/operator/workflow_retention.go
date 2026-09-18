@@ -17,6 +17,17 @@ const (
 	DefaultWorkflowFailedHistory     = 3
 )
 
+// WorkflowRetentionDefinitions is the revision access retention needs, and
+// nothing else: ActiveWorkflowRevisions is the sweep's input -- the tenant's
+// workflow-sourced revisions, the only listing that returns them -- and
+// ActiveRevisions is the full active list a step run's source uid resolves
+// against, because a step is an ordinary run of a ScheduledJob or check
+// definition, not of the workflow that ordered it.
+type WorkflowRetentionDefinitions interface {
+	ActiveWorkflowRevisions(ctx context.Context, tenantID string) ([]revision.Revision, error)
+	ActiveRevisions(ctx context.Context, tenantID string) ([]revision.Revision, error)
+}
+
 // WorkflowRetainer trims workflow history: a workflow definition's terminal
 // runs beyond its retained counts are pruned steps-then-row, and each pruned
 // run's step CRs are removed before the ledger rows are.
@@ -29,7 +40,7 @@ const (
 // the RESTRICT foreign key makes an out-of-order delete fail loudly instead
 // of orphaning steps.
 type WorkflowRetainer struct {
-	Definitions WorkflowRevisionSource
+	Definitions WorkflowRetentionDefinitions
 	Workflows   WorkflowRunStore
 	History     WorkflowHistoryPruner
 	Remover     RunRemover
@@ -44,14 +55,11 @@ func (r WorkflowRetainer) Sweep(ctx context.Context) (int, error) {
 	}
 	removed := 0
 	for _, tenant := range r.Tenants {
-		defs, err := r.Definitions.ActiveRevisions(ctx, tenant)
+		defs, err := r.Definitions.ActiveWorkflowRevisions(ctx, tenant)
 		if err != nil {
-			return removed, fmt.Errorf("list active revisions for tenant %s: %w", tenant, err)
+			return removed, fmt.Errorf("list active workflow revisions for tenant %s: %w", tenant, err)
 		}
 		for _, rev := range defs {
-			if rev.Identity.SourceMode != workflowSourceMode {
-				continue
-			}
 			count, err := r.pruneDefinition(ctx, tenant, rev)
 			if err != nil {
 				return removed, err
@@ -61,12 +69,6 @@ func (r WorkflowRetainer) Sweep(ctx context.Context) (int, error) {
 	}
 	return removed, nil
 }
-
-// workflowSourceMode is the job_definition_revisions source_mode a WorkflowJob
-// materializes under, the checks-and-functions convention: one revision
-// namespace per definition kind, so the retainer never confuses a workflow's
-// history with a ScheduledJob's.
-const workflowSourceMode = "workflow"
 
 func (r WorkflowRetainer) pruneDefinition(ctx context.Context, tenant string, rev revision.Revision) (int, error) {
 	var spec v1alpha1.WorkflowJobSpec

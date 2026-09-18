@@ -100,6 +100,12 @@ type fakeWorkflowRevisions struct {
 	active   []revision.Revision
 	loadErr  error
 	activeEr error
+	// workflowActive mirrors the store's contract: ActiveRevisions never
+	// returns a workflow-sourced revision (its list feeds the scheduler), so
+	// workflow revisions arrive only through ActiveWorkflowRevisions. Keeping
+	// the two lists disjoint is what makes the retainer tests honest.
+	workflowActive []revision.Revision
+	workflowEr     error
 }
 
 // ApplyRevisionForTenant satisfies Runtime.Revisions, which shares the
@@ -124,6 +130,13 @@ func (f *fakeWorkflowRevisions) ActiveRevisions(_ context.Context, _ string) ([]
 		return nil, f.activeEr
 	}
 	return f.active, nil
+}
+
+func (f *fakeWorkflowRevisions) ActiveWorkflowRevisions(_ context.Context, _ string) ([]revision.Revision, error) {
+	if f.workflowEr != nil {
+		return nil, f.workflowEr
+	}
+	return f.workflowActive, nil
 }
 
 type fakeWorkflowPublisher struct {

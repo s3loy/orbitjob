@@ -255,9 +255,10 @@ type functionSyncDeps struct {
 
 // workflowRetentionDeps are the dependencies the workflow retention loop
 // needs. They are narrower than workflowDeps so the compiler enforces that
-// retention cannot create or advance steps.
+// retention cannot create or advance steps; Definitions is the workflow-only
+// revision listing, the sweep's input.
 type workflowRetentionDeps struct {
-	Definitions operator.WorkflowRevisionSource
+	Definitions operator.WorkflowRetentionDefinitions
 	Workflows   operator.WorkflowRunStore
 	Pruner      operator.WorkflowHistoryPruner
 	Remover     operator.RunRemover

@@ -42,14 +42,19 @@ func (f *fakeHistoryPruner) DeleteRun(_ context.Context, tenant string, runID in
 }
 
 // TestWorkflowRetainerSweepsWorkflowDefinitionsOnly pins the sweep's scope and
-// order: only workflow-sourced definitions are swept, the step CRs are removed
-// before the atomic row delete, and an ordinary ScheduledJob's history is
-// never touched by the workflow retainer.
+// order: the workflow revision is reachable only through the workflow-only
+// listing (the store's ActiveRevisions never returns one, so a sweep reading
+// the scheduler's list would prune nothing), the step CRs are removed before
+// the atomic row delete, and an ordinary ScheduledJob's history is never
+// touched by the workflow retainer.
 func TestWorkflowRetainerSweepsWorkflowDefinitionsOnly(t *testing.T) {
 	jobSpec := jobSpecJSON(t)
 	workflowDef := withIdentity(t, workflowRevision(t, 5, workflowSpecJSON(t, twoTaskSpec())), "workflow", "wf-uid-1", "finance", "nightly-pipeline")
 	jobDef := withIdentity(t, workflowRevision(t, 10, jobSpec), "kubernetes", "extract-job-uid", "finance", "extract-job")
-	defs := &fakeWorkflowRevisions{active: []revision.Revision{workflowDef, jobDef}}
+	defs := &fakeWorkflowRevisions{
+		active:         []revision.Revision{jobDef},
+		workflowActive: []revision.Revision{workflowDef},
+	}
 
 	run := workflow.Run{ID: 42, SourceUID: "wf-uid-1", OccurrenceKey: "wocc-1", Phase: workflow.PhaseSucceeded}
 	pruner := &fakeHistoryPruner{prunable: []workflow.Run{run}}
@@ -100,7 +105,7 @@ func TestWorkflowRetainerSweepsWorkflowDefinitionsOnly(t *testing.T) {
 // the sweep skips it instead of failing the whole sweep.
 func TestWorkflowRetainerSurvivesGoneDefinitions(t *testing.T) {
 	workflowDef := withIdentity(t, workflowRevision(t, 5, workflowSpecJSON(t, twoTaskSpec())), "workflow", "wf-uid-1", "finance", "nightly-pipeline")
-	defs := &fakeWorkflowRevisions{active: []revision.Revision{workflowDef}}
+	defs := &fakeWorkflowRevisions{workflowActive: []revision.Revision{workflowDef}}
 	run := workflow.Run{ID: 42, SourceUID: "wf-uid-1", OccurrenceKey: "wocc-1", Phase: workflow.PhaseFailed}
 	pruner := &fakeHistoryPruner{prunable: []workflow.Run{run}}
 	// The step's source uid resolves to no active definition.
