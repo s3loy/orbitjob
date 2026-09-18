@@ -422,11 +422,15 @@ func injectFaults(ctx context.Context, start time.Time, plan []FaultSpec, rec *F
 func deploymentReadyCheck(name, namespace string) func(context.Context) bool {
 	return func(ctx context.Context) bool {
 		out, err := exec.CommandContext(ctx, "kubectl", "get", "deployment", "orbitjob-"+name,
-			"-n", namespace, "-o", "jsonpath={.status.readyReplicas}").Output()
+			"-n", namespace, "-o", "json").Output()
 		if err != nil {
 			return false
 		}
-		return strings.TrimSpace(string(out)) == "1"
+		ready, err := decodeReadyReplicas(out)
+		if err != nil {
+			return false
+		}
+		return ready == 1
 	}
 }
 
