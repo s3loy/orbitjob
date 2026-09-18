@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
@@ -66,6 +67,7 @@ type fakePublisher struct {
 	created   bool
 	err       error
 	published []v1alpha1.JobRun
+	getQueue  []v1alpha1.JobRun
 }
 
 func (f *fakePublisher) Publish(ctx context.Context, run v1alpha1.JobRun) (v1alpha1.JobRun, bool, error) {
@@ -74,6 +76,15 @@ func (f *fakePublisher) Publish(ctx context.Context, run v1alpha1.JobRun) (v1alp
 		return v1alpha1.JobRun{}, false, f.err
 	}
 	return f.stored, f.created, nil
+}
+
+func (f *fakePublisher) Get(ctx context.Context, namespace, name string) (v1alpha1.JobRun, error) {
+	if len(f.getQueue) == 0 {
+		return v1alpha1.JobRun{}, nil
+	}
+	next := f.getQueue[0]
+	f.getQueue = f.getQueue[1:]
+	return next, nil
 }
 
 func assembledUseCase(fns *fakeFunctions, revs *fakeRevisions, pub *fakePublisher) *UseCase {
@@ -131,6 +142,13 @@ func TestInvokePublishesOneFunctionRun(t *testing.T) {
 	}
 	if want := v1alpha1.RunObjectName("function-7", run.Spec.OccurrenceKey); run.Name != want {
 		t.Fatalf("name = %q, want the shared derivation %q", run.Name, want)
+	}
+	// An invocation CR carries no owner references: the scheduled job ref
+	// names a revision identity, not a ScheduledJob custom resource, and an
+	// owner pointer to an object that does not exist would have the GC reap
+	// the run immediately.
+	if len(run.OwnerReferences) != 0 {
+		t.Fatalf("owner references = %+v, want none", run.OwnerReferences)
 	}
 	if got.OccurrenceKey != run.Spec.OccurrenceKey {
 		t.Fatalf("result key %q does not match the published CR's %q", got.OccurrenceKey, run.Spec.OccurrenceKey)
@@ -293,19 +311,108 @@ func TestInvokeFunctionNotFound(t *testing.T) {
 }
 
 func TestInvokeRevisionPending(t *testing.T) {
+	// The CRD requires definitionRevision before publish, so a function whose
+	// revision has not been materialized yet cannot be invoked -- a conflict
+	// the caller can retry, not a 500.
 	pub := &fakePublisher{}
 	revs := &fakeRevisions{found: false}
 	uc := assembledUseCase(&fakeFunctions{def: activeDefinition(9), found: true}, revs, pub)
 
 	_, err := uc.Invoke(context.Background(), invokeInput(9))
-	if !errors.Is(err, ErrRevisionPending) {
-		t.Fatalf("error = %v, want ErrRevisionPending", err)
+	var conflict *resource.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("error = %v, want the unmaterialized-revision ConflictError", err)
+	}
+	if conflict.Field != "revision" {
+		t.Fatalf("conflict field = %q, want revision", conflict.Field)
 	}
 	if revs.gotSourceUID != "function-9" {
 		t.Fatalf("resolver asked for %q, want function-9", revs.gotSourceUID)
 	}
 	if len(pub.published) != 0 {
 		t.Fatal("an unmaterialized revision must not publish")
+	}
+}
+
+func TestInvokeScopedCallerCannotInvokeOtherGroups(t *testing.T) {
+	// A function outside the caller's group is as invisible as a missing one:
+	// saying anything else would leak whether it exists.
+	def := activeDefinition(10)
+	def.ResourceGroupID = "group-9"
+	pub := &fakePublisher{}
+	uc := assembledUseCase(
+		&fakeFunctions{def: def, found: true},
+		&fakeRevisions{rev: Revision{ID: 1, Namespace: "ns"}, found: true},
+		pub,
+	)
+
+	in := invokeInput(10)
+	in.ResourceGroupID = "group-2"
+	_, err := uc.Invoke(context.Background(), in)
+	var notFound *resource.NotFoundError
+	if !errors.As(err, &notFound) {
+		t.Fatalf("error = %v, want a NotFoundError for a function outside the caller's group", err)
+	}
+	if len(pub.published) != 0 {
+		t.Fatal("an invisible function must not publish")
+	}
+}
+
+func TestInvokeWaitPollsToTerminalPhase(t *testing.T) {
+	// The synchronous variant answers with the terminal phase the poll
+	// observed, and drains the publisher's reads doing it.
+	pub := &fakePublisher{
+		created: true,
+		getQueue: []v1alpha1.JobRun{
+			{Status: v1alpha1.JobRunStatus{Phase: "Running"}},
+			{Status: v1alpha1.JobRunStatus{Phase: ""}},
+			{Status: v1alpha1.JobRunStatus{Phase: "Succeeded"}},
+		},
+	}
+	uc := assembledUseCase(
+		&fakeFunctions{def: activeDefinition(11), found: true},
+		&fakeRevisions{rev: Revision{ID: 3, Namespace: "ns"}, found: true},
+		pub,
+	).WithPollInterval(time.Millisecond)
+
+	in := invokeInput(11)
+	in.WaitSeconds = 5
+	got, err := uc.Invoke(context.Background(), in)
+	if err != nil {
+		t.Fatalf("invoke with wait: %v", err)
+	}
+	if got.Phase != "Succeeded" {
+		t.Fatalf("phase = %q, want the terminal phase the poll observed", got.Phase)
+	}
+	if len(pub.getQueue) != 0 {
+		t.Fatalf("poll did not consume the queue: %d left", len(pub.getQueue))
+	}
+}
+
+func TestInvokeWaitExpiryStillReturnsReference(t *testing.T) {
+	// A wait that expires is not an error: the caller always gets the
+	// reference, and the phase observed last -- never a fabricated terminal
+	// phase.
+	pub := &fakePublisher{
+		created: true,
+		getQueue: []v1alpha1.JobRun{
+			{Status: v1alpha1.JobRunStatus{Phase: "Running"}},
+		},
+	}
+	uc := assembledUseCase(
+		&fakeFunctions{def: activeDefinition(12), found: true},
+		&fakeRevisions{rev: Revision{ID: 4, Namespace: "ns"}, found: true},
+		pub,
+	).WithPollInterval(time.Millisecond)
+
+	in := invokeInput(12)
+	in.WaitSeconds = 1
+	got, err := uc.Invoke(context.Background(), in)
+	if err != nil {
+		t.Fatalf("invoke with expiring wait: %v", err)
+	}
+	if got.Phase != "Running" {
+		t.Fatalf("phase = %q, want the last observed non-terminal phase", got.Phase)
 	}
 }
 
@@ -358,6 +465,8 @@ func TestInvokeValidatesInput(t *testing.T) {
 		"blank actor":       {TenantID: tenantID, FunctionID: 1, ActorID: "  "},
 		"oversized actor":   {TenantID: tenantID, FunctionID: 1, ActorID: strings.Repeat("x", 256)},
 		"missing tenant id": {FunctionID: 1, ActorID: "a"},
+		"wait over the cap": {TenantID: tenantID, FunctionID: 1, ActorID: "a", WaitSeconds: maxInvokeWaitSeconds + 1},
+		"negative wait":     {TenantID: tenantID, FunctionID: 1, ActorID: "a", WaitSeconds: -1},
 	}
 	for name, in := range cases {
 		t.Run(name, func(t *testing.T) {

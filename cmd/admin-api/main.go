@@ -42,6 +42,7 @@ import (
 	"orbitjob/internal/admin/http/middleware"
 	"orbitjob/internal/admin/kube"
 	adminpostgres "orbitjob/internal/admin/store/postgres"
+	"orbitjob/internal/core/app/functioninvoke"
 	corepostgres "orbitjob/internal/core/store/postgres"
 	"orbitjob/internal/platform/config"
 	platformlogger "orbitjob/internal/platform/logger"
@@ -327,9 +328,9 @@ func buildHandler(
 
 	handler.SetListFunctionsUseCase(adminhttp.NewListFunctionsUseCase(functionRepo))
 	handler.SetGetFunctionUseCase(adminhttp.NewGetFunctionUseCase(functionRepo))
-	handler.SetInvokeFunctionUseCase(adminhttp.NewInvokeFunctionUseCase(
+	handler.SetInvokeFunctionUseCase(functioninvoke.New(
 		functionRepo,
-		adminhttp.NewFunctionRevisionReader(revisions),
+		controlPlaneRevisions{revisions},
 		jobPublisher,
 	))
 	handler.SetListFunctionRunsUseCase(adminhttp.NewListFunctionRunsUseCase(functionRunRepo, functionRepo))
