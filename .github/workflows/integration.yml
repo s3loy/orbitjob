@@ -60,14 +60,14 @@ jobs:
       - name: Provision deployment roles
         run: go run ./scripts/provision-test-roles
 
-      - name: Run migration baseline qualification
+      - name: Migration baseline suite
         run: go test -count=1 -tags integration ./db/migrations
 
-      - name: Run postgres integration test helpers
+      - name: Postgres test helpers suite
         run: go test -count=1 -tags integration ./internal/platform/postgrestest
 
-      - name: Run postgres repository integration tests
+      - name: Repository suites
         run: go test -count=1 -tags integration ./internal/admin/store/postgres ./internal/core/store/postgres
 
-      - name: Run bootstrap and admin HTTP integration tests
+      - name: Bootstrap + admin HTTP suites
         run: go test -count=1 -tags integration ./internal/admin/bootstrap ./internal/admin/http
