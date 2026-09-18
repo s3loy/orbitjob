@@ -576,7 +576,7 @@ log_section "10. SLIs"
 http POST "/api/v1/slis" \
   -H "Authorization: Bearer $BOOTSTRAP_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"name":"availability-sli","sli_type":"availability","source_type":"check_run","source_config":{"check_id":'"$CHECK_ID"'},"aggregation":"ratio","good_event_criteria":{"field":"status","op":"eq","value":"success"}}'
+  -d '{"name":"availability-sli","sli_type":"availability","source_type":"job_run","source_config":{"source_uid":"check-'"$CHECK_ID"'"},"aggregation":"ratio","good_event_criteria":{"field":"status","op":"eq","value":"success"}}'
 assert_code "201" "create SLI"
 SLI_ID=$(jget "$LAST_BODY" "id")
 SLI_VERSION=$(jget "$LAST_BODY" "version")
