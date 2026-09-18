@@ -1,35 +1,69 @@
-# 数据库配置
+# Database configuration
 
-OrbitJob 把数据库配置放在 installation 层。配置一次，admin-api、scheduler、dispatcher、worker 和后续新增副本自动继承。
+OrbitJob configures its database once per installation. Every process and every
+replica inherits that configuration; nobody configures a DSN per process.
+
+## What the bootstrap account needs
+
+One account is used once, to create the roles the workloads run as. It needs:
+
+- `LOGIN` and `CREATEROLE`
+- ownership of the target database
+
+That is all. It does not need `SUPERUSER`: `pgcrypto` is a trusted extension in
+PostgreSQL 13 and later, so the database owner can create it, and the schema
+grants in `owner-init` work from database ownership.
+
+If the roles already exist and were created by a different account, the
+bootstrap account also needs `ADMIN OPTION` on them — `CREATEROLE` alone only
+covers roles the account created. `scripts/kind-db.sh` grants this when
+switching an existing local installation over.
+
+`owner-init` creates and manages:
+
+```text
+orbitjob_table_owner   orbitjob_migrator   orbitjob_admin   orbitjob_runtime
+orbitjob_operator      orbitjob_owner      orbitjob_reader
+```
+
+Only `orbitjob_migrator`, `orbitjob_admin` and `orbitjob_runtime` have `LOGIN`;
+`orbitjob_table_owner`, `orbitjob_operator`, `orbitjob_owner` and
+`orbitjob_reader` are `NOLOGIN` identities. Business processes never receive
+the bootstrap DSN. They get the migrator, admin and runtime roles, each subject
+to row level security.
 
 ## Bundled PostgreSQL
 
-Docker Compose 自带 PostgreSQL，不需要写 DSN：
+`cmd/configure setup` has two modes. In bundled mode it assumes a PostgreSQL
+server is reachable at a fixed endpoint — the default is
+`postgres://pg:5432/orbitjob`, override with `--bundled-endpoint` — and
+generates the installation state without contacting the server:
 
 ```bash
-make setup
-make docker-up
+go run ./cmd/configure setup --mode bundled
 ```
 
-`make setup` 生成：
+`configure setup` writes:
 
-- `.env`：PostgreSQL owner、Grafana 和 bootstrap API key
-- `.runtime/database.env`：migrator、admin、runtime 的派生连接配置
-- `.runtime/database.json`：installation 状态，用于重复 setup 时复用密码
+- `.runtime/database.env` — the derived DSNs for the bootstrap owner, migrator,
+  admin and runtime roles, plus the generated passwords
+- `.runtime/database.json` — installation state, so a repeated setup reuses the
+  passwords
 
-两个文件目录都被 Git 忽略，凭据文件权限为 `0600`。
+Both paths are gitignored and both files are `0600`.
 
-再次运行 `make setup` 不会修改密码：
+Running `configure setup` again does not change the passwords:
 
 ```text
 Existing database configuration is valid. Runtime configuration refreshed.
 ```
 
-如需完全重置为初始状态，运行 `make docker-reset`。`make env-clean` 也会同时删除 `.runtime/`，避免 PostgreSQL owner 密码与 installation state 分叉。
+`--reconfigure` replaces existing installation state — that is what you want if
+the owner password and the installation state have diverged.
 
 ## External PostgreSQL
 
-把唯一的 bootstrap DSN 写入权限为 `0600` 的文件：
+Put the bootstrap DSN in a file only you can read:
 
 ```bash
 install -m 0600 /dev/null /tmp/orbitjob-bootstrap-dsn
@@ -37,7 +71,7 @@ printf '%s\n' 'postgres://dbadmin:<password>@db.example.com:5432/orbitjob?sslmod
   > /tmp/orbitjob-bootstrap-dsn
 ```
 
-执行：
+Then:
 
 ```bash
 go run ./cmd/configure setup \
@@ -47,30 +81,31 @@ go run ./cmd/configure setup \
   --runtime-env .runtime/database.env
 ```
 
-bootstrap 身份需要创建角色和修改角色密码。配置工具自动创建并验证：
+For a local kind cluster, `make kind-db` does all of this and creates the
+Secret, using an `orbitjob_bootstrap` account that owns the database rather than
+the image's superuser.
 
-```text
-orbitjob_migrator
-orbitjob_admin
-orbitjob_runtime
-```
+## Kubernetes and replicas
 
-业务进程不会得到 bootstrap DSN。
-
-## Kubernetes 和多副本
-
-Kubernetes 中，一次 installation 使用一个 `orbitjob-database` Secret。所有 Pod 引用同一份 Secret。把 worker 从 1 扩到 10 不需要再次配置数据库：
+One installation uses one `orbitjob-database` Secret, and every pod reads the
+same one. Going from one scheduler replica to ten does not touch the database
+configuration:
 
 ```bash
-kubectl scale deployment/orbitjob-worker -n orbitjob-system --replicas=10
-kubectl rollout status deployment/orbitjob-worker -n orbitjob-system
+kubectl scale deployment/orbitjob-scheduler -n orbitjob-system --replicas=10
+kubectl rollout status deployment/orbitjob-scheduler -n orbitjob-system
 ```
 
-Chart 只接收 Secret 名和固定 key 名，不要求你同时填写 password 和 DSN。`deploy/kind/verify-v020.sh` 展示了完整安装流程。
+The chart takes a Secret name and a fixed set of key names. It does not ask for
+a password and a DSN for the same role.
 
-## 独立进程
+Changing the Secret does not restart the pods that read it, and the chart cannot
+hash a Secret it does not create. `make kind-db` rolls the workloads when the
+contents actually change; a hand-edited Secret needs a restart of your own.
 
-如果你不用 Compose 或 Helm，配置工具生成的 `.runtime/database.env` 仍可作为统一来源：
+## Standalone processes
+
+Without Helm, the generated `.runtime/database.env` is the single source:
 
 ```bash
 set -a
@@ -78,42 +113,55 @@ set -a
 set +a
 ./bin/admin-api
 ./bin/scheduler
-./bin/dispatcher
-./bin/worker
+./bin/operator
 ```
 
-admin-api 读取 `ADMIN_DSN`。三个 runtime 共同读取 `RUNTIME_DSN`。
+`admin-api` reads `ADMIN_DSN`. The runtime processes — scheduler and operator —
+share `RUNTIME_DSN`; the operator accepts `OPERATOR_DSN` first and falls back
+to `RUNTIME_DSN`.
 
-旧的 `SCHEDULER_DSN`、`DISPATCHER_DSN`、`WORKER_DSN` 和 `DATABASE_DSN` 仍可回退使用，但新部署不要再分别维护它们。
+> **Renamed variables.** `DATABASE_DSN` and `SCHEDULER_DSN` are accepted only
+> as legacy fallbacks for `ADMIN_DSN` and `RUNTIME_DSN`; new deployments must
+> not use them. The old `DISPATCHER_DSN` and `WORKER_DSN` were removed together
+> with the dispatcher and worker processes.
 
 ## TLS
 
-External DSN 保留 PostgreSQL query 参数：
+An external DSN keeps its PostgreSQL query parameters:
 
 ```text
 postgres://dbadmin:<password>@db.example.com:5432/orbitjob?sslmode=verify-full&sslrootcert=/run/secrets/ca.crt
 ```
 
-配置工具通过 `net/url` 派生内部 DSN。密码包含 `@:/?#%` 或空格时不需要手工 URL encoding。
+The tooling derives the internal DSNs with `net/url`, so a password containing
+`@:/?#%` or a space needs no manual encoding.
 
-## 常见错误
+## Troubleshooting
 
-### 缺少本地配置
+### Local configuration is missing
+
+Standalone processes read `.runtime/database.env`. Generate it once with
+`go run ./cmd/configure setup`; do not hand-write it.
+
+### External authentication fails
+
+Check the user, password, TLS parameters and database in the bootstrap DSN. The
+tooling prints only a redacted endpoint and never the password.
+
+### Permission denied
 
 ```text
-Database configuration is missing. Run: make setup
+ensure database roles: pq: permission denied to alter role (42501)
 ```
 
-先运行 `make setup`。不要手写 `.runtime/database.env`。
+The bootstrap account cannot manage the OrbitJob roles. It needs `CREATEROLE`,
+and `ADMIN OPTION` on roles it did not create itself. PostgreSQL lets only a
+superuser change the `SUPERUSER`, `CREATEROLE` or `BYPASSRLS` attributes, so a
+role that has drifted needs a superuser to repair it — `owner-init` names the
+role and the attribute rather than doing it silently.
 
-### External PostgreSQL 认证失败
+### Switching databases
 
-检查 bootstrap DSN 中的用户名、密码、TLS 参数和目标数据库。工具只输出脱敏 endpoint，不会打印密码。
-
-### 权限不足
-
-bootstrap 用户必须能创建或修改 OrbitJob roles。只允许 DBA 预创建 role 的部署模式尚未交付。
-
-### 切换数据库
-
-默认 setup 不会覆盖已有 installation 状态。切换 endpoint 会改变权威数据源，不能视为普通配置更新。备份和数据迁移需要单独处理。
+A normal setup never overwrites existing installation state. Pointing at a
+different endpoint changes the authoritative data source and is not a routine
+configuration change: back up and migrate separately.

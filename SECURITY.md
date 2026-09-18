@@ -1,69 +1,73 @@
-# 安全策略
+# Security Policy
 
-## 报告漏洞
+## Reporting vulnerabilities
 
-请勿在公开 Issue、Discussion 或 PR 中披露安全漏洞。发送邮件至 <justs3loy@gmail.com>，主题标注 `[OrbitJob Security]`。
+Please do not disclose security vulnerabilities in public Issues, Discussions or PRs. Email <justs3loy@gmail.com> with the subject `[OrbitJob Security]`.
 
-报告需包含：
+A report should include:
 
-- 受影响的 commit、版本或部署方式
-- 所需权限与攻击路径
-- 最小复现步骤
-- 涉及的 tenant、数据库 role、Kubernetes namespace 或网络边界
-- 实际影响与建议修复方案
+- the affected commit, version or deployment method
+- required privileges and attack path
+- minimal reproduction steps
+- the tenant, database role, Kubernetes namespace or network boundary involved
+- actual impact and a suggested fix
 
-禁止在未授权环境中进行测试。禁止发送真实 API key、数据库密码、Secret 内容或生产数据，使用替代值代替。
+Testing in unauthorized environments is prohibited. Never send real API keys, database passwords, Secret contents or production data; use placeholder values.
 
-## 响应与披露
+## Response and disclosure
 
-维护者确认收到报告后，在复现漏洞的基础上协调修复与披露时间。项目尚未发布稳定版本，不承诺固定 SLA。修复提交公开前，请勿发布利用细节。
+Once maintainers acknowledge a report, fix and disclosure are coordinated on the basis of a reproduction. The project has no stable release yet, so no fixed SLA is promised. Please do not publish exploit details before the fix commit is public.
 
-## 当前安全模型
+## Current security model
 
-OrbitJob 的安全边界由四层组成：
+OrbitJob's security boundary has four layers:
 
-1. Bearer API key 认证
-2. Admin API tenant 校验与统一输入验证
-3. PostgreSQL 最小权限 role 与 RLS
-4. Compose/Kubernetes 中的 Secret、ServiceAccount、RBAC 与 Pod Security
+1. Bearer API key authentication
+2. Admin API tenant checks and unified input validation
+3. PostgreSQL least-privilege roles and RLS
+4. Kubernetes Secrets, ServiceAccounts, RBAC and Pod Security
 
-上述各层不可相互替代。RLS 可减少越权查询的影响范围，但不能修复错误授权；Kubernetes RBAC 可限制 worker 创建 Job 的权限，但不能验证业务 tenant。
+No layer substitutes for another. RLS can reduce the blast radius of unauthorized queries but cannot fix wrong grants; Kubernetes RBAC can constrain the operator's ability to create Jobs but cannot validate business tenants.
 
-### API Key
+### API keys
 
-API key 使用 `otj_` 前缀。服务端保存 bcrypt 摘要，不保存可恢复的明文。创建 API key 和 bootstrap 时仅返回或写入一次明文。
+API keys use the `otj_` prefix. The server stores a bcrypt digest, never recoverable plaintext. The plaintext is returned or written exactly once, at key creation or bootstrap.
 
-认证函数需在 tenant 未知时查询候选 key。`orbitjob_auth_api_key` 使用 `SECURITY DEFINER`、固定 `search_path`，仅向 `orbitjob_admin` 授予执行权限。函数返回候选摘要后，应用层执行 bcrypt 比较。
+The authentication function must look up candidate keys when the tenant is unknown. `orbitjob_auth_api_key` is `SECURITY DEFINER`, with a fixed `search_path`, and `EXECUTE` is granted only to `orbitjob_admin`. After the function returns candidate digests, the application performs the bcrypt comparison.
 
-吊销、过期、未知 key、suspended tenant 与错误密码均返回统一 `401`，避免泄露 key 或 tenant 的存在性。
+Revoked, expired, unknown keys, suspended tenants and wrong passwords all return the same `401`, so the existence of a key or tenant is never revealed.
 
-### PostgreSQL Role
+### PostgreSQL roles
 
-部署使用以下 role：
+The deployment uses these roles:
 
-| Role | 用途 |
+| Role | Purpose |
 |---|---|
-| `orbitjob_table_owner` | NOLOGIN；持有 table、sequence 与安全函数 |
-| `orbitjob_migrator` | migration runner；可 `SET ROLE orbitjob_table_owner` |
-| `orbitjob_admin` | Admin API 与 bootstrap |
-| `orbitjob_runtime` | scheduler、dispatcher、worker |
-| `orbitjob_operator` | 为后续 Operator 预留的受限写权限 |
+| `orbitjob_table_owner` | NOLOGIN; owns tables, sequences and the security functions |
+| `orbitjob_migrator` | migration runner; can `SET ROLE orbitjob_table_owner` |
+| `orbitjob_admin` | Admin API and bootstrap; SELECT-only on the run-history tables — the baseline's three ledger tables plus `workflow_run_control_plane` and `function_runs` |
+| `orbitjob_runtime` | login identity of scheduler and operator (`RUNTIME_DSN`, operator prefers `OPERATOR_DSN`); holds run-ledger write privileges |
+| `orbitjob_operator` | NOLOGIN; run-ledger write only, reserved for a future dedicated operator credential |
 
-Runtime 进程不可使用 bootstrap owner、table owner 或 PostgreSQL superuser DSN。Compose 与 Helm 分开保存 admin/runtime/migrator 凭据。
+Runtime processes must never use the bootstrap owner, table owner or PostgreSQL superuser DSN. Credentials live in separate keys of the installation-level `orbitjob-database` Secret, shared by all replicas.
 
-v0.2.0 baseline 撤销 `PUBLIC` 在 `public` schema 上的 `CREATE` 权限，安全函数显式撤销 `PUBLIC EXECUTE`。新增函数时需重复这两个约束，不可依赖数据库默认权限。
+The `baseline` migration revokes `CREATE` on the `public` schema from `PUBLIC`, and the security functions explicitly revoke `PUBLIC EXECUTE`. New functions must repeat both constraints; never rely on database defaults.
 
 ### RLS
 
-v0.2.0 baseline 对以下表执行 `ALTER TABLE ... ENABLE ROW LEVEL SECURITY`：
+The migrations run `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` on these 20 relations:
 
 ```text
-jobs
-job_instances
-job_instance_attempts
-workers
+tenants
+api_keys
+key_policies
+policies
+resource_groups
 audit_events
-job_change_audits
+audit_events_default
+job_definition_revisions
+job_run_control_plane
+job_run_attempts_control_plane
 checks
 check_runs
 slis
@@ -71,84 +75,81 @@ slos
 sli_snapshots
 budgets
 budget_alerts
-api_keys
-tenants
+functions            (0004)
+function_runs        (0004)
+workflow_run_control_plane  (0005)
 ```
 
-baseline 仅 `ENABLE` 不 `FORCE` RLS。`orbitjob_table_owner` 为 NOLOGIN，无进程以 owner 身份登录；`orbitjob_admin`、`orbitjob_runtime`、`orbitjob_operator` 均非 table owner，`ENABLE` 已对它们强制 RLS。`FORCE` 仅在 owner 本身也需受 RLS 约束时才有意义，当前身份分离模型下不需要。
+The baseline only `ENABLE`s RLS, it does not `FORCE` it. `orbitjob_table_owner` is NOLOGIN, so no process ever logs in as the owner; `orbitjob_admin`, `orbitjob_runtime` and `orbitjob_operator` are not table owners, and `ENABLE` already enforces RLS against them. `FORCE` only matters when the owner itself must be subject to RLS, which the current identity-separation model does not need.
 
-策略读取事务局部变量 `app.tenant_id`。repository 必须在同一事务中设置 tenant 后再执行 query。不可使用 session 级 `SET app.tenant_id`，连接池会复用连接。
+Policies read the transaction-local variable `app.tenant_id`. Repositories must set the tenant in the same transaction as the query. Never use session-level `SET app.tenant_id`; connection pools reuse connections.
 
-跨 tenant 操作仅允许通过经过审查的 `SECURITY DEFINER` 函数：
+Cross-tenant operations are allowed only through reviewed `SECURITY DEFINER` functions:
 
 - `orbitjob_auth_api_key`
 - `orbitjob_list_active_tenant_ids`
 - `orbitjob_bootstrap_default`
+- `orbitjob_find_key_tenant`
 
-新增跨 tenant query 前，优先调整数据模型或使用 tenant-scoped transaction。确实需要函数时，固定 `search_path`、收窄返回列、撤销 `PUBLIC`、仅授权指定 role，并增加真实 PostgreSQL 集成测试。
+Before adding a cross-tenant query, adjust the data model or use a tenant-scoped transaction instead. When a function is truly needed: fix the `search_path`, narrow the returned columns, revoke from `PUBLIC`, grant only to specific roles, and add a real PostgreSQL integration test.
 
-### Kubernetes Container Handler
+### Kubernetes workloads
 
-Container handler 创建 `batch/v1 Job`。Pod 默认限制：
+The operator renders each `JobRun` into a `batch/v1` Job in the task namespace
+(`orbitjob-tasks`), from the container image, command and args declared in the
+`ScheduledJob` job template. Pods run with `restartPolicy: Never` — a failed pod
+is one failed attempt, and retry is owned by the platform, never a silent
+in-process restart. The platform sets no pod security context by itself; the
+task ServiceAccount `orbitjob-task` deliberately has no API access, because a
+job is workload, not control plane.
 
-- UID 65534，`runAsNonRoot: true`
-- read-only root filesystem
-- `allowPrivilegeEscalation: false`
-- drop ALL Linux capabilities
-- RuntimeDefault seccomp
-- 不自动挂载 ServiceAccount token
-- 默认 request：100m CPU、64Mi memory
-- 默认 limit：1 CPU、512Mi memory
+The task ServiceAccount must never be granted cluster-level permissions. If a
+workload needs to call an API, create a separate, narrowly scoped
+ServiceAccount for it and reference that one from the job template.
 
-生产环境建议：
+A container image runs with whatever privileges its own manifest requests,
+inside the boundary the task namespace and its ServiceAccount define. Treat job
+images as untrusted inputs: pin them to an immutable digest at the registry or
+admission layer if mutable tags are a concern.
 
-```yaml
-worker:
-  containerExecution:
-    requireDigest: true
+### Secrets and logs
+
+Never commit:
+
+- `.runtime/` installation state files (DSNs and role passwords)
+- the bootstrap API key
+- PostgreSQL role passwords and DSNs
+- Kubernetes Secret plaintext
+- a `smoke-test-results.md` containing real identifiers or errors
+
+Database credentials are generated by `cmd/configure setup` into `.runtime/` with `0600` permissions, then injected into the cluster as the
+installation Secret. The bootstrap key is written by the bootstrap job into the
+`bootstrap-api-key` Secret; read it with:
+
+```bash
+kubectl -n orbitjob-system get secret bootstrap-api-key \
+  -o jsonpath='{.data.api-key}' | base64 --decode
 ```
 
-该设置要求 `image@sha256:...`，防止可变 tag 在重复执行时指向不同内容。
+Never paste that command's output into a CI log or a public Issue.
 
-Chart 将 worker 与 task workload 置于独立的 ServiceAccount/namespace 权限边界内。不可为 task ServiceAccount 授予集群级权限。若 workload 需访问 API，显式创建另一个受限 ServiceAccount，并在 Job payload 中引用。
+The application logs structurally with trace IDs. New log lines must never include the `Authorization` header, API keys, DSNs or full request bodies.
 
-### HTTP 与 Webhook
+## Known boundaries
 
-HTTP、webhook 和 `http_health` handler 拦截 loopback、RFC1918、link-local、metadata 及 IPv6 private 地址，并在 DNS 解析与连接阶段重复检查。redirect 默认关闭。
+- The project has no formal release or long-term-support version.
+- The operator elects a singleton via Kubernetes Lease; the scheduler's etcd election is optional. PG epoch fencing (writer epoch) was removed together with the legacy execution path.
+- The API has no full management RBAC yet. Never expose the tenant/API-key management endpoints directly to untrusted networks; add access control at the ingress or API gateway layer.
+- OpenAPI does not yet fully express the Bearer security scheme and some DELETE version bodies. The middleware is authoritative for authentication; deleting a Check/SLI/SLO requires the current `version`.
+- Runs execute as Kubernetes Jobs with `restartPolicy: Never`; a workload can therefore be started more than once across attempts. Job images and anything they call must tolerate repeated execution.
+- Historical note: the in-process HTTP/webhook/`pg_notify` handlers and their SSRF and signature protections were removed with the worker execution path. The things that make outbound connections now are the user's own container image and the check probes — a digest-pinned curl image requesting the URL each check configures; constrain task-namespace egress with a NetworkPolicy or an egress proxy.
 
-SSRF 防护不等同于网络隔离。生产集群应额外使用 NetworkPolicy、egress proxy 或防火墙限制 worker 与 task namespace 的出口流量。
+## Supported versions
 
-Webhook secret 当前随 Job payload 存储。不可将长期凭据直接写入 payload。优先让接收端使用短期 token，或在后续 Secret 引用能力交付前通过受控网关转发。
-
-### Secret 与日志
-
-禁止提交以下内容：
-
-- `.env` 文件
-- bootstrap API key
-- PostgreSQL role 密码与 DSN
-- Kubernetes Secret 明文
-- 包含真实标识符或错误内容的 `smoke-test-results.md`
-
-`make docker-up` 生成随机本地凭据。bootstrap key 写入 `bootstrap_secrets` volume；通过 `make bootstrap-key` 读取。不可将命令输出粘贴到 CI log 或公开 Issue。
-
-应用使用结构化日志与 trace ID。新增日志时不可记录 `Authorization` header、API key、DSN、handler secret 或完整请求 body。
-
-## 已知边界
-
-- 项目尚无正式 release 与长期支持版本。
-- Kubernetes Lease 与 PG epoch fencing 尚未交付；需要多进程协调时使用 etcd。
-- API 目前没有完整的管理 RBAC。不可将 tenant/API-key 管理接口直接暴露到不可信网络；在 ingress 或 API gateway 层增加访问控制。
-- OpenAPI 尚未完整表达 Bearer security 与部分 DELETE version body。认证行为以 middleware 为准，删除 Check/SLI/SLO 时需提供当前 `version`。
-- Claim/Lease 为至少一次语义，handler 与外部接收端需实现幂等。
-- PostgreSQL `NOTIFY` 不保留离线消息，不可用于安全审计或关键事件投递。
-
-## 支持的版本
-
-| 版本 | 安全更新 |
+| Version | Security updates |
 |---|---|
-| 尚未正式发布 | 维护者优先修复 `dev` 分支上可复现的问题，不承诺长期支持 |
+| No formal release yet | Maintainers prioritize reproducible issues on the `dev` branch; no long-term support promised |
 
-## 致谢
+## Credits
 
-修复公开后列出报告者，除非报告者要求匿名。
+Reporters are listed after a fix is public, unless they ask to remain anonymous.
