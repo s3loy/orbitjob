@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -78,19 +77,15 @@ Exit codes:
 Run "orbitjob <command> -h" for a command's options.`
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, usageText)
+	// A CLI whose stdout has gone away has nothing useful to do with the write
+	// error; the usage text is best effort.
+	_, _ = fmt.Fprintln(w, usageText)
 }
 
 // usageFail is the error a subcommand returns when argv does not name a known
 // subcommand.
 func usageFail(usageLine string) error {
 	return failf(1, "usage: %s", usageLine)
-}
-
-// helpRequested reports flag.ErrHelp, which flag has already announced on
-// stderr; the command then succeeds.
-func helpRequested(err error) bool {
-	return errors.Is(err, flag.ErrHelp)
 }
 
 // fatal wraps an unexpected command failure as exit 1 with a spoken message.

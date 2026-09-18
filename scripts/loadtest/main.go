@@ -329,17 +329,6 @@ func runRun(args []string) error {
 	return nil
 }
 
-func printTuning(params TuningParameters) {
-	fmt.Printf("tuning: task_capacity_max=%d task_capacity=%d trigger_rps_per_tenant=%d\n",
-		params.EffectiveTaskCapacityMax, params.RecommendedTaskCapacity, params.RecommendedTriggerRPSPerTenant)
-	fmt.Printf("tuning: estimated_manual=%d estimated_cron=%d\n",
-		params.EstimatedManualRuns, params.EstimatedCronRuns)
-	fmt.Println("tuning: phase_rates")
-	for name, rate := range params.PhaseRates {
-		fmt.Printf("  %s: rate=%d/min max_active=%d\n", name, rate, params.MaxActive[name])
-	}
-}
-
 func applyTuningToConfig(cfg Config, params TuningParameters) Config {
 	for i := range cfg.Phases {
 		if r, ok := params.PhaseRates[cfg.Phases[i].Name]; ok {

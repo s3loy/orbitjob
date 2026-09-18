@@ -49,7 +49,7 @@ func runsList(ctx context.Context, args []string) error {
 		return printJSONOr(client, data, func() {
 			items, _ := decodeList[runItem](data)
 			if len(items) == 0 {
-				fmt.Fprintln(stdoutWriter, "no runs")
+				_, _ = fmt.Fprintln(stdoutWriter, "no runs")
 				return
 			}
 			rows := make([][]string, 0, len(items))
@@ -132,7 +132,7 @@ func runsGetBody(ctx context.Context, client *apiClient, id int64) error {
 			fieldTime("updated_at", run.UpdatedAt),
 		})
 		if len(run.Attempts) > 0 {
-			fmt.Fprintln(stdoutWriter)
+			_, _ = fmt.Fprintln(stdoutWriter)
 			rows := make([][]string, 0, len(run.Attempts))
 			for _, a := range run.Attempts {
 				rows = append(rows, []string{
@@ -178,7 +178,7 @@ func runsCancel(ctx context.Context, args []string) error {
 	}
 	return printJSONOr(client, data, func() {
 		ref, _ := decodeOne[runRef](data)
-		fmt.Fprintf(stdoutWriter,
+		_, _ = fmt.Fprintf(stdoutWriter,
 			"[OK] cancel requested for run %d (jobrun %s/%s, occurrence %s, phase at request: %s)\n",
 			parsed.id, ref.Namespace, ref.Name, ref.OccurrenceKey, ref.Phase)
 	})
