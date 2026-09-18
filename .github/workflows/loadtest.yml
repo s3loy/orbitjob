@@ -8,7 +8,7 @@
 # Both profiles have since been proven against a real installation, so the
 # wall-clock commitment is now scheduled:
 #
-#   smoke    nightly, 02:30 UTC            ~40 minutes, non-qualifying
+#   smoke    weekly, Wednesday 02:30 UTC   ~40 minutes, non-qualifying
 #   standard weekly, Saturday 22:00 UTC    ~4 hours of schedule plus setup,
 #                                          settle and verify; qualifying
 #
@@ -70,7 +70,7 @@ env:
 jobs:
   # Scheduled events carry no inputs, so the profile is resolved once, here:
   # a manual dispatch takes its input, the Saturday cron means standard, and
-  # any other trigger is the nightly smoke. The decision is a job output
+  # any other trigger is the weekly smoke. The decision is a job output
   # because timeout-minutes cannot read a job-level env.
   plan:
     name: Resolve profile
