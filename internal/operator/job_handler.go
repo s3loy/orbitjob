@@ -17,6 +17,7 @@ import (
 	v1alpha1 "orbitjob/api/kubernetes/workloads/v1alpha1"
 	"orbitjob/internal/core/app/execution"
 	"orbitjob/internal/core/domain/jobrun"
+	corepostgres "orbitjob/internal/core/store/postgres"
 )
 
 // ReconcileJob turns an observed Kubernetes Job phase into platform state. It
@@ -44,6 +45,20 @@ func (r Runtime) ReconcileJob(ctx context.Context, obj unstructured.Unstructured
 	runID, attemptNumber, err := r.Runs.UpdateAttemptPhase(
 		ctx, tenant, job.Name, string(phase), string(job.UID), job.ResourceVersion,
 	)
+	if errors.Is(err, corepostgres.ErrNoAttempt) {
+		// No attempt row owns this Job name, and no future event will create
+		// one: the row was pruned by retention, wiped by a loadtest reset, or
+		// the Job predates this install. The store's refusal is what keeps a
+		// foreign Job from being adopted into a run, so it must stay; but
+		// requeueing the observation would burn a PostgreSQL transaction, an
+		// ERROR line and a reconcile-error increment on every retry and
+		// resync forever, on an answer that cannot change (see the known
+		// issues doc). Drop the key instead. The one transient way to land
+		// here — the informer delivering the Job in the sliver between Ensure
+		// and the attempt's commit — heals itself: the attempt row lands
+		// moments later, and the Job's next status change re-observes it.
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("record job %s phase %s: %w", job.Name, phase, err)
 	}
