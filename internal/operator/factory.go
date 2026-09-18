@@ -50,18 +50,26 @@ func apiHTTPClient(c *rest.Config) (*http.Client, error) {
 	return rest.HTTPClientFor(&sanitized)
 }
 
+// applyClientLimits states the apiserver client's throughput contract in one
+// place. client-go's silent default is five requests per second, which the
+// bursty control plane exceeds on ordinary work: applying twelve hundred
+// declarations is twelve hundred status writes. 50 with a burst of 150 keeps
+// the queue draining on reconcile work rather than on the rate limiter, and
+// stays well under what the apiserver serves per client. Living as a helper
+// (not inline in a constructor) is what lets a test pin the numbers -- the
+// informer incident's headline fix must not be revertible by editing one call
+// site.
+func applyClientLimits(cfg *rest.Config) {
+	cfg.QPS = 50
+	cfg.Burst = 150
+}
+
 func NewInCluster(cfg Config) (Controller, error) {
 	c, err := rest.InClusterConfig()
 	if err != nil {
 		return Controller{}, err
 	}
-	// client-go's silent default is five requests per second, which the bursty
-	// control plane exceeds on ordinary work: applying twelve hundred
-	// declarations is twelve hundred status writes. 50 with a burst of 150
-	// keeps the queue draining on reconcile work rather than on the rate
-	// limiter, and stays well under what the apiserver serves per client.
-	c.QPS = 50
-	c.Burst = 150
+	applyClientLimits(c)
 	httpClient, err := apiHTTPClient(c)
 	if err != nil {
 		return Controller{}, err

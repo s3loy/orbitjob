@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -170,13 +171,41 @@ func (c Controller) Run(ctx context.Context) error {
 
 func (c Controller) worker(ctx context.Context, queue workqueue.TypedRateLimitingInterface[string], log *slog.Logger, watched objectCache) {
 	for {
+		// Sampled by every worker each iteration, so the gauge reads the last
+		// writer's view; that is enough for depth to climb between scrapes when
+		// the queue fills faster than it drains.
+		metrics.OperatorWorkqueueDepth.Set(float64(queue.Len()))
 		key, shutdown := queue.Get()
 		if shutdown {
 			return
 		}
-		c.reconcileOne(ctx, queue, log, watched, key)
-		queue.Done(key)
+		c.process(ctx, queue, log, watched, key)
 	}
+}
+
+// process runs one reconcile for key and always releases it. It exists apart
+// from the loop because a panicking Reconcile used to unwind straight through
+// the worker: the goroutine died, Done was never called, and the key stayed
+// pinned in the workqueue's dirty set forever -- a handful of panics and the
+// operator reconciled nothing while its liveness stayed green and its logs
+// stayed empty.
+func (c Controller) process(ctx context.Context, queue workqueue.TypedRateLimitingInterface[string], log *slog.Logger, watched objectCache, key string) {
+	// Done must happen exactly once per Get, panic or not, and must be
+	// deferred ahead of the recovery so the recovered requeue below lands on a
+	// released key.
+	defer queue.Done(key)
+	defer func() {
+		if r := recover(); r != nil {
+			// Same policy as the error path: the failure is counted and the
+			// key comes back through the rate limiter, so a panic is a retry
+			// with backoff, not a silently lost key.
+			resource, _, _ := strings.Cut(key, ":")
+			queue.AddRateLimited(key)
+			metrics.OperatorReconcileErrorsTotal.WithLabelValues(resource).Inc()
+			log.Error("reconcile panicked", "key", key, "panic", r, "stack", string(debug.Stack()))
+		}
+	}()
+	c.reconcileOne(ctx, queue, log, watched, key)
 }
 
 func (c Controller) reconcileOne(ctx context.Context, queue workqueue.TypedRateLimitingInterface[string], log *slog.Logger, watched objectCache, key string) {

@@ -78,6 +78,22 @@ func TestAPIHTTPClientMovesTLSOutOfTheConfig(t *testing.T) {
 	}
 }
 
+// TestApplyClientLimitsRaisesTheSilentDefaults pins the headline number of
+// the informer incident: client-go's silent default is five requests per
+// second, under which every reconcile paid an apiserver read and the queue
+// drained slower than bursts filled it. The limits live in one helper so this
+// test can hold the numbers; nothing else may move them.
+func TestApplyClientLimitsRaisesTheSilentDefaults(t *testing.T) {
+	cfg := &rest.Config{QPS: 5, Burst: 10} // the silent defaults the incident ran on
+	applyClientLimits(cfg)
+	if cfg.QPS != 50 {
+		t.Fatalf("QPS = %g, want 50", cfg.QPS)
+	}
+	if cfg.Burst != 150 {
+		t.Fatalf("Burst = %d, want 150", cfg.Burst)
+	}
+}
+
 // testCACertPEM is a throwaway self-signed certificate: valid enough for the
 // config loader to parse, trusted by nothing.
 const testCACertPEM = `-----BEGIN CERTIFICATE-----

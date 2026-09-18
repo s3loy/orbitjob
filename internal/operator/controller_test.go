@@ -160,6 +160,62 @@ func TestReconcileOneRequeuesExpiredBudget(t *testing.T) {
 	}
 }
 
+// TestProcessRequeuesAfterPanic pins the bookkeeping of the recovery path: a
+// panicking reconcile must be counted as a reconcile error and requeued
+// through the rate limiter, exactly like an error return. The requeue is only
+// visible once Done has released the key -- a key held by a dead worker never
+// re-enters the queue -- so the poll below pins both halves.
+func TestProcessRequeuesAfterPanic(t *testing.T) {
+	queue := queueWith("jobruns:finance/x")
+	controller := Controller{Reconcile: func(context.Context, string, unstructured.Unstructured, bool) error {
+		panic("reconcile exploded")
+	}}
+	controller.process(context.Background(), queue, discardLogger(), objectCache{}, "jobruns:finance/x")
+
+	if got := queue.NumRequeues("jobruns:finance/x"); got != 1 {
+		t.Fatalf("requeues = %d, want 1 (the retry must be rate limited, not immediate)", got)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for queue.Len() == 0 && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+	if queue.Len() == 0 {
+		t.Fatal("a panicking reconcile must be requeued for retry")
+	}
+}
+
+// TestWorkerSurvivesPanickingReconciles pins the failure mode the recovery
+// wrapper exists for: before it, the first panic unwound through the worker
+// loop, the goroutine died, Done was never called, and the operator stopped
+// reconciling while its liveness stayed green. Three panics in a row must all
+// come back through the queue and be served again.
+func TestWorkerSurvivesPanickingReconciles(t *testing.T) {
+	queue := queueWith("jobruns:finance/x")
+	calls := make(chan struct{}, 8)
+	controller := Controller{Reconcile: func(context.Context, string, unstructured.Unstructured, bool) error {
+		calls <- struct{}{}
+		panic("reconcile exploded")
+	}}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		controller.worker(context.Background(), queue, discardLogger(), objectCache{})
+	}()
+	for i := 0; i < 3; i++ {
+		select {
+		case <-calls:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("the worker stopped serving keys after %d panic(s)", i)
+		}
+	}
+	queue.ShutDown()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the worker did not return on shutdown")
+	}
+}
+
 func TestEnqueueNamespacesKeysByResource(t *testing.T) {
 	queue := workqueue.NewTypedRateLimitingQueue(
 		workqueue.DefaultTypedControllerRateLimiter[string](),
@@ -217,13 +273,17 @@ func TestEnqueueIgnoresUnaddressableObjects(t *testing.T) {
 	}
 }
 
-// TestEnqueueReconcilesInformerDeliveredShapes pins the shape a live informer
+// TestEnqueueKeysInformerDeliveredShapes pins the shape a live informer
 // delivers: a probe against the kind apiserver (client-go v0.32, batch/v1
 // jobs) showed LIST and watch both hand handlers *unstructured.Unstructured.
-// enqueue must turn that shape into a queue key through meta.Accessor, the
-// canonical accessor, rather than a bare interface assertion — a dropped event
-// is silent, an operator that reconciles nothing but logs no errors.
-func TestEnqueueReconcilesInformerDeliveredShapes(t *testing.T) {
+// This is a hardening pin, not a regression pin: *unstructured.Unstructured
+// satisfies metav1.Object, so the old direct assertion never dropped these
+// events either. meta.Accessor is kept because it reaches the metadata of
+// every shape uniformly instead of only direct metav1.Object matches. The
+// regression that actually left events unreconciled was client-go rate-limit
+// starvation on the apiserver client, fixed at the factory level
+// (applyClientLimits), not in event delivery.
+func TestEnqueueKeysInformerDeliveredShapes(t *testing.T) {
 	plain := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "workloads.orbitjob.io/v1alpha1",
 		"kind":       "ScheduledJob",
@@ -240,6 +300,40 @@ func TestEnqueueReconcilesInformerDeliveredShapes(t *testing.T) {
 	item, _ := queue.Get()
 	if item != "scheduledjobs:orbitjob-tasks-load/nightly" {
 		t.Fatalf("key = %q", item)
+	}
+}
+
+// TestEnqueueKeysObjectsWithoutNamespaceOrName pins the one shape enqueue
+// does not guard: metadata with an empty namespace (a cluster-scoped
+// delivery) or an empty name still yields a key -- "jobruns:/name" or
+// "jobruns:/". Such a key reconciles through the uncached fallback, finds
+// nothing, and drains through the normal retry path, so no guard is needed;
+// pinning that here makes adding one a deliberate change rather than a silent
+// behavior shift.
+func TestEnqueueKeysObjectsWithoutNamespaceOrName(t *testing.T) {
+	queue := workqueue.NewTypedRateLimitingQueue(
+		workqueue.DefaultTypedControllerRateLimiter[string](),
+	)
+	enqueue(queue, jobRunGVR, &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "workloads.orbitjob.io/v1alpha1",
+		"kind":       "JobRun",
+		"metadata":   map[string]any{"name": "run-1"},
+	}})
+	enqueue(queue, jobRunGVR, &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "workloads.orbitjob.io/v1alpha1",
+		"kind":       "JobRun",
+		"metadata":   map[string]any{"namespace": "finance"},
+	}})
+	if queue.Len() != 2 {
+		t.Fatalf("queue holds %d keys, want 2", queue.Len())
+	}
+	item, _ := queue.Get()
+	if item != "jobruns:/run-1" {
+		t.Fatalf("namespaceless key = %q", item)
+	}
+	item, _ = queue.Get()
+	if item != "jobruns:finance/" {
+		t.Fatalf("nameless key = %q", item)
 	}
 }
 
