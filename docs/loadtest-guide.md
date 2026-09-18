@@ -183,8 +183,54 @@ resources and the operator materializes the revisions.
 
 Prepare is idempotent rather than resume-capable: reapplying an unchanged
 ScheduledJob keeps its revision, so a rerun re-reads the same ids. After a
-`reset`, run `prepare` again from scratch — the truncation gives the CRs fresh
-revision ids, and stale run directories will not match them.
+`reset`, run `prepare` again from scratch — reset deletes the load tenants'
+ledger rows and tenants, so the CRs get fresh revision ids, and stale run
+directories will not match them.
+
+### 3.5 Grant the admin API its trigger surface
+
+`prepare` creates the tenants' namespaces after the chart was installed, and
+the chart grants the admin API's CR surface one scheduling namespace at a
+time (`operator.namespaceTenants`). A namespace with no Role denies every
+manual trigger's JobRun publish: the run rejects with 500 and nothing
+executes. Apply the chart's own Role and binding to the namespaces this tool
+created — they carry the `orbitjob.io/managed-by=orbitjob-loadtest` label,
+the same one `reset` cleans by:
+
+```bash
+for namespace in $(kubectl get namespace \
+    -l orbitjob.io/managed-by=orbitjob-loadtest \
+    -o jsonpath='{.items[*].metadata.name}'); do
+  kubectl apply -n "$namespace" -f - <<'MANIFEST'
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: orbitjob-admin-api
+rules:
+  - apiGroups: ["workloads.orbitjob.io"]
+    resources: ["jobruns"]
+    verbs: ["create", "get", "patch"]
+  - apiGroups: ["workloads.orbitjob.io"]
+    resources: ["workflowruns"]
+    verbs: ["create", "get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: orbitjob-admin-api
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: orbitjob-admin-api}
+subjects:
+  - kind: ServiceAccount
+    name: orbitjob-admin-api
+    namespace: orbitjob-system
+MANIFEST
+done
+```
+
+`scripts/loadtest-ci.sh` performs this step between prepare and the run.
+Widening a real installation stays a helm upgrade of
+`operator.namespaceTenants`; this loop is fixture plumbing for namespaces
+the tool itself created and deletes again.
 
 ### 4. Run
 

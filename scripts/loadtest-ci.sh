@@ -21,6 +21,9 @@ readonly PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly RELEASE_NAMESPACE="${ORBITJOB_NAMESPACE:-orbitjob-system}"
 readonly DB_NAMESPACE="${ORBITJOB_DB_NAMESPACE:-orbitjob}"
 readonly LOAD_NAMESPACE="orbitjob-load"
+# Every namespace the load tool creates carries this label, so the grant step
+# below and reset's cleanup discover the same set without hardcoding names.
+readonly LOAD_NAMESPACE_LABEL="orbitjob.io/managed-by=orbitjob-loadtest"
 readonly ADMIN_PORT=18080
 readonly FIXTURE_PORT=18081
 readonly DB_PORT=15432
@@ -77,18 +80,22 @@ wait_for_port() {
 # --- credentials -------------------------------------------------------------
 
 log "reading installation credentials"
-orbitjob_dsn="$(kubectl get secret "$SECRET_NAME" -n "$RELEASE_NAMESPACE" \
-    -o jsonpath='{.data.bootstrap-owner-dsn}' | base64 -d)"
+admin_dsn="$(kubectl get secret "$SECRET_NAME" -n "$RELEASE_NAMESPACE" \
+    -o jsonpath='{.data.admin-dsn}' | base64 -d)"
 # The Secret holds the in-cluster Service address; this host reaches PostgreSQL
 # through a port-forward instead.
-orbitjob_dsn="${orbitjob_dsn/orbitjob-postgres.orbitjob.svc:5432/127.0.0.1:${DB_PORT}}"
+admin_dsn="${admin_dsn/orbitjob-postgres.orbitjob.svc:5432/127.0.0.1:${DB_PORT}}"
 bootstrap_key="$(kubectl get secret "$SECRET_NAME" -n "$RELEASE_NAMESPACE" \
     -o jsonpath='{.data.bootstrap-api-key}' | base64 -d)"
-[[ -n $orbitjob_dsn && -n $bootstrap_key ]] || die "the installation Secret is missing its DSN or API key"
+[[ -n $admin_dsn && -n $bootstrap_key ]] || die "the installation Secret is missing its DSN or API key"
 export ORBITJOB_API_KEY="$bootstrap_key"
-# The verifier reads this when --orbitjob-dsn is absent. Keeping the DSN out of
+# The verifier and the settle wait read the ledger as the SELECT-only admin
+# identity, which is exactly the read they perform. Roles are NOINHERIT and
+# orbitjob_bootstrap holds no table grants, so the owner DSN this script used
+# before got a 42501 on the first evidence query and the settle wait reported
+# "unknown" for every iteration (CI run 35380354290). Keeping the DSN out of
 # argv means its password is not in the process table.
-export ORBITJOB_DSN="$orbitjob_dsn"
+export ORBITJOB_DSN="$admin_dsn"
 
 # --- fixtures ----------------------------------------------------------------
 
@@ -135,6 +142,46 @@ log "preparing tenants and definitions"
 go run ./scripts/loadtest prepare --config "$config" --profile "$profile" \
     --run-id "$run_id" --api-url "http://localhost:${ADMIN_PORT}"
 
+# The chart grants the admin API its CR surface one scheduling namespace at a
+# time, keyed by operator.namespaceTenants -- and prepare created the load
+# tenants' namespaces after the installation was charted. Without a Role
+# there, every manual trigger's JobRun publish is denied: CI run 35380354290
+# rejected all 500 triggers with 500 and not one run executed. Mirror the
+# chart's per-namespace Role and binding for the run's own namespaces (same
+# rules, same identity), scoped to namespaces this tool created and labeled;
+# reset deletes them again. Widening a real installation stays a helm
+# upgrade; this is fixture plumbing, not a production grant.
+log "granting the admin api its trigger surface in the load namespaces"
+load_namespaces="$(kubectl get namespace \
+    -l "$LOAD_NAMESPACE_LABEL" -o jsonpath='{.items[*].metadata.name}')"
+[[ -n $load_namespaces ]] || die "prepare produced no load namespaces to grant"
+for namespace in $load_namespaces; do
+    kubectl apply -n "$namespace" -f - >/dev/null <<MANIFEST
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: orbitjob-admin-api
+rules:
+  - apiGroups: ["workloads.orbitjob.io"]
+    resources: ["jobruns"]
+    verbs: ["create", "get", "patch"]
+  - apiGroups: ["workloads.orbitjob.io"]
+    resources: ["workflowruns"]
+    verbs: ["create", "get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: orbitjob-admin-api
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: orbitjob-admin-api}
+subjects:
+  - kind: ServiceAccount
+    name: orbitjob-admin-api
+    namespace: ${RELEASE_NAMESPACE}
+MANIFEST
+    log "granted $namespace"
+done
+
 log "running the schedule; this is the part that takes $profile's duration"
 go run ./scripts/loadtest run --config "$config" --profile "$profile" \
     --run-id "$run_id" --api-url "http://localhost:${ADMIN_PORT}"
@@ -153,7 +200,7 @@ for _ in $(seq 1 60); do
     # Only an integer is allowed out of this. A psql failure can quote the
     # connection string back, and this value ends up in a log line, so anything
     # that is not a count is discarded rather than echoed.
-    in_flight="$(psql "$orbitjob_dsn" -Atqc \
+    in_flight="$(psql "$admin_dsn" -Atqc \
         "SELECT count(*) FROM job_run_control_plane WHERE phase NOT IN ('Succeeded','Failed','Canceled')" \
         2>/dev/null)" || in_flight=""
     [[ $in_flight =~ ^[0-9]+$ ]] || in_flight="unknown"
