@@ -56,6 +56,12 @@ type WorkflowRunStore interface {
 	// already reached a terminal phase and changed is false in that case —
 	// terminal workflow bookkeeping fires once, like the job run's.
 	UpdatePhase(ctx context.Context, tenantID string, runID int64, phase workflow.Phase, decisions map[string]workflow.TaskDecision) (changed bool, err error)
+	// RunsForDefinition lists one workflow definition's run history, newest
+	// first, for the admin read surface — beside the walker's OpenRuns, which
+	// answers the advance pass's different question. Terminal and open runs
+	// alike are history once they exist, so no phase filter applies. A
+	// non-positive limit means the implementation's default page.
+	RunsForDefinition(ctx context.Context, tenantID, sourceUID string, limit, offset int) ([]workflow.Run, error)
 }
 
 // FunctionStore is the configuration surface for function definitions: the
@@ -103,4 +109,9 @@ type FunctionRunStore interface {
 	// newest first, for the admin read surface. A non-positive limit means
 	// the implementation's default page.
 	RunsByFunction(ctx context.Context, tenantID string, functionID int64, limit int) ([]function.FunctionRun, error)
+	// RunByRunID reads one terminal invocation by its deterministic run id —
+	// the read model's single-row answer beside RunsByFunction's history. A
+	// run of another function, another tenant's run and a missing run are
+	// alike not found. found is false in every such case.
+	RunByRunID(ctx context.Context, tenantID string, functionID int64, runID string) (function.FunctionRun, bool, error)
 }

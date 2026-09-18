@@ -68,6 +68,7 @@ func (h *Handler) ListFunctions(c *gin.Context) {
 		TenantID:        tenantID,
 		ResourceGroupID: groupFrom(c),
 		Limit:           req.Limit,
+		Offset:          req.Offset,
 	})
 	if err != nil {
 		writeAPIError(c, err)

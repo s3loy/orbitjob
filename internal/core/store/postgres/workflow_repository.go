@@ -115,6 +115,11 @@ const openWorkflowRunsSQL = `SELECT ` + workflowRunProjection + `
 FROM workflow_run_control_plane WHERE tenant_id=$1 AND phase <> ALL($2)
 ORDER BY id`
 
+const workflowRunsForDefinitionSQL = `SELECT ` + workflowRunProjection + `
+FROM workflow_run_control_plane WHERE tenant_id=$1 AND source_uid=$2
+ORDER BY created_at DESC, id DESC
+LIMIT $3 OFFSET $4`
+
 // CreateRunForTenant records one workflow run unless the occurrence already
 // exists, and always returns the stored row. created is false for the loser
 // of a dedup race, whose caller gets the winner's row unchanged: firing the
@@ -317,6 +322,40 @@ func (r *WorkflowRunRepository) OpenRuns(ctx context.Context, tenantID string) (
 	var out []workflow.Run
 	err := r.withTenantTx(ctx, tenantID, func(ctx context.Context, tx *sql.Tx) error {
 		rows, queryErr := tx.QueryContext(ctx, openWorkflowRunsSQL, tenantID, terminalWorkflowPhases())
+		if queryErr != nil {
+			return queryErr
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			run, scanErr := scanWorkflowRunRow(rows)
+			if scanErr != nil {
+				return scanErr
+			}
+			out = append(out, run)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// RunsForDefinition lists one workflow definition's run history, newest first
+// -- the admin read surface's page over the ledger, beside the walker's
+// OpenRuns. A non-positive limit means the default run page; a negative
+// offset is treated as zero. Terminal and open runs alike are history once
+// they exist, so no phase filter applies here.
+func (r *WorkflowRunRepository) RunsForDefinition(ctx context.Context, tenantID, sourceUID string, limit, offset int) ([]workflow.Run, error) {
+	if limit < 1 {
+		limit = defaultRunPage
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	var out []workflow.Run
+	err := r.withTenantTx(ctx, tenantID, func(ctx context.Context, tx *sql.Tx) error {
+		rows, queryErr := tx.QueryContext(ctx, workflowRunsForDefinitionSQL, tenantID, sourceUID, limit, offset)
 		if queryErr != nil {
 			return queryErr
 		}

@@ -13,6 +13,12 @@ import (
 	"orbitjob/internal/core/domain/jobrun"
 )
 
+// SourceModeWorkflow is the job_definition_revisions source_mode a WorkflowJob
+// materializes under. Revisions are unique per (source_mode, source_uid,
+// generation), so workflow-sourced revisions live in their own namespace and
+// can never collide with kubernetes, check or function rows.
+const SourceModeWorkflow = "workflow"
+
 // Phase is the workflow-level lifecycle of one workflow execution. It is the
 // ledger column's vocabulary, not the step lifecycle: a workflow run is one
 // row in workflow_run_control_plane and its steps are ordinary job runs.
