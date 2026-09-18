@@ -535,7 +535,13 @@ func waitRevisions(ctx context.Context, tenants []string, defs []Definition) (ma
 			return revisions, nil
 		}
 		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("%d declared definitions have no active revision after 10m; check the operator logs", missing)
+			// The bare count cannot distinguish "the CRs are not in the
+			// cluster" from "they are there but the operator never patched
+			// them" from "they are patched and the read is wrong". Capture
+			// exactly that state before giving up, so the failure carries its
+			// own diagnosis.
+			return nil, fmt.Errorf("%d declared definitions have no active revision after 10m; diagnosis follows\n%s",
+				missing, diagnoseRevisionWait(tenants, declared))
 		}
 		select {
 		case <-ctx.Done():
@@ -582,6 +588,48 @@ func generateTLSManifest() error {
 		return fmt.Errorf("%s: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// diagnoseRevisionWait snapshots the cluster state a revision wait depends
+// on: do the CRs exist, do they carry a status, does the operator's namespace
+// table cover their namespaces. Each command fails soft — the diagnosis is
+// evidence, and a failed piece of evidence is itself evidence.
+func diagnoseRevisionWait(tenants []string, declared map[string]string) string {
+	var b strings.Builder
+	run := func(label string, args ...string) {
+		out, err := exec.Command("kubectl", args...).CombinedOutput()
+		fmt.Fprintf(&b, "--- %s\n", label)
+		if err != nil {
+			fmt.Fprintf(&b, "(kubectl failed: %v) %s\n", err, strings.TrimSpace(string(out)))
+			return
+		}
+		text := strings.TrimSpace(string(out))
+		if text == "" {
+			text = "(no output)"
+		}
+		fmt.Fprintf(&b, "%s\n", text)
+	}
+	for _, tenantID := range tenants {
+		ns := TenantNamespace(tenantID)
+		run("namespaces: "+ns, "get", "namespace", ns, "-o", "jsonpath={.metadata.name} phase={.status.phase}")
+		run("scheduledjobs in "+ns, "get", "scheduledjobs", "-n", ns,
+			"-o", "jsonpath={range .items[*]}{.metadata.name} gen={.metadata.generation} status={.status}{'\\n'}{end}")
+		run("crds", "get", "crd", "scheduledjobs.workloads.orbitjob.io",
+			"-o", "jsonpath={.metadata.name} established={.status.conditions[?(@.type=='Established')].status}")
+	}
+	run("operator env OPERATOR_NAMESPACE_TENANTS", "get", "deployment", "orbitjob-operator",
+		"-n", WorkloadNamespace(),
+		"-o", "jsonpath={range .spec.template.spec.containers[*].env[*]}{.name}={.value}{'\\n'}{end}")
+	sample := ""
+	for caseID := range declared {
+		sample = caseID
+		break
+	}
+	if sample != "" && len(tenants) > 0 {
+		run(fmt.Sprintf("sample CR %s", sample), "get", "scheduledjobs", sample,
+			"-n", TenantNamespace(tenants[0]), "-o", "yaml")
+	}
+	return b.String()
 }
 
 func kubectlApply(path string) error {
