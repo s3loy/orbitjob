@@ -88,11 +88,7 @@ func EnsureDefault(ctx context.Context, db *sql.DB, opts Options) (Result, error
 	if err != nil {
 		return Result{}, fmt.Errorf("begin bootstrap tx: %w", err)
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
+	defer func() { _ = tx.Rollback() }()
 
 	res := Result{MaskedKey: maskKey(key)}
 	if err = tx.QueryRowContext(ctx, `
