@@ -49,4 +49,14 @@ var (
 		Help:    "Reconcile pass duration in seconds, labeled by watched resource (scheduledjobs|jobruns|jobs).",
 		Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 10},
 	}, []string{"resource"})
+
+	// OperatorWorkqueueDepth gauges how many reconcile keys are waiting in the
+	// operator workqueue. Depth climbing between scrapes means events arrive
+	// faster than the workers drain them; depth pinned high while liveness
+	// stays green is the silent-starvation shape the 2026-09 informer incident
+	// took.
+	OperatorWorkqueueDepth = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "orbitjob_operator_workqueue_depth",
+		Help: "Reconcile keys currently waiting in the operator workqueue.",
+	})
 )
