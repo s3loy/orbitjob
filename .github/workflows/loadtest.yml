@@ -172,6 +172,13 @@ jobs:
             kubectl get pods -n "$namespace" -o wide || true
             kubectl get events -n "$namespace" --sort-by=.lastTimestamp | tail -30 || true
           done
+          # Reconcile failures live in pod logs, not in events: a ScheduledJob
+          # that never gains an activeRevision, for example, is decided by
+          # what the operator logged when it reconciled that CR.
+          for component in orbitjob-operator orbitjob-admin-api orbitjob-scheduler; do
+            echo "=== logs: $component ==="
+            kubectl logs "deployment/$component" -n orbitjob-system --tail=200 --all-containers || true
+          done
 
       # One glanceable block on the run page: profile, duration, what the
       # verifier decided, and where the artifact landed. report.md is embedded

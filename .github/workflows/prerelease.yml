@@ -52,6 +52,15 @@ jobs:
 
       # Published images must be verified, so the quality gate is not skipped
       # here either: an rc tag is something another machine will install.
+      # golangci-lint is not preinstalled on the runner; the action installs
+      # the binary into PATH before make check reaches the lint target.
+      - name: Install golangci-lint
+        uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9.2.0
+        with:
+          version: v2.11.3
+          # Lint runs here as part of make check; skip the action's own run.
+          install-only: true
+
       - name: Run quality gate
         run: make check
 
