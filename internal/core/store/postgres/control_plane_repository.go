@@ -16,6 +16,7 @@ import (
 	"orbitjob/internal/core/domain/function"
 	"orbitjob/internal/core/domain/jobrun"
 	"orbitjob/internal/core/domain/revision"
+	"orbitjob/internal/core/domain/workflow"
 	"orbitjob/internal/domain/resource"
 )
 
@@ -359,23 +360,63 @@ func (r *ControlPlaneRepository) ActiveRevisions(ctx context.Context, tenantID s
 			return queryErr
 		}
 		defer func() { _ = rows.Close() }()
-		for rows.Next() {
-			var rev revision.Revision
-			if scanErr := rows.Scan(
-				&rev.ID, &rev.Identity.SourceMode, &rev.Identity.SourceUID,
-				&rev.Identity.Namespace, &rev.Identity.Name, &rev.Generation,
-				&rev.SpecHash, &rev.NormalizedSpec, &rev.Actor, &rev.CreatedAt,
-			); scanErr != nil {
-				return scanErr
-			}
-			out = append(out, rev)
-		}
-		return rows.Err()
+		revs, scanErr := scanRevisions(rows)
+		out = revs
+		return scanErr
 	})
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+// activeWorkflowRevisionsSQL is the workflow history retainer's sweep input:
+// the active revision of every workflow-sourced definition, and nothing else.
+const activeWorkflowRevisionsSQL = `
+SELECT ` + revisionColumns + `
+FROM job_definition_revisions
+WHERE is_active AND source_mode = $2 AND tenant_id=$1
+ORDER BY source_uid`
+
+// ActiveWorkflowRevisions lists the tenant's active workflow revisions -- the
+// one listing workflow-sourced rows in the store. ActiveRevisions deliberately
+// stops short of them because its result feeds the scheduler, and a scheduled
+// workflow firing is a separate future feature; retention needs the workflow
+// rows, so it reads this narrower source instead.
+func (r *ControlPlaneRepository) ActiveWorkflowRevisions(ctx context.Context, tenantID string) ([]revision.Revision, error) {
+	var out []revision.Revision
+	err := r.WithTenantTransaction(ctx, tenantID, func(ctx context.Context, tx *sql.Tx) error {
+		rows, queryErr := tx.QueryContext(ctx, activeWorkflowRevisionsSQL, tenantID, workflow.SourceModeWorkflow)
+		if queryErr != nil {
+			return queryErr
+		}
+		defer func() { _ = rows.Close() }()
+		revs, scanErr := scanRevisions(rows)
+		out = revs
+		return scanErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// scanRevisions drains a job_definition_revisions result set in the
+// revisionColumns order both active-revision listings select.
+func scanRevisions(rows *sql.Rows) ([]revision.Revision, error) {
+	var out []revision.Revision
+	for rows.Next() {
+		var rev revision.Revision
+		if scanErr := rows.Scan(
+			&rev.ID, &rev.Identity.SourceMode, &rev.Identity.SourceUID,
+			&rev.Identity.Namespace, &rev.Identity.Name, &rev.Generation,
+			&rev.SpecHash, &rev.NormalizedSpec, &rev.Actor, &rev.CreatedAt,
+		); scanErr != nil {
+			return nil, scanErr
+		}
+		out = append(out, rev)
+	}
+	return out, rows.Err()
 }
 
 // ---------------------------------------------------------------------------
