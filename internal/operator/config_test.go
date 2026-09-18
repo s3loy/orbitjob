@@ -3,6 +3,8 @@ package operator
 import (
 	"context"
 	"testing"
+
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 func TestParseNamespaceTenants(t *testing.T) {
@@ -61,14 +63,14 @@ func TestEnvOr(t *testing.T) {
 
 func TestNewControllerWiresHandler(t *testing.T) {
 	called := false
-	controller := NewController(nil, nil, Config{Workers: 3}, func(_ context.Context, _ string) error {
+	controller := NewController(nil, nil, Config{Workers: 3}, func(_ context.Context, _ string, _ unstructured.Unstructured, _ bool) error {
 		called = true
 		return nil
 	})
 	if controller.Reconcile == nil {
 		t.Fatal("handler was not wired")
 	}
-	if err := controller.Reconcile(context.Background(), "jobruns:finance/x"); err != nil || !called {
+	if err := controller.Reconcile(context.Background(), "jobruns:finance/x", unstructured.Unstructured{}, false); err != nil || !called {
 		t.Fatalf("handler not invoked: %v", err)
 	}
 	if controller.Config.Workers != 3 {

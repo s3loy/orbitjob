@@ -35,7 +35,7 @@ func TestDynamicHandlerRoutesResources(t *testing.T) {
 				return nil
 			}
 			h := DynamicHandler{Client: client, ReconcileScheduledJob: callback, ReconcileJobRun: callback, ReconcileJob: callback}
-			if err := h.Handle(context.Background(), tc.key); err != nil {
+			if err := h.Handle(context.Background(), tc.key, unstructured.Unstructured{}, false); err != nil {
 				t.Fatal(err)
 			}
 			if calls != 1 {
@@ -54,7 +54,7 @@ func TestDynamicHandlerPropagatesErrors(t *testing.T) {
 	forbidden := apierrors.NewForbidden(scheduledJobGVR.GroupResource(), "report", errors.New("denied"))
 	client.PrependReactor("get", "scheduledjobs", func(ktesting.Action) (bool, runtime.Object, error) { return true, nil, forbidden })
 	h := DynamicHandler{Client: client, ReconcileScheduledJob: func(context.Context, unstructured.Unstructured) error { t.Fatal("unexpected callback"); return nil }}
-	if err := h.Handle(context.Background(), "scheduledjobs:finance/report"); !apierrors.IsForbidden(err) {
+	if err := h.Handle(context.Background(), "scheduledjobs:finance/report", unstructured.Unstructured{}, false); !apierrors.IsForbidden(err) {
 		t.Fatalf("error=%v", err)
 	}
 }
@@ -63,7 +63,7 @@ func TestDynamicHandlerDeletedResource(t *testing.T) {
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 	called := false
 	h := DynamicHandler{Client: client, ReconcileScheduledJob: func(context.Context, unstructured.Unstructured) error { called = true; return nil }}
-	if err := h.Handle(context.Background(), "scheduledjobs:finance/missing"); err != nil {
+	if err := h.Handle(context.Background(), "scheduledjobs:finance/missing", unstructured.Unstructured{}, false); err != nil {
 		t.Fatal(err)
 	}
 	if called {
@@ -71,10 +71,41 @@ func TestDynamicHandlerDeletedResource(t *testing.T) {
 	}
 }
 
+// TestDynamicHandlerServesCachedObjectWithoutReadingAPI pins the fast path:
+// when the informer hands the object over, the handler must reconcile it
+// without paying an apiserver read.
+func TestDynamicHandlerServesCachedObjectWithoutReadingAPI(t *testing.T) {
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	obj := unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "batch/v1",
+		"kind":       "Job",
+		"metadata":   map[string]any{"name": "report", "namespace": "finance"},
+	}}
+	called := false
+	var got unstructured.Unstructured
+	h := DynamicHandler{Client: client, ReconcileJob: func(_ context.Context, o unstructured.Unstructured) error {
+		called = true
+		got = o
+		return nil
+	}}
+	if err := h.Handle(context.Background(), "jobs:finance/report", obj, true); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("cached object was not reconciled")
+	}
+	if got.GetName() != "report" {
+		t.Fatalf("object = %q", got.GetName())
+	}
+	if len(client.Actions()) != 0 {
+		t.Fatalf("cached path read the API server: %v", client.Actions())
+	}
+}
+
 func TestDynamicHandlerRejectsInvalidKeys(t *testing.T) {
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 	for _, key := range []string{"", "finance/report", "jobs:/report", "jobs:finance/", "jobs:finance/report/extra", "secrets:finance/report"} {
-		if err := (DynamicHandler{Client: client}).Handle(context.Background(), key); err == nil {
+		if err := (DynamicHandler{Client: client}).Handle(context.Background(), key, unstructured.Unstructured{}, false); err == nil {
 			t.Errorf("accepted %q", key)
 		}
 	}

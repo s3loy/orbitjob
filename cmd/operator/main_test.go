@@ -92,9 +92,9 @@ func TestLoadTenantResolver_RejectsInvalidMapping(t *testing.T) {
 // defaultWorkers
 // ---------------------------------------------------------------------------
 
-func TestDefaultWorkersIsTwo(t *testing.T) {
-	if got := defaultWorkers(); got != 2 {
-		t.Fatalf("defaultWorkers() = %d, want 2", got)
+func TestDefaultWorkersIsFour(t *testing.T) {
+	if got := defaultWorkers(); got != 4 {
+		t.Fatalf("defaultWorkers() = %d, want 4", got)
 	}
 }
 
@@ -455,8 +455,8 @@ func TestRun_WiresControllerAndRuns(t *testing.T) {
 	if recorder.dsn != "postgres://operator-test" {
 		t.Fatalf("open database dsn = %q, want the resolved OPERATOR_DSN", recorder.dsn)
 	}
-	if recorder.config.Workers != 2 {
-		t.Fatalf("controller workers = %d, want 2", recorder.config.Workers)
+	if recorder.config.Workers != 4 {
+		t.Fatalf("controller workers = %d, want 4", recorder.config.Workers)
 	}
 	if recorder.config.Resync != resyncInterval {
 		t.Fatalf("controller resync = %s, want %s", recorder.config.Resync, resyncInterval)
