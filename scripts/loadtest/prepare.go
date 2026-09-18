@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,8 +18,9 @@ import (
 )
 
 type kubeObject struct {
-	Kind     string `yaml:"kind"`
-	Metadata struct {
+	APIVersion string `yaml:"apiVersion"`
+	Kind       string `yaml:"kind"`
+	Metadata   struct {
 		Name      string `yaml:"name"`
 		Namespace string `yaml:"namespace"`
 	} `yaml:"metadata"`
@@ -194,12 +196,19 @@ func Prepare(configPath, imagesPath, runID, runRoot, apiURL, bootstrapKey, profi
 		byTenant[def.Tenant] = append(byTenant[def.Tenant], def)
 	}
 	for _, tenantID := range cfg.Tenants {
-		docs, err := yaml.Marshal(scheduledJobManifests(byTenant[tenantID], tenantID))
-		if err != nil {
-			return fmt.Errorf("render manifest for tenant %s: %w", tenantID, err)
+		// kubectl reads one object per YAML document; a top-level sequence is
+		// not a manifest, so the batch is written as --- separated documents.
+		objects := scheduledJobManifests(byTenant[tenantID], tenantID)
+		docs := make([][]byte, 0, len(objects))
+		for _, object := range objects {
+			doc, err := yaml.Marshal(object)
+			if err != nil {
+				return fmt.Errorf("render manifest for tenant %s: %w", tenantID, err)
+			}
+			docs = append(docs, doc)
 		}
 		path := filepath.Join(manifestDir, strings.ToLower(tenantID)+".yaml")
-		if err := os.WriteFile(path, docs, 0o600); err != nil {
+		if err := os.WriteFile(path, []byte(bytes.Join(docs, []byte("---\n"))), 0o600); err != nil {
 			return fmt.Errorf("write manifest: %w", err)
 		}
 		if err := kubectlApply(path); err != nil {
@@ -280,6 +289,7 @@ func scheduledJobManifests(defs []Definition, tenantID string) []kubeObject {
 	objects := make([]kubeObject, 0, len(defs))
 	for _, def := range defs {
 		var object kubeObject
+		object.APIVersion = scheduledJobAPIVersion
 		object.Kind = "ScheduledJob"
 		object.Metadata.Name = def.CaseID
 		object.Metadata.Namespace = namespace
