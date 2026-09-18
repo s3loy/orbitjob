@@ -195,8 +195,13 @@ func (r Runtime) ReconcileJobRun(ctx context.Context, obj unstructured.Unstructu
 			// operator creates state for: the scheduler owns the creation of
 			// scheduled runs, and doing its job here would let a JobRun written
 			// by anyone with CR access bypass occurrence deduplication and the
-			// concurrency policy.
-			return fmt.Errorf("no stored run for occurrence %s", spec.OccurrenceKey)
+			// concurrency policy. Scheduled and check rows are always committed
+			// before their CR can be observed, so not-found here means the row
+			// was deleted afterwards -- retention, or a tenant-blind loadtest
+			// reset. The answer cannot change, and requeueing would burn a
+			// transaction, an ERROR line and a reconcile-error increment on
+			// every resync forever. Drop the key.
+			return nil
 		}
 	}
 
