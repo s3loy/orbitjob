@@ -273,7 +273,7 @@ func decodeOne[T any](data []byte) (T, error) {
 // form to render.
 func printJSONOr(client *apiClient, data []byte, render func()) error {
 	if client.jsonOut {
-		fmt.Fprintln(stdoutWriter, strings.TrimRight(string(data), "\n"))
+		_, _ = fmt.Fprintln(stdoutWriter, strings.TrimRight(string(data), "\n"))
 		return nil
 	}
 	render()

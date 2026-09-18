@@ -46,7 +46,7 @@ func checksList(ctx context.Context, args []string) error {
 		return printJSONOr(client, data, func() {
 			items, _ := decodeList[checkItem](data)
 			if len(items) == 0 {
-				fmt.Fprintln(stdoutWriter, "no checks")
+				_, _ = fmt.Fprintln(stdoutWriter, "no checks")
 				return
 			}
 			rows := make([][]string, 0, len(items))

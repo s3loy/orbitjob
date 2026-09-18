@@ -28,14 +28,14 @@ func printTable(headers []string, rows [][]string) {
 		out.WriteString("  ")
 	}
 	line := strings.TrimRight(out.String(), " ")
-	fmt.Fprintln(stdoutWriter, line)
+	_, _ = fmt.Fprintln(stdoutWriter, line)
 
 	separator := strings.Builder{}
 	for i := range headers {
 		separator.WriteString(strings.Repeat("-", widths[i]))
 		separator.WriteString("  ")
 	}
-	fmt.Fprintln(stdoutWriter, strings.TrimRight(separator.String(), " "))
+	_, _ = fmt.Fprintln(stdoutWriter, strings.TrimRight(separator.String(), " "))
 
 	for _, row := range rows {
 		out.Reset()
@@ -47,7 +47,7 @@ func printTable(headers []string, rows [][]string) {
 			out.WriteString(pad(cell, widths[i]))
 			out.WriteString("  ")
 		}
-		fmt.Fprintln(stdoutWriter, strings.TrimRight(out.String(), " "))
+		_, _ = fmt.Fprintln(stdoutWriter, strings.TrimRight(out.String(), " "))
 	}
 }
 
@@ -62,7 +62,7 @@ func pad(s string, width int) string {
 // same way a table is, and stable in the face of long values.
 func printDetail(pairs []detailField) {
 	for _, p := range pairs {
-		fmt.Fprintf(stdoutWriter, "%s: %s\n", p.label, p.value)
+		_, _ = fmt.Fprintf(stdoutWriter, "%s: %s\n", p.label, p.value)
 	}
 }
 
@@ -96,6 +96,6 @@ func emitJSON(v any) error {
 	if err != nil {
 		return fatal("encode JSON output: %v", err)
 	}
-	fmt.Fprintln(stdoutWriter, string(data))
+	_, _ = fmt.Fprintln(stdoutWriter, string(data))
 	return nil
 }

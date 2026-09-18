@@ -65,7 +65,7 @@ func statusCommand(ctx context.Context, args []string) error {
 		return emitJSON(lines)
 	}
 	for _, l := range lines {
-		fmt.Fprintf(stdoutWriter, "%s %s\n", l.Status, l.Detail)
+		_, _ = fmt.Fprintf(stdoutWriter, "%s %s\n", l.Status, l.Detail)
 	}
 	if failed {
 		return failf(exitGeneral, "status found failures")

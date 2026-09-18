@@ -46,7 +46,7 @@ func jobsList(ctx context.Context, args []string) error {
 		return printJSONOr(client, data, func() {
 			items, _ := decodeList[jobItem](data)
 			if len(items) == 0 {
-				fmt.Fprintln(stdoutWriter, "no jobs")
+				_, _ = fmt.Fprintln(stdoutWriter, "no jobs")
 				return
 			}
 			rows := make([][]string, 0, len(items))
@@ -134,7 +134,7 @@ func jobsTrigger(ctx context.Context, args []string) error {
 	}
 	return printJSONOr(client, data, func() {
 		ref, _ := decodeOne[runRef](data)
-		fmt.Fprintf(stdoutWriter,
+		_, _ = fmt.Fprintf(stdoutWriter,
 			"[OK] triggered job %d (jobrun %s/%s, occurrence %s, phase %s)\n",
 			parsed.id, ref.Namespace, ref.Name, ref.OccurrenceKey, ref.Phase)
 	})

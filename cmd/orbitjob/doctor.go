@@ -125,7 +125,7 @@ func doctorCommand(ctx context.Context, args []string) error {
 		return emitJSON(lines)
 	}
 	for _, l := range lines {
-		fmt.Fprintf(stdoutWriter, "%s %s\n", l.Status, l.Detail)
+		_, _ = fmt.Fprintf(stdoutWriter, "%s %s\n", l.Status, l.Detail)
 	}
 	if failed {
 		return failf(exitGeneral, "doctor found failures; see the [FAIL] lines above")
@@ -162,10 +162,6 @@ func resolveDoctorKey(ctx context.Context, kube kubeRunner, namespace, flagKey s
 		return "", "", fmt.Errorf("secret bootstrap-api-key in namespace %s has no api-key entry", namespace)
 	}
 	return key, keyFromSecret, nil
-}
-
-func envLookup(name string) string {
-	return strings.TrimSpace(os.Getenv(name))
 }
 
 // leaseHolder reads the operator's Lease and returns its holderIdentity.
