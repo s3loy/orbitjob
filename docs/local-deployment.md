@@ -172,19 +172,22 @@ helm upgrade orbitjob ./charts/orbitjob \
 kubectl rollout status -n orbitjob-system deployment/orbitjob-admin-api
 ```
 
-`make integration` needs a PostgreSQL it can create schemas in. Any test
-database works:
+`make integration` needs a PostgreSQL it can create schemas in. Run a
+disposable instance for it — never reuse the cluster's database pod:
 
 ```bash
-export TEST_DATABASE_DSN="postgres://postgres:orbitjob-owner@127.0.0.1:15432/orbitjob_test?sslmode=disable"
+docker run -d --name orbitjob-test-pg -p 55432:5432 \
+  -e POSTGRES_PASSWORD=postgres postgres:17-alpine
+export TEST_DATABASE_DSN="postgres://postgres:postgres@127.0.0.1:55432/orbitjob_test?sslmode=disable"
 make integration
 ```
 
-That DSN points at the same PostgreSQL pod the cluster uses, so port-forward it
-first. The test helper refuses a database whose name does not contain `test`,
-and for good reason: the suite truncates the database it runs against. Point it
-at a disposable `*test*` database, never at the `orbitjob` database the
-installation serves.
+The suite truncates the database it runs against and its role provisioning
+rewrites shared login-role passwords, so a name-based guard is not enough: on
+2026-09-18 a run pointed at the cluster's PostgreSQL through a port-forward
+and rotated the installation's credentials out from under the operator. The
+test helper refuses a database whose name does not contain `test` — keep that
+guard, and point the DSN at a container whose loss costs nothing.
 
 ### Restart one component
 
