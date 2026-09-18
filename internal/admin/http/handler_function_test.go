@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"orbitjob/internal/core/app/functioninvoke"
 	"orbitjob/internal/domain/resource"
 )
 
@@ -44,12 +45,12 @@ func (s *stubGetFunction) Get(ctx context.Context, in FunctionGetInput) (Functio
 
 type stubInvokeFunction struct {
 	called bool
-	in     FunctionInvokeInput
-	out    FunctionInvokeResult
+	in     functioninvoke.Input
+	out    functioninvoke.Result
 	err    error
 }
 
-func (s *stubInvokeFunction) Invoke(ctx context.Context, in FunctionInvokeInput) (FunctionInvokeResult, error) {
+func (s *stubInvokeFunction) Invoke(ctx context.Context, in functioninvoke.Input) (functioninvoke.Result, error) {
 	s.called = true
 	s.in = in
 	return s.out, s.err
@@ -163,7 +164,7 @@ func TestHandler_GetFunction_MapsNotFound(t *testing.T) {
 }
 
 func TestHandler_InvokeFunction_RecordsAuthenticatedKey(t *testing.T) {
-	invoke := &stubInvokeFunction{out: FunctionInvokeResult{
+	invoke := &stubInvokeFunction{out: functioninvoke.Result{
 		Namespace: "orbitjob", Name: "function-3-1a2b3c4d",
 		OccurrenceKey: "abc", Trigger: "Function", Created: true,
 	}}
@@ -192,7 +193,7 @@ func TestHandler_InvokeFunction_RecordsAuthenticatedKey(t *testing.T) {
 }
 
 func TestHandler_InvokeFunction_ReplayAnswers200(t *testing.T) {
-	invoke := &stubInvokeFunction{out: FunctionInvokeResult{Created: false}}
+	invoke := &stubInvokeFunction{out: functioninvoke.Result{Created: false}}
 	_, router := newFunctionHandler(nil, nil, invoke, nil, nil, "")
 
 	resp := httptest.NewRecorder()

@@ -17,20 +17,29 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 
 	v1alpha1 "orbitjob/api/kubernetes/workloads/v1alpha1"
 	"orbitjob/internal/core/domain/function"
+	"orbitjob/internal/core/domain/jobrun"
 	"orbitjob/internal/domain/resource"
 	"orbitjob/internal/domain/validation"
 	"orbitjob/internal/platform/metrics"
 )
+
+// maxInvokeWaitSeconds caps the synchronous variant of an invocation. The
+// platform's honest latency promise for a function is seconds -- every
+// invocation is a cold pod and image pull dominates -- so a longer wait would
+// hold an HTTP request open against work the caller can already poll.
+const maxInvokeWaitSeconds = 60
+
+// invokePollInterval is how often the synchronous variant re-reads the JobRun
+// custom resource while waiting for a terminal phase.
+const invokePollInterval = time.Second
 
 // FunctionReader loads one live function definition. It is the FunctionStore
 // read the invoke path needs; a deleted or other-tenant definition arrives as
@@ -58,30 +67,35 @@ type RevisionSource interface {
 	ActiveRevision(ctx context.Context, tenantID, sourceUID string) (Revision, bool, error)
 }
 
-// RunPublisher hands a JobRun Custom Resource to Kubernetes. It must be
-// idempotent: the object name derives from the occurrence key, so a retry
-// after a failed publish adopts the object instead of doubling it. The bool
-// reports whether this call created the object.
+// RunPublisher hands a JobRun Custom Resource to Kubernetes and reads one back
+// while a synchronous invocation waits. Publish must be idempotent: the object
+// name derives from the occurrence key, so a retry after a failed publish
+// adopts the object instead of doubling it. The bool reports whether this call
+// created the object.
 type RunPublisher interface {
 	Publish(ctx context.Context, run v1alpha1.JobRun) (v1alpha1.JobRun, bool, error)
+	Get(ctx context.Context, namespace, name string) (v1alpha1.JobRun, error)
 }
-
-// ErrRevisionPending reports that the function exists but the operator has
-// not yet materialized any revision for it — a definition invoked between its
-// save and the sync loop's first pass. It is a retryable condition, not a
-// not-found one: the definition is there, its executable form is not.
-var ErrRevisionPending = errors.New("function revision is not materialized yet")
 
 // UseCase invokes a function by publishing one Function-trigger JobRun.
 type UseCase struct {
-	functions FunctionReader
-	revisions RevisionSource
-	publisher RunPublisher
+	functions    FunctionReader
+	revisions    RevisionSource
+	publisher    RunPublisher
+	pollInterval time.Duration
 }
 
 // New assembles the invoke use case.
 func New(functions FunctionReader, revisions RevisionSource, publisher RunPublisher) *UseCase {
-	return &UseCase{functions: functions, revisions: revisions, publisher: publisher}
+	return &UseCase{functions: functions, revisions: revisions, publisher: publisher, pollInterval: invokePollInterval}
+}
+
+// WithPollInterval overrides how often the synchronous variant re-reads the
+// JobRun custom resource. Production wiring keeps the default; tests shrink it
+// so a wait expires without real time passing.
+func (uc *UseCase) WithPollInterval(interval time.Duration) *UseCase {
+	uc.pollInterval = interval
+	return uc
 }
 
 // Input is one invocation request.
@@ -97,13 +111,22 @@ type Input struct {
 	// IdempotencyKey, when set, makes a repeated invocation resolve to the
 	// same run instead of creating another.
 	IdempotencyKey string
+	// ResourceGroupID is the caller's key scope; a function outside it is as
+	// invisible as a missing one.
+	ResourceGroupID string
+	// WaitSeconds is the synchronous variant's budget: when positive, the
+	// call polls the JobRun custom resource until a terminal phase or this
+	// many seconds elapse, then answers with the phase observed. Zero means
+	// async-with-reference.
+	WaitSeconds int
 }
 
 // Result is what a caller gets back: a reference to the JobRun Custom
 // Resource, not a ledger row. The row is written later by the operator, so
 // Phase is whatever the CR's status says, empty until the operator has
-// observed it once. Created is false for a replay that adopted an existing
-// run — the same occurrence, not a new one.
+// observed it once -- and an expired wait reports the last observed phase
+// rather than pretending the run finished. Created is false for a replay that
+// adopted an existing run -- the same occurrence, not a new one.
 type Result struct {
 	Namespace     string
 	Name          string
@@ -122,24 +145,24 @@ func (uc *UseCase) Invoke(ctx context.Context, in Input) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	if uc.publisher == nil {
-		return Result{}, fmt.Errorf("job run publisher is required")
-	}
 	if uc.functions == nil || uc.revisions == nil {
 		return Result{}, fmt.Errorf("function reader and revision source are required")
+	}
+	if uc.publisher == nil {
+		return Result{}, fmt.Errorf("job run publisher is required")
 	}
 
 	def, found, err := uc.functions.GetForTenant(ctx, normalized.TenantID, normalized.FunctionID)
 	if err != nil {
 		return Result{}, fmt.Errorf("read function for invoke: %w", err)
 	}
-	if !found {
+	if !found || !visibleToGroup(def.ResourceGroupID, normalized.ResourceGroupID) {
 		return Result{}, &resource.NotFoundError{Resource: "function", ID: normalized.FunctionID}
 	}
-	if def.Status != function.StatusActive {
-		// Paused is the suspended-definition conflict, not an error: the
-		// definition exists and the caller reached it, but invocation is
-		// switched off.
+	// Invoking a paused function is a conflict, not an error: the definition
+	// exists and the caller reached it, but the platform has been told not to
+	// run it.
+	if def.Status == function.StatusPaused {
 		return Result{}, &resource.ConflictError{
 			Resource: "function",
 			ID:       def.ID,
@@ -151,10 +174,18 @@ func (uc *UseCase) Invoke(ctx context.Context, in Input) (Result, error) {
 	sourceUID := function.SourceUID(def.ID)
 	rev, found, err := uc.revisions.ActiveRevision(ctx, normalized.TenantID, sourceUID)
 	if err != nil {
-		return Result{}, fmt.Errorf("read active revision for invoke: %w", err)
+		return Result{}, fmt.Errorf("resolve active revision: %w", err)
 	}
+	// The CRD requires definitionRevision before publish, so a function whose
+	// revision has not been materialized yet cannot be invoked -- a conflict
+	// the caller can retry, not a 500.
 	if !found {
-		return Result{}, fmt.Errorf("invoke function %d: %w", def.ID, ErrRevisionPending)
+		return Result{}, &resource.ConflictError{
+			Resource: "function",
+			ID:       def.ID,
+			Field:    "revision",
+			Message:  "the function has no active revision yet; the operator's revision sync has not caught up",
+		}
 	}
 
 	occurrenceKey, err := deriveOccurrenceKey(normalized, sourceUID)
@@ -165,14 +196,14 @@ func (uc *UseCase) Invoke(ctx context.Context, in Input) (Result, error) {
 	start := time.Now()
 	stored, created, err := uc.publisher.Publish(ctx, jobRun(def, rev, occurrenceKey, normalized.ActorID))
 	if err != nil {
-		return Result{}, fmt.Errorf("publish function run: %w", err)
+		return Result{}, fmt.Errorf("publish function invocation: %w", err)
 	}
 	elapsed := time.Since(start).Seconds()
 
 	metrics.FunctionInvocationsTotal.WithLabelValues(normalized.TenantID, outcomeLabel(created)).Inc()
 	metrics.FunctionDurationSeconds.WithLabelValues(normalized.TenantID).Observe(elapsed)
 
-	return Result{
+	result := Result{
 		Namespace:     stored.Namespace,
 		Name:          stored.Name,
 		OccurrenceKey: occurrenceKey,
@@ -181,7 +212,57 @@ func (uc *UseCase) Invoke(ctx context.Context, in Input) (Result, error) {
 		Created:       created,
 		FunctionID:    def.ID,
 		RevisionID:    rev.ID,
-	}, nil
+	}
+
+	if normalized.WaitSeconds > 0 {
+		result.Phase = uc.awaitTerminalPhase(ctx, stored.Namespace, stored.Name,
+			start.Add(time.Duration(normalized.WaitSeconds)*time.Second))
+	}
+	return result, nil
+}
+
+// awaitTerminalPhase polls the custom resource until its phase is terminal or
+// the deadline passes, whichever comes first. The resource is the read model:
+// the operator patches status from stored state, so no new read surface is
+// needed. An expired wait is not an error -- the caller always gets the
+// reference, and the phase observed last.
+func (uc *UseCase) awaitTerminalPhase(ctx context.Context, namespace, name string, deadline time.Time) string {
+	interval := uc.pollInterval
+	if interval <= 0 {
+		interval = invokePollInterval
+	}
+	phase := ""
+	for {
+		if err := ctx.Err(); err != nil {
+			return phase
+		}
+		run, err := uc.publisher.Get(ctx, namespace, name)
+		// Only a real observation updates the phase: a failed or empty read
+		// must not blank out the last phase the resource reported.
+		if err == nil && run.Status.Phase != "" {
+			phase = run.Status.Phase
+			if jobrun.Terminal(jobrun.Phase(phase)) {
+				return phase
+			}
+		}
+		if !time.Now().Add(interval).Before(deadline) {
+			return phase
+		}
+		select {
+		case <-ctx.Done():
+			return phase
+		case <-time.After(interval):
+		}
+	}
+}
+
+// visibleToGroup decides whether one definition is in a caller's scope. An
+// unscoped caller (empty scope) sees everything; a scoped caller sees only
+// rows stamped with its group, mirroring the checks read model's
+// `resource_group_id = $caller_group` filter, where an ungrouped row is as
+// invisible to a scoped key as another group's row.
+func visibleToGroup(rowGroup, callerScope string) bool {
+	return callerScope == "" || rowGroup == callerScope
 }
 
 func normalizeInput(in Input) (Input, error) {
@@ -204,12 +285,18 @@ func normalizeInput(in Input) (Input, error) {
 	if len(actorID) > 255 {
 		return Input{}, validation.New("actor_id", "must be <= 255 characters")
 	}
+	if in.WaitSeconds < 0 || in.WaitSeconds > maxInvokeWaitSeconds {
+		return Input{}, validation.New("wait_seconds",
+			fmt.Sprintf("must be between 0 and %d", maxInvokeWaitSeconds))
+	}
 
 	return Input{
-		TenantID:       tenantID,
-		FunctionID:     in.FunctionID,
-		ActorID:        actorID,
-		IdempotencyKey: strings.TrimSpace(in.IdempotencyKey),
+		TenantID:        tenantID,
+		FunctionID:      in.FunctionID,
+		ActorID:         actorID,
+		IdempotencyKey:  strings.TrimSpace(in.IdempotencyKey),
+		ResourceGroupID: in.ResourceGroupID,
+		WaitSeconds:     in.WaitSeconds,
 	}, nil
 }
 
@@ -227,7 +314,7 @@ func deriveOccurrenceKey(in Input, sourceUID string) (string, error) {
 
 	var nonce [16]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
-		return "", fmt.Errorf("generate invoke nonce: %w", err)
+		return "", fmt.Errorf("generate invocation nonce: %w", err)
 	}
 	return sha256Hex(base + "|nonce|" + hex.EncodeToString(nonce[:])), nil
 }
@@ -237,11 +324,15 @@ func sha256Hex(s string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// jobRun renders the JobRun Custom Resource for one invocation. The object
-// name derives from the source uid and the occurrence key through the shared
-// naming rule, so a retried invocation, a cancel request and the operator all
-// address one object. The timeout rides the CR so enforcement survives an
-// operator outage, pinned to what the invoked version declared.
+// jobRun renders the JobRun Custom Resource for one invocation. The scheduled
+// job ref names the function's stable revision identity -- the same string the
+// ledger stores as source_uid -- and the object name derives from the
+// occurrence key, so a replayed invocation addresses one object. There are
+// deliberately no owner references: the ref does not point at a ScheduledJob
+// custom resource, and an owner pointer to an object that does not exist would
+// have Kubernetes garbage-collect the run immediately. The timeout rides the
+// CR so enforcement survives an operator outage, pinned to what the invoked
+// version declared.
 func jobRun(def function.Definition, rev Revision, occurrenceKey, actorID string) v1alpha1.JobRun {
 	name := function.SourceUID(def.ID)
 	return v1alpha1.JobRun{
@@ -249,17 +340,6 @@ func jobRun(def function.Definition, rev Revision, occurrenceKey, actorID string
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: rev.Namespace,
 			Name:      v1alpha1.RunObjectName(name, occurrenceKey),
-			// Deleting the definition garbage-collects its runs rather than
-			// leaving orphans no reconciler owns, mirroring the manual
-			// trigger's owner reference shape.
-			OwnerReferences: []metav1.OwnerReference{{
-				APIVersion:         v1alpha1.GroupVersion.String(),
-				Kind:               "ScheduledJob",
-				Name:               name,
-				UID:                types.UID(name),
-				Controller:         ptr(true),
-				BlockOwnerDeletion: ptr(false),
-			}},
 		},
 		Spec: v1alpha1.JobRunSpec{
 			ScheduledJobRef:    v1alpha1.ObjectReference{Name: name, UID: name},
@@ -281,5 +361,3 @@ func outcomeLabel(created bool) string {
 	}
 	return "deduplicated"
 }
-
-func ptr[T any](v T) *T { return &v }

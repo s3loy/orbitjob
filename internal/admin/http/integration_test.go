@@ -45,6 +45,7 @@ import (
 	"orbitjob/internal/admin/http/middleware"
 	"orbitjob/internal/admin/kube"
 	adminpostgres "orbitjob/internal/admin/store/postgres"
+	"orbitjob/internal/core/app/functioninvoke"
 	corepostgres "orbitjob/internal/core/store/postgres"
 	"orbitjob/internal/platform/migrate"
 	"orbitjob/internal/platform/postgrestest"
@@ -80,6 +81,20 @@ type workloadsTestStores struct {
 	workflowDefs *fakeWorkflowDefinitions
 	workflowRuns *fakeWorkflowRuns
 	jobRuns      *dynamicfake.FakeDynamicClient
+}
+
+// fakeFunctionRevisions is the in-memory revision resolver the invoke route
+// pins through: it satisfies the core use case's RevisionSource, and the seed
+// below materializes revision 41 so the route answers before the (absent)
+// sync loop runs.
+type fakeFunctionRevisions struct {
+	revision functioninvoke.Revision
+	found    bool
+	err      error
+}
+
+func (f *fakeFunctionRevisions) ActiveRevision(ctx context.Context, tenantID, sourceUID string) (functioninvoke.Revision, bool, error) {
+	return f.revision, f.found, f.err
 }
 
 // tracker exposes the fake cluster's object tracker, so tests can assert the
@@ -243,19 +258,14 @@ func newIntegrationServerWithWorkloads(t *testing.T) (*httptest.Server, *sql.DB,
 	stores := &workloadsTestStores{
 		functions:    &fakeFunctionStore{},
 		functionRuns: &fakeFunctionRuns{},
-		revisions:    &fakeFunctionRevisions{revision: functionRevision{ID: 41, Namespace: "orbitjob"}},
+		revisions:    &fakeFunctionRevisions{revision: functioninvoke.Revision{ID: 41, Namespace: "orbitjob"}, found: true},
 		workflowDefs: &fakeWorkflowDefinitions{},
 		workflowRuns: &fakeWorkflowRuns{},
 		jobRuns:      fakeCluster,
 	}
 	handler.SetListFunctionsUseCase(&ListFunctionsUseCase{lister: stores.functions})
 	handler.SetGetFunctionUseCase(&GetFunctionUseCase{reader: stores.functions})
-	handler.SetInvokeFunctionUseCase(&InvokeFunctionUseCase{
-		reader:       stores.functions,
-		revisions:    stores.revisions,
-		publisher:    publisher,
-		pollInterval: invokePollInterval,
-	})
+	handler.SetInvokeFunctionUseCase(functioninvoke.New(stores.functions, stores.revisions, publisher))
 	handler.SetListFunctionRunsUseCase(&ListFunctionRunsUseCase{runs: stores.functionRuns, reader: stores.functions})
 	handler.SetGetFunctionRunUseCase(&GetFunctionRunUseCase{runs: stores.functionRuns, reader: stores.functions})
 	handler.SetListWorkflowsUseCase(&ListWorkflowsUseCase{definitions: stores.workflowDefs})

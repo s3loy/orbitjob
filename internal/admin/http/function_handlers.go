@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"orbitjob/internal/admin/http/apperror"
+	"orbitjob/internal/core/app/functioninvoke"
 )
 
 // The function routes serve the definitions read-only plus invoke in v1: a
@@ -23,8 +24,10 @@ type getFunctionUseCase interface {
 	Get(ctx context.Context, in FunctionGetInput) (FunctionItem, error)
 }
 
+// invokeFunctionUseCase is the core invoke use case; the handler maps the
+// route's request and the use case's result onto the API's response shape.
 type invokeFunctionUseCase interface {
-	Invoke(ctx context.Context, in FunctionInvokeInput) (FunctionInvokeResult, error)
+	Invoke(ctx context.Context, in functioninvoke.Input) (functioninvoke.Result, error)
 }
 
 type listFunctionRunsUseCase interface {
@@ -41,6 +44,20 @@ type functionListResponse struct {
 
 type functionRunListResponse struct {
 	Items []FunctionRunItem `json:"items"`
+}
+
+// FunctionInvokeResult mirrors the manual trigger's contract: a reference to
+// the custom resource, not a ledger row. Phase is whatever the resource
+// currently reports, empty until the operator has observed it once -- and an
+// expired wait reports the last observed phase rather than pretending the run
+// finished.
+type FunctionInvokeResult struct {
+	Namespace     string `json:"namespace"`
+	Name          string `json:"name"`
+	OccurrenceKey string `json:"occurrence_key"`
+	Trigger       string `json:"trigger"`
+	Phase         string `json:"phase"`
+	Created       bool   `json:"created"`
 }
 
 func (h *Handler) SetListFunctionsUseCase(uc listFunctionsUseCase)   { h.listFunctionsUC = uc }
@@ -139,7 +156,7 @@ func (h *Handler) InvokeFunction(c *gin.Context) {
 		idempotencyKey = *key
 	}
 
-	out, err := h.invokeFunctionUC.Invoke(c.Request.Context(), FunctionInvokeInput{
+	out, err := h.invokeFunctionUC.Invoke(c.Request.Context(), functioninvoke.Input{
 		FunctionID:      req.ID,
 		TenantID:        tenantID,
 		ActorID:         actorID(c),
@@ -152,11 +169,19 @@ func (h *Handler) InvokeFunction(c *gin.Context) {
 		return
 	}
 
+	resp := FunctionInvokeResult{
+		Namespace:     out.Namespace,
+		Name:          out.Name,
+		OccurrenceKey: out.OccurrenceKey,
+		Trigger:       out.Trigger,
+		Phase:         out.Phase,
+		Created:       out.Created,
+	}
 	if out.Created {
-		c.JSON(stdhttp.StatusCreated, out)
+		c.JSON(stdhttp.StatusCreated, resp)
 		return
 	}
-	c.JSON(stdhttp.StatusOK, out)
+	c.JSON(stdhttp.StatusOK, resp)
 }
 
 // ListFunctionRuns lists a function's terminal invocations from the
