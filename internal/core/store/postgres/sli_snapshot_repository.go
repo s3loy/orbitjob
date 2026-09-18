@@ -34,11 +34,7 @@ func (r *SLISnapshotRepository) IncrementSnapshot(ctx context.Context, tenantID 
 	if err != nil {
 		return fmt.Errorf("begin increment tx: %w", err)
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
+	defer func() { _ = tx.Rollback() }()
 
 	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID); err != nil {
 		return fmt.Errorf("set tenant context: %w", err)
@@ -77,11 +73,7 @@ func (r *SLISnapshotRepository) AggregateWindow(ctx context.Context, tenantID st
 	if err != nil {
 		return agg, fmt.Errorf("begin aggregate tx: %w", err)
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
+	defer func() { _ = tx.Rollback() }()
 
 	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID); err != nil {
 		return agg, fmt.Errorf("set tenant context: %w", err)

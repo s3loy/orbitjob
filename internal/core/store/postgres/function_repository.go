@@ -427,11 +427,7 @@ func (r *FunctionRunRepository) RecordCompleted(ctx context.Context, tenantID st
 	if err != nil {
 		return fmt.Errorf("begin function run record tx: %w", err)
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
+	defer func() { _ = tx.Rollback() }()
 
 	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID); err != nil {
 		return fmt.Errorf("set tenant context: %w", err)
