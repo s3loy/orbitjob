@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -64,6 +65,40 @@ type functionRevisionReader interface {
 	ActiveRevision(ctx context.Context, tenantID, sourceUID string) (functionRevision, error)
 }
 
+// FunctionRevisionSource is the storage-side lookup the binary wiring
+// satisfies. The store returns the active revision's id and namespace as
+// plain values because the revision shape is private to this package; the
+// bridge below turns them into one. A revision that is not there yet -- the
+// operator's sync loop has not caught up with a new definition or version --
+// arrives as a NotFoundError and is translated into the zero revision, which
+// the invoke use case reports as the "no active revision yet" conflict.
+type FunctionRevisionSource interface {
+	ActiveFunctionRevision(ctx context.Context, tenantID, sourceUID string) (revisionID int64, namespace string, err error)
+}
+
+// NewFunctionRevisionReader adapts the storage lookup to the invoke use
+// case's revision reader. The returned value is opaque on purpose: callers
+// pass it straight into NewInvokeFunctionUseCase.
+func NewFunctionRevisionReader(source FunctionRevisionSource) functionRevisionReader {
+	return functionRevisionBridge{source: source}
+}
+
+type functionRevisionBridge struct {
+	source FunctionRevisionSource
+}
+
+func (b functionRevisionBridge) ActiveRevision(ctx context.Context, tenantID, sourceUID string) (functionRevision, error) {
+	id, namespace, err := b.source.ActiveFunctionRevision(ctx, tenantID, sourceUID)
+	if err != nil {
+		var notFound *resource.NotFoundError
+		if errors.As(err, &notFound) {
+			return functionRevision{}, nil
+		}
+		return functionRevision{}, err
+	}
+	return functionRevision{ID: id, Namespace: namespace}, nil
+}
+
 // functionRevision is the slice of a pinned revision an invocation needs: the
 // revision id the CR requires and the scheduling namespace the object is
 // published into. A function definition row carries no namespace of its own;
@@ -100,6 +135,7 @@ type FunctionListInput struct {
 	TenantID        string
 	ResourceGroupID string
 	Limit           int
+	Offset          int
 }
 
 // FunctionItem is the API's function definition shape.
@@ -163,8 +199,13 @@ func (uc *ListFunctionsUseCase) List(ctx context.Context, in FunctionListInput) 
 
 	limit := normalizeListLimit(in.Limit)
 	out := make([]FunctionItem, 0, len(defs))
+	skipped := 0
 	for _, def := range defs {
 		if !visibleToGroup(def.ResourceGroupID, in.ResourceGroupID) {
+			continue
+		}
+		if skipped < in.Offset {
+			skipped++
 			continue
 		}
 		if len(out) == limit {
@@ -380,7 +421,9 @@ func (uc *InvokeFunctionUseCase) awaitTerminalPhase(ctx context.Context, namespa
 			return phase
 		}
 		run, err := uc.publisher.Get(ctx, namespace, name)
-		if err == nil {
+		// Only a real observation updates the phase: a failed or empty read
+		// must not blank out the last phase the resource reported.
+		if err == nil && run.Status.Phase != "" {
 			phase = run.Status.Phase
 			if jobrun.Terminal(jobrun.Phase(phase)) {
 				return phase

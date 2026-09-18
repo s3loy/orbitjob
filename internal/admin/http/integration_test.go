@@ -17,6 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"k8s.io/apimachinery/pkg/runtime"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	v1alpha1 "orbitjob/api/kubernetes/workloads/v1alpha1"
 	apikeycommand "orbitjob/internal/admin/app/apikey/command"
@@ -67,7 +68,32 @@ const itestAdminPassword = "itest-admin"
 // The returned *sql.DB is the superuser handle the schema was built with, not
 // the server's handle: the tests use it for direct SQL assertions, which rely
 // on the superuser's RLS bypass to read rows across tenants.
+// The function and workflow routes' storage has no repositories yet (the core
+// contracts are landed; the implementations are the storage workstream's), so
+// those use cases run against in-memory fakes. Everything around them -- auth,
+// policies, tenants, keys, the dynamic Kubernetes client -- is the production
+// wiring.
+type workloadsTestStores struct {
+	functions    *fakeFunctionStore
+	functionRuns *fakeFunctionRuns
+	revisions    *fakeFunctionRevisions
+	workflowDefs *fakeWorkflowDefinitions
+	workflowRuns *fakeWorkflowRuns
+	jobRuns      *dynamicfake.FakeDynamicClient
+}
+
+// tracker exposes the fake cluster's object tracker, so tests can assert the
+// custom resources the routes published.
+func (w *workloadsTestStores) tracker() k8stesting.ObjectTracker {
+	return w.jobRuns.Tracker() // k8stesting.ObjectTracker
+}
+
 func newIntegrationServer(t *testing.T) (*httptest.Server, *sql.DB, string) {
+	server, db, key, _ := newIntegrationServerWithWorkloads(t)
+	return server, db, key
+}
+
+func newIntegrationServerWithWorkloads(t *testing.T) (*httptest.Server, *sql.DB, string, *workloadsTestStores) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
@@ -130,7 +156,13 @@ func newIntegrationServer(t *testing.T) (*httptest.Server, *sql.DB, string) {
 	if err := v1alpha1.AddToScheme(publisherScheme); err != nil {
 		t.Fatalf("build publisher scheme: %v", err)
 	}
-	publisher := kube.JobRunPublisher{Client: dynamicfake.NewSimpleDynamicClient(publisherScheme)}
+	// One in-memory cluster serves both publishers: the jobrun client (job
+	// triggers, run cancels) and the workflowrun client (workflow triggers and
+	// cancels) share its object tracker, so tests can assert what each route
+	// published.
+	fakeCluster := dynamicfake.NewSimpleDynamicClient(publisherScheme)
+	publisher := kube.JobRunPublisher{Client: fakeCluster}
+	workflowPublisher := kube.WorkflowRunPublisher{Client: fakeCluster}
 	triggerJobUC := jobcommand.NewTriggerJobUseCase(jobRepo, publisher)
 
 	runRepo := adminpostgres.NewRunRepository(adminDB)
@@ -205,11 +237,41 @@ func newIntegrationServer(t *testing.T) (*httptest.Server, *sql.DB, string) {
 	// grants, so every guarded route denies.
 	auth.Documents = policyRepo
 
+	// Function and workflow use cases. Their stores are the in-memory fakes
+	// described on workloadsTestStores: the contracts are landed, the
+	// repositories are not, and the auth and RBAC layers around them are real.
+	stores := &workloadsTestStores{
+		functions:    &fakeFunctionStore{},
+		functionRuns: &fakeFunctionRuns{},
+		revisions:    &fakeFunctionRevisions{revision: functionRevision{ID: 41, Namespace: "orbitjob"}},
+		workflowDefs: &fakeWorkflowDefinitions{},
+		workflowRuns: &fakeWorkflowRuns{},
+		jobRuns:      fakeCluster,
+	}
+	handler.SetListFunctionsUseCase(&ListFunctionsUseCase{lister: stores.functions})
+	handler.SetGetFunctionUseCase(&GetFunctionUseCase{reader: stores.functions})
+	handler.SetInvokeFunctionUseCase(&InvokeFunctionUseCase{
+		reader:       stores.functions,
+		revisions:    stores.revisions,
+		publisher:    publisher,
+		pollInterval: invokePollInterval,
+	})
+	handler.SetListFunctionRunsUseCase(&ListFunctionRunsUseCase{runs: stores.functionRuns, reader: stores.functions})
+	handler.SetGetFunctionRunUseCase(&GetFunctionRunUseCase{runs: stores.functionRuns, reader: stores.functions})
+	handler.SetListWorkflowsUseCase(&ListWorkflowsUseCase{definitions: stores.workflowDefs})
+	handler.SetGetWorkflowUseCase(&GetWorkflowUseCase{definitions: stores.workflowDefs})
+	handler.SetTriggerWorkflowUseCase(&TriggerWorkflowUseCase{definitions: stores.workflowDefs, publisher: workflowPublisher})
+	handler.SetListWorkflowRunsUseCase(&ListWorkflowRunsUseCase{definitions: stores.workflowDefs, runs: stores.workflowRuns})
+	handler.SetGetWorkflowRunUseCase(&GetWorkflowRunUseCase{definitions: stores.workflowDefs, runs: stores.workflowRuns})
+	handler.SetCancelWorkflowRunUseCase(&CancelWorkflowRunUseCase{
+		definitions: stores.workflowDefs, runs: stores.workflowRuns, publisher: workflowPublisher,
+	})
+
 	r := gin.Default()
 	r.Use(auth.Middleware())
 	handler.Register(r)
 
-	return httptest.NewServer(r), db, bootstrapKey
+	return httptest.NewServer(r), db, bootstrapKey, stores
 }
 
 func postJSON(t *testing.T, client *http.Client, url, authKey string, body any) *http.Response {

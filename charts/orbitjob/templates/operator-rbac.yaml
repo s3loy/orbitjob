@@ -20,8 +20,18 @@ rules:
   - apiGroups: ["workloads.orbitjob.io"]
     resources: ["jobruns"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # WorkflowRuns are watched so a manual workflow execution is materialized
+  # into the workflow ledger and its status is projected back; patch carries
+  # that status projection. WorkflowJob steps are ordinary JobRuns, so the
+  # walker creates and cancels steps through the jobruns rules above.
   - apiGroups: ["workloads.orbitjob.io"]
-    resources: ["scheduledjobs/status", "jobruns/status"]
+    resources: ["workflowjobs", "workflowruns"]
+    verbs: ["get", "list", "watch", "patch"]
+  # WorkflowJobs are projected the way ScheduledJobs are, and their status
+  # carries the observed generation and the active revision id back to the
+  # declarer, so the status subresource rides the same rule.
+  - apiGroups: ["workloads.orbitjob.io"]
+    resources: ["scheduledjobs/status", "jobruns/status", "workflowruns/status", "workflowjobs/status"]
     verbs: ["get", "update", "patch"]
   - apiGroups: ["batch"]
     resources: ["jobs"]

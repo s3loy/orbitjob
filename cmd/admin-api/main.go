@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"log/slog"
@@ -54,21 +55,22 @@ var (
 	}
 )
 
-// newJobRunPublisher builds the client a manual trigger publishes JobRun
-// resources through. The API cannot write the ledger itself -- orbitjob_admin
-// holds SELECT only on the control-plane tables -- so this client is the whole
-// of its trigger path, and a process without it can start but cannot trigger
-// anything. Build it before serving.
-func newJobRunPublisher() (kube.JobRunPublisher, error) {
+// newJobRunPublisher builds the clients the trigger paths publish custom
+// resources through. The API cannot write the ledger itself --
+// orbitjob_admin holds SELECT only on the control-plane tables -- so these
+// clients are the whole of its trigger and cancel paths, and a process
+// without them can start but cannot trigger or cancel anything. Build them
+// before serving.
+func newJobRunPublisher() (kube.JobRunPublisher, kube.WorkflowRunPublisher, error) {
 	cfg, err := inClusterConfigFn()
 	if err != nil {
-		return kube.JobRunPublisher{}, fmt.Errorf("build in-cluster config: %w", err)
+		return kube.JobRunPublisher{}, kube.WorkflowRunPublisher{}, fmt.Errorf("build in-cluster config: %w", err)
 	}
 	client, err := newDynamicClientFn(cfg)
 	if err != nil {
-		return kube.JobRunPublisher{}, fmt.Errorf("build dynamic client: %w", err)
+		return kube.JobRunPublisher{}, kube.WorkflowRunPublisher{}, fmt.Errorf("build dynamic client: %w", err)
 	}
-	return kube.JobRunPublisher{Client: client}, nil
+	return kube.JobRunPublisher{Client: client}, kube.WorkflowRunPublisher{Client: client}, nil
 }
 
 func newRouter(handler *adminhttp.Handler, auth *middleware.Auth, rl *middleware.RateLimiter) *gin.Engine {
@@ -131,6 +133,56 @@ func main() {
 		log.Fatal(err)
 	}
 
+	publisher, workflowPublisher, err := newJobRunPublisher()
+	if err != nil {
+		log.Fatal(err)
+	}
+	handler := buildHandler(db, publisher, workflowPublisher)
+
+	auth := middleware.NewAuth(db)
+	// Wire the policy loader: without it, requests authenticate but carry no
+	// grants, so every guarded route denies. It wraps the same pool and reads
+	// the same documents table the policy endpoints use.
+	auth.Documents = adminpostgres.NewPolicyRepository(db)
+	rl := middleware.NewRateLimiter(ctx)
+
+	addr := ":" + os.Getenv("PORT")
+	if addr == ":" {
+		addr = ":8080"
+	}
+	srv := &http.Server{
+		Addr:         addr,
+		Handler:      newRouter(handler, auth, rl),
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	go func() {
+		slog.Info("admin-api listening", "addr", srv.Addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal(err)
+		}
+	}()
+
+	<-ctx.Done()
+	slog.Info("admin-api shutting down")
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("admin-api shutdown error", "error", err)
+	}
+}
+
+// buildHandler constructs every use case over its store and wires the result
+// into one Handler. A use case that is never set leaves its routes behind the
+// enabled-gate and unregistered, so this function is the whole answer to
+// "which routes does this binary serve".
+func buildHandler(
+	db *sql.DB,
+	jobPublisher kube.JobRunPublisher,
+	workflowPublisher kube.WorkflowRunPublisher,
+) *adminhttp.Handler {
 	// Job definitions are read here; they are declared in Kubernetes. There is
 	// no create, update or delete use case any more: the declaration is the
 	// CR, and the API only reads the revisions projected from it.
@@ -138,15 +190,11 @@ func main() {
 	listJobsUC := jobquery.NewListJobsUseCase(jobRepo)
 	getJobUC := jobquery.NewGetJobUseCase(jobRepo)
 
-	publisher, err := newJobRunPublisher()
-	if err != nil {
-		log.Fatal(err)
-	}
 	// A manual trigger publishes a JobRun Custom Resource. The operator, which
 	// owns the control-plane tables, creates the run row in the same
 	// transaction as the attempt and the audit entry, so the API never writes
 	// the ledger.
-	triggerJobUC := jobcommand.NewTriggerJobUseCase(jobRepo, publisher)
+	triggerJobUC := jobcommand.NewTriggerJobUseCase(jobRepo, jobPublisher)
 
 	runRepo := adminpostgres.NewRunRepository(db)
 	listInstancesUC := runquery.NewListRunsUseCase(runRepo)
@@ -154,7 +202,7 @@ func main() {
 	// A cancel request reads the run tenant-scoped, then patches
 	// spec.cancelRequested on its JobRun Custom Resource. The operator does
 	// the stop and the ledger writes, so the API needs no write grant.
-	cancelRunUC := runcommand.NewCancelRunUseCase(runRepo, publisher)
+	cancelRunUC := runcommand.NewCancelRunUseCase(runRepo, jobPublisher)
 	listAttemptsUC := runquery.NewListAttemptsUseCase(runRepo)
 
 	// Check use cases.
@@ -266,37 +314,36 @@ func main() {
 	handler.SetCreateGroupUseCase(createGroupUC)
 	handler.SetListGroupsUseCase(listGroupsUC)
 
-	auth := middleware.NewAuth(db)
-	// Wire the policy loader: without it, requests authenticate but carry no
-	// grants, so every guarded route denies. It is the same repository the
-	// policy endpoints use, not a second connection pool over one table.
-	auth.Documents = policyRepo
-	rl := middleware.NewRateLimiter(ctx)
-
-	addr := ":" + os.Getenv("PORT")
-	if addr == ":" {
-		addr = ":8080"
-	}
-	srv := &http.Server{
-		Addr:         addr,
-		Handler:      newRouter(handler, auth, rl),
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  60 * time.Second,
+	// Function use cases. The definitions are rows this API serves read-only
+	// plus invoke; the revisions the invoke path pins are the ones the
+	// operator's sync loop materializes from those rows.
+	functionRepo := corepostgres.NewFunctionRepository(db)
+	functionRunRepo := corepostgres.NewFunctionRunRepository(db)
+	revisions := corepostgres.NewControlPlaneRepository(db)
+	workflowRunRepo := corepostgres.NewWorkflowRunRepository(db)
+	workflowDefinitions := workflowDefinitionSource{
+		definitions: corepostgres.NewWorkflowDefinitionRepository(db),
 	}
 
-	go func() {
-		slog.Info("admin-api listening", "addr", srv.Addr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatal(err)
-		}
-	}()
+	handler.SetListFunctionsUseCase(adminhttp.NewListFunctionsUseCase(functionRepo))
+	handler.SetGetFunctionUseCase(adminhttp.NewGetFunctionUseCase(functionRepo))
+	handler.SetInvokeFunctionUseCase(adminhttp.NewInvokeFunctionUseCase(
+		functionRepo,
+		adminhttp.NewFunctionRevisionReader(revisions),
+		jobPublisher,
+	))
+	handler.SetListFunctionRunsUseCase(adminhttp.NewListFunctionRunsUseCase(functionRunRepo, functionRepo))
+	handler.SetGetFunctionRunUseCase(adminhttp.NewGetFunctionRunUseCase(functionRunRepo, functionRepo))
 
-	<-ctx.Done()
-	slog.Info("admin-api shutting down")
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer shutdownCancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		slog.Error("admin-api shutdown error", "error", err)
-	}
+	// Workflow use cases. The definitions are WorkflowJob custom resources
+	// read here through their projection; runs live in the workflow ledger the
+	// operator's walker advances.
+	handler.SetListWorkflowsUseCase(adminhttp.NewListWorkflowsUseCase(workflowDefinitions))
+	handler.SetGetWorkflowUseCase(adminhttp.NewGetWorkflowUseCase(workflowDefinitions))
+	handler.SetTriggerWorkflowUseCase(adminhttp.NewTriggerWorkflowUseCase(workflowDefinitions, workflowPublisher))
+	handler.SetListWorkflowRunsUseCase(adminhttp.NewListWorkflowRunsUseCase(workflowDefinitions, workflowRunRepo))
+	handler.SetGetWorkflowRunUseCase(adminhttp.NewGetWorkflowRunUseCase(workflowDefinitions, workflowRunRepo))
+	handler.SetCancelWorkflowRunUseCase(adminhttp.NewCancelWorkflowRunUseCase(workflowDefinitions, workflowRunRepo, workflowPublisher))
+
+	return handler
 }

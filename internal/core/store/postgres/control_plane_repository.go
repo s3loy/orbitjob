@@ -13,6 +13,7 @@ import (
 
 	"orbitjob/internal/core/app/controlplane"
 	"orbitjob/internal/core/domain/check"
+	"orbitjob/internal/core/domain/function"
 	"orbitjob/internal/core/domain/jobrun"
 	"orbitjob/internal/core/domain/revision"
 	"orbitjob/internal/domain/resource"
@@ -302,6 +303,34 @@ func (r *ControlPlaneRepository) ActiveRevision(ctx context.Context, tenantID, s
 		return revision.Revision{}, err
 	}
 	return out, nil
+}
+
+// ActiveFunctionRevision reads the active revision a function invocation pins:
+// the job_definition_revisions row at (source_mode='function', source_uid,
+// is_active), which the operator's revision-sync loop materializes from the
+// function's current version. It returns the revision's id -- the identity the
+// JobRun custom resource requires before publish -- and the scheduling
+// namespace the object is published into. A definition whose sync has not run
+// yet has no row: that is NotFoundError, the caller's "no active revision"
+// answer, and re-asking after the next sync tick is the designed recovery.
+func (r *ControlPlaneRepository) ActiveFunctionRevision(ctx context.Context, tenantID, sourceUID string) (revisionID int64, namespace string, err error) {
+	err = r.WithTenantTransaction(ctx, tenantID, func(ctx context.Context, tx *sql.Tx) error {
+		scanErr := tx.QueryRowContext(ctx, `
+			SELECT id, source_namespace FROM job_definition_revisions
+			WHERE source_mode=$1 AND source_uid=$2 AND tenant_id=$3 AND is_active
+		`, function.SourceModeFunction, sourceUID, tenantID).Scan(&revisionID, &namespace)
+		if errors.Is(scanErr, sql.ErrNoRows) {
+			return &resource.NotFoundError{Resource: "function_definition_revision", ID: sourceUID}
+		}
+		if scanErr != nil {
+			return fmt.Errorf("active function revision for %s: %w", sourceUID, scanErr)
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, "", err
+	}
+	return revisionID, namespace, nil
 }
 
 const activeRevisionsSQL = `

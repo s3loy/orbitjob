@@ -19,6 +19,12 @@ import (
 // can never collide with kubernetes, check or workflow rows.
 const SourceModeFunction = "function"
 
+// DefaultTimeoutSeconds is the execution deadline a function revision pins
+// when a definition row reaches the sync without one. The functions table
+// defaults the column to 60 and its CHECK refuses lower than 1, so this only
+// covers a zero from a row written before the column existed.
+const DefaultTimeoutSeconds = 60
+
 // Definition statuses. Paused is the suspended-definition state: invoking a
 // paused function is a conflict, not an error.
 const (

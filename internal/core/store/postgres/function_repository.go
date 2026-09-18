@@ -452,6 +452,66 @@ func (r *FunctionRunRepository) RecordCompleted(ctx context.Context, tenantID st
 	return nil
 }
 
+// RunByRunID reads one terminal invocation by its deterministic run id, the
+// read model's single-row answer beside RunsByFunction's history. The
+// function predicate stays alongside the run id — defense in depth is cheap,
+// and a run of another function must be indistinguishable from a run that
+// does not exist.
+func (r *FunctionRunRepository) RunByRunID(ctx context.Context, tenantID string, functionID int64, runID string) (function.FunctionRun, bool, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return function.FunctionRun{}, false, fmt.Errorf("begin function run get tx: %w", err)
+	}
+	// Unconditional release: the scan below captures its error into scanErr,
+	// so the not-found and scan-failure returns leave err nil and a rollback
+	// keyed on err would leak the transaction holding the tenant GUC.
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID); err != nil {
+		return function.FunctionRun{}, false, fmt.Errorf("set tenant context: %w", err)
+	}
+
+	var (
+		run                   function.FunctionRun
+		startedAt, finishedAt sql.NullTime
+		durationMs            sql.NullInt64
+	)
+	scanErr := tx.QueryRowContext(ctx, `
+		SELECT id, run_id, tenant_id, function_id, status, triggered_at, started_at, finished_at,
+		       duration_ms, version, created_at
+		FROM function_runs
+		WHERE tenant_id = $1 AND function_id = $2 AND run_id = $3
+	`, tenantID, functionID, runID).Scan(
+		&run.ID, &run.RunID, &run.TenantID, &run.FunctionID, &run.Status, &run.TriggeredAt,
+		&startedAt, &finishedAt, &durationMs, &run.Version, &run.CreatedAt,
+	)
+	if scanErr == sql.ErrNoRows {
+		// Deleted, foreign-function and other-tenant rows are alike not found:
+		// RLS hides the last, the predicates hide the first two.
+		return function.FunctionRun{}, false, nil
+	}
+	if scanErr != nil {
+		return function.FunctionRun{}, false, fmt.Errorf("get function run: %w", scanErr)
+	}
+	if startedAt.Valid {
+		started := startedAt.Time
+		run.StartedAt = &started
+	}
+	if finishedAt.Valid {
+		finished := finishedAt.Time
+		run.FinishedAt = &finished
+	}
+	if durationMs.Valid {
+		ms := int(durationMs.Int64)
+		run.DurationMs = &ms
+	}
+
+	if err = tx.Commit(); err != nil {
+		return function.FunctionRun{}, false, fmt.Errorf("commit function run get: %w", err)
+	}
+	return run, true, nil
+}
+
 // RunsByFunction lists the function's most recent terminal invocations, newest
 // first. A non-positive limit means the default page.
 func (r *FunctionRunRepository) RunsByFunction(ctx context.Context, tenantID string, functionID int64, limit int) ([]function.FunctionRun, error) {

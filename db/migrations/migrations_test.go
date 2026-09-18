@@ -35,12 +35,17 @@ func TestMigrationFileSet(t *testing.T) {
 	// the function_runs derived read model (serverless design, section 4).
 	// 0005 adds the Workflows surface: workflow_run_control_plane and the
 	// workflow_run_id step-grouping column (workflow design, section 9.1).
+	// 0006 arms the enforcing function/workflow routes: the TenantAdminAccess
+	// preset document gains the six actions the routes check (the 0004/0005
+	// preset deferral, kept because an action earns a preset place only when
+	// the HTTP API enforces it).
 	want := []string{
 		"0001_baseline.up.sql",
 		"0002_checks_to_kubernetes_jobs.up.sql",
 		"0003_resource_group_id_on_ledger.up.sql",
 		"0004_functions.up.sql",
 		"0005_workflows.up.sql",
+		"0006_tenant_admin_function_workflow_actions.up.sql",
 	}
 	if !reflect.DeepEqual(files, want) {
 		t.Fatalf("migration files = %v, want %v", files, want)
