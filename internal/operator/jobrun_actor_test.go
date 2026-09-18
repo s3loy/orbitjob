@@ -156,14 +156,12 @@ func TestReconcileJobRunWithAnActorProceedsPastTheGuard(t *testing.T) {
 	rt := newRuntime(t, fakeDynamic(t, &obj), &fakeRevisions{}, runs, &fakeJobs{})
 
 	err := rt.ReconcileJobRun(context.Background(), obj)
-	if err == nil {
-		t.Fatal("expected the missing stored run to surface")
-	}
-	if strings.Contains(err.Error(), "has no actor") {
-		t.Fatalf("a valid actor was rejected: %v", err)
-	}
-	if !strings.Contains(err.Error(), "no stored run for occurrence") {
-		t.Fatalf("error %q shows the reconcile did not reach the run lookup", err)
+	if err != nil {
+		// The stored run is gone (pruned or wiped by a tenant-blind reset),
+		// the trigger is not one the operator materializes, and the reconcile
+		// got past every guard on the way: this is the drop-the-key path,
+		// not a failure. The pre-drop code errored here unconditionally.
+		t.Fatalf("an orphaned occurrence must be dropped, got %v", err)
 	}
 }
 

@@ -171,11 +171,22 @@ func TestReconcileJobRunIsNoOpForTerminalRun(t *testing.T) {
 	}
 }
 
-func TestReconcileJobRunRefusesRunWithoutStoredState(t *testing.T) {
+func TestReconcileJobRunIsNoOpForAnOrphanOccurrence(t *testing.T) {
+	// found=false on a non-manual trigger means the row existed once and was
+	// taken away (retention, or a tenant-blind loadtest reset). The refusal
+	// stance stays -- the operator must not materialize platform state for a
+	// CR the scheduler owns -- but the key is dropped instead of requeued,
+	// because no future event can change the answer.
 	obj := jobRunObject(t)
-	rt := newRuntime(t, fakeDynamic(t, &obj), &fakeRevisions{}, &fakeRuns{found: false}, &fakeJobs{})
-	if err := rt.ReconcileJobRun(context.Background(), obj); err == nil {
-		t.Fatal("a CR without platform state must be refused")
+	runs := &fakeRuns{found: false}
+	jobs := &fakeJobs{}
+	rt := newRuntime(t, fakeDynamic(t, &obj), &fakeRevisions{}, runs, jobs)
+
+	if err := rt.ReconcileJobRun(context.Background(), obj); err != nil {
+		t.Fatalf("an orphaned occurrence must be dropped, got %v", err)
+	}
+	if len(jobs.created) != 0 || len(runs.phases) != 0 {
+		t.Fatal("an orphaned occurrence must not gain platform state")
 	}
 }
 
