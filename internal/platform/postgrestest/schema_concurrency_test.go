@@ -4,6 +4,7 @@ package postgrestest
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"strings"
@@ -178,14 +179,17 @@ func TestDropSchemaKeepsDatabaseExtensions(t *testing.T) {
 // state where it must be created. The schema that held it goes with it.
 func dropExtension(t *testing.T, baseDSN, name string) {
 	t.Helper()
-	db, err := open(baseDSN)
-	if err != nil {
-		t.Fatalf("open for extension cleanup: %v", err)
-	}
-	defer func() { _ = db.Close() }()
-
-	if _, err := db.ExecContext(context.Background(),
-		`DROP EXTENSION IF EXISTS `+quoteIdentifier(name)+` CASCADE`); err != nil {
+	// The drop takes the extension-placement lock like every creator does. An
+	// unlocked DROP EXTENSION CASCADE can wait on a concurrent placement's
+	// catalog lock and then commit after that placement's own check — landing
+	// the removal between another package's "extension is present" decision
+	// and this test's assertion, which is exactly the no-rows failure this
+	// test used to flake on.
+	if err := withAdvisoryLock(baseDSN, sharedSchemaLockClassID, extensionLockObjectID, func(db *sql.DB) error {
+		_, err := db.ExecContext(context.Background(),
+			`DROP EXTENSION IF EXISTS `+quoteIdentifier(name)+` CASCADE`)
+		return err
+	}); err != nil {
 		t.Fatalf("drop extension %s: %v", name, err)
 	}
 }

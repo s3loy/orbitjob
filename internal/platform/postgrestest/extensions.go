@@ -119,3 +119,10 @@ func placeExtension(ctx context.Context, db *sql.DB, name string) error {
 	}
 	return nil
 }
+
+// extensionPlacementLockKeys are the advisory lock coordinates placeExtension
+// serializes on. migrate.EnsureRoles creates the same extension from its own
+// package, which cannot import this one, so it carries mirrored copies; the
+// drift test in this package fails if the two copies ever diverge, because a
+// divergence puts two CREATE EXTENSION calls back into the race this lock
+// exists to prevent.
