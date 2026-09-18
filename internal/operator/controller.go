@@ -10,7 +10,8 @@ import (
 
 	"orbitjob/internal/platform/metrics"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	dynamicinformer "k8s.io/client-go/dynamic/dynamicinformer"
@@ -31,6 +32,12 @@ var (
 // keeps a ScheduledJob and a JobRun of the same namespace/name apart.
 var watchedResources = []schema.GroupVersionResource{scheduledJobGVR, jobRunGVR, jobGVR, workflowRunGVR, workflowJobGVR}
 
+// reconcileBudget bounds one pass. Every read and write it makes honours this
+// deadline, so a wedged connection or a stuck database turns into a failed
+// reconcile that is retried, not a worker that hangs forever and starves the
+// queue behind it in silence.
+const reconcileBudget = 60 * time.Second
+
 type Config struct {
 	// Resync re-delivers every watched object periodically. It is the safety net
 	// for events dropped while the operator was down.
@@ -38,10 +45,18 @@ type Config struct {
 	// Workers bounds concurrent reconciles. Each reconcile may touch PostgreSQL
 	// and the Kubernetes API, so this is a load knob, not a throughput knob.
 	Workers int
+	// Budget bounds one reconcile pass; zero means the default (reconcileBudget).
+	// A pass that outlives it fails and is retried, which is what keeps a wedged
+	// read from pinning a worker forever.
+	Budget time.Duration
 }
 
 // ReconcileHandler processes one resource key of the form "<resource>:<ns>/<name>".
-type ReconcileHandler func(context.Context, string) error
+// obj is the state the informer last observed for the key, and cached reports
+// whether it could be served from the informer's store. When cached is false
+// (the object was deleted while queued, or the handler was invoked outside the
+// watch path) the handler reads the API server itself.
+type ReconcileHandler func(context.Context, string, unstructured.Unstructured, bool) error
 
 // Controller watches the control plane resources and drives reconciliation.
 type Controller struct {
@@ -53,6 +68,36 @@ type Controller struct {
 	// doing no work.
 	Reconcile ReconcileHandler
 	Log       *slog.Logger
+}
+
+// objectCache serves the last state the informers observed, keyed by the
+// resource prefix of the reconcile key. Reads hit the local store, so the
+// reconcile hot path pays no apiserver round trip per event -- under a burst
+// that round trip is what leaves the queue draining slower than it fills,
+// starving the keys enqueued last. A miss (the object was deleted while
+// queued, or the resource is not watched) sends the handler to the API server.
+type objectCache struct {
+	byResource map[string]cache.SharedIndexInformer
+}
+
+// get returns the stored object for the key and whether one was found. A store
+// error is reported as not-found rather than failed: the handler's fallback
+// read decides authoritatively, and a transient index error must not fail a
+// reconcile that would have succeeded.
+func (o objectCache) get(resource, namespace, name string) (unstructured.Unstructured, bool) {
+	informer, ok := o.byResource[resource]
+	if !ok {
+		return unstructured.Unstructured{}, false
+	}
+	obj, exists, err := informer.GetStore().GetByKey(namespace + "/" + name)
+	if err != nil || !exists {
+		return unstructured.Unstructured{}, false
+	}
+	u, ok := obj.(*unstructured.Unstructured)
+	if !ok {
+		return unstructured.Unstructured{}, false
+	}
+	return *u, true
 }
 
 // Run watches until ctx is cancelled. It returns only after in-flight reconciles
@@ -76,23 +121,28 @@ func (c Controller) Run(ctx context.Context) error {
 		workqueue.DefaultTypedControllerRateLimiter[string](),
 	)
 
+	byResource := make(map[string]cache.SharedIndexInformer, len(watchedResources))
+	informers := make([]cache.SharedIndexInformer, 0, len(watchedResources))
 	for _, gvr := range watchedResources {
 		gvr := gvr
-		handler := cache.ResourceEventHandlerFuncs{
+		informer := factory.ForResource(gvr).Informer()
+		informers = append(informers, informer)
+		if _, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 			AddFunc:    func(obj any) { enqueue(queue, gvr, obj) },
 			UpdateFunc: func(_, obj any) { enqueue(queue, gvr, obj) },
 			DeleteFunc: func(obj any) { enqueue(queue, gvr, obj) },
-		}
-		if _, err := factory.ForResource(gvr).Informer().AddEventHandler(handler); err != nil {
+		}); err != nil {
 			return fmt.Errorf("watch %s: %w", gvr.Resource, err)
 		}
+		byResource[gvr.Resource] = informer
 	}
+	watched := objectCache{byResource: byResource}
 
 	factory.Start(ctx.Done())
 
-	synced := make([]cache.InformerSynced, 0, len(watchedResources))
-	for _, gvr := range watchedResources {
-		synced = append(synced, factory.ForResource(gvr).Informer().HasSynced)
+	synced := make([]cache.InformerSynced, 0, len(informers))
+	for _, informer := range informers {
+		synced = append(synced, informer.HasSynced)
 	}
 	if !cache.WaitForCacheSync(ctx.Done(), synced...) {
 		return ctx.Err()
@@ -108,7 +158,7 @@ func (c Controller) Run(ctx context.Context) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			c.worker(ctx, queue, log)
+			c.worker(ctx, queue, log, watched)
 		}()
 	}
 
@@ -118,25 +168,38 @@ func (c Controller) Run(ctx context.Context) error {
 	return nil
 }
 
-func (c Controller) worker(ctx context.Context, queue workqueue.TypedRateLimitingInterface[string], log *slog.Logger) {
+func (c Controller) worker(ctx context.Context, queue workqueue.TypedRateLimitingInterface[string], log *slog.Logger, watched objectCache) {
 	for {
 		key, shutdown := queue.Get()
 		if shutdown {
 			return
 		}
-		c.reconcileOne(ctx, queue, log, key)
+		c.reconcileOne(ctx, queue, log, watched, key)
 		queue.Done(key)
 	}
 }
 
-func (c Controller) reconcileOne(ctx context.Context, queue workqueue.TypedRateLimitingInterface[string], log *slog.Logger, key string) {
+func (c Controller) reconcileOne(ctx context.Context, queue workqueue.TypedRateLimitingInterface[string], log *slog.Logger, watched objectCache, key string) {
 	// The key is "<resource>:<namespace>/<name>" (see enqueue below). Only the
-	// resource half is a label: it is a bounded set of three, where the name
+	// resource half is a label: it is a bounded set of five, where the name
 	// would grow without bound.
-	resource, _, _ := strings.Cut(key, ":")
+	resource, nsname, _ := strings.Cut(key, ":")
+	namespace, name, _ := strings.Cut(nsname, "/")
+	obj, cached := watched.get(resource, namespace, name)
+
+	// shutdown is read off the parent context: the budget below gives the child
+	// a deadline of its own, and a deadline that expired mid-reconcile must
+	// requeue the work instead of being mistaken for a stop.
+	shutdown := ctx.Err() != nil
+	budget := c.Config.Budget
+	if budget <= 0 {
+		budget = reconcileBudget
+	}
+	reconcileCtx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
 
 	started := time.Now()
-	err := c.Reconcile(ctx, key)
+	err := c.Reconcile(reconcileCtx, key, obj, cached)
 	metrics.OperatorReconcileDuration.WithLabelValues(resource).Observe(time.Since(started).Seconds())
 
 	switch {
@@ -144,7 +207,7 @@ func (c Controller) reconcileOne(ctx context.Context, queue workqueue.TypedRateL
 		// Drop the backoff history so the next failure starts from the shortest
 		// delay.
 		queue.Forget(key)
-	case ctx.Err() != nil:
+	case shutdown:
 		// Shutting down: do not requeue, the work is retried on next start. Not
 		// counted as a reconcile error -- the pass did not fail, it was stopped.
 		queue.Forget(key)
@@ -156,18 +219,21 @@ func (c Controller) reconcileOne(ctx context.Context, queue workqueue.TypedRateL
 }
 
 func enqueue(queue workqueue.TypedRateLimitingInterface[string], gvr schema.GroupVersionResource, obj any) {
-	meta, ok := obj.(metav1.Object)
-	if !ok {
-		// Deleted-object tombstones still carry metadata; anything else cannot
-		// be addressed and is dropped rather than enqueued as a bad key.
-		tombstone, isTombstone := obj.(cache.DeletedFinalStateUnknown)
-		if !isTombstone {
-			return
+	// meta.Accessor, not a direct metav1.Object assertion, is the canonical
+	// event-handler idiom: it reaches the metadata of every shape the informer
+	// machinery hands over, and a failed assertion here would drop the event
+	// silently -- an operator that reconciles nothing but logs no errors.
+	// DeletedFinalStateUnknown is not itself a metav1.Object (and meta.Accessor
+	// cannot know client-go's tombstone type), so its inner object is unwrapped
+	// explicitly.
+	object, err := meta.Accessor(obj)
+	if err != nil {
+		if tombstone, isTombstone := obj.(cache.DeletedFinalStateUnknown); isTombstone {
+			object, err = meta.Accessor(tombstone.Obj)
 		}
-		meta, ok = tombstone.Obj.(metav1.Object)
-		if !ok {
+		if err != nil {
 			return
 		}
 	}
-	queue.Add(gvr.Resource + ":" + meta.GetNamespace() + "/" + meta.GetName())
+	queue.Add(gvr.Resource + ":" + object.GetNamespace() + "/" + object.GetName())
 }

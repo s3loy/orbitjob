@@ -199,8 +199,13 @@ func loadTenantResolver() (tenantResolver, error) {
 	return operator.NamespaceTenantResolver{Tenants: mapping}, nil
 }
 
+// defaultWorkers bounds the reconcile pool. Reconciles read from the informer
+// cache and touch PostgreSQL plus the apiserver only when they act, so four
+// concurrent passes drain a burst (the loadtest applies twelve hundred
+// declarations at once) far faster than a queue can refill it, while keeping
+// the concurrent load on PostgreSQL a small, predictable number.
 func defaultWorkers() int {
-	return 2
+	return 4
 }
 
 // scheduleDeps are the dependencies the schedule loop needs.

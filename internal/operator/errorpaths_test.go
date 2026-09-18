@@ -7,14 +7,14 @@ import (
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/util/workqueue"
-
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	k8stesting "k8s.io/client-go/testing"
+	"k8s.io/client-go/util/workqueue"
 
 	"orbitjob/internal/core/domain/jobrun"
 	"orbitjob/internal/core/domain/revision"
@@ -172,19 +172,19 @@ func TestDynamicHandlerRejectsUnsupportedResource(t *testing.T) {
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 	handler := DynamicHandler{Client: client}
 	for _, key := range []string{"secrets:finance/x", "unknown:finance/x", "nocolon", "jobs:missing-slash"} {
-		if err := handler.Handle(context.Background(), key); err == nil {
+		if err := handler.Handle(context.Background(), key, unstructured.Unstructured{}, false); err == nil {
 			t.Errorf("key %q accepted", key)
 		}
 	}
 }
 
 func TestDynamicHandlerRequiresClientAndHandler(t *testing.T) {
-	if err := (DynamicHandler{}).Handle(context.Background(), "jobs:finance/x"); err == nil {
+	if err := (DynamicHandler{}).Handle(context.Background(), "jobs:finance/x", unstructured.Unstructured{}, false); err == nil {
 		t.Fatal("expected a client error")
 	}
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 	// A resource with no configured callback is a wiring defect.
-	if err := (DynamicHandler{Client: client}).Handle(context.Background(), "jobs:finance/x"); err == nil {
+	if err := (DynamicHandler{Client: client}).Handle(context.Background(), "jobs:finance/x", unstructured.Unstructured{}, false); err == nil {
 		t.Fatal("expected a handler error")
 	}
 }
@@ -194,12 +194,12 @@ func TestWorkerExitsWhenTheQueueIsShutDown(t *testing.T) {
 		workqueue.DefaultTypedControllerRateLimiter[string](),
 	)
 	queue.ShutDown()
-	controller := Controller{Reconcile: func(context.Context, string) error {
+	controller := Controller{Reconcile: func(context.Context, string, unstructured.Unstructured, bool) error {
 		t.Fatal("a shut-down queue must not deliver work")
 		return nil
 	}}
 	done := make(chan struct{})
-	go func() { controller.worker(context.Background(), queue, discardLogger()); close(done) }()
+	go func() { controller.worker(context.Background(), queue, discardLogger(), objectCache{}); close(done) }()
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):

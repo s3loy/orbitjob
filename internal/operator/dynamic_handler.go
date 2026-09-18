@@ -3,12 +3,13 @@ package operator
 import (
 	"context"
 	"fmt"
+	"strings"
+
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
-	"strings"
 )
 
 type DynamicHandler struct {
@@ -20,17 +21,20 @@ type DynamicHandler struct {
 	ReconcileWorkflowJob  func(context.Context, unstructured.Unstructured) error
 }
 
-func (h DynamicHandler) Handle(ctx context.Context, key string) error {
+// Handle routes one reconcile key to its handler. The object arrives from the
+// informer's store when cached is set; otherwise (deleted while queued, or a
+// call from outside the watch path) one read of the API server decides, and
+// NotFound ends the reconcile as complete rather than failed.
+func (h DynamicHandler) Handle(ctx context.Context, key string, obj unstructured.Unstructured, cached bool) error {
 	if h.Client == nil {
 		return fmt.Errorf("dynamic client is required")
 	}
-	parts := strings.SplitN(key, ":", 2)
-	if len(parts) != 2 {
+	resource, nsname, ok := strings.Cut(key, ":")
+	if !ok {
 		return fmt.Errorf("invalid resource key")
 	}
-	resource := parts[0]
-	p := strings.SplitN(parts[1], "/", 2)
-	if len(p) != 2 {
+	namespace, name, ok := strings.Cut(nsname, "/")
+	if !ok || namespace == "" || name == "" {
 		return fmt.Errorf("invalid resource key")
 	}
 	var fn func(context.Context, unstructured.Unstructured) error
@@ -53,12 +57,15 @@ func (h DynamicHandler) Handle(ctx context.Context, key string) error {
 	if resource == "jobs" {
 		gvr = schema.GroupVersionResource{Group: "batch", Version: "v1", Resource: "jobs"}
 	}
-	obj, err := h.Client.Resource(gvr).Namespace(p[0]).Get(ctx, p[1], metav1.GetOptions{})
+	if cached {
+		return fn(ctx, obj)
+	}
+	current, err := h.Client.Resource(gvr).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	return fn(ctx, *obj)
+	return fn(ctx, *current)
 }
