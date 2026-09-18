@@ -1,14 +1,13 @@
-# 贡献指南
+# Contribution Guide
 
-欢迎参与 OrbitJob 开发。提交重大功能或接口变更前，请先创建 Issue，说明问题范围、边界条件与验证方案。小型修复可直接提交 PR。
+Open an Issue before submitting major features or interface changes, describing the problem scope, edge cases and verification plan. Small fixes can go straight to a PR.
 
-## 开发环境
+## Development environment
 
-- Go 1.26.5
+- Go 1.27.1
 - PostgreSQL 17
-- golangci-lint v2.11.3
-- Docker Compose v2（部署相关变更）
-- Helm 3、kind、kubectl（Chart 或 Kubernetes 变更）
+- golangci-lint latest (version auto-updates with CI)
+- Helm 3, kind, kubectl (for chart or Kubernetes changes)
 
 ```bash
 git clone https://github.com/s3loy/orbitjob.git
@@ -16,11 +15,11 @@ cd orbitjob
 go mod download
 ```
 
-## 分支策略
+## Branch strategy
 
-从 `dev` 分支创建开发分支，PR 合回 `dev`。维护者按发布节奏将 `dev` 合入 `main`。
+Create development branches from `dev` and merge PRs back into `dev`. Maintainers merge `dev` into `main` on the release cadence.
 
-分支命名规范：
+Branch naming:
 
 ```text
 feat/<description>
@@ -29,93 +28,97 @@ refactor/<description>
 chore/<description>
 ```
 
-使用 kebab-case，一个分支聚焦一个主题。
+Use kebab-case; one branch, one topic.
 
-## 代码规范
+## Code conventions
 
-依赖方向：
+Dependency direction:
 
 ```text
 platform <- core
 platform <- admin
-core 不导入 admin
+core does not import admin
 admin/http -> admin/app -> core/domain
 ```
 
-提交代码需满足：
+Submitted code must:
 
-- Context-first API，通过函数变量注入外部依赖
-- Domain 层不引用 HTTP 类型或 admin DTO
-- 新依赖优先选择标准库，其次复用已有依赖
-- Admin API 错误使用统一结构 `{error:{code,message,field}}`
-- 写操作放入事务；批量抢占使用 `FOR UPDATE SKIP LOCKED`
-- 并发更新使用 `version` 乐观锁
-- 新代码路径同步增加 metrics、结构化日志或 trace 接入点
-- 认证、输入校验与权限检查随功能同步提交
+- Use context-first APIs, with external dependencies injected through function variables
+- Keep the domain layer free of HTTP types and admin DTOs
+- Prefer the standard library for new dependencies, then reuse existing ones
+- Use the unified error structure `{error:{code,message,field}}` in the Admin API
+- Put writes in transactions; batch claims use `FOR UPDATE SKIP LOCKED`
+- Use the `version` optimistic lock for concurrent updates
+- Add metrics, structured logging or trace hooks to new code paths
+- Ship authentication, input validation and permission checks together with the feature
 
-## 数据库 Migration
+## Database migrations
 
-文件名使用四位序号：
+File names use a four-digit ordinal:
 
 ```text
 NNNN_description.up.sql
 NNNN_description.down.sql
 ```
 
-不可逆 migration 的 down 文件名添加 `_irreversible` 后缀，并在文件内说明原因。已发布或已写入 `schema_migrations` 的 migration 不可再修改；runner 通过 SHA-256 checksum 检测变更。
+Irreversible migrations add an `_irreversible` suffix to the down file name and explain the reason inside the file. Published migrations, or ones already recorded in `schema_migrations`, must never be modified; the runner detects changes via SHA-256 checksums.
 
-修改 `db/migrations/*.up.sql` 后同步 Helm Chart 副本：
+After editing `db/migrations/*.up.sql`, sync the Helm chart copy:
 
 ```bash
 make helm-migrations-sync
 make helm-migrations-check
 ```
 
-涉及 role、RLS、ownership 或 `SECURITY DEFINER` 函数的变更需说明：
+Changes touching roles, RLS, ownership or `SECURITY DEFINER` functions must state:
 
-- 哪个 PG role 获得权限
-- 是否绕过或受 RLS 约束
-- 使用 `SECURITY DEFINER` 而非 tenant-scoped query 的原因
-- rollback 是否可逆
+- which PG role gains the privilege
+- whether RLS is bypassed or enforced
+- why `SECURITY DEFINER` instead of a tenant-scoped query
+- whether rollback is reversible
 
-## 测试
+## Testing
 
-测试分层从内到外：
+Test tiers, inside out:
 
-1. Domain 单元测试：纯逻辑
-2. Use case 测试：mock 外部依赖
-3. Handler 测试：`httptest`
-4. Repository 测试：`go-sqlmock`
-5. 集成测试：真实 PostgreSQL，`//go:build integration`
-6. 部署验证：Compose、Helm 或 kind
+1. Domain unit tests: pure logic
+2. Use-case tests: mock external dependencies
+3. Handler tests: `httptest`
+4. Repository tests: `go-sqlmock`
+5. Integration tests: real PostgreSQL, `//go:build integration`
+6. Deployment verification: Helm or kind
 
-含业务逻辑的 Go 包以 100% 语句覆盖率为合入目标。提交前运行：
+Go packages carrying business logic target 100% statement coverage as the merge bar. Before submitting, run:
 
 ```bash
 make check
 make test-cover
 ```
 
-涉及数据库、repository、migration、bootstrap 或 RLS 的变更还需运行：
+Changes touching the database, repositories, migrations, bootstrap or RLS also require:
 
 ```bash
 TEST_DATABASE_DSN='postgres://...' make integration
 ```
 
-涉及 Helm 或 Kubernetes 的变更运行：
+Changes touching Helm or Kubernetes require:
 
 ```bash
 make helm-check
-make kind-v020-verify
+make kind-verify
 ```
 
-`kind-v020-verify` 会创建本地 kind 集群，耗时高于单元测试。PR 中需注明是否实际运行；不可将"未运行"标记为"通过"。
+`kind-verify` creates a local kind cluster and takes longer than unit tests. State in the PR whether you actually ran it; never mark "not run" as "passed".
 
-性能敏感路径需附带 benchmark：
+### Benchmarks
 
-```bash
-make bench
-```
+`make bench` measures the ledger's pure hot paths: occurrence-key derivation (the dedup cornerstone), run phase transitions, check/probe-config normalization, Kubernetes Job rendering, terminal-outcome-to-SLI derivation, and leader election/locking. These are in-process functions — no database, no cluster — so the target finishes in about a minute. It covers only packages that carry benchmarks and skips the test suites; `make test` owns verification.
+
+The run writes `bench.txt`, which the Benchmark workflow tracks per commit; check the comparison it posts on your PR before merging a change to a benched path.
+
+`make bench-etcd-memory` reruns the election benchmarks at higher count for benchstat-style comparisons. `make bench-etcd` does the same against a live etcd and needs `ETCD_ENDPOINTS` (default `localhost:2379`).
+
+A change to a performance-sensitive path ships with a benchmark next to it: table-driven over representative inputs, with `b.ReportAllocs`, and honest — a trivially fast function says so in a comment rather than inflating the scenario. Benchmarks that need the ledger database are out of scope for now; once the store workstream settles they will land as a separate tagged target, not inside `make bench`.
 
 ## Local hooks
 
@@ -146,83 +149,82 @@ The heavyweight suites stay in CI — lint, unit/race/coverage, the integration 
 
 Bypass with `git commit --no-verify`, but only in documented emergencies — a release cherry-pick out of a broken tree, or a failure caused by a hook itself — and say so in the commit or PR description. Never use it to skip a failure you have not read.
 
+## CI
+
+The pipeline map — which workflow runs when, what each one proves, and where artifacts land — is `docs/ci.md`. On every PR: unit/race/coverage, the integration suites, lint, govulncheck, dependency review, a benchmark comparison, and a build of all five images for both release platforms (no push). Nightly on the default branch: load-test smoke; Saturday night: the qualifying standard profile. A hosted job caps at 360 minutes, so the 8-hour soak runs on the always-on dev cluster, not in CI.
+
 ## OpenAPI
 
-HTTP route、请求字段、enum 或错误响应变更后需更新 `api/openapi.yaml`：
+After changing HTTP routes, request fields, enums or error responses, update `api/openapi.yaml`:
 
 ```bash
 make openapi-gen
 make openapi-check
 ```
 
-运行时文档位于 `GET /openapi.json`。若 handler 行为暂时无法由 OpenAPI 表达，需在 PR 描述和 `USAGE.md` 中明确标注差异。
+Runtime documentation is at `GET /openapi.json`. If handler behavior temporarily cannot be expressed in OpenAPI, flag the deviation explicitly in the PR description and `USAGE.md`.
 
-## 文档
+## Documentation
 
-代码与文档在同一 PR 中更新：
+Code and documentation change in the same PR:
 
-- 项目定位与启动方式：`README.md`、`README.en.md`
-- 操作步骤与 curl 示例：`USAGE.md`
-- 安全边界：`SECURITY.md`
-- 接口 schema：`api/openapi.yaml`
+- Project positioning and quick start: `README.md` (English), `README.zh.md` (Chinese variant)
+- Operating steps and curl examples: `USAGE.md`
+- Security boundaries: `SECURITY.md`
+- API schema: `api/openapi.yaml`
 
-README 不记录版本路线。路线与架构计划记录在 Issue、PR 或维护者指定的设计文档中。
+The README does not record the version roadmap. Roadmaps and architecture plans live in Issues, PRs or maintainer-designated design documents.
 
-## Commit 格式
+## Commit format
 
-使用 Conventional Commits：
+Conventional Commits:
 
 ```text
 type(scope): description
 ```
 
-描述使用英文小写，不加句号，不超过 72 字符。常用 type：`feat`、`fix`、`refactor`、`test`、`docs`、`chore`、`style`、`perf`。
+Descriptions are lowercase English, no trailing period, at most 72 characters. Common types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `style`, `perf`.
 
-| Scope | 用途 |
+| Scope | Purpose |
 |---|---|
-| `core/domain` | 领域规则 |
-| `core/store` | 核心写库 |
-| `core/app` | 核心用例 |
-| `admin/http` | HTTP handler 与 middleware |
-| `admin/store` | Admin 读库 |
-| `admin/app` | Admin 用例 |
-| `schedule` | scheduler 进程 |
-| `dispatcher` | dispatcher 进程 |
-| `worker` | worker 与 handler |
-| `check` | Check 与 CheckRun |
-| `slo` | SLI、SLO 与错误预算 |
-| `bootstrap` | 首次初始化 |
-| `deploy` | Docker、Compose、Helm 与 kind |
-| `platform` | migration、协调层与基础设施 |
+| `core/domain` | domain rules |
+| `core/store` | core write store |
+| `core/app` | core use cases |
+| `admin/http` | HTTP handlers and middleware |
+| `admin/store` | admin read store |
+| `admin/app` | admin use cases |
+| `schedule` | scheduler process |
+| `operator` | operator process and CRD reconciler |
+| `check` | Checks and CheckRuns |
+| `slo` | SLIs, SLOs and error budgets |
+| `bootstrap` | first-time initialization |
+| `deploy` | Docker, Compose, Helm and kind |
+| `platform` | migrations, coordination layer, infrastructure |
 | `ci` | CI/CD |
-| `docs` | 文档 |
+| `docs` | documentation |
 
-不可将无关功能合并到同一 commit，也不可将一个逻辑单元拆分为逐文件的多个 commit。
+Do not fold unrelated features into one commit, and do not split one logical unit into per-file commits.
 
-## PR 内容
+## PR content
 
-PR 目标分支为 `dev`。描述至少包含：
+PRs target `dev`. The description contains at least:
 
 ```markdown
 ## Summary
-- 解决的问题
-- 用户或运维侧的变更
+The problem solved and the user- or operator-visible change.
 
 ## Changes
-- 主要代码、数据库、部署变更
+Main code, database and deployment changes.
 
-## Security and migration notes
-- role/RLS/secret/rollback 影响；无则写 None
+## Testing
+How it was tested and the results.
 
-## Verification
-- [x] make check
-- [x] make test-cover
-- [ ] make integration（注明未运行原因）
-- [ ] make helm-check / make kind-v020-verify（按变更选择）
+## Related
+Related Issues and design documents. Use `Fixes #issue` to auto-close.
 ```
 
-不兼容变更、不可逆 migration、Secret key 名称和升级顺序需写入 PR 正文，不可仅放在 review comment 中。
+Breaking changes, irreversible migrations, Secret key names and upgrade order belong in the PR body, not only in review comments.
 
-## 行为准则
+## Code of conduct
 
-保持专业与友善。本项目遵循 [Contributor Covenant](https://www.contributor-covenant.org/)。
+Stay professional and friendly. Follow the [Contributor Covenant](https://www.contributor-covenant.org/).
