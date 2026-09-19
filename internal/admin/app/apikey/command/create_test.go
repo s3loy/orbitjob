@@ -5,10 +5,14 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"orbitjob/internal/core/domain/apikey"
+	"orbitjob/internal/core/domain/audit"
 )
 
 type stubAPIKeyCreator struct {
 	called    bool
+	last      apikey.PersistInput
 	tenantID  string
 	id        string
 	keyHash   string
@@ -16,12 +20,13 @@ type stubAPIKeyCreator struct {
 	err       error
 }
 
-func (s *stubAPIKeyCreator) Create(ctx context.Context, tenantID, id, keyHash, keyPrefix string) error {
+func (s *stubAPIKeyCreator) Create(ctx context.Context, in apikey.PersistInput, _ audit.Event) error {
+	s.last = in
 	s.called = true
-	s.tenantID = tenantID
-	s.id = id
-	s.keyHash = keyHash
-	s.keyPrefix = keyPrefix
+	s.tenantID = in.TenantID
+	s.id = in.ID
+	s.keyHash = in.KeyHash
+	s.keyPrefix = in.KeyPrefix
 	return s.err
 }
 

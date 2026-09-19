@@ -8,7 +8,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: orbitjob-load-operations
-  namespace: orbitjob
+  namespace: orbitjob-system
 rules:
   - apiGroups: [""]
     resources: ["pods", "configmaps", "endpoints"]
@@ -27,7 +27,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: orbitjob-load-operations
-  namespace: orbitjob
+  namespace: orbitjob-system
 subjects:
   - kind: ServiceAccount
     name: orbitjob-load-operations

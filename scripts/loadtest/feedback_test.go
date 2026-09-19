@@ -39,7 +39,7 @@ func TestPaceController_BoostsWhenBehind(t *testing.T) {
 		MinPace:               0.5,
 		MaxPace:               1.5,
 	}
-	params := TuningParameters{EffectiveWorkerCapacityMax: 10}
+	params := TuningParameters{EffectiveTaskCapacityMax: 10}
 	pc := NewPaceController(cfg, params, 10000, 4*time.Hour)
 
 	if pc.Pace() != 1.0 {
@@ -72,19 +72,13 @@ func TestPaceController_ReducesOnHighPressure(t *testing.T) {
 		MinPace:               0.5,
 		MaxPace:               1.5,
 	}
-	params := TuningParameters{EffectiveWorkerCapacityMax: 10}
+	params := TuningParameters{EffectiveTaskCapacityMax: 10}
 	pc := NewPaceController(cfg, params, 0, 4*time.Hour)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query().Get("query")
 		w.Header().Set("Content-Type", "application/json")
 		switch q {
-		case `sum(orbitjob_dispatcher_queue_depth)`:
-			_, _ = w.Write([]byte(`{"status":"success","data":{"result":[{"value":[0,"50"]}]}}`))
-		case `sum(orbitjob_worker_queue_depth)`:
-			_, _ = w.Write([]byte(`{"status":"success","data":{"result":[{"value":[0,"10"]}]}}`))
-		case `sum(orbitjob_worker_capacity)`:
-			_, _ = w.Write([]byte(`{"status":"success","data":{"result":[{"value":[0,"10"]}]}}`))
 		case `histogram_quantile(0.99, sum(rate(orbitjob_trigger_latency_seconds_bucket[5m])) by (le))`:
 			_, _ = w.Write([]byte(`{"status":"success","data":{"result":[{"value":[0,"2"]}]}}`))
 		default:
@@ -118,7 +112,7 @@ func TestPaceController_FreezesAfterConsecutiveQueryFailures(t *testing.T) {
 		MinPace:               0.5,
 		MaxPace:               1.5,
 	}
-	params := TuningParameters{EffectiveWorkerCapacityMax: 10}
+	params := TuningParameters{EffectiveTaskCapacityMax: 10}
 	pc := NewPaceController(cfg, params, 0, 4*time.Hour)
 
 	server := failingPrometheus()
@@ -150,7 +144,7 @@ func TestPaceController_MissingCapacityReadsAsNoSignal(t *testing.T) {
 		MinPace:               0.5,
 		MaxPace:               1.5,
 	}
-	params := TuningParameters{EffectiveWorkerCapacityMax: 10}
+	params := TuningParameters{EffectiveTaskCapacityMax: 10}
 	pc := NewPaceController(cfg, params, 0, 4*time.Hour)
 
 	// Every query returns an empty result: no series anywhere (static mode).
@@ -164,7 +158,7 @@ func TestPaceController_MissingCapacityReadsAsNoSignal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
 	}
-	// Missing worker_capacity must not add phantom pressure.
+	// Every signal series missing must not add phantom pressure.
 	if pressure >= cfg.LowPressureThreshold {
 		t.Fatalf("pressure = %v, want below low threshold with all signals missing", pressure)
 	}

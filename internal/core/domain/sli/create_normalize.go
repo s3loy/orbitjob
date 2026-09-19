@@ -27,7 +27,7 @@ func NormalizeCreate(in CreateInput) (CreateSpec, error) {
 
 	sourceType := in.SourceType
 	if sourceType == "" {
-		sourceType = SourceTypeCheckRun
+		sourceType = SourceTypeJobRun
 	}
 	if !ValidSourceTypes[sourceType] {
 		return CreateSpec{}, validation.New("source_type", fmt.Sprintf("unsupported source_type: %s", sourceType))
@@ -41,29 +41,18 @@ func NormalizeCreate(in CreateInput) (CreateSpec, error) {
 		return CreateSpec{}, validation.New("aggregation", fmt.Sprintf("unsupported aggregation: %s", aggregation))
 	}
 
-	// Validate source_config contains required fields for check_run source.
-	if sourceType == SourceTypeCheckRun {
-		if in.SourceConfig == nil {
-			return CreateSpec{}, validation.New("source_config", "source_config is required for check_run source")
-		}
-		checkID, ok := in.SourceConfig["check_id"]
-		if !ok {
-			return CreateSpec{}, validation.New("source_config.check_id", "check_id is required in source_config")
-		}
-		var checkIDFloat float64
-		switch v := checkID.(type) {
-		case float64:
-			checkIDFloat = v
-		case int64:
-			checkIDFloat = float64(v)
-		case int:
-			checkIDFloat = float64(v)
-		default:
-			return CreateSpec{}, validation.New("source_config.check_id", "check_id must be a positive integer")
-		}
-		if checkIDFloat < 1 || checkIDFloat != float64(int64(checkIDFloat)) {
-			return CreateSpec{}, validation.New("source_config.check_id", "check_id must be a positive integer")
-		}
+	// The source_config must name the definition the SLI observes. The ledger
+	// is the event source, so a source_uid is what ties the SLI to its runs.
+	if in.SourceConfig == nil {
+		return CreateSpec{}, validation.New("source_config", "source_config is required")
+	}
+	sourceUID, ok := in.SourceConfig["source_uid"]
+	if !ok {
+		return CreateSpec{}, validation.New("source_config.source_uid", "source_uid is required in source_config")
+	}
+	sourceUIDStr, ok := sourceUID.(string)
+	if !ok || strings.TrimSpace(sourceUIDStr) == "" {
+		return CreateSpec{}, validation.New("source_config.source_uid", "source_uid must be a non-empty string")
 	}
 
 	// good_event_criteria is required for availability/quality types.
@@ -76,6 +65,7 @@ func NormalizeCreate(in CreateInput) (CreateSpec, error) {
 	return CreateSpec{
 		Name:              name,
 		Description:       in.Description,
+		ResourceGroupID:   strings.TrimSpace(in.ResourceGroupID),
 		SLIType:           sliType,
 		SourceType:        sourceType,
 		SourceConfig:      in.SourceConfig,

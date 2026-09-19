@@ -57,14 +57,3 @@ func (w Window) Elapsed(now time.Time) time.Duration {
 	}
 	return now.Sub(w.Start)
 }
-
-// Remaining returns the remaining time in the window from the given time.
-func (w Window) Remaining(now time.Time) time.Duration {
-	if now.After(w.End) {
-		return 0
-	}
-	if now.Before(w.Start) {
-		return w.Duration()
-	}
-	return w.End.Sub(now)
-}

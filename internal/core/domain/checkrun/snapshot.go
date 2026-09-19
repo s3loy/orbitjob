@@ -14,6 +14,22 @@ const (
 	SeverityUnknown  = "unknown"
 )
 
+// CompletedRecord is one terminal check outcome written into the read model.
+// It is derived from the run ledger, not produced by an executor: check runs
+// execute as Kubernetes Jobs, and this is the projection their outcomes land
+// in.
+type CompletedRecord struct {
+	// RunID is the deterministic UUID derived from the ledger occurrence key,
+	// so a replayed recording addresses the same read-model row.
+	RunID       string
+	CheckID     int64
+	Status      string
+	ScheduledAt time.Time
+	StartedAt   time.Time
+	FinishedAt  time.Time
+	DurationMs  int
+}
+
 // Snapshot is the persisted check run state.
 type Snapshot struct {
 	ID               int64          `json:"id"`

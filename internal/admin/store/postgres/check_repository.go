@@ -19,7 +19,7 @@ func NewCheckRepository(db *sql.DB) *CheckRepository {
 	return &CheckRepository{db: db}
 }
 
-func (r *CheckRepository) Get(ctx context.Context, tenantID string, id int64) (domaincheck.Snapshot, error) {
+func (r *CheckRepository) Get(ctx context.Context, tenantID, resourceGroupID string, id int64) (domaincheck.Snapshot, error) {
 	var snap domaincheck.Snapshot
 	var checkConfigBytes, assertionBytes, labelsBytes []byte
 
@@ -35,7 +35,8 @@ func (r *CheckRepository) Get(ctx context.Context, tenantID string, id int64) (d
 			       priority, labels, next_run_at, version, created_at, updated_at
 			FROM checks
 			WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
-		`, tenantID, id).Scan(
+			  AND ($3::text IS NULL OR resource_group_id = $3)
+		`, tenantID, id, nullableGroup(resourceGroupID)).Scan(
 		&snap.ID, &snap.Name, &snap.Description, &snap.TenantID, &snap.Status, &snap.CheckType,
 		&checkConfigBytes, &assertionBytes, &snap.ScheduleType, &snap.CronExpr, &snap.IntervalSec,
 		&snap.Timezone, &snap.TimeoutSec, &snap.RetryLimit, &snap.Priority, &labelsBytes,
@@ -87,11 +88,15 @@ func (r *CheckRepository) List(ctx context.Context, in checkquery.ListChecksInpu
 	defer func() { _ = tx.Rollback() }()
 
 	var total int
+	// The group predicate is part of the query, not a filter over the fetched
+	// page. Post-filtering would return the wrong total and would leak the
+	// existence of other groups' checks through the count.
 	err = tx.QueryRowContext(ctx, `
 			SELECT COUNT(*) FROM checks
 			WHERE tenant_id = $1 AND deleted_at IS NULL
 			  AND ($2::text IS NULL OR status = $2)
-		`, in.TenantID, in.Status).Scan(&total)
+			  AND ($3::text IS NULL OR resource_group_id = $3)
+		`, in.TenantID, in.Status, nullableGroup(in.ResourceGroupID)).Scan(&total)
 	if err != nil {
 		return nil, 0, fmt.Errorf("count checks: %w", err)
 	}
@@ -101,9 +106,10 @@ func (r *CheckRepository) List(ctx context.Context, in checkquery.ListChecksInpu
 			FROM checks
 			WHERE tenant_id = $1 AND deleted_at IS NULL
 			  AND ($2::text IS NULL OR status = $2)
+			  AND ($3::text IS NULL OR resource_group_id = $3)
 			ORDER BY id DESC
-			LIMIT $3 OFFSET $4
-		`, in.TenantID, in.Status, limit, in.Offset)
+			LIMIT $4 OFFSET $5
+		`, in.TenantID, in.Status, nullableGroup(in.ResourceGroupID), limit, in.Offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list checks: %w", err)
 	}

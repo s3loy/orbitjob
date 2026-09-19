@@ -3,7 +3,6 @@ package election
 import (
 	"context"
 	"sync"
-	"sync/atomic"
 )
 
 // NewMemory creates an in-memory Coordinator for unit testing.
@@ -81,7 +80,3 @@ func (m *memoryCoordinator) Close() error {
 	m.elections = make(map[string]*memoryElection)
 	return nil
 }
-
-// memoryCoordinator 实现为测试用，以下辅助函数用于测试场景
-
-var _ atomic.Int32 // ensure sync/atomic is available for future use

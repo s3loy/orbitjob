@@ -1,4 +1,4 @@
-{{- $taskNamespace := .Values.worker.containerExecution.namespace -}}
+{{- $taskNamespace := .Values.taskNamespace.name -}}
 {{- if .Values.taskNamespace.create }}
 apiVersion: v1
 kind: Namespace
@@ -9,43 +9,12 @@ metadata:
     orbitjob.io/task-namespace: "true"
 {{- end }}
 ---
+# The identity a container job runs as. It deliberately has no API access:
+# a job is workload, not control plane, and automountServiceAccountToken is off
+# so a compromised job carries no credential to escalate with.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: orbitjob-worker
-  namespace: {{ .Release.Namespace }}
-automountServiceAccountToken: true
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: {{ .Values.worker.containerExecution.serviceAccountName }}
-  namespace: {{ .Values.worker.containerExecution.namespace }}
+  name: {{ .Values.taskNamespace.serviceAccountName }}
+  namespace: {{ $taskNamespace }}
 automountServiceAccountToken: false
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: orbitjob-container-executor
-  namespace: {{ .Values.worker.containerExecution.namespace }}
-rules:
-  - apiGroups: ["batch"]
-    resources: ["jobs"]
-    verbs: ["create", "get", "list", "watch", "delete"]
-  - apiGroups: [""]
-    resources: ["pods", "pods/log"]
-    verbs: ["get", "list", "watch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: orbitjob-container-executor
-  namespace: {{ .Values.worker.containerExecution.namespace }}
-subjects:
-  - kind: ServiceAccount
-    name: orbitjob-worker
-    namespace: {{ .Release.Namespace }}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: orbitjob-container-executor

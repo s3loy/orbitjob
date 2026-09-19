@@ -1,20 +1,29 @@
-.PHONY: dev build build-all test test-cover test-race bench integration
-.PHONY: lint vet check openapi-check openapi-gen tidy-check
-.PHONY: docker-build docker-up docker-down docker-status observability-status
-.PHONY: kind-up kind-status kind-down kind-v020-verify
+.PHONY: dev build build-all test test-cover test-cover-check test-race bench bench-etcd-memory bench-etcd integration
+.PHONY: lint vet check openapi-check openapi-gen tidy-check hooks
+.PHONY: docker-build kind-load observability-status
+.PHONY: kind-up kind-db kind-status kind-down kind-verify kind-env
 .PHONY: helm-migrations-sync helm-migrations-check helm-check
-.PHONY: env-init env-check env-clean setup setup-check bootstrap-key grafana-password docker-reset
 .PHONY: migrate-up migrate-version
 .PHONY: loadtest-preflight loadtest-generate loadtest-prepare loadtest-run
-.PHONY: loadtest-verify loadtest-report loadtest-clean loadtest-smoke loadtest-long loadtest-v020
+.PHONY: loadtest-verify loadtest-report loadtest-clean loadtest-smoke loadtest-long loadtest-full
 .PHONY: clean
 
 DEV_DSN      ?= postgres://postgres:postgres@localhost:5432/orbitjob?sslmode=disable
 DATABASE_URL ?= postgres://postgres:postgres@localhost:5432/orbitjob?sslmode=disable
 
-# ---- Development ----
-dev:
-	DEV_DSN=$(DEV_DSN) go run ./cmd/devserver
+# ---- Local commit hooks ----
+# One-time setup after cloning: `pip3 install pre-commit` (the framework stays
+# the standard Python tool, not a Go dependency), then wire the git hooks.
+# `pre-commit install` also installs the commit-msg hook, via
+# default_install_hook_types in .pre-commit-config.yaml. Bypassing with
+# `git commit --no-verify` is for documented emergencies only (CONTRIBUTING.md).
+hooks:
+	@if ! command -v pre-commit >/dev/null 2>&1; then \
+		echo "pre-commit is not installed. One-time setup:"; \
+		echo "  pip3 install pre-commit"; \
+		exit 1; \
+	fi
+	pre-commit install
 
 # ---- Build ----
 build:
@@ -24,8 +33,8 @@ build-all:
 	@mkdir -p bin
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/admin-api   ./cmd/admin-api/
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/scheduler   ./cmd/scheduler/
-	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/dispatcher  ./cmd/dispatcher/
-	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/worker      ./cmd/worker/
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/operator    ./cmd/operator/
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/configure   ./cmd/configure/
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/bootstrap   ./cmd/bootstrap/
 
 # ---- Test ----
@@ -36,23 +45,45 @@ test-cover:
 	go test -coverprofile=coverage.out ./...
 	go tool cover -func=coverage.out
 
+# Tiered coverage gate, thresholds defined in CLAUDE.md
+test-cover-check: test-cover
+	bash scripts/check-coverage.sh coverage.out
+
 test-race:
 	go test -race ./...
 
+# Packages that carry benchmarks. `bench` is scoped to them so it stays a
+# fast always-on target; plain ./... would rerun every test suite for the
+# same measurements.
+BENCH_PACKAGES := \
+	./internal/core/domain/coordination/ \
+	./internal/core/domain/jobrun/ \
+	./internal/core/domain/check/ \
+	./internal/core/app/execution/ \
+	./internal/core/app/checkobserve/ \
+	./internal/platform/election/
+
+# -run='^$' skips the test suites: the benchmark run measures, it does not
+# re-verify. bench.txt is the file the Benchmark workflow feeds to
+# github-action-benchmark, so the tee is part of the contract.
 bench:
-	go test -bench=. -benchmem ./...
+	go test -run='^$$' -bench=. -benchmem $(BENCH_PACKAGES) | tee bench.txt
 
+# bench-etcd-memory runs the election benchmarks at higher count for
+# benchstat-style comparisons. Takes minutes: the contention benchmark holds
+# each lock for a millisecond by design.
 bench-etcd-memory:
-	go test -bench=. -benchmem -count=5 ./internal/platform/election/ ./internal/platform/discovery/
+	go test -run='^$$' -bench=. -benchmem -count=5 ./internal/platform/election/
 
+# bench-etcd runs the election benchmarks against a live etcd. Requires an
+# etcd reachable at ETCD_ENDPOINTS (default localhost:2379). Against an
+# unreachable endpoint the run does not fail fast — the etcd client retries
+# in the background — so bring the server up first.
 bench-etcd:
-	go test -tags etcd -bench=. -benchmem -count=5 ./internal/platform/election/ ./internal/platform/discovery/
-
-bench-etcd-compare:
-	bash scripts/bench-etcd.sh
+	go test -tags etcd -run='^$$' -bench=. -benchmem -count=5 ./internal/platform/election/
 
 integration:
-	go test -count=1 -tags integration ./db/migrations ./internal/platform/postgrestest ./internal/admin/bootstrap ./internal/admin/http ./internal/admin/store/postgres ./internal/core/store/postgres ./test/integration
+	go test -count=1 -tags integration ./db/migrations ./internal/platform/postgrestest ./internal/admin/bootstrap ./internal/admin/http ./internal/admin/store/postgres ./internal/core/store/postgres
 
 # ---- Lint & Vet ----
 lint:
@@ -74,64 +105,66 @@ openapi-gen:
 tidy-check:
 	go mod tidy && git diff --exit-code go.sum
 
-# ---- Local environment ----
-setup: env-init
-	@set -a; . ./.env; set +a; go run ./cmd/configure setup --mode bundled --state .runtime/database.json --runtime-env .runtime/database.env
-	@echo "Database configuration is ready."
-
-setup-check:
-	@test -s .env || { echo "Local environment is missing. Run: make setup"; exit 1; }
-	@test -s .runtime/database.env || { echo "Database configuration is missing. Run: make setup"; exit 1; }
-	@for key in BOOTSTRAP_OWNER_DSN MIGRATOR_DSN ADMIN_DSN RUNTIME_DSN MIGRATOR_PASSWORD ADMIN_PASSWORD RUNTIME_PASSWORD; do grep -q "^$$key=" .runtime/database.env || { echo ".runtime/database.env is missing $$key. Run: make setup"; exit 1; }; done
-	@test "$$(stat -f '%Lp' .runtime/database.env 2>/dev/null || stat -c '%a' .runtime/database.env)" = "600" || { echo ".runtime/database.env permissions must be 0600"; exit 1; }
-
-env-init:
-	@go run ./scripts/env-init.go
-	@echo "Local environment is initialized and validated."
-
-env-check:
-	@go run ./scripts/env-init.go -check
-
-env-clean:
-	@printf "Type 'delete-env' to remove .env and generated database state: "; read answer; \
-	[ "$$answer" = "delete-env" ] || { echo "Cancelled."; exit 1; }; \
-	rm -f .env; rm -rf .runtime
-
 # ---- Docker ----
+# Local builds serve development only. Published images are built and pushed
+# by release.yml on tag; helm install pulls ghcr.io/s3loy/orbitjob-* directly.
+#
+# TAG follows the chart appVersion, so upgrades touch Chart.yaml only.
+# Dev loop: make docker-build TAG=dev && make kind-load TAG=dev
+REGISTRY ?= ghcr.io/s3loy
+APP_VERSION := $(shell sed -n 's/^appVersion: *"\(.*\)"/\1/p' charts/orbitjob/Chart.yaml)
+TAG ?= v$(APP_VERSION)
+
+DOCKER_COMPONENTS := admin-api:admin scheduler:scheduler operator:operator migrate:migrate bootstrap:bootstrap
+
 docker-build:
-	docker build --target admin      -t orbitjob-admin:latest      .
-	docker build --target scheduler  -t orbitjob-scheduler:latest  .
-	docker build --target dispatcher -t orbitjob-dispatcher:latest .
-	docker build --target worker     -t orbitjob-worker:latest     .
+	@set -e; for pair in $(DOCKER_COMPONENTS); do \
+	  name=$${pair%%:*}; target=$${pair##*:}; \
+	  echo "==> orbitjob-$$name (target $$target)"; \
+	  docker build --target $$target -t $(REGISTRY)/orbitjob-$$name:$(TAG) .; \
+	done
 
-docker-up: env-check setup-check
-	docker compose config >/dev/null
-	docker compose up -d --build
-	@bash scripts/docker-wait.sh
-	@set -a; . ./.env; set +a; bash scripts/observability-status.sh
-	@printf "\nOrbitJob is ready.\n\nAdmin API:  http://localhost:8080\nPrometheus: http://localhost:9090\nGrafana:    http://localhost:3000\n\nExport the bootstrap key:\n  export ORBITJOB_API_KEY=\"$$(make --no-print-directory bootstrap-key)\"\n\n"
+# Load locally built images into kind to avoid a registry pull
+kind-load:
+	@set -e; for pair in $(DOCKER_COMPONENTS); do \
+	  name=$${pair%%:*}; \
+	  echo "==> load orbitjob-$$name"; \
+	  kind load docker-image $(REGISTRY)/orbitjob-$$name:$(TAG) --name orbitjob-dev; \
+	done
 
-docker-status:
-	docker compose ps -a
-	@curl -fsS http://localhost:8080/healthz >/dev/null && echo "Admin API: healthy"
-	@set -a; . ./.env; set +a; bash scripts/observability-status.sh
+# The Docker Compose local path was removed. The product is Kubernetes-only and
+# the operator needs a cluster, so a Compose install could not run it; the
+# Dockerfile can no longer build the dispatcher or worker stages either. Use the
+# kind path (make kind-up -> kind-db -> docker-build -> kind-load -> helm).
+#
+# Checks an installation that is already running and port-forwarded.
+observability-status:
+	@bash scripts/observability-status.sh
 
-observability-status: env-check
-	@set -a; . ./.env; set +a; bash scripts/observability-status.sh
+# Installs the cluster observability stack: kube-prometheus-stack as its OWN
+# helm release into the "monitoring" namespace (never part of charts/orbitjob),
+# plus the OrbitJob scrape wiring, alert rules, and Grafana dashboard. Values
+# come from the file under deploy/monitoring/, never from --set. Idempotent:
+# re-running an upgrade with the same values is a no-op. Never touches the
+# orbitjob release.
+KPS_VERSION ?= 91.4.1
 
-bootstrap-key:
-	@docker compose run --rm --no-deps secret-init cat /run/secrets/orbitjob/bootstrap-api-key/api-key
+monitoring-up:
+	helm repo add prometheus-community https://prometheus-community.github.io/helm-charts >/dev/null 2>&1 || true
+	helm repo update prometheus-community >/dev/null
+	helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+	  --version $(KPS_VERSION) \
+	  --namespace monitoring --create-namespace \
+	  -f deploy/monitoring/values-kube-prometheus-stack.yaml
+	kubectl apply -f deploy/monitoring/namespace.yaml
+	kubectl apply -f deploy/monitoring/orbitjob-observability.yaml
+	kubectl apply -f deploy/monitoring/grafana-dashboards.yaml
 
-grafana-password: env-check
-	@set -a; . ./.env; set +a; printf '%s\n' "$$GRAFANA_PASSWORD"
-
-docker-down:
-	docker compose down
-
-docker-reset:
-	@printf "v0.2.0 does not upgrade pre-release development databases in place.\nType 'delete-volumes' to remove OrbitJob containers, volumes, and generated database state: "; read answer; \
-	[ "$$answer" = "delete-volumes" ] || { echo "Cancelled."; exit 1; }; \
-	docker compose down -v; rm -rf .runtime
+monitoring-down:
+	kubectl delete -f deploy/monitoring/orbitjob-observability.yaml --ignore-not-found
+	kubectl delete -f deploy/monitoring/grafana-dashboards.yaml --ignore-not-found
+	helm uninstall kube-prometheus-stack --namespace monitoring || true
+	kubectl delete namespace monitoring --ignore-not-found
 
 # ---- Local Kubernetes ----
 helm-migrations-sync:
@@ -140,9 +173,21 @@ helm-migrations-sync:
 helm-migrations-check:
 	bash scripts/helm-migrations.sh check
 
+# operator.namespaceTenants is required, so rendering the chart needs a value.
+# The bootstrap tenant owns the default namespace, which is what a local install
+# uses too.
+HELM_SAMPLE_TENANTS ?= "default=00000000000000000000000001"
+
 helm-check: helm-migrations-check
-	helm lint charts/orbitjob
-	helm template orbitjob charts/orbitjob >/dev/null
+	helm lint charts/orbitjob --set operator.namespaceTenants=$(HELM_SAMPLE_TENANTS)
+	helm template orbitjob charts/orbitjob --set operator.namespaceTenants=$(HELM_SAMPLE_TENANTS) >/dev/null
+	bash scripts/chart-assert.sh
+
+# Prepares PostgreSQL and the installation Secret the chart needs. kind-up only
+# builds the cluster; without this the Helm hooks fail with
+# CreateContainerConfigError and the release lands in `failed`.
+kind-db:
+	bash scripts/kind-db.sh
 
 kind-up:
 	@if kind get clusters | grep -qx orbitjob-dev; then \
@@ -159,13 +204,28 @@ kind-status:
 	@kubectl get nodes -o wide
 	@kubectl get pods -A
 
-kind-v020-verify: helm-check
-	bash deploy/kind/verify-v020.sh
+kind-verify: helm-check
+	ORBITJOB_IMAGE_TAG=$(TAG) bash deploy/kind/verify-install.sh
 
 kind-down:
 	@printf "Type 'delete-kind' to remove the orbitjob-dev cluster: "; read answer; \
 	[ "$$answer" = "delete-kind" ] || { echo "Cancelled."; exit 1; }; \
 	kind delete cluster --name orbitjob-dev
+
+kind-env:
+	@if ! kubectl config current-context 2>/dev/null | grep -q "kind-orbitjob-dev"; then \
+		echo "Error: Not connected to kind-orbitjob-dev cluster"; \
+		echo "Run: kubectl config use-context kind-orbitjob-dev"; \
+		exit 1; \
+	fi
+	@echo "# OrbitJob environment variables for kind cluster"
+	@echo "# Source this file: source <(make kind-env)"
+	@echo ""
+	@echo "export ORBITJOB_API_KEY=\"$$(kubectl -n orbitjob-system get secret bootstrap-api-key -o jsonpath='{.data.api-key}' 2>/dev/null | base64 -d || echo 'SECRET_NOT_FOUND')\""
+	@echo "export ORBITJOB_API=\"http://localhost:18080\""
+	@echo ""
+	@echo "# Verify connection:"
+	@echo "# curl -H \"Authorization: Bearer \$$ORBITJOB_API_KEY\" \$$ORBITJOB_API/api/v1/tenants"
 
 # ---- Database Migrations ----
 migrate-up:
@@ -197,11 +257,12 @@ loadtest-prepare:
 	kubectl apply -f deploy/load/namespace.yaml
 	kubectl apply -f deploy/load/operations-rbac.yaml
 	kubectl apply -f deploy/load/fixture-configmap.yaml
+	kubectl apply -f deploy/load/fixture-tls-secret.yaml
 	kubectl apply -f deploy/load/fixture.yaml
 	kubectl apply -f deploy/load/postgres.yaml
 
 loadtest-run:
-	@echo "loadtest run requires a live cluster; use make loadtest-v020 for full flow"
+	@echo "loadtest run requires a live cluster; use make loadtest-full for full flow"
 
 loadtest-verify:
 	go run ./scripts/loadtest verify --config "$(LOADTEST_CONFIG)" --run-id "$(RUN_ID)"
@@ -221,5 +282,5 @@ loadtest-long:
 	@echo "NON-STANDARD RUN - NOT A RELEASE QUALIFICATION"
 	go run ./scripts/loadtest preflight --config test/load/config/long.yaml --images "$(LOADTEST_IMAGES)" --profile long --check-only
 
-loadtest-v020: loadtest-preflight loadtest-generate
+loadtest-full: loadtest-preflight loadtest-generate
 	@echo "Full 4-hour qualification run requires manual review of preflight and generated manifest."

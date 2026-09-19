@@ -1,9 +1,9 @@
-schema_version: v020-scenarios/v1
 category: external-probes
+# A DNS lookup from busybox and three curl reaches: a TLS handshake, a TLS
+# response that carries a body, and a plain fixture download. Each name says
+# which reach it makes.
 families:
-  - {id: dns, count: 20, image: busybox}
-  - {id: tls, count: 20, image: curl}
-  - {id: https, count: 20, image: curl}
-  - {id: small-download, count: 15, image: curl}
-  - {id: public-json, count: 15, image: curl}
-  - {id: ipv4-ipv6, count: 10, image: busybox}
+  - {id: dns-lookup, count: 30, image: busybox}
+  - {id: tls-handshake, count: 20, image: curl}
+  - {id: tls-json-body, count: 20, image: curl}
+  - {id: fixture-json-download, count: 30, image: curl}

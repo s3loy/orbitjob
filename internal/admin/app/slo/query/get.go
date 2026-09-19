@@ -8,7 +8,7 @@ import (
 
 // sloReader retrieves SLOs.
 type sloReader interface {
-	Get(ctx context.Context, tenantID string, id int64) (slo.Snapshot, error)
+	Get(ctx context.Context, tenantID, resourceGroupID string, id int64) (slo.Snapshot, error)
 }
 
 // budgetReader retrieves current budgets.
@@ -64,8 +64,8 @@ type BudgetItem struct {
 }
 
 // Get retrieves a single SLO with its current budget.
-func (uc *GetSLOUseCase) Get(ctx context.Context, tenantID string, id int64) (GetItem, error) {
-	snap, err := uc.sloRepo.Get(ctx, tenantID, id)
+func (uc *GetSLOUseCase) Get(ctx context.Context, tenantID, resourceGroupID string, id int64) (GetItem, error) {
+	snap, err := uc.sloRepo.Get(ctx, tenantID, resourceGroupID, id)
 	if err != nil {
 		return GetItem{}, err
 	}

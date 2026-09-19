@@ -18,7 +18,7 @@ func TestWriteReportIncludesRequiredSections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, section := range []string{"# v0.2.0 Load Qualification Report", "## Verdict", "## Environment", "## Correctness", "## Evidence"} {
+	for _, section := range []string{"# Load Qualification Report", "## Verdict", "## Environment", "## Correctness", "## Evidence"} {
 		if !bytes.Contains(body, []byte(section)) {
 			t.Fatalf("missing section %s", section)
 		}

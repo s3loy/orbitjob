@@ -111,8 +111,8 @@ paths:
         in: query
         schema:
           type: string
-          default: default
-          maxLength: 64
+          minLength: 26
+          maxLength: 26
       - name: check_id
         in: query
         schema:
@@ -232,7 +232,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/GetResult"
+                $ref: "#/components/schemas/CheckrunGetResult"
         "400":
           description: Invalid request
           headers:
@@ -309,8 +309,8 @@ paths:
         in: query
         schema:
           type: string
-          default: default
-          maxLength: 64
+          minLength: 26
+          maxLength: 26
       - name: status
         in: query
         schema:
@@ -493,8 +493,8 @@ paths:
         in: query
         schema:
           type: string
-          default: default
-          maxLength: 64
+          minLength: 26
+          maxLength: 26
       responses:
         "200":
           description: Check detail
@@ -569,7 +569,7 @@ paths:
     delete:
       operationId: deleteCheck
       summary: Delete one check
-      description: Soft-delete a check definition by setting deleted_at.
+      description: Soft-delete a check definition by setting deleted_at. The version body is required for optimistic locking.
       tags:
       - Checks
       parameters:
@@ -589,8 +589,14 @@ paths:
         in: query
         schema:
           type: string
-          default: default
-          maxLength: 64
+          minLength: 26
+          maxLength: 26
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VersionRequest"
       responses:
         "200":
           description: Deleted check
@@ -682,8 +688,8 @@ paths:
         in: query
         schema:
           type: string
-          default: default
-          maxLength: 64
+          minLength: 26
+          maxLength: 26
       requestBody:
         required: true
         content:
@@ -796,8 +802,8 @@ paths:
         in: query
         schema:
           type: string
-          default: default
-          maxLength: 64
+          minLength: 26
+          maxLength: 26
       requestBody:
         required: true
         content:
@@ -886,31 +892,25 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-  /api/v1/instances:
+  /api/v1/functions:
     get:
-      operationId: listInstances
-      summary: List instances
-      description: List execution instances for one tenant. Optionally filter by status.
+      operationId: listFunctions
+      summary: List function definitions
+      description: List the function definitions in the tenant, newest first. A function is a tenant-owned definition row; a key scoped to a resource group sees only that group's functions. limit defaults to 50 when omitted.
       tags:
-      - Instances
+      - Functions
       parameters:
       - name: X-Trace-ID
         in: header
         schema:
           type: string
           maxLength: 128
-      - name: status
+      - name: tenant_id
         in: query
         schema:
           type: string
-          enum:
-          - pending
-          - dispatched
-          - running
-          - retry_wait
-          - success
-          - failed
-          - canceled
+          minLength: 26
+          maxLength: 26
       - name: limit
         in: query
         schema:
@@ -926,7 +926,7 @@ paths:
           minimum: 0
       responses:
         "200":
-          description: Instance list
+          description: Function list
           headers:
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
@@ -935,7 +935,529 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InstanceListResponse"
+                $ref: "#/components/schemas/FunctionListResponse"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/functions/{id}:
+    get:
+      operationId: getFunction
+      summary: Get one function definition
+      description: "Get one function definition by id. A function has no schedule: it is invoke-only, and every execution-shaping field is pinned into the revision each invocation runs."
+      tags:
+      - Functions
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      - name: tenant_id
+        in: query
+        schema:
+          type: string
+          minLength: 26
+          maxLength: 26
+      responses:
+        "200":
+          description: Function detail
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FunctionItem"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Function not found
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/functions/{id}/invoke:
+    post:
+      operationId: invokeFunction
+      summary: Invoke a function
+      description: "Invoke a function by publishing a JobRun custom resource, exactly as a manual job trigger does; the operator materializes the ledger run from the pinned revision. The request carries no body: v1 functions are parameterless, and parameters are baked into the definition. With wait_seconds (capped at 60) the call polls the custom resource until a terminal phase or the budget expires, then answers with the phase observed. Every invocation is a cold pod, so latency is honest seconds, not milliseconds -- and the only result channel is the exit outcome: the platform returns a phase and a duration, never logs or a response body. Invoking a paused function is a conflict. Use the X-OrbitJob-Idempotency-Key header to prevent duplicate invocations."
+      tags:
+      - Functions
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      - name: wait_seconds
+        in: query
+        schema:
+          type: integer
+          minimum: 0
+          maximum: 60
+      - name: X-OrbitJob-Idempotency-Key
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      responses:
+        "200":
+          description: Existing invocation returned for idempotent replay, or the wait expired and the async reference is repeated
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FunctionInvokeResult"
+        "201":
+          description: Invocation published
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FunctionInvokeResult"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Function not found
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The function is paused, or has no active revision yet
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/functions/{id}/runs:
+    get:
+      operationId: listFunctionRuns
+      summary: List function invocations
+      description: "List a function's terminal invocations from the function_runs read model, newest first. The model records outcomes only -- success, failed, canceled -- because live progress lives on the run's JobRun custom resource and the ledger row."
+      tags:
+      - Functions
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      - name: tenant_id
+        in: query
+        schema:
+          type: string
+          minLength: 26
+          maxLength: 26
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          default: 50
+          minimum: 1
+          maximum: 100
+      responses:
+        "200":
+          description: Function run list
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FunctionRunListResponse"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Function not found
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/functions/{id}/runs/{run_id}:
+    get:
+      operationId: getFunctionRun
+      summary: Get one function invocation
+      description: Get one terminal invocation by its deterministic run id, which is derived from the ledger occurrence key so a replayed recording addresses the same row.
+      tags:
+      - Functions
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+          maxLength: 64
+      responses:
+        "200":
+          description: Function run detail
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FunctionRunItem"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Function or run not found
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/instances:
+    get:
+      operationId: listInstances
+      summary: List runs
+      description: List runs from the control-plane ledger, newest first. Each entry carries the run's phase, its attempt count against max_attempts, and the actor that triggered it. Optionally filter by phase.
+      tags:
+      - Instances
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: phase
+        in: query
+        schema:
+          type: string
+          enum:
+          - Pending
+          - CreatingAttempt
+          - Running
+          - RetryWaiting
+          - Succeeded
+          - Failed
+          - CancelRequested
+          - Canceled
+          - CancelUnknown
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          default: 50
+          minimum: 1
+          maximum: 100
+      - name: offset
+        in: query
+        schema:
+          type: integer
+          default: 0
+          minimum: 0
+      responses:
+        "200":
+          description: Run list
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunListResponse"
         "400":
           description: Invalid request
           headers:
@@ -987,8 +1509,8 @@ paths:
   /api/v1/instances/{run_id}:
     get:
       operationId: getInstance
-      summary: Get one instance
-      description: Get one execution instance by run_id.
+      summary: Get one run
+      description: "Get one run from the ledger by run id, with its full attempt trail in the same response. Answers \"did it run, how many times, and who triggered it\": the body carries phase, attempt, max_attempts and actor."
       tags:
       - Instances
       parameters:
@@ -1001,12 +1523,12 @@ paths:
         in: path
         required: true
         schema:
-          type: string
-          minLength: 1
-          maxLength: 64
+          type: integer
+          format: int64
+          minimum: 1
       responses:
         "200":
-          description: Instance detail
+          description: Run detail
           headers:
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
@@ -1015,7 +1537,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InstanceItem"
+                $ref: "#/components/schemas/RunGetItem"
         "400":
           description: Invalid request
           headers:
@@ -1039,7 +1561,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
-          description: Instance not found
+          description: Run not found
           headers:
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
@@ -1078,8 +1600,8 @@ paths:
   /api/v1/instances/{run_id}/attempts:
     get:
       operationId: listAttempts
-      summary: List instance attempts
-      description: List the per-attempt execution trail for one instance by run_id.
+      summary: List run attempts
+      description: List the per-attempt trail for one run. Each attempt is one Kubernetes Job, so the trail answers "how many times" with the Job that carried each try. The trail is bounded by the definition's retry policy, so it takes no page parameters.
       tags:
       - Instances
       parameters:
@@ -1092,9 +1614,9 @@ paths:
         in: path
         required: true
         schema:
-          type: string
-          minLength: 1
-          maxLength: 64
+          type: integer
+          format: int64
+          minimum: 1
       responses:
         "200":
           description: Attempt list
@@ -1120,6 +1642,17 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Run not found
           headers:
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
@@ -1158,8 +1691,8 @@ paths:
   /api/v1/instances/{run_id}/cancel:
     post:
       operationId: cancelInstance
-      summary: Cancel one instance
-      description: Cancel a pending, dispatched, running, or retry_wait instance using optimistic locking by version.
+      summary: Request a run cancel
+      description: Request a stop for one run by patching spec.cancelRequested on its JobRun custom resource. The request carries no body. The run reaches the Canceled phase only once the operator has observed its Kubernetes Job gone; the response carries the phase observed at request time. Canceling a run that already finished succeeds and reports the terminal phase.
       tags:
       - Instances
       parameters:
@@ -1172,18 +1705,12 @@ paths:
         in: path
         required: true
         schema:
-          type: string
-          minLength: 1
-          maxLength: 64
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CancelInstanceRequest"
+          type: integer
+          format: int64
+          minimum: 1
       responses:
         "200":
-          description: Canceled instance
+          description: Cancel request accepted, or the run was already terminal
           headers:
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
@@ -1192,7 +1719,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Snapshot"
+                $ref: "#/components/schemas/CancelResult"
         "400":
           description: Invalid request
           headers:
@@ -1206,6 +1733,28 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Run not found
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The run's JobRun custom resource is missing
           headers:
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
@@ -1244,8 +1793,8 @@ paths:
   /api/v1/jobs:
     get:
       operationId: listJobs
-      summary: List jobs
-      description: List jobs for one tenant. tenant_id defaults to "default" and limit defaults to 50 when omitted.
+      summary: List job definitions
+      description: List the active revision of every job definition in the tenant. A definition is a ScheduledJob custom resource, declared outside this API; there is no create route. limit defaults to 50 when omitted.
       tags:
       - Jobs
       parameters:
@@ -1258,15 +1807,8 @@ paths:
         in: query
         schema:
           type: string
-          default: default
-          maxLength: 64
-      - name: status
-        in: query
-        schema:
-          type: string
-          enum:
-          - active
-          - paused
+          minLength: 26
+          maxLength: 26
       - name: limit
         in: query
         schema:
@@ -1340,89 +1882,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-    post:
-      operationId: createJob
-      summary: Create one job
-      description: Create a job definition. cron_expr is required when trigger_type=cron, and must be empty when trigger_type=manual.
-      tags:
-      - Jobs
-      parameters:
-      - name: X-Trace-ID
-        in: header
-        schema:
-          type: string
-          maxLength: 128
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateJobRequest"
-      responses:
-        "201":
-          description: Created job
-          headers:
-            X-Trace-ID:
-              description: Trace identifier echoed back to clients. Generated when request does not provide one.
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CreateResult"
-        "400":
-          description: Invalid request
-          headers:
-            X-Trace-ID:
-              description: Trace identifier echoed back to clients. Generated when request does not provide one.
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "401":
-          description: Unauthorized
-          headers:
-            X-Trace-ID:
-              description: Trace identifier echoed back to clients. Generated when request does not provide one.
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "429":
-          description: Rate limit exceeded
-          headers:
-            Retry-After:
-              description: Minimum seconds until the request may be retried (default 1)
-              schema:
-                type: string
-            X-Trace-ID:
-              description: Trace identifier echoed back to clients. Generated when request does not provide one.
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Internal error
-          headers:
-            X-Trace-ID:
-              description: Trace identifier echoed back to clients. Generated when request does not provide one.
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/jobs/{id}:
     get:
       operationId: getJob
-      summary: Get one job
-      description: Get one job by id. tenant_id defaults to "default" when omitted.
+      summary: Get one job definition
+      description: "Get the active revision of one definition by revision id. The revision is immutable: a later edit makes a new revision active."
       tags:
       - Jobs
       parameters:
@@ -1442,8 +1906,8 @@ paths:
         in: query
         schema:
           type: string
-          default: default
-          maxLength: 64
+          minLength: 26
+          maxLength: 26
       responses:
         "200":
           description: Job detail
@@ -1515,10 +1979,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-    put:
-      operationId: updateJob
-      summary: Update one job
-      description: "Merge-style update: unspecified fields keep existing values. When trigger_type is changed to manual without cron_expr, existing cron_expr is cleared."
+  /api/v1/jobs/{id}/trigger:
+    post:
+      operationId: triggerJob
+      summary: Trigger a manual run
+      description: Publish a JobRun custom resource for a manual execution. The operator writes the run row together with its audit trail and records the calling credential as the run's actor, so "who triggered it" is answerable after the fact. Use the X-OrbitJob-Idempotency-Key header to prevent duplicate triggers.
       tags:
       - Jobs
       parameters:
@@ -1534,27 +1999,14 @@ paths:
           type: integer
           format: int64
           minimum: 1
-      - name: tenant_id
-        in: query
-        schema:
-          type: string
-          default: default
-          maxLength: 64
-      - name: X-Actor-ID
+      - name: X-OrbitJob-Idempotency-Key
         in: header
-        required: true
         schema:
           type: string
           maxLength: 128
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/UpdateJobRequest"
       responses:
         "200":
-          description: Updated job
+          description: Existing run returned for idempotent trigger
           headers:
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
@@ -1563,7 +2015,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/UpdateResult"
+                $ref: "#/components/schemas/TriggerResult"
+        "201":
+          description: Created run
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TriggerResult"
         "400":
           description: Invalid request
           headers:
@@ -1598,7 +2061,259 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
-          description: Version conflict
+          description: Definition is suspended
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/policies:
+    get:
+      operationId: listPolicies
+      summary: List policies
+      description: "List the policies the caller's tenant may bind: its own, and the platform presets."
+      tags:
+      - Policies
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      responses:
+        "200":
+          description: Policy list
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyListResponse"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: createPolicy
+      summary: Create one policy
+      description: Create an authorization policy in the caller's tenant. Actions the platform does not implement, and the "*" wildcard, are rejected.
+      tags:
+      - Policies
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePolicyRequest"
+      responses:
+        "201":
+          description: Created policy
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyCreateResult"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Not permitted
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/policies/{id}:
+    get:
+      operationId: getPolicy
+      summary: Get one policy
+      description: Read one policy belonging to the caller's tenant, or a platform preset.
+      tags:
+      - Policies
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          maxLength: 26
+      responses:
+        "200":
+          description: Policy detail
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyGetResult"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Policy not found
           headers:
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
@@ -1635,11 +2350,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
     delete:
-      operationId: deleteJob
-      summary: Delete one job
-      description: Soft-delete a job definition by setting deleted_at.
+      operationId: deletePolicy
+      summary: Delete one policy
+      description: Delete a policy the caller's tenant owns. Platform presets are never deletable, and a policy still bound to a key is refused rather than cascaded.
       tags:
-      - Jobs
+      - Policies
       parameters:
       - name: X-Trace-ID
         in: header
@@ -1650,27 +2365,16 @@ paths:
         in: path
         required: true
         schema:
-          type: integer
-          format: int64
-          minimum: 1
-      - name: tenant_id
-        in: query
-        schema:
           type: string
-          default: default
-          maxLength: 64
+          maxLength: 26
       responses:
-        "200":
-          description: Deleted job
+        "204":
+          description: Deleted policy
           headers:
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
               schema:
                 type: string
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/DeleteResult"
         "400":
           description: Invalid request
           headers:
@@ -1693,106 +2397,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-        "404":
-          description: Job not found
-          headers:
-            X-Trace-ID:
-              description: Trace identifier echoed back to clients. Generated when request does not provide one.
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "429":
-          description: Rate limit exceeded
-          headers:
-            Retry-After:
-              description: Minimum seconds until the request may be retried (default 1)
-              schema:
-                type: string
-            X-Trace-ID:
-              description: Trace identifier echoed back to clients. Generated when request does not provide one.
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Internal error
-          headers:
-            X-Trace-ID:
-              description: Trace identifier echoed back to clients. Generated when request does not provide one.
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-  /api/v1/jobs/{id}/pause:
-    post:
-      operationId: pauseJob
-      summary: Pause one job
-      description: Pause an active job definition using optimistic locking by version.
-      tags:
-      - Jobs
-      parameters:
-      - name: X-Trace-ID
-        in: header
-        schema:
-          type: string
-          maxLength: 128
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: integer
-          format: int64
-          minimum: 1
-      - name: tenant_id
-        in: query
-        schema:
-          type: string
-          default: default
-          maxLength: 64
-      - name: X-Actor-ID
-        in: header
-        required: true
-        schema:
-          type: string
-          maxLength: 128
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ChangeStatusRequest"
-      responses:
-        "200":
-          description: Paused job
-          headers:
-            X-Trace-ID:
-              description: Trace identifier echoed back to clients. Generated when request does not provide one.
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ChangeStatusResult"
-        "400":
-          description: Invalid request
-          headers:
-            X-Trace-ID:
-              description: Trace identifier echoed back to clients. Generated when request does not provide one.
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "401":
-          description: Unauthorized
+        "403":
+          description: Not permitted
           headers:
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
@@ -1803,7 +2409,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
-          description: Job not found
+          description: Policy not found
           headers:
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
@@ -1814,7 +2420,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
-          description: Version conflict
+          description: Policy still bound
           headers:
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
@@ -1850,47 +2456,22 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-  /api/v1/jobs/{id}/resume:
-    post:
-      operationId: resumeJob
-      summary: Resume one job
-      description: Resume a paused job definition using optimistic locking by version.
+  /api/v1/resource_groups:
+    get:
+      operationId: listResourceGroups
+      summary: List resource groups
+      description: List the resource groups belonging to the caller's tenant.
       tags:
-      - Jobs
+      - Resource Groups
       parameters:
       - name: X-Trace-ID
         in: header
         schema:
           type: string
           maxLength: 128
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: integer
-          format: int64
-          minimum: 1
-      - name: tenant_id
-        in: query
-        schema:
-          type: string
-          default: default
-          maxLength: 64
-      - name: X-Actor-ID
-        in: header
-        required: true
-        schema:
-          type: string
-          maxLength: 128
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ChangeStatusRequest"
       responses:
         "200":
-          description: Resumed job
+          description: Resource group list
           headers:
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
@@ -1899,7 +2480,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ChangeStatusResult"
+                $ref: "#/components/schemas/ResourceGroupListResponse"
         "400":
           description: Invalid request
           headers:
@@ -1922,28 +2503,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-        "404":
-          description: Job not found
-          headers:
-            X-Trace-ID:
-              description: Trace identifier echoed back to clients. Generated when request does not provide one.
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "409":
-          description: Version conflict
-          headers:
-            X-Trace-ID:
-              description: Trace identifier echoed back to clients. Generated when request does not provide one.
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
         "429":
           description: Rate limit exceeded
           headers:
@@ -1970,45 +2529,27 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-  /api/v1/jobs/{id}/trigger:
     post:
-      operationId: triggerJob
-      summary: Trigger a manual run
-      description: Create a manual execution instance for a job. Use X-OrbitJob-Idempotency-Key header to prevent duplicate triggers.
+      operationId: createResourceGroup
+      summary: Create one resource group
+      description: Create an isolation group inside the caller's tenant. Keys scoped to a group see only that group's resources.
       tags:
-      - Jobs
+      - Resource Groups
       parameters:
       - name: X-Trace-ID
         in: header
         schema:
           type: string
           maxLength: 128
-      - name: id
-        in: path
+      requestBody:
         required: true
-        schema:
-          type: integer
-          format: int64
-          minimum: 1
-      - name: X-OrbitJob-Idempotency-Key
-        in: header
-        schema:
-          type: string
-          maxLength: 128
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateResourceGroupRequest"
       responses:
-        "200":
-          description: Existing instance returned for idempotent trigger
-          headers:
-            X-Trace-ID:
-              description: Trace identifier echoed back to clients. Generated when request does not provide one.
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TriggerResult"
         "201":
-          description: Created instance
+          description: Created resource group
           headers:
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
@@ -2017,7 +2558,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TriggerResult"
+                $ref: "#/components/schemas/ResourcegroupCreateResult"
         "400":
           description: Invalid request
           headers:
@@ -2031,6 +2572,17 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Slug already used
           headers:
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
@@ -2083,7 +2635,6 @@ paths:
         in: query
         schema:
           type: string
-          default: default
       - name: limit
         in: query
         schema:
@@ -2186,7 +2737,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CreateResult"
+                $ref: "#/components/schemas/SliCreateResult"
         "400":
           description: Invalid request
           headers:
@@ -2266,7 +2817,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/GetItem"
+                $ref: "#/components/schemas/SliGetItem"
         "400":
           description: Invalid request
           headers:
@@ -2329,7 +2880,7 @@ paths:
     delete:
       operationId: deleteSLI
       summary: Delete one SLI
-      description: Soft-delete a service level indicator by setting deleted_at.
+      description: Soft-delete a service level indicator by setting deleted_at. The version body is required for optimistic locking.
       tags:
       - SLIs
       parameters:
@@ -2349,8 +2900,14 @@ paths:
         in: query
         schema:
           type: string
-          default: default
-          maxLength: 64
+          minLength: 26
+          maxLength: 26
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VersionRequest"
       responses:
         "200":
           description: Deleted SLI
@@ -2435,7 +2992,6 @@ paths:
         in: query
         schema:
           type: string
-          default: default
       - name: slo_id
         in: query
         schema:
@@ -2549,7 +3105,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/GetItem"
+                $ref: "#/components/schemas/SloalertGetItem"
         "400":
           description: Invalid request
           headers:
@@ -2626,7 +3182,6 @@ paths:
         in: query
         schema:
           type: string
-          default: default
       - name: limit
         in: query
         schema:
@@ -2729,7 +3284,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CreateResult"
+                $ref: "#/components/schemas/SloCreateResult"
         "400":
           description: Invalid request
           headers:
@@ -2809,7 +3364,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/GetItem"
+                $ref: "#/components/schemas/SloGetItem"
         "400":
           description: Invalid request
           headers:
@@ -2872,7 +3427,7 @@ paths:
     delete:
       operationId: deleteSLO
       summary: Delete one SLO
-      description: Soft-delete a service level objective by setting deleted_at.
+      description: Soft-delete a service level objective by setting deleted_at. The version body is required for optimistic locking.
       tags:
       - SLOs
       parameters:
@@ -2892,8 +3447,14 @@ paths:
         in: query
         schema:
           type: string
-          default: default
-          maxLength: 64
+          minLength: 26
+          maxLength: 26
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VersionRequest"
       responses:
         "200":
           description: Deleted SLO
@@ -2992,7 +3553,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/GetItem"
+                $ref: "#/components/schemas/SlobudgetGetItem"
         "400":
           description: Invalid request
           headers:
@@ -3069,7 +3630,6 @@ paths:
         in: query
         schema:
           type: string
-          default: default
       - name: limit
         in: query
         schema:
@@ -3167,8 +3727,8 @@ paths:
         in: query
         schema:
           type: string
-          default: default
-          maxLength: 64
+          minLength: 26
+          maxLength: 26
       requestBody:
         required: true
         content:
@@ -3186,7 +3746,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ChangeStatusResult"
+                $ref: "#/components/schemas/SloChangeStatusResult"
         "400":
           description: Invalid request
           headers:
@@ -3281,8 +3841,8 @@ paths:
         in: query
         schema:
           type: string
-          default: default
-          maxLength: 64
+          minLength: 26
+          maxLength: 26
       requestBody:
         required: true
         content:
@@ -3300,7 +3860,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ChangeStatusResult"
+                $ref: "#/components/schemas/SloChangeStatusResult"
         "400":
           description: Invalid request
           headers:
@@ -3787,6 +4347,695 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/workflows:
+    get:
+      operationId: listWorkflows
+      summary: List workflow definitions
+      description: List the active revision of every WorkflowJob definition in the tenant. A workflow definition is a WorkflowJob custom resource, declared outside this API and read here through its projection; there is no create route. limit defaults to 50 when omitted.
+      tags:
+      - Workflows
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: tenant_id
+        in: query
+        schema:
+          type: string
+          minLength: 26
+          maxLength: 26
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          default: 50
+          minimum: 1
+          maximum: 100
+      - name: offset
+        in: query
+        schema:
+          type: integer
+          default: 0
+          minimum: 0
+      responses:
+        "200":
+          description: Workflow list
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowListResponse"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: A group-scoped key cannot reach workflow definitions
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/workflows/{id}:
+    get:
+      operationId: getWorkflow
+      summary: Get one workflow definition
+      description: "Get the active revision of one workflow definition by revision id, with its task DAG: each task names the ScheduledJob definition it runs, the tasks that must finish first, and an optional condition over the terminal state of its dependencies."
+      tags:
+      - Workflows
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      - name: tenant_id
+        in: query
+        schema:
+          type: string
+          minLength: 26
+          maxLength: 26
+      responses:
+        "200":
+          description: Workflow detail
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowGetItem"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: A group-scoped key cannot reach workflow definitions
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Workflow not found
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/workflows/{id}/runs:
+    get:
+      operationId: listWorkflowRuns
+      summary: List workflow runs
+      description: "List one workflow's runs from the workflow ledger, newest first. Each entry carries the workflow-level phase -- the DAG's lifecycle, not any single step's -- its trigger, and the actor that asked for it."
+      tags:
+      - Workflows
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      - name: tenant_id
+        in: query
+        schema:
+          type: string
+          minLength: 26
+          maxLength: 26
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          default: 50
+          minimum: 1
+          maximum: 100
+      - name: offset
+        in: query
+        schema:
+          type: integer
+          default: 0
+          minimum: 0
+      responses:
+        "200":
+          description: Workflow run list
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowRunListResponse"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: A group-scoped key cannot reach workflow runs
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Workflow not found
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: triggerWorkflow
+      summary: Trigger a manual workflow run
+      description: "Publish a WorkflowRun custom resource for a manual workflow execution. The operator materializes the workflow run row from it, row-first, and then walks the DAG: each task is an ordinary run of the ScheduledJob definition the task names. The calling credential is recorded as the run's actor, so \"who triggered it\" is answerable after the fact. Triggering a suspended workflow is a conflict. Use the X-OrbitJob-Idempotency-Key header to prevent duplicate triggers."
+      tags:
+      - Workflows
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      - name: X-OrbitJob-Idempotency-Key
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      responses:
+        "200":
+          description: Existing run returned for idempotent trigger
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowTriggerResult"
+        "201":
+          description: Created workflow run
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowTriggerResult"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: A group-scoped key cannot trigger workflows
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Workflow not found
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Workflow is suspended
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/workflows/{id}/runs/{run_id}:
+    get:
+      operationId: getWorkflowRun
+      summary: Get one workflow run
+      description: "Get one workflow run by ledger id, with its step runs in the same response. Each step is an ordinary run of the ScheduledJob definition its task names, grouped under the workflow run; a task the walker decided not to create has no step -- its skip reason lives on the run's task decisions, visible in the phase trail."
+      tags:
+      - Workflows
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      responses:
+        "200":
+          description: Workflow run detail
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowRunGetItem"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: A group-scoped key cannot reach workflow runs
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Workflow or run not found
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/workflows/{id}/runs/{run_id}/cancel:
+    post:
+      operationId: cancelWorkflowRun
+      summary: Request a workflow run cancel
+      description: Request a stop for one workflow run by patching spec.cancelRequested on its WorkflowRun custom resource. The request carries no body. The operator fans the stop out over the workflow's non-terminal step runs; the workflow reaches Canceled only once its steps are observed terminal, and the response carries the phase observed at request time. Canceling a run that already finished succeeds and reports the terminal phase.
+      tags:
+      - Workflows
+      parameters:
+      - name: X-Trace-ID
+        in: header
+        schema:
+          type: string
+          maxLength: 128
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      responses:
+        "200":
+          description: Cancel request accepted, or the run was already terminal
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowCancelResult"
+        "400":
+          description: Invalid request
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: A group-scoped key cannot cancel workflow runs
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Workflow or run not found
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The run's WorkflowRun custom resource is missing
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Minimum seconds until the request may be retried (default 1)
+              schema:
+                type: string
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          headers:
+            X-Trace-ID:
+              description: Trace identifier echoed back to clients. Generated when request does not provide one.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /healthz:
     get:
       operationId: getHealthz
@@ -3878,7 +5127,6 @@ components:
           - NOT_FOUND
           - CONFLICT
           - RATE_LIMITED
-          - QUOTA_EXHAUSTED
           - INTERNAL_ERROR
           - SERVICE_UNAVAILABLE
         field:
@@ -3935,7 +5183,7 @@ components:
         items:
           type: array
           items:
-            $ref: "#/components/schemas/ListItem"
+            $ref: "#/components/schemas/SloalertListItem"
       required:
       - items
     ApiKeyListResponse:
@@ -3961,30 +5209,42 @@ components:
     AttemptItem:
       type: object
       properties:
-        attempt_no:
+        attempt_number:
           type: integer
-        error_msg:
-          type: string
-          nullable: true
-        finished_at:
+        completed_at:
           type: string
           format: date-time
           nullable: true
-        result_code:
+        created_at:
+          type: string
+          format: date-time
+        id:
+          type: integer
+          format: int64
+        kubernetes_job_name:
+          type: string
+        kubernetes_job_uid:
           type: string
           nullable: true
+        observed_resource_version:
+          type: string
+          nullable: true
+        phase:
+          type: string
+        run_id:
+          type: integer
+          format: int64
         started_at:
           type: string
           format: date-time
           nullable: true
-        status:
-          type: string
-        worker_id:
-          type: string
-          nullable: true
       required:
-      - attempt_no
-      - status
+      - id
+      - run_id
+      - attempt_number
+      - phase
+      - kubernetes_job_name
+      - created_at
     AttemptListResponse:
       type: object
       properties:
@@ -4025,17 +5285,25 @@ components:
         items:
           type: array
           items:
-            $ref: "#/components/schemas/ListItem"
+            $ref: "#/components/schemas/SlobudgetListItem"
       required:
       - items
-    CancelInstanceRequest:
+    CancelResult:
       type: object
       properties:
-        version:
-          type: integer
-          minimum: 1
+        name:
+          type: string
+        namespace:
+          type: string
+        occurrence_key:
+          type: string
+        phase:
+          type: string
       required:
-      - version
+      - namespace
+      - name
+      - occurrence_key
+      - phase
     ChangeCheckStatusRequest:
       type: object
       properties:
@@ -4052,14 +5320,6 @@ components:
           minimum: 1
       required:
       - version
-    ChangeStatusRequest:
-      type: object
-      properties:
-        version:
-          type: integer
-          minimum: 1
-      required:
-      - version
     ChangeStatusResult:
       type: object
       properties:
@@ -4068,16 +5328,56 @@ components:
           format: int64
         status:
           type: string
+        version:
+          type: integer
       required:
       - id
       - status
+      - version
+    CheckListItem:
+      type: object
+      properties:
+        check_type:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        description:
+          type: string
+          nullable: true
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        next_run_at:
+          type: string
+          format: date-time
+          nullable: true
+        schedule_type:
+          type: string
+        status:
+          type: string
+        tenant_id:
+          type: string
+        version:
+          type: integer
+      required:
+      - id
+      - name
+      - tenant_id
+      - status
+      - check_type
+      - schedule_type
+      - version
+      - created_at
     CheckListResponse:
       type: object
       properties:
         items:
           type: array
           items:
-            $ref: "#/components/schemas/ListItem"
+            $ref: "#/components/schemas/CheckListItem"
       required:
       - items
     CheckRunListResponse:
@@ -4086,335 +5386,10 @@ components:
         items:
           type: array
           items:
-            $ref: "#/components/schemas/ListItem"
+            $ref: "#/components/schemas/CheckrunListItem"
       required:
       - items
-    CreateAPIKeyRequest:
-      type: object
-    CreateCheckRequest:
-      type: object
-      properties:
-        assertion_rules:
-          type: array
-          items:
-            $ref: "#/components/schemas/AssertionRule"
-        check_config:
-          type: object
-          additionalProperties: true
-        check_type:
-          type: string
-          enum:
-          - http_health
-          maxLength: 32
-        cron_expr:
-          type: string
-          nullable: true
-        description:
-          type: string
-          nullable: true
-          maxLength: 512
-        interval_sec:
-          type: integer
-          nullable: true
-          minimum: 1
-        labels:
-          type: object
-          additionalProperties: true
-        name:
-          type: string
-          maxLength: 128
-        priority:
-          type: integer
-          minimum: 0
-        retry_limit:
-          type: integer
-          minimum: 0
-        schedule_type:
-          type: string
-          enum:
-          - cron
-          - interval
-        tenant_id:
-          type: string
-          maxLength: 64
-        timeout_sec:
-          type: integer
-          minimum: 1
-        timezone:
-          type: string
-          maxLength: 64
-      required:
-      - name
-      - check_type
-    CreateJobRequest:
-      type: object
-      properties:
-        concurrency_policy:
-          type: string
-          enum:
-          - allow
-          - forbid
-          - replace
-          default: allow
-        cron_expr:
-          type: string
-          description: Required when trigger_type=cron; must be empty when trigger_type=manual.
-          nullable: true
-        handler_payload:
-          type: object
-          additionalProperties: true
-        handler_type:
-          type: string
-          enum:
-          - exec
-          - http
-          - webhook
-          - pg_notify
-          - container
-          maxLength: 32
-        misfire_policy:
-          type: string
-          enum:
-          - skip
-          - fire_now
-          - catch_up
-          default: fire_now
-        name:
-          type: string
-          maxLength: 128
-        partition_key:
-          type: string
-          nullable: true
-          maxLength: 64
-        priority:
-          type: integer
-          minimum: 0
-        retry_backoff_sec:
-          type: integer
-          minimum: 0
-        retry_backoff_strategy:
-          type: string
-          enum:
-          - fixed
-          - exponential
-          default: fixed
-        retry_limit:
-          type: integer
-          minimum: 0
-        tenant_id:
-          type: string
-          default: default
-          maxLength: 64
-        timeout_sec:
-          type: integer
-          default: 60
-          minimum: 1
-        timezone:
-          type: string
-          default: UTC
-          maxLength: 64
-        trigger_type:
-          type: string
-          enum:
-          - cron
-          - manual
-      required:
-      - name
-      - trigger_type
-      - handler_type
-    CreateResult:
-      type: object
-      properties:
-        alert_fast_burn_rate:
-          type: number
-        alert_slow_burn_rate:
-          type: number
-        created_at:
-          type: string
-        description:
-          type: string
-          nullable: true
-        id:
-          type: integer
-          format: int64
-        name:
-          type: string
-        sli_id:
-          type: integer
-          format: int64
-        status:
-          type: string
-        target:
-          type: number
-        version:
-          type: integer
-        window_duration:
-          type: string
-        window_type:
-          type: string
-      required:
-      - id
-      - name
-      - sli_id
-      - target
-      - window_type
-      - window_duration
-      - alert_fast_burn_rate
-      - alert_slow_burn_rate
-      - status
-      - version
-      - created_at
-    CreateSLIRequest:
-      type: object
-      properties:
-        aggregation:
-          type: string
-          enum:
-          - ratio
-          - count
-        description:
-          type: string
-          nullable: true
-        good_event_criteria:
-          type: object
-          additionalProperties: true
-        name:
-          type: string
-          maxLength: 128
-        sli_type:
-          type: string
-          enum:
-          - availability
-          - latency
-          - quality
-          - custom
-        source_config:
-          type: object
-          additionalProperties: true
-        source_type:
-          type: string
-          enum:
-          - check_run
-      required:
-      - name
-      - sli_type
-    CreateSLORequest:
-      type: object
-      properties:
-        alert_fast_burn_rate:
-          type: number
-        alert_slow_burn_rate:
-          type: number
-        description:
-          type: string
-          nullable: true
-        name:
-          type: string
-          maxLength: 128
-        sli_id:
-          type: integer
-          format: int64
-          minimum: 1
-        target:
-          type: number
-          maximum: 1
-        window_duration:
-          type: string
-        window_type:
-          type: string
-          enum:
-          - rolling
-          - calendar
-          - quarterly
-      required:
-      - name
-      - sli_id
-      - target
-      - window_duration
-    CreateTenantRequest:
-      type: object
-      properties:
-        name:
-          type: string
-          maxLength: 128
-        slug:
-          type: string
-          maxLength: 64
-        status:
-          type: string
-          enum:
-          - active
-          - suspended
-      required:
-      - slug
-      - name
-    DeleteResult:
-      type: object
-      properties:
-        created_at:
-          type: string
-          format: date-time
-        id:
-          type: integer
-          format: int64
-        name:
-          type: string
-        status:
-          type: string
-        tenant_id:
-          type: string
-        updated_at:
-          type: string
-          format: date-time
-        version:
-          type: integer
-      required:
-      - id
-      - name
-      - tenant_id
-      - status
-      - version
-      - created_at
-      - updated_at
-    ErrorResponse:
-      type: object
-      properties:
-        error:
-          $ref: "#/components/schemas/APIError"
-      required:
-      - error
-    GetItem:
-      type: object
-      properties:
-        alert_type:
-          type: string
-        budget_id:
-          type: integer
-          format: int64
-        burn_rate:
-          type: number
-        id:
-          type: integer
-          format: int64
-        resolved_at:
-          type: string
-          nullable: true
-        slo_id:
-          type: integer
-          format: int64
-        status:
-          type: string
-        triggered_at:
-          type: string
-      required:
-      - id
-      - slo_id
-      - budget_id
-      - alert_type
-      - burn_rate
-      - status
-      - triggered_at
-    GetResult:
+    CheckrunGetResult:
       type: object
       properties:
         check_id:
@@ -4468,6 +5443,580 @@ components:
       - scheduled_at
       - version
       - created_at
+    CheckrunListItem:
+      type: object
+      properties:
+        check_id:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+        duration_ms:
+          type: integer
+          nullable: true
+        id:
+          type: integer
+          format: int64
+        run_id:
+          type: string
+        severity:
+          type: string
+          nullable: true
+        status:
+          type: string
+      required:
+      - id
+      - run_id
+      - check_id
+      - status
+      - created_at
+    CreateAPIKeyRequest:
+      type: object
+      properties:
+        boundary_policy_id:
+          type: string
+        policies:
+          type: array
+          items:
+            type: string
+        resource_group_id:
+          type: string
+    CreateCheckRequest:
+      type: object
+      properties:
+        assertion_rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/AssertionRule"
+        check_config:
+          type: object
+          additionalProperties: true
+        check_type:
+          type: string
+          enum:
+          - http_health
+          maxLength: 32
+        cron_expr:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+          maxLength: 512
+        interval_sec:
+          type: integer
+          nullable: true
+          minimum: 30
+        labels:
+          type: object
+          additionalProperties: true
+        name:
+          type: string
+          maxLength: 128
+        priority:
+          type: integer
+          minimum: 0
+        retry_limit:
+          type: integer
+          minimum: 0
+        schedule_type:
+          type: string
+          enum:
+          - cron
+          - interval
+        tenant_id:
+          type: string
+          minLength: 26
+          maxLength: 26
+        timeout_sec:
+          type: integer
+          minimum: 1
+        timezone:
+          type: string
+          maxLength: 64
+      required:
+      - name
+      - check_type
+    CreatePolicyRequest:
+      type: object
+      properties:
+        description:
+          type: string
+          maxLength: 2000
+        document:
+          type: array
+          items:
+            type: integer
+        name:
+          type: string
+          maxLength: 128
+      required:
+      - name
+      - document
+    CreateResourceGroupRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 128
+        slug:
+          type: string
+          maxLength: 64
+      required:
+      - slug
+      - name
+    CreateResult:
+      type: object
+      properties:
+        assertion_rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/AssertionRule"
+        check_config:
+          type: object
+          additionalProperties: true
+        check_type:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        cron_expr:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        id:
+          type: integer
+          format: int64
+        interval_sec:
+          type: integer
+          nullable: true
+        labels:
+          type: object
+          additionalProperties: true
+        name:
+          type: string
+        next_run_at:
+          type: string
+          format: date-time
+          nullable: true
+        priority:
+          type: integer
+        retry_limit:
+          type: integer
+        schedule_type:
+          type: string
+        status:
+          type: string
+        tenant_id:
+          type: string
+        timeout_sec:
+          type: integer
+        timezone:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+        version:
+          type: integer
+      required:
+      - id
+      - name
+      - tenant_id
+      - status
+      - check_type
+      - check_config
+      - assertion_rules
+      - schedule_type
+      - timezone
+      - timeout_sec
+      - retry_limit
+      - priority
+      - labels
+      - version
+      - created_at
+      - updated_at
+    CreateSLIRequest:
+      type: object
+      properties:
+        aggregation:
+          type: string
+          enum:
+          - ratio
+          - count
+        description:
+          type: string
+          nullable: true
+        good_event_criteria:
+          type: object
+          additionalProperties: true
+        name:
+          type: string
+          maxLength: 128
+        sli_type:
+          type: string
+          enum:
+          - availability
+          - latency
+          - quality
+          - custom
+        source_config:
+          type: object
+          additionalProperties: true
+        source_type:
+          type: string
+          enum:
+          - job_run
+      required:
+      - name
+      - sli_type
+    CreateSLORequest:
+      type: object
+      properties:
+        alert_fast_burn_rate:
+          type: number
+        alert_slow_burn_rate:
+          type: number
+        description:
+          type: string
+          nullable: true
+        name:
+          type: string
+          maxLength: 128
+        sli_id:
+          type: integer
+          format: int64
+          minimum: 1
+        target:
+          type: number
+          maximum: 1
+        window_duration:
+          type: string
+        window_type:
+          type: string
+          enum:
+          - rolling
+          - calendar
+          - quarterly
+      required:
+      - name
+      - sli_id
+      - target
+      - window_duration
+    CreateTenantRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 128
+        slug:
+          type: string
+          maxLength: 64
+        status:
+          type: string
+          enum:
+          - active
+          - suspended
+      required:
+      - slug
+      - name
+    Document:
+      type: object
+      properties:
+        statement:
+          type: array
+          items:
+            $ref: "#/components/schemas/Statement"
+        version:
+          type: string
+      required:
+      - version
+      - statement
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          $ref: "#/components/schemas/APIError"
+      required:
+      - error
+    FunctionInvokeResult:
+      type: object
+      properties:
+        created:
+          type: boolean
+        name:
+          type: string
+        namespace:
+          type: string
+        occurrence_key:
+          type: string
+        phase:
+          type: string
+        trigger:
+          type: string
+      required:
+      - namespace
+      - name
+      - occurrence_key
+      - trigger
+      - phase
+      - created
+    FunctionItem:
+      type: object
+      properties:
+        args:
+          type: array
+          items:
+            type: string
+        command:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        description:
+          type: string
+        history_failed:
+          type: integer
+        history_success:
+          type: integer
+        id:
+          type: integer
+          format: int64
+        image:
+          type: string
+        labels:
+          type: object
+          additionalProperties: true
+        name:
+          type: string
+        resource_group_id:
+          type: string
+        retry_limit:
+          type: integer
+        status:
+          type: string
+        tenant_id:
+          type: string
+        timeout_seconds:
+          type: integer
+        updated_at:
+          type: string
+          format: date-time
+        version:
+          type: integer
+      required:
+      - id
+      - tenant_id
+      - resource_group_id
+      - name
+      - description
+      - status
+      - image
+      - command
+      - args
+      - timeout_seconds
+      - retry_limit
+      - history_success
+      - history_failed
+      - labels
+      - version
+      - created_at
+      - updated_at
+    FunctionListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/FunctionItem"
+      required:
+      - items
+    FunctionRunItem:
+      type: object
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        duration_ms:
+          type: integer
+          nullable: true
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        function_id:
+          type: integer
+          format: int64
+        id:
+          type: integer
+          format: int64
+        run_id:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+        triggered_at:
+          type: string
+          format: date-time
+        version:
+          type: integer
+      required:
+      - id
+      - run_id
+      - function_id
+      - status
+      - triggered_at
+      - version
+      - created_at
+    FunctionRunListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/FunctionRunItem"
+      required:
+      - items
+    GetItem:
+      type: object
+      properties:
+        actor:
+          type: string
+        concurrency_policy:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        generation:
+          type: integer
+          format: int64
+        id:
+          type: integer
+          format: int64
+        job_template:
+          $ref: "#/components/schemas/JobTemplate"
+        misfire_policy:
+          type: string
+        name:
+          type: string
+        namespace:
+          type: string
+        retry_max_attempts:
+          type: integer
+        schedule:
+          type: string
+        schedule_summary:
+          type: string
+        source_mode:
+          type: string
+        source_uid:
+          type: string
+        spec_hash:
+          type: string
+        suspend:
+          type: boolean
+        tenant_id:
+          type: string
+        timeout_seconds:
+          type: integer
+      required:
+      - id
+      - tenant_id
+      - name
+      - namespace
+      - source_mode
+      - source_uid
+      - generation
+      - spec_hash
+      - actor
+      - created_at
+      - schedule
+      - suspend
+      - concurrency_policy
+      - misfire_policy
+      - timeout_seconds
+      - retry_max_attempts
+      - job_template
+      - schedule_summary
+    GetResult:
+      type: object
+      properties:
+        assertion_rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/AssertionRule"
+        check_config:
+          type: object
+          additionalProperties: true
+        check_type:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        cron_expr:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        id:
+          type: integer
+          format: int64
+        interval_sec:
+          type: integer
+          nullable: true
+        labels:
+          type: object
+          additionalProperties: true
+        name:
+          type: string
+        next_run_at:
+          type: string
+          format: date-time
+          nullable: true
+        priority:
+          type: integer
+        retry_limit:
+          type: integer
+        schedule_type:
+          type: string
+        status:
+          type: string
+        tenant_id:
+          type: string
+        timeout_sec:
+          type: integer
+        timezone:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+        version:
+          type: integer
+      required:
+      - id
+      - name
+      - tenant_id
+      - status
+      - check_type
+      - check_config
+      - assertion_rules
+      - schedule_type
+      - timezone
+      - timeout_sec
+      - retry_limit
+      - priority
+      - labels
+      - version
+      - created_at
+      - updated_at
     HealthzResponse:
       type: object
       properties:
@@ -4475,87 +6024,6 @@ components:
           type: string
       required:
       - status
-    InstanceItem:
-      type: object
-      properties:
-        attempt:
-          type: integer
-        created_at:
-          type: string
-          format: date-time
-        dispatched_at:
-          type: string
-          format: date-time
-          nullable: true
-        effective_priority:
-          type: integer
-        error_msg:
-          type: string
-          nullable: true
-        finished_at:
-          type: string
-          format: date-time
-          nullable: true
-        job_id:
-          type: integer
-          format: int64
-        max_attempt:
-          type: integer
-        priority:
-          type: integer
-        result_code:
-          type: string
-          nullable: true
-        retry_at:
-          type: string
-          format: date-time
-          nullable: true
-        run_id:
-          type: string
-        scheduled_at:
-          type: string
-          format: date-time
-        started_at:
-          type: string
-          format: date-time
-          nullable: true
-        status:
-          type: string
-        tenant_id:
-          type: string
-        trigger_source:
-          type: string
-        updated_at:
-          type: string
-          format: date-time
-        version:
-          type: integer
-        worker_id:
-          type: string
-          nullable: true
-      required:
-      - run_id
-      - tenant_id
-      - job_id
-      - trigger_source
-      - status
-      - priority
-      - effective_priority
-      - attempt
-      - max_attempt
-      - scheduled_at
-      - created_at
-      - updated_at
-      - version
-    InstanceListResponse:
-      type: object
-      properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/InstanceItem"
-      required:
-      - items
     JobListResponse:
       type: object
       properties:
@@ -4565,7 +6033,560 @@ components:
             $ref: "#/components/schemas/ListItem"
       required:
       - items
+    JobTemplate:
+      type: object
+      properties:
+        args:
+          type: array
+          items:
+            type: string
+        backoff_limit:
+          type: integer
+        command:
+          type: array
+          items:
+            type: string
+        image:
+          type: string
+      required:
+      - image
+      - backoff_limit
     ListItem:
+      type: object
+      properties:
+        actor:
+          type: string
+        concurrency_policy:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        generation:
+          type: integer
+          format: int64
+        id:
+          type: integer
+          format: int64
+        misfire_policy:
+          type: string
+        name:
+          type: string
+        namespace:
+          type: string
+        schedule:
+          type: string
+        schedule_summary:
+          type: string
+        source_uid:
+          type: string
+        suspend:
+          type: boolean
+        tenant_id:
+          type: string
+      required:
+      - id
+      - tenant_id
+      - name
+      - namespace
+      - source_uid
+      - generation
+      - actor
+      - schedule
+      - suspend
+      - concurrency_policy
+      - misfire_policy
+      - schedule_summary
+      - created_at
+    PolicyCreateResult:
+      type: object
+      properties:
+        description:
+          type: string
+        id:
+          type: string
+        name:
+          type: string
+      required:
+      - id
+      - name
+      - description
+    PolicyGetResult:
+      type: object
+      properties:
+        description:
+          type: string
+        document:
+          $ref: "#/components/schemas/Document"
+        id:
+          type: string
+        name:
+          type: string
+        platform:
+          type: boolean
+      required:
+      - id
+      - name
+      - description
+      - platform
+      - document
+    PolicyListItem:
+      type: object
+      properties:
+        description:
+          type: string
+        document:
+          $ref: "#/components/schemas/Document"
+        id:
+          type: string
+        name:
+          type: string
+        platform:
+          type: boolean
+      required:
+      - id
+      - name
+      - description
+      - platform
+      - document
+    PolicyListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PolicyListItem"
+      required:
+      - items
+    ResourceGroupListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResourcegroupListItem"
+      required:
+      - items
+    ResourcegroupCreateResult:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        slug:
+          type: string
+      required:
+      - id
+      - slug
+      - name
+    ResourcegroupListItem:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        slug:
+          type: string
+      required:
+      - id
+      - slug
+      - name
+    RunGetItem:
+      type: object
+      properties:
+        actor:
+          type: string
+        attempt:
+          type: integer
+        attempts:
+          type: array
+          items:
+            $ref: "#/components/schemas/AttemptItem"
+        created_at:
+          type: string
+          format: date-time
+        id:
+          type: integer
+          format: int64
+        max_attempts:
+          type: integer
+        occurrence_key:
+          type: string
+        phase:
+          type: string
+        revision_id:
+          type: integer
+          format: int64
+        source_uid:
+          type: string
+        tenant_id:
+          type: string
+        trigger:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+      required:
+      - id
+      - tenant_id
+      - source_uid
+      - revision_id
+      - occurrence_key
+      - trigger
+      - actor
+      - phase
+      - attempt
+      - max_attempts
+      - created_at
+      - updated_at
+      - attempts
+    RunListItem:
+      type: object
+      properties:
+        actor:
+          type: string
+        attempt:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        id:
+          type: integer
+          format: int64
+        max_attempts:
+          type: integer
+        occurrence_key:
+          type: string
+        phase:
+          type: string
+        revision_id:
+          type: integer
+          format: int64
+        source_uid:
+          type: string
+        tenant_id:
+          type: string
+        trigger:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+      required:
+      - id
+      - tenant_id
+      - source_uid
+      - revision_id
+      - occurrence_key
+      - trigger
+      - actor
+      - phase
+      - attempt
+      - max_attempts
+      - created_at
+      - updated_at
+    RunListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RunListItem"
+      required:
+      - items
+    SliCreateResult:
+      type: object
+      properties:
+        aggregation:
+          type: string
+        created_at:
+          type: string
+        description:
+          type: string
+          nullable: true
+        good_event_criteria:
+          type: object
+          additionalProperties: true
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        sli_type:
+          type: string
+        source_config:
+          type: object
+          additionalProperties: true
+        source_type:
+          type: string
+        version:
+          type: integer
+      required:
+      - id
+      - name
+      - sli_type
+      - source_type
+      - source_config
+      - aggregation
+      - good_event_criteria
+      - version
+      - created_at
+    SliGetItem:
+      type: object
+      properties:
+        aggregation:
+          type: string
+        created_at:
+          type: string
+        description:
+          type: string
+          nullable: true
+        good_event_criteria:
+          type: object
+          additionalProperties: true
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        sli_type:
+          type: string
+        source_config:
+          type: object
+          additionalProperties: true
+        source_type:
+          type: string
+        updated_at:
+          type: string
+        version:
+          type: integer
+      required:
+      - id
+      - name
+      - sli_type
+      - source_type
+      - source_config
+      - aggregation
+      - good_event_criteria
+      - version
+      - created_at
+      - updated_at
+    SliListItem:
+      type: object
+      properties:
+        aggregation:
+          type: string
+        created_at:
+          type: string
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        sli_type:
+          type: string
+        source_type:
+          type: string
+        version:
+          type: integer
+      required:
+      - id
+      - name
+      - sli_type
+      - source_type
+      - aggregation
+      - version
+      - created_at
+    SliListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SliListItem"
+      required:
+      - items
+    SloChangeStatusResult:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        status:
+          type: string
+      required:
+      - id
+      - status
+    SloCreateResult:
+      type: object
+      properties:
+        alert_fast_burn_rate:
+          type: number
+        alert_slow_burn_rate:
+          type: number
+        created_at:
+          type: string
+        description:
+          type: string
+          nullable: true
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        sli_id:
+          type: integer
+          format: int64
+        status:
+          type: string
+        target:
+          type: number
+        version:
+          type: integer
+        window_duration:
+          type: string
+        window_type:
+          type: string
+      required:
+      - id
+      - name
+      - sli_id
+      - target
+      - window_type
+      - window_duration
+      - alert_fast_burn_rate
+      - alert_slow_burn_rate
+      - status
+      - version
+      - created_at
+    SloGetItem:
+      type: object
+      properties:
+        alert_fast_burn_rate:
+          type: number
+        alert_slow_burn_rate:
+          type: number
+        created_at:
+          type: string
+        current_budget:
+          $ref: "#/components/schemas/BudgetItem"
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        sli_id:
+          type: integer
+          format: int64
+        status:
+          type: string
+        target:
+          type: number
+        updated_at:
+          type: string
+        version:
+          type: integer
+        window_duration:
+          type: string
+        window_type:
+          type: string
+      required:
+      - id
+      - name
+      - sli_id
+      - target
+      - window_type
+      - window_duration
+      - alert_fast_burn_rate
+      - alert_slow_burn_rate
+      - status
+      - version
+      - created_at
+      - updated_at
+    SloListItem:
+      type: object
+      properties:
+        alert_fast_burn_rate:
+          type: number
+        alert_slow_burn_rate:
+          type: number
+        created_at:
+          type: string
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        sli_id:
+          type: integer
+          format: int64
+        status:
+          type: string
+        target:
+          type: number
+        version:
+          type: integer
+        window_duration:
+          type: string
+        window_type:
+          type: string
+      required:
+      - id
+      - name
+      - sli_id
+      - target
+      - window_type
+      - window_duration
+      - alert_fast_burn_rate
+      - alert_slow_burn_rate
+      - status
+      - version
+      - created_at
+    SloListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SloListItem"
+      required:
+      - items
+    SloalertGetItem:
+      type: object
+      properties:
+        alert_type:
+          type: string
+        budget_id:
+          type: integer
+          format: int64
+        burn_rate:
+          type: number
+        id:
+          type: integer
+          format: int64
+        resolved_at:
+          type: string
+          nullable: true
+        slo_id:
+          type: integer
+          format: int64
+        status:
+          type: string
+        triggered_at:
+          type: string
+      required:
+      - id
+      - slo_id
+      - budget_id
+      - alert_type
+      - burn_rate
+      - status
+      - triggered_at
+    SloalertListItem:
       type: object
       properties:
         alert_type:
@@ -4589,26 +6610,76 @@ components:
       - burn_rate
       - status
       - triggered_at
-    SliListResponse:
+    SlobudgetGetItem:
       type: object
       properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/ListItem"
+        budget_consumed:
+          type: number
+        budget_remaining:
+          type: number
+        budget_total:
+          type: number
+        burn_rate:
+          type: number
+        status:
+          type: string
+        version:
+          type: integer
+        window_end:
+          type: string
+        window_start:
+          type: string
       required:
-      - items
-    SloListResponse:
+      - window_start
+      - window_end
+      - budget_total
+      - budget_consumed
+      - budget_remaining
+      - burn_rate
+      - status
+      - version
+    SlobudgetListItem:
       type: object
       properties:
-        items:
+        budget_consumed:
+          type: number
+        budget_remaining:
+          type: number
+        budget_total:
+          type: number
+        burn_rate:
+          type: number
+        status:
+          type: string
+        window_end:
+          type: string
+        window_start:
+          type: string
+      required:
+      - window_start
+      - window_end
+      - budget_total
+      - budget_consumed
+      - budget_remaining
+      - burn_rate
+      - status
+    Statement:
+      type: object
+      properties:
+        action:
           type: array
           items:
-            $ref: "#/components/schemas/ListItem"
+            type: string
+        effect:
+          type: string
+        resource:
+          type: array
+          items:
+            type: string
       required:
-      - items
-    Snapshot:
-      type: object
+      - effect
+      - action
+      - resource
     TenantCreateResult:
       type: object
       properties:
@@ -4671,136 +6742,256 @@ components:
       properties:
         created:
           type: boolean
-        created_at:
-          type: string
-          format: date-time
-        job_id:
-          type: integer
-          format: int64
-        run_id:
-          type: string
-        scheduled_at:
-          type: string
-          format: date-time
-        status:
-          type: string
-        tenant_id:
-          type: string
-      required:
-      - run_id
-      - job_id
-      - tenant_id
-      - status
-      - scheduled_at
-      - created_at
-      - created
-    UpdateJobRequest:
-      type: object
-      properties:
-        concurrency_policy:
-          type: string
-          enum:
-          - allow
-          - forbid
-          - replace
-          nullable: true
-        cron_expr:
-          type: string
-          nullable: true
-        handler_payload:
-          type: object
-          additionalProperties: true
-        handler_type:
-          type: string
-          enum:
-          - exec
-          - http
-          - webhook
-          - pg_notify
-          - container
-          nullable: true
-          maxLength: 32
-        misfire_policy:
-          type: string
-          enum:
-          - skip
-          - fire_now
-          - catch_up
-          nullable: true
         name:
           type: string
-          nullable: true
-          maxLength: 128
-        partition_key:
+        namespace:
           type: string
-          nullable: true
-          maxLength: 64
-        priority:
-          type: integer
-          nullable: true
-          minimum: 0
-        retry_backoff_sec:
-          type: integer
-          nullable: true
-          minimum: 0
-        retry_backoff_strategy:
+        occurrence_key:
           type: string
-          enum:
-          - fixed
-          - exponential
-          nullable: true
-        retry_limit:
-          type: integer
-          nullable: true
-          minimum: 0
-        timeout_sec:
-          type: integer
-          nullable: true
-          minimum: 1
-        timezone:
+        phase:
           type: string
-          nullable: true
-          maxLength: 64
-        trigger_type:
+        trigger:
           type: string
-          enum:
-          - cron
-          - manual
-          nullable: true
+      required:
+      - namespace
+      - name
+      - occurrence_key
+      - trigger
+      - phase
+      - created
+    VersionRequest:
+      type: object
+      properties:
         version:
           type: integer
           minimum: 1
       required:
       - version
-    UpdateResult:
+    WorkflowCancelResult:
       type: object
       properties:
+        name:
+          type: string
+        namespace:
+          type: string
+        occurrence_key:
+          type: string
+        phase:
+          type: string
+      required:
+      - namespace
+      - name
+      - occurrence_key
+      - phase
+    WorkflowConditionItem:
+      type: object
+      properties:
+        rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkflowRuleItem"
+        type:
+          type: string
+      required:
+      - type
+      - rules
+    WorkflowGetItem:
+      type: object
+      properties:
+        tasks:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkflowTaskItem"
+      required:
+      - tasks
+    WorkflowListItem:
+      type: object
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        fail_policy:
+          type: string
+        generation:
+          type: integer
+          format: int64
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        namespace:
+          type: string
+        schedule:
+          type: string
+        source_uid:
+          type: string
+        suspend:
+          type: boolean
+        task_count:
+          type: integer
+        timeout_seconds:
+          type: integer
+      required:
+      - id
+      - name
+      - namespace
+      - source_uid
+      - generation
+      - schedule
+      - suspend
+      - fail_policy
+      - timeout_seconds
+      - task_count
+      - created_at
+    WorkflowListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkflowListItem"
+      required:
+      - items
+    WorkflowRuleItem:
+      type: object
+      properties:
+        field:
+          type: string
+        number:
+          type: integer
+          format: int64
+          nullable: true
+        operator:
+          type: string
+        task:
+          type: string
+        values:
+          type: array
+          items:
+            type: string
+      required:
+      - task
+      - field
+      - operator
+    WorkflowRunGetItem:
+      type: object
+      properties:
+        steps:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkflowStepItem"
+      required:
+      - steps
+    WorkflowRunItem:
+      type: object
+      properties:
+        actor:
+          type: string
         created_at:
           type: string
           format: date-time
         id:
           type: integer
           format: int64
-        name:
+        occurrence_key:
           type: string
-        next_run_at:
+        phase:
           type: string
-          format: date-time
-          nullable: true
-        status:
-          type: string
-        tenant_id:
+        revision_id:
+          type: integer
+          format: int64
+        trigger:
           type: string
         updated_at:
           type: string
           format: date-time
-        version:
-          type: integer
+        workflow_source_uid:
+          type: string
       required:
       - id
-      - name
-      - tenant_id
-      - status
-      - version
+      - workflow_source_uid
+      - revision_id
+      - occurrence_key
+      - trigger
+      - actor
+      - phase
       - created_at
       - updated_at
+    WorkflowRunListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkflowRunItem"
+      required:
+      - items
+    WorkflowStepItem:
+      type: object
+      properties:
+        attempt:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        id:
+          type: integer
+          format: int64
+        occurrence_key:
+          type: string
+        phase:
+          type: string
+        source_uid:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+      required:
+      - id
+      - source_uid
+      - occurrence_key
+      - phase
+      - attempt
+      - created_at
+      - updated_at
+    WorkflowTaskItem:
+      type: object
+      properties:
+        condition:
+          $ref: "#/components/schemas/WorkflowConditionItem"
+          nullable: true
+        depends_on:
+          type: array
+          items:
+            type: string
+        job_ref:
+          type: string
+        name:
+          type: string
+      required:
+      - name
+      - job_ref
+      - depends_on
+    WorkflowTriggerResult:
+      type: object
+      properties:
+        created:
+          type: boolean
+        name:
+          type: string
+        namespace:
+          type: string
+        occurrence_key:
+          type: string
+        phase:
+          type: string
+        trigger:
+          type: string
+      required:
+      - namespace
+      - name
+      - occurrence_key
+      - trigger
+      - phase
+      - created

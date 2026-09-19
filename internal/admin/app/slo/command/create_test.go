@@ -25,7 +25,7 @@ type stubSLODeleter struct {
 	err    error
 }
 
-func (s *stubSLODeleter) Delete(_ context.Context, _ string, id int64, _ int) error {
+func (s *stubSLODeleter) Delete(_ context.Context, _, _ string, id int64, _ int) error {
 	s.lastID = id
 	return s.err
 }
@@ -36,7 +36,7 @@ type stubSLOStatusChanger struct {
 	err        error
 }
 
-func (s *stubSLOStatusChanger) ChangeStatus(_ context.Context, _ string, _ int64, _ int, status string) (slo.Snapshot, error) {
+func (s *stubSLOStatusChanger) ChangeStatus(_ context.Context, _, _ string, _ int64, _ int, status string) (slo.Snapshot, error) {
 	s.lastStatus = status
 	return s.out, s.err
 }

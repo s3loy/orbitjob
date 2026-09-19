@@ -8,7 +8,7 @@ import (
 
 // sloLister lists SLOs.
 type sloLister interface {
-	List(ctx context.Context, tenantID string, limit, offset int) ([]slo.Snapshot, int64, error)
+	List(ctx context.Context, tenantID, resourceGroupID string, limit, offset int) ([]slo.Snapshot, int64, error)
 }
 
 // ListSLOsUseCase handles SLO listing.
@@ -24,8 +24,11 @@ func NewListSLOsUseCase(repo sloLister) *ListSLOsUseCase {
 // ListInput contains the parameters for listing.
 type ListInput struct {
 	TenantID string
-	Limit    int
-	Offset   int
+	// ResourceGroupID narrows the result to one resource group when the caller's
+	// key is scoped to one. Empty means unscoped: the whole tenant.
+	ResourceGroupID string
+	Limit           int
+	Offset          int
 }
 
 // ListItem is a single item in the list.
@@ -60,7 +63,7 @@ func (uc *ListSLOsUseCase) List(ctx context.Context, in ListInput) (ListResult, 
 		in.Limit = 100
 	}
 
-	slos, total, err := uc.repo.List(ctx, in.TenantID, in.Limit, in.Offset)
+	slos, total, err := uc.repo.List(ctx, in.TenantID, in.ResourceGroupID, in.Limit, in.Offset)
 	if err != nil {
 		return ListResult{}, err
 	}

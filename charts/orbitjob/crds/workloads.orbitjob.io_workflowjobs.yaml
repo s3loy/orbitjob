@@ -1,0 +1,123 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: workflowjobs.workloads.orbitjob.io
+spec:
+  group: workloads.orbitjob.io
+  scope: Namespaced
+  names:
+    plural: workflowjobs
+    singular: workflowjob
+    kind: WorkflowJob
+    shortNames: [wj]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            spec:
+              type: object
+              required: [schedule, tasks]
+              properties:
+                schedule: {type: string, minLength: 1}
+                # Zero means the platform default rather than unlimited, matching
+                # the ScheduledJob history semantics.
+                history:
+                  type: object
+                  properties:
+                    successfulRuns: {type: integer, format: int32, minimum: 0}
+                    failedRuns: {type: integer, format: int32, minimum: 0}
+                suspend: {type: boolean}
+                # Workflow-level concurrency over open workflow runs. Replace is
+                # deliberately absent: replacing a DAG means cancel plus a new
+                # run, not a concurrency policy.
+                concurrencyPolicy: {type: string, enum: [Allow, Forbid]}
+                # Workflow-level wall-clock deadline in seconds, enforced by the
+                # operator's workflow walker. Honestly weaker than a task's own
+                # deadline (which Kubernetes enforces as activeDeadlineSeconds):
+                # an operator outage past the deadline goes unpunished. Zero
+                # means no workflow-level deadline.
+                timeoutSeconds: {type: integer, format: int32, minimum: 0}
+                # FailFast stops creating steps once a step fails terminally;
+                # in-flight steps are respected, not preempted. Continue lets
+                # creation proceed per dependsOn and conditions alone.
+                failPolicy: {type: string, enum: [FailFast, Continue]}
+                # Each task is a reference to an existing ScheduledJob definition
+                # in the same namespace, not an inline template: a task's image,
+                # timeout and retry budget stay owned by the definition it names,
+                # and a step run is indistinguishable from any other run of that
+                # definition. Semantic validation (unique names, resolvable
+                # dependencies, acyclic graph, conditions naming only declared
+                # dependencies, resolvable jobRef) happens at projection, in the
+                # operator's reconcile; an invalid spec earns a status condition
+                # and no active revision.
+                tasks:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [name, jobRef]
+                    properties:
+                      name: {type: string, minLength: 1, maxLength: 128}
+                      jobRef:
+                        type: object
+                        required: [name]
+                        properties:
+                          name: {type: string, minLength: 1}
+                      dependsOn:
+                        type: array
+                        items: {type: string, minLength: 1}
+                      # Evaluated once, when all dependsOn tasks are terminal. A
+                      # failed condition skips the task without creating any run;
+                      # the decision trail lives on the workflow run row.
+                      condition:
+                        type: object
+                        required: [type, rules]
+                        properties:
+                          type: {type: string, enum: [all, any]}
+                          rules:
+                            type: array
+                            minItems: 1
+                            items:
+                              type: object
+                              required: [task, field, operator]
+                              properties:
+                                # The upstream task whose ledger facts the rule
+                                # reads; must be in the owning task's dependsOn.
+                                task: {type: string, minLength: 1}
+                                # The closed field grammar: only what the run
+                                # ledger can answer. Exit codes and outputs are
+                                # deliberately absent.
+                                field: {type: string, enum: [phase, attempts, duration_ms]}
+                                # String operators compare phase names; numeric
+                                # operators compare attempt counts and durations.
+                                operator: {type: string, enum: [eq, ne, in, not_in, lt, le, gt, ge]}
+                                # Comparands of eq/ne (exactly one) and
+                                # in/not_in (one or more).
+                                values:
+                                  type: array
+                                  items: {type: string}
+                                # Comparand of lt/le/gt/ge.
+                                number: {type: integer, format: int64}
+            status:
+              type: object
+              properties:
+                observedGeneration: {type: integer, format: int64}
+                activeRevision: {type: integer, format: int64}
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    required: [type, status]
+                    properties:
+                      type: {type: string}
+                      status: {type: string, enum: ["True", "False", Unknown]}
+                      reason: {type: string}
+                      message: {type: string}
+                lastScheduleTime: {type: string, format: date-time}
+                lastSuccessfulTime: {type: string, format: date-time}
+      subresources: {status: {}}

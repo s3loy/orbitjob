@@ -9,8 +9,30 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
+
+// credentialPatterns match the credential carriers of the two DSN forms
+// lib/pq accepts: the URL form (postgres://user:password@host/db) and the
+// keyword form (host=... password=...).
+var credentialPatterns = []struct {
+	pattern *regexp.Regexp
+	mask    string
+}{
+	{regexp.MustCompile(`://[^/@\s]+@`), "://***@"},
+	{regexp.MustCompile(`(?i)\bpassword\s*=\s*\S+`), "password=***"},
+}
+
+// redactDSN strips credentials from a value before it reaches a log line or a
+// test failure message. net/url and the driver quote the connection string they
+// were given, so an error about a DSN is a DSN.
+func redactDSN(value string) string {
+	for _, credential := range credentialPatterns {
+		value = credential.pattern.ReplaceAllString(value, credential.mask)
+	}
+	return value
+}
 
 func packageDSN(baseDSN string) (string, string, error) {
 	wd, err := os.Getwd()

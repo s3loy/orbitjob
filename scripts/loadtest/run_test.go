@@ -29,7 +29,7 @@ func TestBurstEventsFitSubmitWindow(t *testing.T) {
 	schedule := BuildPhaseSchedule(cfg, nil)
 	var first, last time.Duration
 	for _, event := range schedule.Events {
-		if event.Phase != "peak" || event.IdempotencyKey[:11] != "v020-burst-" {
+		if event.Phase != "peak" || event.IdempotencyKey[:6] != "burst-" {
 			continue
 		}
 		if first == 0 || event.At < first {
@@ -67,8 +67,8 @@ func TestBuildPhaseScheduleCyclesDefinitions(t *testing.T) {
 		},
 	}
 	cases := []CreatedDefinition{
-		{CaseID: "a", JobID: 1, Tenant: "t1"},
-		{CaseID: "b", JobID: 2, Tenant: "t2"},
+		{CaseID: "a", RevisionID: 1, Tenant: "t1"},
+		{CaseID: "b", RevisionID: 2, Tenant: "t2"},
 	}
 	schedule := BuildPhaseSchedule(cfg, cases)
 	if len(schedule.Events) != 5 {
@@ -77,8 +77,8 @@ func TestBuildPhaseScheduleCyclesDefinitions(t *testing.T) {
 	want := []int64{1, 2, 1, 2, 1}
 	seen := map[string]bool{}
 	for i, ev := range schedule.Events {
-		if ev.JobID != want[i] {
-			t.Fatalf("event %d jobID = %d, want %d", i, ev.JobID, want[i])
+		if ev.RevisionID != want[i] {
+			t.Fatalf("event %d revisionID = %d, want %d", i, ev.RevisionID, want[i])
 		}
 		if seen[ev.IdempotencyKey] {
 			t.Fatalf("duplicate idempotency key %s", ev.IdempotencyKey)
@@ -111,8 +111,8 @@ func TestRunEngineCountsSkippedWhenAtCapacity(t *testing.T) {
 	defer srv.Close()
 
 	schedule := PhaseSchedule{Events: []TriggerEvent{
-		{At: 0, JobID: 1, Tenant: "t1", Phase: "p", IdempotencyKey: "k1"},
-		{At: 0, JobID: 2, Tenant: "t1", Phase: "p", IdempotencyKey: "k2"},
+		{At: 0, RevisionID: 1, Tenant: "t1", Phase: "p", IdempotencyKey: "k1"},
+		{At: 0, RevisionID: 2, Tenant: "t1", Phase: "p", IdempotencyKey: "k2"},
 	}}
 	engine := NewRunEngine(map[string]*APIClient{"t1": NewAPIClient(srv.URL, "k")}, schedule, map[string]int{"p": 1})
 	start := time.Now()
@@ -152,9 +152,9 @@ func TestRunEngineClassifiesRejections(t *testing.T) {
 	defer srv.Close()
 
 	schedule := PhaseSchedule{Events: []TriggerEvent{
-		{At: 0, JobID: 1, Tenant: "t1", Phase: "p", IdempotencyKey: "k1"},
-		{At: 0, JobID: 1, Tenant: "t1", Phase: "p", IdempotencyKey: "k2"},
-		{At: 0, JobID: 0, Tenant: "t1", Phase: "p", IdempotencyKey: "k3"}, // placeholder: no client call
+		{At: 0, RevisionID: 1, Tenant: "t1", Phase: "p", IdempotencyKey: "k1"},
+		{At: 0, RevisionID: 1, Tenant: "t1", Phase: "p", IdempotencyKey: "k2"},
+		{At: 0, RevisionID: 0, Tenant: "t1", Phase: "p", IdempotencyKey: "k3"}, // placeholder: no client call
 	}}
 	engine := NewRunEngine(map[string]*APIClient{"t1": NewAPIClient(srv.URL, "k")}, schedule, map[string]int{})
 	start := time.Now()
@@ -187,7 +187,7 @@ func TestBuildPhaseScheduleKeepsBurstInTimeOrder(t *testing.T) {
 		},
 		Burst: BurstConfig{Phase: "peak", Offset: time.Minute, Count: 3, SubmitWithin: time.Minute},
 	}
-	cases := []CreatedDefinition{{CaseID: "a", JobID: 1, Tenant: "t1"}}
+	cases := []CreatedDefinition{{CaseID: "a", RevisionID: 1, Tenant: "t1"}}
 
 	schedule := BuildPhaseSchedule(cfg, cases)
 
@@ -198,7 +198,7 @@ func TestBuildPhaseScheduleKeepsBurstInTimeOrder(t *testing.T) {
 			t.Fatalf("event %d at %s precedes previous at %s", i, ev.At, prev)
 		}
 		prev = ev.At
-		if strings.HasPrefix(ev.IdempotencyKey, "v020-burst-") {
+		if strings.HasPrefix(ev.IdempotencyKey, "burst-") {
 			burstSeen++
 			want := 10*time.Minute + time.Minute
 			if ev.At < want || ev.At >= want+time.Minute {
@@ -208,5 +208,40 @@ func TestBuildPhaseScheduleKeepsBurstInTimeOrder(t *testing.T) {
 	}
 	if burstSeen != 3 {
 		t.Fatalf("burst events = %d, want 3", burstSeen)
+	}
+}
+
+// A scenario that needs the generator to act has to be reachable by it. These
+// definitions sat past index 600 while a 30-minute run emits about 500 events,
+// so they were never triggered and their instances arrived from cron instead --
+// which the generator cannot cancel.
+func TestRequireGeneratorFirstMovesCancelScenariosToTheFront(t *testing.T) {
+	cases := []CreatedDefinition{
+		{CaseID: "a"},
+		{CaseID: "b"},
+		{CaseID: "cancel-1", ExpectedTerminalState: terminalStateCanceled},
+		{CaseID: "c"},
+		{CaseID: "cancel-2", ExpectedTerminalState: terminalStateCanceled},
+	}
+
+	got := requireGeneratorFirst(cases)
+	if got[0].CaseID != "cancel-1" || got[1].CaseID != "cancel-2" {
+		t.Fatalf("cancel scenarios not first: %v", got)
+	}
+	if len(got) != len(cases) {
+		t.Fatalf("definitions lost: got %d, want %d", len(got), len(cases))
+	}
+	// The rest keep their relative order; the schedule's distribution depends
+	// on it.
+	if got[2].CaseID != "a" || got[3].CaseID != "b" || got[4].CaseID != "c" {
+		t.Fatalf("remaining order changed: %v", got)
+	}
+}
+
+func TestRequireGeneratorFirstLeavesOrdinaryDefinitionsAlone(t *testing.T) {
+	cases := []CreatedDefinition{{CaseID: "a"}, {CaseID: "b"}}
+	got := requireGeneratorFirst(cases)
+	if got[0].CaseID != "a" || got[1].CaseID != "b" {
+		t.Fatalf("order changed: %v", got)
 	}
 }

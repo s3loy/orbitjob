@@ -14,7 +14,7 @@ type stubSLOReader struct {
 	err error
 }
 
-func (s *stubSLOReader) Get(_ context.Context, _ string, _ int64) (slo.Snapshot, error) {
+func (s *stubSLOReader) Get(_ context.Context, _, _ string, _ int64) (slo.Snapshot, error) {
 	return s.out, s.err
 }
 
@@ -34,7 +34,7 @@ type stubSLOLister struct {
 	err       error
 }
 
-func (s *stubSLOLister) List(_ context.Context, _ string, limit, _ int) ([]slo.Snapshot, int64, error) {
+func (s *stubSLOLister) List(_ context.Context, _, _ string, limit, _ int) ([]slo.Snapshot, int64, error) {
 	s.lastLimit = limit
 	return s.items, s.total, s.err
 }
@@ -50,7 +50,7 @@ func TestGetSLO_WithBudget(t *testing.T) {
 	}}
 	uc := NewGetSLOUseCase(sloRepo, budgetRepo)
 
-	result, err := uc.Get(context.Background(), "t1", 1)
+	result, err := uc.Get(context.Background(), "t1", "", 1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestGetSLO_NoBudgetOnBudgetError(t *testing.T) {
 	budgetRepo := &stubBudgetReader{err: errors.New("no budget yet")}
 	uc := NewGetSLOUseCase(sloRepo, budgetRepo)
 
-	result, err := uc.Get(context.Background(), "t1", 1)
+	result, err := uc.Get(context.Background(), "t1", "", 1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestGetSLO_SLOError(t *testing.T) {
 	sloRepo := &stubSLOReader{err: errors.New("not found")}
 	uc := NewGetSLOUseCase(sloRepo, &stubBudgetReader{})
 
-	_, err := uc.Get(context.Background(), "t1", 1)
+	_, err := uc.Get(context.Background(), "t1", "", 1)
 	if err == nil {
 		t.Fatal("expected error from SLO repo")
 	}

@@ -9,7 +9,6 @@ import (
 	"github.com/go-playground/validator/v10"
 
 	"orbitjob/internal/admin/http/apperror"
-	domainjob "orbitjob/internal/core/domain/job"
 	"orbitjob/internal/domain/resource"
 	"orbitjob/internal/domain/validation"
 )
@@ -96,20 +95,6 @@ func TestToAPIError_ConflictFallbackMessage(t *testing.T) {
 	}
 	if got.Field != "job" {
 		t.Fatalf("expected field to fall back to Resource=%q, got %q", "job", got.Field)
-	}
-}
-
-func TestToAPIError_QuotaExceeded(t *testing.T) {
-	got := toAPIError(domainjob.NewQuotaExceededError("max_jobs", 10))
-
-	if got.Code != apperror.CodeQuotaExhausted {
-		t.Fatalf("expected code=%q, got %q", apperror.CodeQuotaExhausted, got.Code)
-	}
-	if got.Message != "quota exhausted" {
-		t.Fatalf("expected message=%q, got %q", "quota exhausted", got.Message)
-	}
-	if got.Field != "max_jobs" {
-		t.Fatalf("expected field=%q, got %q", "max_jobs", got.Field)
 	}
 }
 

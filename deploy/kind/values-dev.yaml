@@ -1,0 +1,18 @@
+# Values for the long-lived orbitjob-dev kind cluster (scripts/quickstart.sh,
+# make kind-up / kind-db / docker-build / kind-load).
+#
+# Images come from `make docker-build TAG=dev` + `make kind-load TAG=dev`,
+# which publish ghcr.io/s3loy/orbitjob-*:dev -- the chart's default registry,
+# so no registry override lives here. deploy/kind/values-local.yaml is a
+# different file: it serves deploy/kind/verify-install.sh, which builds bare
+# image names and therefore clears the registry.
+global:
+  imageTag: dev
+  imagePullPolicy: Never
+operator:
+  # The bootstrap tenant owns the default namespace. Captured verbatim from the
+  # pre-upgrade release state (helm get values orbitjob -n orbitjob-system and
+  # the live OPERATOR_NAMESPACE_TENANTS env) when the cluster converged to the
+  # single-baseline chart on 2026-09-18. A comma-separated mapping must be
+  # changed here or with -f, never with --set.
+  namespaceTenants: default=00000000000000000000000001

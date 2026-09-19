@@ -6,7 +6,7 @@ import (
 )
 
 func TestImageLockRequiresTagAndDigests(t *testing.T) {
-	lock := ImageLock{SchemaVersion: "v020-images/v1", Images: []LockedImage{{
+	lock := ImageLock{Images: []LockedImage{{
 		Name: "python", Repository: "docker.io/library/python", Tag: "3.14-alpine", Purpose: []string{"json"},
 	}}}
 	err := ValidateImageLock(lock)

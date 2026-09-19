@@ -11,8 +11,7 @@ import (
 var digestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 type ImageLock struct {
-	SchemaVersion string        `yaml:"schema_version"`
-	Images        []LockedImage `yaml:"images"`
+	Images []LockedImage `yaml:"images"`
 }
 
 type LockedImage struct {
@@ -40,9 +39,6 @@ func LoadImageLock(path string) (ImageLock, error) {
 }
 
 func ValidateImageLock(lock ImageLock) error {
-	if lock.SchemaVersion != "v020-images/v1" {
-		return fmt.Errorf("image lock schema_version must be v020-images/v1")
-	}
 	seen := map[string]bool{}
 	allowed := map[string]bool{
 		"docker.io/library/python": true, "docker.io/library/postgres": true,

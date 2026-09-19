@@ -36,7 +36,7 @@ func TestEnsureDefault_FirstRun(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("orbitjob_bootstrap_default").
-		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus, DefaultAPIKeyID, sqlmock.AnyArg(), DefaultAPIKey[:12], defaultAPIKeyPermissions).
+		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus, DefaultAPIKeyID, sqlmock.AnyArg(), DefaultAPIKey[:12]).
 		WillReturnRows(sqlmock.NewRows([]string{"tenant_created", "key_created"}).AddRow(true, true))
 	mock.ExpectCommit()
 
@@ -67,7 +67,7 @@ func TestEnsureDefault_TenantExistsKeyNew(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("orbitjob_bootstrap_default").
-		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus, DefaultAPIKeyID, sqlmock.AnyArg(), DefaultAPIKey[:12], defaultAPIKeyPermissions).
+		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus, DefaultAPIKeyID, sqlmock.AnyArg(), DefaultAPIKey[:12]).
 		WillReturnRows(sqlmock.NewRows([]string{"tenant_created", "key_created"}).AddRow(false, true))
 	mock.ExpectCommit()
 
@@ -95,7 +95,7 @@ func TestEnsureDefault_BothExist(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("orbitjob_bootstrap_default").
-		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus, DefaultAPIKeyID, sqlmock.AnyArg(), DefaultAPIKey[:12], defaultAPIKeyPermissions).
+		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus, DefaultAPIKeyID, sqlmock.AnyArg(), DefaultAPIKey[:12]).
 		WillReturnRows(sqlmock.NewRows([]string{"tenant_created", "key_created"}).AddRow(false, false))
 	mock.ExpectCommit()
 
@@ -121,7 +121,7 @@ func TestEnsureDefault_CustomKey(t *testing.T) {
 	customKey := "otj_customkey_42"
 	mock.ExpectBegin()
 	mock.ExpectQuery("orbitjob_bootstrap_default").
-		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus, DefaultAPIKeyID, sqlmock.AnyArg(), customKey[:12], defaultAPIKeyPermissions).
+		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus, DefaultAPIKeyID, sqlmock.AnyArg(), customKey[:12]).
 		WillReturnRows(sqlmock.NewRows([]string{"tenant_created", "key_created"}).AddRow(true, true))
 	mock.ExpectCommit()
 
@@ -209,7 +209,7 @@ func TestEnsureDefault_QueryError(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("orbitjob_bootstrap_default").
-		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus, DefaultAPIKeyID, sqlmock.AnyArg(), DefaultAPIKey[:12], defaultAPIKeyPermissions).
+		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus, DefaultAPIKeyID, sqlmock.AnyArg(), DefaultAPIKey[:12]).
 		WillReturnError(errors.New("bootstrap function failed"))
 	mock.ExpectRollback()
 
@@ -231,7 +231,7 @@ func TestEnsureDefault_CommitError(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("orbitjob_bootstrap_default").
-		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus, DefaultAPIKeyID, sqlmock.AnyArg(), DefaultAPIKey[:12], defaultAPIKeyPermissions).
+		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus, DefaultAPIKeyID, sqlmock.AnyArg(), DefaultAPIKey[:12]).
 		WillReturnRows(sqlmock.NewRows([]string{"tenant_created", "key_created"}).AddRow(true, true))
 	mock.ExpectCommit().WillReturnError(errors.New("commit failed"))
 
@@ -284,7 +284,7 @@ func TestEnsureDefault_WritesSecretWhenKeyCreated(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("orbitjob_bootstrap_default").
-		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus, DefaultAPIKeyID, sqlmock.AnyArg(), DefaultAPIKey[:12], defaultAPIKeyPermissions).
+		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus, DefaultAPIKeyID, sqlmock.AnyArg(), DefaultAPIKey[:12]).
 		WillReturnRows(sqlmock.NewRows([]string{"tenant_created", "key_created"}).AddRow(true, true))
 	mock.ExpectCommit()
 
@@ -319,7 +319,7 @@ func TestEnsureDefault_SkipsSecretWhenKeyExists(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("orbitjob_bootstrap_default").
-		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus, DefaultAPIKeyID, sqlmock.AnyArg(), DefaultAPIKey[:12], defaultAPIKeyPermissions).
+		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus, DefaultAPIKeyID, sqlmock.AnyArg(), DefaultAPIKey[:12]).
 		WillReturnRows(sqlmock.NewRows([]string{"tenant_created", "key_created"}).AddRow(true, false))
 	mock.ExpectCommit()
 
@@ -348,7 +348,7 @@ func TestEnsureDefault_WriterError(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("orbitjob_bootstrap_default").
-		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus, DefaultAPIKeyID, sqlmock.AnyArg(), DefaultAPIKey[:12], defaultAPIKeyPermissions).
+		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus, DefaultAPIKeyID, sqlmock.AnyArg(), DefaultAPIKey[:12]).
 		WillReturnRows(sqlmock.NewRows([]string{"tenant_created", "key_created"}).AddRow(true, true))
 	mock.ExpectCommit()
 

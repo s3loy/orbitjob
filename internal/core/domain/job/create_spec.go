@@ -4,8 +4,11 @@ import "time"
 
 // CreateSpec is the normalized result persisted by the write-side repository.
 type CreateSpec struct {
-	Name                 string
-	TenantID             string
+	Name     string
+	TenantID string
+	// ResourceGroupID is the isolation group this job belongs to, taken from
+	// the creating key's own scope. Empty means ungrouped.
+	ResourceGroupID      string
 	Priority             int
 	PartitionKey         *string
 	TriggerType          string

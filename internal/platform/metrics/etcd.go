@@ -1,3 +1,10 @@
+//go:build etcd
+
+// Every symbol here is referenced only from code behind //go:build etcd
+// (internal/platform/election). Without the tag on this file the metrics are
+// registered in every shipped binary and never incremented, because the only
+// writers are compiled out. The tag keeps the series out of the default build
+// and alive for `make bench-etcd`.
 package metrics
 
 import (
@@ -31,25 +38,4 @@ var (
 		Name: "orbitjob_etcd_operation_errors_total",
 		Help: "Total etcd operation errors.",
 	}, []string{"operation"})
-
-	// EtcdRegisterDuration tracks service registration latency.
-	EtcdRegisterDuration = promauto.NewHistogram(prometheus.HistogramOpts{
-		Name:    "orbitjob_etcd_register_duration_seconds",
-		Help:    "Service registration latency in seconds.",
-		Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1},
-	})
-
-	// EtcdDeregisterDuration tracks service deregistration latency.
-	EtcdDeregisterDuration = promauto.NewHistogram(prometheus.HistogramOpts{
-		Name:    "orbitjob_etcd_deregister_duration_seconds",
-		Help:    "Service deregistration latency in seconds.",
-		Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1},
-	})
-
-	// EtcdListInstancesDuration tracks service discovery list latency.
-	EtcdListInstancesDuration = promauto.NewHistogram(prometheus.HistogramOpts{
-		Name:    "orbitjob_etcd_list_instances_duration_seconds",
-		Help:    "Service discovery list latency in seconds.",
-		Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1},
-	})
 )

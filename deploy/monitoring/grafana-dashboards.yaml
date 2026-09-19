@@ -1,197 +1,661 @@
+# The "OrbitJob / Run Ledger" Grafana dashboard, provisioned through the
+# kube-prometheus-stack Grafana sidecar: the grafana_dashboard="1" label is
+# what makes the sidecar pick this ConfigMap up and load it, in any namespace.
+# Replaces the retired loadtest-era "OrbitJob Soak" dashboard, whose queries
+# referenced seven metric names with no producer after the dispatcher/worker
+# refactor.
+#
+# Implements the 17-panel spec in docs/superpowers/plans/observability-design.md
+# section 6 (compound spec rows are split into adjacent sub-panels). Query
+# discipline follows the shared-registry caveat in that document: counters are
+# summed across targets, gauges that can appear on several processes are pinned
+# to the producing job, and jobrun_phase uses value==1 for "currently in this
+# phase" because the StateSet keeps one series per known phase.
+#
+# Panels only render data where producers exist: the PostgreSQL panels stay
+# empty until deploy/monitoring/postgres-exporter.yaml is applied, and the
+# SLO/check panels stay empty until the corresponding features run.
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: orbitjob-dashboards
+  name: orbitjob-run-ledger-dashboard
   namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+    app.kubernetes.io/part-of: orbitjob-observability
 data:
-  orbitjob.json: |
+  orbitjob-run-ledger.json: |
     {
-      "title": "OrbitJob Soak",
-      "uid": "orbitjob-soak",
+      "uid": "orbitjob-run-ledger",
+      "title": "OrbitJob / Run Ledger",
+      "description": "Runs, control plane, infrastructure, and datastore for OrbitJob. Phase census via kube-state-metrics Custom Resource State Metrics; process health via the three orbitjob_* scrape targets.",
+      "tags": ["orbitjob", "run-ledger"],
+      "timezone": "browser",
       "schemaVersion": 39,
       "version": 1,
-      "refresh": "15s",
-      "time": {"from": "now-9h", "to": "now"},
-      "timezone": "browser",
+      "editable": true,
+      "refresh": "30s",
+      "time": { "from": "now-6h", "to": "now" },
+      "templating": {
+        "list": [
+          {
+            "name": "namespace",
+            "label": "Namespace",
+            "type": "custom",
+            "multi": true,
+            "includeAll": true,
+            "allValue": "orbitjob-.*",
+            "current": { "selected": true, "text": "All", "value": "$__all" },
+            "options": [
+              { "selected": true, "text": "All", "value": "$__all" },
+              { "selected": false, "text": "orbitjob-system", "value": "orbitjob-system" },
+              { "selected": false, "text": "orbitjob", "value": "orbitjob" },
+              { "selected": false, "text": "orbitjob-tasks", "value": "orbitjob-tasks" }
+            ]
+          },
+          {
+            "name": "tenant_id",
+            "label": "Tenant",
+            "type": "query",
+            "multi": true,
+            "includeAll": true,
+            "allValue": ".*",
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "query": "label_values(orbitjob_trigger_latency_seconds, tenant_id)",
+            "current": { "selected": true, "text": "All", "value": "$__all" }
+          }
+        ]
+      },
       "panels": [
-        {"id": 100, "type": "row", "title": "Overview", "gridPos": {"x": 0, "y": 0, "w": 24, "h": 1}, "collapsed": false, "panels": []},
-        {"id": 1, "type": "stat", "title": "Components up", "gridPos": {"x": 0, "y": 1, "w": 7, "h": 4},
-          "targets": [{"refId": "A", "expr": "up{job=~\"orbitjob-.*|cadvisor\"}", "legendFormat": "{{job}}"}],
-          "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}, "mappings": []}, "overrides": []},
-          "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "horizontal", "textMode": "value_and_name", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}},
-        {"id": 2, "type": "stat", "title": "Execute rate", "gridPos": {"x": 7, "y": 1, "w": 4, "h": 4},
-          "targets": [{"refId": "A", "expr": "sum(rate(orbitjob_executions_total[5m]))"}],
-          "fieldConfig": {"defaults": {"unit": "ops", "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}}, "overrides": []},
-          "options": {"colorMode": "background", "graphMode": "area", "textMode": "value", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}},
-        {"id": 3, "type": "stat", "title": "Trigger latency p99", "gridPos": {"x": 11, "y": 1, "w": 4, "h": 4},
-          "targets": [{"refId": "A", "expr": "histogram_quantile(0.99, sum by (le) (rate(orbitjob_trigger_latency_seconds_bucket[5m]))) or vector(0)"}],
-          "fieldConfig": {"defaults": {"unit": "s", "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.5}, {"color": "red", "value": 1}]}}, "overrides": []},
-          "options": {"colorMode": "background", "graphMode": "area", "textMode": "value", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}},
-        {"id": 4, "type": "stat", "title": "RateLimit hits / 5m", "gridPos": {"x": 15, "y": 1, "w": 4, "h": 4},
-          "targets": [{"refId": "A", "expr": "sum(increase(orbitjob_ratelimit_hits_total[5m])) or vector(0)"}],
-          "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
-          "options": {"colorMode": "background", "graphMode": "area", "textMode": "value", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}},
-        {"id": 5, "type": "stat", "title": "Worker pool rejected / 5m", "gridPos": {"x": 19, "y": 1, "w": 5, "h": 4},
-          "targets": [{"refId": "A", "expr": "sum(increase(orbitjob_worker_pool_rejected_total[5m])) or vector(0)"}],
-          "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
-          "options": {"colorMode": "background", "graphMode": "area", "textMode": "value", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}},
-
-        {"id": 101, "type": "row", "title": "Soak Progress", "gridPos": {"x": 0, "y": 5, "w": 24, "h": 1}, "collapsed": false, "panels": []},
-        {"id": 6, "type": "stat", "title": "Instances by status", "gridPos": {"x": 0, "y": 6, "w": 6, "h": 6},
-          "targets": [{"refId": "A", "expr": "sum by (status) (increase(orbitjob_instances_total[$__range]))", "legendFormat": "{{status}}"}],
-          "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "color": {"mode": "fixed"}}, "overrides": [
-            {"matcher": {"id": "byName", "options": "success"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}]},
-            {"matcher": {"id": "byName", "options": "failed"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]},
-            {"matcher": {"id": "byName", "options": "running"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "yellow"}}]},
-            {"matcher": {"id": "byName", "options": "pending"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "blue"}}]},
-            {"matcher": {"id": "byName", "options": "dispatched"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "purple"}}]}
-          ]},
-          "options": {"colorMode": "background", "graphMode": "none", "orientation": "horizontal", "textMode": "value_and_name", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}},
-        {"id": 7, "type": "timeseries", "title": "Instance transitions /s", "gridPos": {"x": 6, "y": 6, "w": 9, "h": 6},
-          "targets": [{"refId": "A", "expr": "sum by (status) (rate(orbitjob_instances_total[5m]))", "legendFormat": "{{status}}"}],
-          "fieldConfig": {"defaults": {"unit": "ops", "min": 0, "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never"}}, "overrides": [
-            {"matcher": {"id": "byName", "options": "success"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}]},
-            {"matcher": {"id": "byName", "options": "failed"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]}
-          ]},
-          "options": {"legend": {"displayMode": "table", "placement": "right"}, "tooltip": {"mode": "multi"}}},
-        {"id": 8, "type": "timeseries", "title": "Executions by result /s", "gridPos": {"x": 15, "y": 6, "w": 9, "h": 6},
-          "targets": [{"refId": "A", "expr": "sum by (result) (rate(orbitjob_executions_total[5m]))", "legendFormat": "{{result}}"}],
-          "fieldConfig": {"defaults": {"unit": "ops", "min": 0, "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never"}}, "overrides": [
-            {"matcher": {"id": "byName", "options": "completed"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}]},
-            {"matcher": {"id": "byName", "options": "failed"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]},
-            {"matcher": {"id": "byName", "options": "timeout"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "orange"}}]}
-          ]},
-          "options": {"legend": {"displayMode": "table", "placement": "right"}, "tooltip": {"mode": "multi"}}},
-
-        {"id": 102, "type": "row", "title": "Admin API", "gridPos": {"x": 0, "y": 12, "w": 24, "h": 1}, "collapsed": false, "panels": []},
-        {"id": 9, "type": "timeseries", "title": "Trigger latency quantiles", "gridPos": {"x": 0, "y": 13, "w": 12, "h": 7},
+        {
+          "id": 1,
+          "title": "Runs by phase",
+          "description": "Current census of every JobRun custom resource by phase (CRSM StateSet; value 1 = currently in that phase).",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
           "targets": [
-            {"refId": "A", "expr": "histogram_quantile(0.99, sum by (le) (rate(orbitjob_trigger_latency_seconds_bucket[5m])))", "legendFormat": "p99"},
-            {"refId": "B", "expr": "histogram_quantile(0.95, sum by (le) (rate(orbitjob_trigger_latency_seconds_bucket[5m])))", "legendFormat": "p95"},
-            {"refId": "C", "expr": "histogram_quantile(0.50, sum by (le) (rate(orbitjob_trigger_latency_seconds_bucket[5m])))", "legendFormat": "p50"}
+            {
+              "expr": "sum by (phase) (jobrun_phase{namespace=~\"$namespace\"} == 1)",
+              "legendFormat": "{{phase}}",
+              "refId": "A"
+            }
           ],
-          "fieldConfig": {"defaults": {"unit": "s", "min": 0, "custom": {"drawStyle": "line", "fillOpacity": 8, "lineWidth": 2, "showPoints": "never"}}, "overrides": [
-            {"matcher": {"id": "byName", "options": "p99"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]},
-            {"matcher": {"id": "byName", "options": "p95"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "yellow"}}]},
-            {"matcher": {"id": "byName", "options": "p50"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}]}
-          ]},
-          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}},
-        {"id": 10, "type": "timeseries", "title": "RateLimit hits /s", "gridPos": {"x": 12, "y": 13, "w": 6, "h": 7},
-          "targets": [{"refId": "A", "expr": "sum by (endpoint_group) (rate(orbitjob_ratelimit_hits_total[5m])) or vector(0)", "legendFormat": "{{endpoint_group}}"}],
-          "fieldConfig": {"defaults": {"unit": "ops", "min": 0, "custom": {"drawStyle": "line", "fillOpacity": 20, "lineWidth": 2, "showPoints": "never"}, "color": {"mode": "fixed", "fixedColor": "red"}}, "overrides": []},
-          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}},
-        {"id": 11, "type": "timeseries", "title": "RateLimit passed /s", "gridPos": {"x": 18, "y": 13, "w": 6, "h": 7},
-          "targets": [{"refId": "A", "expr": "sum by (endpoint_group) (rate(orbitjob_ratelimit_passed_total[5m]))", "legendFormat": "{{endpoint_group}}"}],
-          "fieldConfig": {"defaults": {"unit": "ops", "min": 0, "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never"}}, "overrides": []},
-          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}},
-        {"id": 103, "type": "row", "title": "Scheduler", "gridPos": {"x": 0, "y": 20, "w": 24, "h": 1}, "collapsed": false, "panels": []},
-        {"id": 12, "type": "timeseries", "title": "Queue depth", "gridPos": {"x": 0, "y": 21, "w": 6, "h": 7},
-          "targets": [{"refId": "A", "expr": "orbitjob_scheduler_queue_depth{job=\"orbitjob-scheduler\"}", "legendFormat": "depth"}],
-          "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "min": 0, "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 10}, {"color": "red", "value": 50}]}}, "overrides": []},
-          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}},
-        {"id": 13, "type": "timeseries", "title": "Tick duration p99", "gridPos": {"x": 6, "y": 21, "w": 6, "h": 7},
-          "targets": [{"refId": "A", "expr": "histogram_quantile(0.99, sum by (le) (rate(orbitjob_scheduler_tick_duration_seconds_bucket{job=\"orbitjob-scheduler\"}[5m])))", "legendFormat": "p99"}],
-          "fieldConfig": {"defaults": {"unit": "s", "min": 0, "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never"}}, "overrides": []},
-          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}},
-        {"id": 14, "type": "timeseries", "title": "Instances created /s", "gridPos": {"x": 12, "y": 21, "w": 6, "h": 7},
-          "targets": [{"refId": "A", "expr": "sum(rate(orbitjob_scheduler_instances_created_total{job=\"orbitjob-scheduler\"}[5m]))", "legendFormat": "created"}],
-          "fieldConfig": {"defaults": {"unit": "ops", "min": 0, "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never"}}, "overrides": []},
-          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}},
-        {"id": 15, "type": "stat", "title": "Cron errors / Breaker transitions", "gridPos": {"x": 18, "y": 21, "w": 6, "h": 7},
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 20, "stacking": { "mode": "normal" } },
+              "unit": "short",
+              "min": 0
+            },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+        },
+        {
+          "id": 2,
+          "title": "Run throughput by trigger",
+          "description": "Creation rate of new runs by why they exist: Schedule, Manual, or Retry. Today's substitute for schedule adherence (no schedule-fire metric exists).",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
           "targets": [
-            {"refId": "A", "expr": "orbitjob_scheduler_cron_errors_total{job=\"orbitjob-scheduler\"} or vector(0)", "legendFormat": "cron errors"},
-            {"refId": "B", "expr": "orbitjob_scheduler_breaker_transitions_total{job=\"orbitjob-scheduler\"} or vector(0)", "legendFormat": "breaker transitions"}
+            {
+              "expr": "sum by (trigger) (rate(jobrun_info{namespace=~\"$namespace\"}[10m]))",
+              "legendFormat": "{{trigger}}",
+              "refId": "A"
+            }
           ],
-          "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
-          "options": {"colorMode": "background", "graphMode": "area", "orientation": "horizontal", "textMode": "value_and_name", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}},
-
-        {"id": 104, "type": "row", "title": "Dispatcher", "gridPos": {"x": 0, "y": 28, "w": 24, "h": 1}, "collapsed": false, "panels": []},
-        {"id": 16, "type": "timeseries", "title": "Queue depth by tenant", "gridPos": {"x": 0, "y": 29, "w": 8, "h": 7},
-          "targets": [{"refId": "A", "expr": "sum by (tenant_id) (orbitjob_dispatcher_queue_depth)", "legendFormat": "{{tenant_id}}"}],
-          "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "min": 0, "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never"}}, "overrides": []},
-          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}},
-        {"id": 17, "type": "timeseries", "title": "Dispatch actions /s", "gridPos": {"x": 8, "y": 29, "w": 8, "h": 7},
-          "targets": [{"refId": "A", "expr": "sum by (action) (rate(orbitjob_dispatcher_dispatch_total[5m]))", "legendFormat": "{{action}}"}],
-          "fieldConfig": {"defaults": {"unit": "ops", "min": 0, "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never"}}, "overrides": []},
-          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}},
-        {"id": 18, "type": "timeseries", "title": "Tick duration p99", "gridPos": {"x": 16, "y": 29, "w": 8, "h": 7},
-          "targets": [{"refId": "A", "expr": "histogram_quantile(0.99, sum by (le) (rate(orbitjob_dispatcher_tick_duration_seconds_bucket[5m])))", "legendFormat": "p99"}],
-          "fieldConfig": {"defaults": {"unit": "s", "min": 0, "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never"}}, "overrides": []},
-          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}},
-
-        {"id": 105, "type": "row", "title": "Worker", "gridPos": {"x": 0, "y": 36, "w": 24, "h": 1}, "collapsed": false, "panels": []},
-        {"id": 19, "type": "gauge", "title": "Pool active tasks", "gridPos": {"x": 0, "y": 37, "w": 4, "h": 6},
-          "targets": [{"refId": "A", "expr": "sum(orbitjob_worker_pool_active_tasks)"}],
-          "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "min": 0, "max": 14, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 11}, {"color": "red", "value": 14}]}}, "overrides": []},
-          "options": {"showThresholdLabels": false, "showThresholdMarkers": true, "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}},
-        {"id": 20, "type": "stat", "title": "In-flight executions", "gridPos": {"x": 4, "y": 37, "w": 4, "h": 6},
-          "targets": [{"refId": "A", "expr": "orbitjob_executions_active{job=\"orbitjob-worker\"}"}],
-          "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}}, "overrides": []},
-          "options": {"colorMode": "background", "graphMode": "area", "textMode": "value", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}},
-        {"id": 21, "type": "timeseries", "title": "Queue depth / Capacity", "gridPos": {"x": 8, "y": 37, "w": 8, "h": 6},
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 10 },
+              "unit": "ops",
+              "min": 0
+            },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+        },
+        {
+          "id": 3,
+          "title": "Rendered Job outcomes",
+          "description": "Kubernetes Jobs the operator rendered from JobRuns, by terminal status, per namespace.",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
           "targets": [
-            {"refId": "A", "expr": "sum(orbitjob_worker_queue_depth) or vector(0)", "legendFormat": "queue depth"},
-            {"refId": "B", "expr": "sum(orbitjob_worker_capacity) or vector(0)", "legendFormat": "capacity"}
+            {
+              "expr": "sum by (namespace) (rate(kube_job_status_succeeded{namespace=~\"$namespace\"}[10m]))",
+              "legendFormat": "Succeeded {{namespace}}",
+              "refId": "A"
+            },
+            {
+              "expr": "sum by (namespace) (rate(kube_job_status_failed{namespace=~\"$namespace\"}[10m]))",
+              "legendFormat": "Failed {{namespace}}",
+              "refId": "B"
+            }
           ],
-          "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "min": 0, "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never"}}, "overrides": []},
-          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}},
-        {"id": 22, "type": "timeseries", "title": "Handler duration p95", "gridPos": {"x": 16, "y": 37, "w": 8, "h": 6},
-          "targets": [{"refId": "A", "expr": "histogram_quantile(0.95, sum by (le, result_code) (rate(orbitjob_handler_execution_duration_seconds_bucket[5m])))", "legendFormat": "{{result_code}}"}],
-          "fieldConfig": {"defaults": {"unit": "s", "min": 0, "custom": {"drawStyle": "line", "fillOpacity": 8, "lineWidth": 2, "showPoints": "never"}}, "overrides": []},
-          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}},
-
-        {"id": 106, "type": "row", "title": "Runtime", "gridPos": {"x": 0, "y": 43, "w": 24, "h": 1}, "collapsed": false, "panels": []},
-        {"id": 23, "type": "timeseries", "title": "Goroutines", "gridPos": {"x": 0, "y": 44, "w": 6, "h": 7},
-          "targets": [{"refId": "A", "expr": "go_goroutines{job=~\"orbitjob-.*\"}", "legendFormat": "{{job}}"}],
-          "fieldConfig": {"defaults": {"unit": "short", "min": 0, "custom": {"drawStyle": "line", "fillOpacity": 8, "lineWidth": 2, "showPoints": "never"}}, "overrides": []},
-          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}},
-        {"id": 24, "type": "timeseries", "title": "Resident memory", "gridPos": {"x": 6, "y": 44, "w": 6, "h": 7},
-          "targets": [{"refId": "A", "expr": "process_resident_memory_bytes{job=~\"orbitjob-.*\"}", "legendFormat": "{{job}}"}],
-          "fieldConfig": {"defaults": {"unit": "bytes", "min": 0, "custom": {"drawStyle": "line", "fillOpacity": 8, "lineWidth": 2, "showPoints": "never"}}, "overrides": []},
-          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}},
-        {"id": 25, "type": "timeseries", "title": "CPU", "gridPos": {"x": 12, "y": 44, "w": 6, "h": 7},
-          "targets": [{"refId": "A", "expr": "sum by (job) (rate(process_cpu_seconds_total{job=~\"orbitjob-.*\"}[5m]))", "legendFormat": "{{job}}"}],
-          "fieldConfig": {"defaults": {"unit": "short", "decimals": 3, "min": 0, "custom": {"drawStyle": "line", "fillOpacity": 8, "lineWidth": 2, "showPoints": "never"}}, "overrides": []},
-          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}},
-        {"id": 26, "type": "timeseries", "title": "Open FDs", "gridPos": {"x": 18, "y": 44, "w": 6, "h": 7},
-          "targets": [{"refId": "A", "expr": "process_open_fds{job=~\"orbitjob-.*\"}", "legendFormat": "{{job}}"}],
-          "fieldConfig": {"defaults": {"unit": "short", "min": 0, "custom": {"drawStyle": "line", "fillOpacity": 8, "lineWidth": 2, "showPoints": "never"}}, "overrides": []},
-          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}},
-
-        {"id": 107, "type": "row", "title": "Containers", "gridPos": {"x": 0, "y": 51, "w": 24, "h": 1}, "collapsed": false, "panels": []},
-        {"id": 27, "type": "timeseries", "title": "CPU per pod (orbitjob)", "gridPos": {"x": 0, "y": 52, "w": 8, "h": 7},
-          "targets": [{"refId": "A", "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"orbitjob\",container!=\"\"}[5m]))", "legendFormat": "{{pod}}"}],
-          "fieldConfig": {"defaults": {"unit": "short", "decimals": 3, "min": 0, "custom": {"drawStyle": "line", "fillOpacity": 8, "lineWidth": 2, "showPoints": "never"}}, "overrides": []},
-          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}},
-        {"id": 28, "type": "timeseries", "title": "Memory per pod (orbitjob)", "gridPos": {"x": 8, "y": 52, "w": 8, "h": 7},
-          "targets": [{"refId": "A", "expr": "sum by (pod) (container_memory_working_set_bytes{namespace=\"orbitjob\",container!=\"\"})", "legendFormat": "{{pod}}"}],
-          "fieldConfig": {"defaults": {"unit": "bytes", "min": 0, "custom": {"drawStyle": "line", "fillOpacity": 8, "lineWidth": 2, "showPoints": "never"}}, "overrides": []},
-          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}},
-        {"id": 29, "type": "timeseries", "title": "CPU per pod (orbitjob-tasks)", "gridPos": {"x": 16, "y": 52, "w": 8, "h": 7},
-          "targets": [{"refId": "A", "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"orbitjob-tasks\",container!=\"\"}[5m]))", "legendFormat": "{{pod}}"}],
-          "fieldConfig": {"defaults": {"unit": "short", "decimals": 3, "min": 0, "custom": {"drawStyle": "line", "fillOpacity": 8, "lineWidth": 2, "showPoints": "never"}}, "overrides": []},
-          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}},
-
-        {"id": 108, "type": "row", "title": "PostgreSQL", "gridPos": {"x": 0, "y": 59, "w": 24, "h": 1}, "collapsed": false, "panels": []},
-        {"id": 30, "type": "stat", "title": "pg_up", "gridPos": {"x": 0, "y": 60, "w": 3, "h": 5},
-          "targets": [{"refId": "A", "expr": "pg_up"}],
-          "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}}, "overrides": []},
-          "options": {"colorMode": "background", "graphMode": "none", "textMode": "value", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}},
-        {"id": 31, "type": "timeseries", "title": "Connections", "gridPos": {"x": 3, "y": 60, "w": 7, "h": 5},
-          "targets": [{"refId": "A", "expr": "pg_stat_database_numbackends{datname=\"orbitjob\"}", "legendFormat": "backends"}],
-          "fieldConfig": {"defaults": {"unit": "short", "min": 0, "max": 100, "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 60}, {"color": "red", "value": 90}]}}, "overrides": []},
-          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}},
-        {"id": 32, "type": "timeseries", "title": "Transactions /s", "gridPos": {"x": 10, "y": 60, "w": 7, "h": 5},
-          "targets": [{"refId": "A", "expr": "sum(rate(pg_stat_database_xact_commit{datname=\"orbitjob\"}[1m]))", "legendFormat": "commit"}],
-          "fieldConfig": {"defaults": {"unit": "ops", "min": 0, "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never"}}, "overrides": []},
-          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}},
-        {"id": 33, "type": "stat", "title": "Deadlocks / 5m", "gridPos": {"x": 17, "y": 60, "w": 3, "h": 5},
-          "targets": [{"refId": "A", "expr": "increase(pg_stat_database_deadlocks{datname=\"orbitjob\"}[5m]) or vector(0)"}],
-          "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
-          "options": {"colorMode": "background", "graphMode": "area", "textMode": "value", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}},
-        {"id": 34, "type": "timeseries", "title": "Database size", "gridPos": {"x": 20, "y": 60, "w": 4, "h": 5},
-          "targets": [{"refId": "A", "expr": "pg_database_size_bytes{datname=\"orbitjob\"}", "legendFormat": "size"}],
-          "fieldConfig": {"defaults": {"unit": "bytes", "min": 0, "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never"}}, "overrides": []},
-          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}}
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 10 },
+              "unit": "ops",
+              "min": 0
+            },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+        },
+        {
+          "id": 4,
+          "title": "Run wall-clock duration (approx.)",
+          "description": "Per-Job completion minus start time, p50/p95 over the dashboard range. Approximation: no run-duration histogram exists in the codebase.",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+          "targets": [
+            {
+              "expr": "quantile_over_time(0.5, (kube_job_status_completion_time{namespace=~\"$namespace\"} - kube_job_status_start_time{namespace=~\"$namespace\"})[$__range:1m])",
+              "legendFormat": "p50",
+              "refId": "A"
+            },
+            {
+              "expr": "quantile_over_time(0.95, (kube_job_status_completion_time{namespace=~\"$namespace\"} - kube_job_status_start_time{namespace=~\"$namespace\"})[$__range:1m])",
+              "legendFormat": "p95",
+              "refId": "B"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 10 },
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+        },
+        {
+          "id": 5,
+          "title": "Trigger latency",
+          "description": "admin-api trigger path latency, p50/p95/p99 (produced by the admin-api trigger use case).",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "x": 0, "y": 16, "w": 12, "h": 8 },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.5, sum by (le) (rate(orbitjob_trigger_latency_seconds_bucket[5m])))",
+              "legendFormat": "p50",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(orbitjob_trigger_latency_seconds_bucket[5m])))",
+              "legendFormat": "p95",
+              "refId": "B"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(orbitjob_trigger_latency_seconds_bucket[5m])))",
+              "legendFormat": "p99",
+              "refId": "C"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 10 },
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+        },
+        {
+          "id": 6,
+          "title": "Cancel activity",
+          "description": "Cancel request rate, plus runs currently carrying cancelRequested without having reached Canceled.",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "x": 12, "y": 16, "w": 12, "h": 8 },
+          "targets": [
+            {
+              "expr": "sum(rate(orbitjob_run_cancel_requests_total[5m]))",
+              "legendFormat": "cancel requests/s",
+              "refId": "A"
+            },
+            {
+              "expr": "sum(jobrun_info{cancel_requested=\"true\"} and on(namespace, name) (jobrun_phase{phase!=\"Canceled\", phase!=\"\"} == 1))",
+              "legendFormat": "open cancels",
+              "refId": "B"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 10 },
+              "min": 0
+            },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+        },
+        {
+          "id": 7,
+          "title": "Operator reconcile errors",
+          "description": "Reconcile error rate per resource. The top-level signal that the operator is not converging.",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "x": 0, "y": 24, "w": 12, "h": 7 },
+          "targets": [
+            {
+              "expr": "sum by (resource) (rate(orbitjob_operator_reconcile_errors_total[10m]))",
+              "legendFormat": "{{resource}}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 10 },
+              "unit": "ops",
+              "min": 0
+            },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+        },
+        {
+          "id": 8,
+          "title": "Operator reconcile duration p95",
+          "description": "Reconcile latency per resource.",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "x": 12, "y": 24, "w": 12, "h": 7 },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum by (le, resource) (rate(orbitjob_operator_reconcile_duration_seconds_bucket[5m])))",
+              "legendFormat": "{{resource}}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 10 },
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+        },
+        {
+          "id": 9,
+          "title": "K8s-Job ensure failures (1h)",
+          "description": "Kubernetes Job creation or adoption failures in the last hour.",
+          "type": "stat",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "x": 0, "y": 31, "w": 6, "h": 4 },
+          "targets": [
+            {
+              "expr": "increase(orbitjob_operator_job_creation_failures_total[1h])",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } },
+            "overrides": []
+          },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+        },
+        {
+          "id": 10,
+          "title": "Attempts exhausted (24h)",
+          "description": "Runs whose retry attempts were exhausted in the last 24 hours.",
+          "type": "stat",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "x": 6, "y": 31, "w": 6, "h": 4 },
+          "targets": [
+            {
+              "expr": "increase(orbitjob_operator_runs_failed_total[24h])",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } },
+            "overrides": []
+          },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+        },
+        {
+          "id": 11,
+          "title": "Scheduler up",
+          "description": "The scheduler process is the only place SLO evaluation runs; if this drops, those loops stopped with it.",
+          "type": "stat",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "x": 12, "y": 31, "w": 6, "h": 4 },
+          "targets": [
+            {
+              "expr": "up{job=\"orbitjob-scheduler\"}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] } },
+            "overrides": []
+          },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+        },
+        {
+          "id": 12,
+          "title": "SLI evaluations",
+          "description": "SLI evaluation results (the loop ticks every 5 minutes).",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "x": 18, "y": 31, "w": 6, "h": 4 },
+          "targets": [
+            {
+              "expr": "sum by (result) (rate(orbitjob_sli_evaluations_total[15m]))",
+              "legendFormat": "{{result}}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 10 },
+              "unit": "ops",
+              "min": 0
+            },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+        },
+        {
+          "id": 13,
+          "title": "Check runs created",
+          "description": "Check-loop throughput by tenant.",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "x": 0, "y": 35, "w": 12, "h": 7 },
+          "targets": [
+            {
+              "expr": "sum by (tenant_id) (rate(orbitjob_check_runs_created_total{tenant_id=~\"$tenant_id\"}[5m]))",
+              "legendFormat": "{{tenant_id}}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 10 },
+              "unit": "ops",
+              "min": 0
+            },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+        },
+        {
+          "id": 14,
+          "title": "API rate limiting",
+          "description": "Rate-limit hits and passes by endpoint group.",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "x": 12, "y": 35, "w": 12, "h": 7 },
+          "targets": [
+            {
+              "expr": "sum by (endpoint_group) (rate(orbitjob_ratelimit_hits_total[5m]))",
+              "legendFormat": "hits {{endpoint_group}}",
+              "refId": "A"
+            },
+            {
+              "expr": "sum by (endpoint_group) (rate(orbitjob_ratelimit_passed_total[5m]))",
+              "legendFormat": "passed {{endpoint_group}}",
+              "refId": "B"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 10 },
+              "unit": "ops",
+              "min": 0
+            },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+        },
+        {
+          "id": 15,
+          "title": "Governance counters",
+          "description": "API key and policy creation rate by tenant.",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "x": 0, "y": 42, "w": 8, "h": 7 },
+          "targets": [
+            {
+              "expr": "sum by (tenant_id) (rate(orbitjob_api_keys_total{tenant_id=~\"$tenant_id\"}[1h]))",
+              "legendFormat": "api keys {{tenant_id}}",
+              "refId": "A"
+            },
+            {
+              "expr": "sum by (tenant_id) (rate(orbitjob_policies_total{tenant_id=~\"$tenant_id\"}[1h]))",
+              "legendFormat": "policies {{tenant_id}}",
+              "refId": "B"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 10 },
+              "unit": "ops",
+              "min": 0
+            },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+        },
+        {
+          "id": 16,
+          "title": "SLO budget burn rate",
+          "description": "Error-budget burn rate per tenant and SLO, pinned to the scheduler (the only producer; the family is duplicated across scrape targets).",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "x": 8, "y": 42, "w": 8, "h": 7 },
+          "targets": [
+            {
+              "expr": "orbitjob_slo_budget_burn_rate{job=\"orbitjob-scheduler\", tenant_id=~\"$tenant_id\"}",
+              "legendFormat": "{{tenant_id}}/{{slo_id}}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 10 },
+              "min": 0
+            },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+        },
+        {
+          "id": 17,
+          "title": "SLO budget status",
+          "description": "0 = healthy, 1 = at risk, 2 = exhausted.",
+          "type": "stat",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "x": 16, "y": 42, "w": 8, "h": 7 },
+          "targets": [
+            {
+              "expr": "max by (tenant_id, slo_id) (orbitjob_slo_budget_status{job=\"orbitjob-scheduler\", tenant_id=~\"$tenant_id\"})",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "mappings": [
+                {
+                  "type": "value",
+                  "options": {
+                    "0": { "text": "Healthy", "color": "green" },
+                    "1": { "text": "At risk", "color": "yellow" },
+                    "2": { "text": "Exhausted", "color": "red" }
+                  }
+                }
+              ],
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 2 } ] }
+            },
+            "overrides": []
+          },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+        },
+        {
+          "id": 18,
+          "title": "Node pressure conditions",
+          "description": "Nodes currently reporting MemoryPressure, DiskPressure, or PIDPressure.",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "x": 0, "y": 49, "w": 12, "h": 7 },
+          "targets": [
+            {
+              "expr": "kube_node_status_condition{condition=~\"MemoryPressure|DiskPressure|PIDPressure\", status=\"true\"}",
+              "legendFormat": "{{node}} {{condition}}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "drawStyle": "line", "lineInterpolation": "stepAfter", "fillOpacity": 10 },
+              "unit": "short",
+              "min": 0,
+              "max": 1
+            },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+        },
+        {
+          "id": 19,
+          "title": "Node memory available",
+          "description": "Fraction of node memory available (node-exporter).",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "x": 12, "y": 49, "w": 12, "h": 7 },
+          "targets": [
+            {
+              "expr": "node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes",
+              "legendFormat": "{{instance}}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 10 },
+              "unit": "percentunit",
+              "min": 0,
+              "max": 1
+            },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+        },
+        {
+          "id": 20,
+          "title": "CPU throttling (task namespaces)",
+          "description": "CFS throttled periods per second in orbitjob-system and orbitjob-tasks.",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "x": 0, "y": 56, "w": 8, "h": 7 },
+          "targets": [
+            {
+              "expr": "sum by (namespace) (rate(container_cpu_cfs_throttled_periods_total{namespace=~\"orbitjob-tasks|orbitjob-system\"}[5m]))",
+              "legendFormat": "{{namespace}}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 10 },
+              "unit": "ops",
+              "min": 0
+            },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+        },
+        {
+          "id": 21,
+          "title": "Container memory working set (task namespaces)",
+          "description": "Working-set memory of OrbitJob containers.",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "x": 8, "y": 56, "w": 8, "h": 7 },
+          "targets": [
+            {
+              "expr": "sum by (namespace) (container_memory_working_set_bytes{namespace=~\"orbitjob-tasks|orbitjob-system\", container!=\"\"})",
+              "legendFormat": "{{namespace}}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 10 },
+              "unit": "bytes"
+            },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+        },
+        {
+          "id": 22,
+          "title": "Container restarts",
+          "description": "Restart rate across all OrbitJob namespaces; sustained growth means crash loops.",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "x": 16, "y": 56, "w": 8, "h": 7 },
+          "targets": [
+            {
+              "expr": "sum by (namespace) (rate(kube_pod_container_status_restarts_total{namespace=~\"orbitjob-.*\"}[15m]))",
+              "legendFormat": "{{namespace}}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 10 },
+              "unit": "ops",
+              "min": 0
+            },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+        },
+        {
+          "id": 23,
+          "title": "PostgreSQL exporter up",
+          "description": "The ledger's database probe. No data until postgres-exporter is deployed (kubectl apply -f deploy/monitoring/postgres-exporter.yaml).",
+          "type": "stat",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "x": 0, "y": 63, "w": 12, "h": 4 },
+          "targets": [
+            {
+              "expr": "up{job=\"orbitjob-postgres-exporter\"}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] } },
+            "overrides": []
+          },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+        },
+        {
+          "id": 24,
+          "title": "PostgreSQL pg_up",
+          "description": "The exporter's own connectivity check to PostgreSQL.",
+          "type": "stat",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "x": 12, "y": 63, "w": 12, "h": 4 },
+          "targets": [
+            {
+              "expr": "pg_up{job=\"orbitjob-postgres-exporter\"}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] } },
+            "overrides": []
+          },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+        }
       ]
     }

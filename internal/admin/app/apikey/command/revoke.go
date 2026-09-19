@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"orbitjob/internal/core/domain/audit"
 	"orbitjob/internal/domain/resource"
 )
 
@@ -11,10 +12,12 @@ import (
 type RevokeInput struct {
 	ID       string
 	TenantID string
+	// ActorID is the key performing the revocation, recorded in the audit trail.
+	ActorID string
 }
 
 type apiKeyRevoker interface {
-	Revoke(ctx context.Context, tenantID, id string) error
+	Revoke(ctx context.Context, tenantID, id string, ev audit.Event) error
 	RevokeCrossTenant(ctx context.Context, id string) error
 }
 
@@ -28,16 +31,25 @@ func NewRevoker(repo apiKeyRevoker) *Revoker {
 	return &Revoker{repo: repo}
 }
 
-// Revoke marks an API key as revoked within a tenant.
+// Revoke marks an API key as revoked within a tenant, recording the revocation
+// in the same transaction. A revocation that could not be recorded must not
+// report success: afterwards, nothing could tell that it happened.
 func (r *Revoker) Revoke(ctx context.Context, in RevokeInput) error {
-	if err := r.repo.Revoke(ctx, in.TenantID, in.ID); err != nil {
-		return err
-	}
-	return nil
+	return r.repo.Revoke(ctx, in.TenantID, in.ID, audit.Event{
+		TenantID:     in.TenantID,
+		ActorID:      in.ActorID,
+		EventType:    audit.EventRevoke,
+		ResourceType: audit.ResourceAPIKey,
+		ResourceID:   in.ID,
+	})
 }
 
 // RevokeAsAdmin revokes an API key globally without tenant filtering.
 // Only for use by platform administrators (bootstrap tenant).
+//
+// It still produces an audit row: the repository resolves the key's own tenant
+// before revoking, so the event is recorded against the tenant it belongs to
+// rather than left with no scope at all.
 func (r *Revoker) RevokeAsAdmin(ctx context.Context, id string) error {
 	return r.repo.RevokeCrossTenant(ctx, id)
 }

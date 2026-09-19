@@ -98,8 +98,10 @@ const (
 	EventTypeInstanceCompleted     = "instance.completed"
 	EventTypeInstanceStatusChanged = "instance.status_changed"
 	EventTypeOrphanRecovered       = "instance.orphan_recovered"
+	EventTypeRuntimeSwitched       = "tenant.runtime_switched"
 
 	ResourceTypeJob      = "job"
 	ResourceTypeInstance = "instance"
 	ResourceTypeAudit    = "audit"
+	ResourceTypeTenant   = "tenant"
 )

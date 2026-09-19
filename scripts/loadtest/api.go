@@ -25,56 +25,60 @@ func NewAPIClient(baseURL, apiKey string) *APIClient {
 	}
 }
 
+// TriggerResponse is what a manual trigger returns: a reference to the JobRun
+// custom resource, not a ledger row. The Admin API does not write the row --
+// the operator does, asynchronously, after the CR is reconciled -- so there is
+// no run id in this response. A caller that needs the ledger id (cancel does)
+// resolves it from the occurrence key against the run list.
 type TriggerResponse struct {
-	RunID    string `json:"run_id"`
-	JobID    int64  `json:"job_id"`
-	TenantID string `json:"tenant_id"`
-	Status   string `json:"status"`
-	Created  bool   `json:"created"`
+	Namespace     string `json:"namespace"`
+	Name          string `json:"name"`
+	OccurrenceKey string `json:"occurrence_key"`
+	Trigger       string `json:"trigger"`
+	Phase         string `json:"phase"`
+	Created       bool   `json:"created"`
 }
 
 // TriggerError carries the HTTP status of a failed trigger so the run engine
 // can classify rejections. StatusCode 0 means the request never got a response
 // (dial failure, timeout, connection reset).
 type TriggerError struct {
-	JobID      int64
+	RevisionID int64
 	StatusCode int
 	Message    string
 }
 
 func (e *TriggerError) Error() string {
 	if e.StatusCode == 0 {
-		return fmt.Sprintf("trigger job %d: transport error: %s", e.JobID, e.Message)
+		return fmt.Sprintf("trigger revision %d: transport error: %s", e.RevisionID, e.Message)
 	}
-	return fmt.Sprintf("trigger job %d: status %d", e.JobID, e.StatusCode)
+	return fmt.Sprintf("trigger revision %d: status %d", e.RevisionID, e.StatusCode)
 }
 
-func (c *APIClient) CreateJob(ctx context.Context, tenant string, request map[string]any) (int64, error) {
-	body, err := json.Marshal(request)
-	if err != nil {
-		return 0, err
-	}
-	resp, err := c.do(ctx, http.MethodPost, "/api/v1/jobs", tenant, "", bytes.NewReader(body))
-	if err != nil {
-		return 0, &APIError{StatusCode: 0, Message: err.Error()}
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusCreated {
-		return 0, &APIError{StatusCode: resp.StatusCode, Message: fmt.Sprintf("create job: status %d", resp.StatusCode)}
-	}
-	var created struct {
-		ID int64 `json:"id"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
-		return 0, err
-	}
-	return created.ID, nil
+// CancelError carries the HTTP status of a failed cancel request. 409 means the
+// run's ledger row is open but its JobRun custom resource is missing; the API
+// reports that as Conflict, not NotFound.
+type CancelError struct {
+	RunID      string
+	StatusCode int
+	Message    string
 }
 
-func (c *APIClient) TriggerJob(ctx context.Context, jobID int64, tenant, idempotencyKey string) (TriggerResponse, error) {
-	resp, err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/jobs/%d/trigger", jobID), tenant, idempotencyKey, nil)
+func (e *CancelError) Error() string {
+	if e.StatusCode == 0 {
+		return fmt.Sprintf("cancel run %s: transport error: %s", e.RunID, e.Message)
+	}
+	return fmt.Sprintf("cancel run %s: status %d", e.RunID, e.StatusCode)
+}
+
+// TriggerJob publishes a manual JobRun for the definition revision. The API
+// key determines the tenant; there is no tenant header to set. The
+// idempotency key makes a repeated trigger resolve to the same run instead of
+// creating another.
+func (c *APIClient) TriggerJob(ctx context.Context, revisionID int64, idempotencyKey string) (TriggerResponse, error) {
+	resp, err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/jobs/%d/trigger", revisionID), idempotencyKey, nil)
 	if err != nil {
-		return TriggerResponse{}, &TriggerError{JobID: jobID, StatusCode: 0, Message: err.Error()}
+		return TriggerResponse{}, &TriggerError{RevisionID: revisionID, StatusCode: 0, Message: err.Error()}
 	}
 	defer func() { _ = resp.Body.Close() }()
 	switch resp.StatusCode {
@@ -87,12 +91,16 @@ func (c *APIClient) TriggerJob(ctx context.Context, jobID int64, tenant, idempot
 	case http.StatusConflict:
 		return TriggerResponse{Created: false}, nil
 	default:
-		return TriggerResponse{}, &TriggerError{JobID: jobID, StatusCode: resp.StatusCode}
+		return TriggerResponse{}, &TriggerError{RevisionID: revisionID, StatusCode: resp.StatusCode}
 	}
 }
 
-func (c *APIClient) ListInstances(ctx context.Context, tenant string, limit int) ([]map[string]any, error) {
-	resp, err := c.do(ctx, http.MethodGet, fmt.Sprintf("/api/v1/instances?limit=%d", limit), tenant, "", nil)
+// ListInstances reads the newest runs from the ledger, newest first. It is the
+// only way for a trigger caller to learn the ledger id of a run it just
+// created: the trigger response names the JobRun object, and the row appears
+// once the operator has reconciled it.
+func (c *APIClient) ListInstances(ctx context.Context, limit int) ([]map[string]any, error) {
+	resp, err := c.do(ctx, http.MethodGet, fmt.Sprintf("/api/v1/instances?limit=%d", limit), "", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -109,12 +117,61 @@ func (c *APIClient) ListInstances(ctx context.Context, tenant string, limit int)
 	return body.Items, nil
 }
 
+// RunIDByOccurrenceKey resolves a just-triggered run's ledger id from its
+// occurrence key. The operator writes the row asynchronously, so the first
+// read can legitimately miss; poll until it appears or the deadline passes.
+// A key that belongs to another tenant can never be returned: the API scopes
+// the list to the key's own tenant.
+func (c *APIClient) RunIDByOccurrenceKey(ctx context.Context, occurrenceKey string, deadline time.Time) (string, error) {
+	for {
+		items, err := c.ListInstances(ctx, 50)
+		if err != nil {
+			return "", err
+		}
+		for _, item := range items {
+			if key, _ := item["occurrence_key"].(string); key == occurrenceKey {
+				switch id := item["id"].(type) {
+				case float64:
+					return fmt.Sprintf("%d", int64(id)), nil
+				case string:
+					return id, nil
+				}
+			}
+		}
+		if time.Now().After(deadline) {
+			return "", fmt.Errorf("run with occurrence key %s did not appear in the ledger", occurrenceKey)
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
+}
+
+// CancelInstance requests a stop for one run. The request carries no body: the
+// whole effect is a patch of spec.cancelRequested on the run's JobRun custom
+// resource, and the operator does the rest. A 409 response means the ledger
+// row exists but its CR is gone.
+func (c *APIClient) CancelInstance(ctx context.Context, runID string) error {
+	path := fmt.Sprintf("/api/v1/instances/%s/cancel", runID)
+	resp, err := c.do(ctx, http.MethodPost, path, "", nil)
+	if err != nil {
+		return &CancelError{RunID: runID, StatusCode: 0, Message: err.Error()}
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return &CancelError{RunID: runID, StatusCode: resp.StatusCode, Message: fmt.Sprintf("cancel instance %s: status %d", runID, resp.StatusCode)}
+	}
+	return nil
+}
+
 func (c *APIClient) CreateTenant(ctx context.Context, slug, name string) (string, error) {
 	body, err := json.Marshal(map[string]any{"slug": slug, "name": name, "status": "active"})
 	if err != nil {
 		return "", err
 	}
-	resp, err := c.do(ctx, http.MethodPost, "/api/v1/tenants", "", "", bytes.NewReader(body))
+	resp, err := c.do(ctx, http.MethodPost, "/api/v1/tenants", "", bytes.NewReader(body))
 	if err != nil {
 		return "", err
 	}
@@ -131,12 +188,50 @@ func (c *APIClient) CreateTenant(ctx context.Context, slug, name string) (string
 	return created.ID, nil
 }
 
-func (c *APIClient) CreateAPIKey(ctx context.Context, tenantID string) (string, error) {
-	body, err := json.Marshal(map[string]any{})
+// TenantAdminPolicyName is the platform preset the fixtures bind to their
+// tenant keys.
+//
+// A key with no policies authenticates and then reaches nothing, which is the
+// intended default rather than a gap: authorization is a list of grants, not a
+// property of being logged in. The fixtures create, trigger and read jobs, so
+// they ask for the tenant-scoped administrator preset.
+const TenantAdminPolicyName = "TenantAdminAccess"
+
+// PolicyIDByName resolves a platform preset by name. The fixture keys bind by
+// name rather than by hardcoded id so the binding survives a reseed.
+func (c *APIClient) PolicyIDByName(ctx context.Context, name string) (string, error) {
+	resp, err := c.do(ctx, http.MethodGet, "/api/v1/policies", "", nil)
 	if err != nil {
 		return "", err
 	}
-	resp, err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/tenants/%s/api_keys", tenantID), "", "", bytes.NewReader(body))
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("list policies: status %d", resp.StatusCode)
+	}
+	var body struct {
+		Items []struct {
+			ID       string `json:"id"`
+			Name     string `json:"name"`
+			Platform bool   `json:"platform"`
+		} `json:"items"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return "", err
+	}
+	for _, item := range body.Items {
+		if item.Name == name && item.Platform {
+			return item.ID, nil
+		}
+	}
+	return "", fmt.Errorf("platform policy %q not found", name)
+}
+
+func (c *APIClient) CreateAPIKey(ctx context.Context, tenantID string, policyIDs []string) (string, error) {
+	body, err := json.Marshal(map[string]any{"policies": policyIDs})
+	if err != nil {
+		return "", err
+	}
+	resp, err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/tenants/%s/api_keys", tenantID), "", bytes.NewReader(body))
 	if err != nil {
 		return "", err
 	}
@@ -153,14 +248,16 @@ func (c *APIClient) CreateAPIKey(ctx context.Context, tenantID string) (string, 
 	return created.Key, nil
 }
 
-func (c *APIClient) GetJob(ctx context.Context, jobID int64, tenant string) (map[string]any, error) {
-	resp, err := c.do(ctx, http.MethodGet, fmt.Sprintf("/api/v1/jobs/%d", jobID), tenant, "", nil)
+// GetJob reads one definition revision by id. It is what the cross-tenant
+// probes use: a key from another tenant must be refused, not served.
+func (c *APIClient) GetJob(ctx context.Context, revisionID int64) (map[string]any, error) {
+	resp, err := c.do(ctx, http.MethodGet, fmt.Sprintf("/api/v1/jobs/%d", revisionID), "", nil)
 	if err != nil {
 		return nil, &APIError{StatusCode: 0, Message: err.Error()}
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil, &APIError{StatusCode: resp.StatusCode, Message: fmt.Sprintf("get job %d: status %d", jobID, resp.StatusCode)}
+		return nil, &APIError{StatusCode: resp.StatusCode, Message: fmt.Sprintf("get job %d: status %d", revisionID, resp.StatusCode)}
 	}
 	var out map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
@@ -184,15 +281,12 @@ func (e *APIError) Error() string {
 	return e.Message
 }
 
-func (c *APIClient) do(ctx context.Context, method, path, tenant, idempotencyKey string, body io.Reader) (*http.Response, error) {
+func (c *APIClient) do(ctx context.Context, method, path, idempotencyKey string, body io.Reader) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	if tenant != "" {
-		req.Header.Set("X-OrbitJob-Tenant", tenant)
-	}
 	if idempotencyKey != "" {
 		req.Header.Set("X-OrbitJob-Idempotency-Key", idempotencyKey)
 	}

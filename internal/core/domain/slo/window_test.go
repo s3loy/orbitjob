@@ -162,68 +162,6 @@ func TestWindow_Elapsed(t *testing.T) {
 	}
 }
 
-func TestWindow_Remaining(t *testing.T) {
-	start := time.Date(2026, 6, 4, 0, 0, 0, 0, time.UTC)
-	end := time.Date(2026, 6, 5, 0, 0, 0, 0, time.UTC)
-	w := Window{Start: start, End: end}
-
-	tests := []struct {
-		name string
-		now  time.Time
-		want time.Duration
-	}{
-		{
-			name: "before_start",
-			now:  time.Date(2026, 6, 3, 12, 0, 0, 0, time.UTC),
-			want: 24 * time.Hour,
-		},
-		{
-			name: "at_start",
-			now:  start,
-			want: 24 * time.Hour,
-		},
-		{
-			name: "halfway",
-			now:  time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC),
-			want: 12 * time.Hour,
-		},
-		{
-			name: "at_end",
-			now:  end,
-			want: 0,
-		},
-		{
-			name: "after_end",
-			now:  time.Date(2026, 6, 5, 12, 0, 0, 0, time.UTC),
-			want: 0,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := w.Remaining(tt.now)
-			if got != tt.want {
-				t.Errorf("Remaining() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestWindow_ElapsedAndRemainingSumToDuration(t *testing.T) {
-	start := time.Date(2026, 6, 4, 0, 0, 0, 0, time.UTC)
-	end := time.Date(2026, 6, 5, 0, 0, 0, 0, time.UTC)
-	w := Window{Start: start, End: end}
-
-	now := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
-	elapsed := w.Elapsed(now)
-	remaining := w.Remaining(now)
-	duration := w.Duration()
-
-	if elapsed+remaining != duration {
-		t.Errorf("elapsed(%v) + remaining(%v) != duration(%v)", elapsed, remaining, duration)
-	}
-}
-
 func TestCalculateWindow_Quarterly(t *testing.T) {
 	tests := []struct {
 		name      string

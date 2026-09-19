@@ -5,12 +5,17 @@ import (
 	"time"
 )
 
+// validTenantID has the exact CHAR(26) ULID shape the schema requires, so the
+// fault tests below fail on the field they name rather than on tenant_id.
+const validTenantID = "00000000000000000000000001"
+
 func TestNormalizeCreate_Valid(t *testing.T) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	cron := "*/5 * * * *"
 
 	spec, err := NormalizeCreate(now, CreateInput{
 		Name:         "test-check",
+		TenantID:     validTenantID,
 		CheckType:    CheckTypeHTTPHealth,
 		ScheduleType: ScheduleTypeCron,
 		CronExpr:     &cron,
@@ -36,6 +41,7 @@ func TestNormalizeCreate_Valid(t *testing.T) {
 func TestNormalizeCreate_InvalidCheckType(t *testing.T) {
 	_, err := NormalizeCreate(time.Now(), CreateInput{
 		Name:      "test",
+		TenantID:  validTenantID,
 		CheckType: "unknown",
 	})
 	if err == nil {
@@ -46,6 +52,7 @@ func TestNormalizeCreate_InvalidCheckType(t *testing.T) {
 func TestNormalizeCreate_InvalidAssertionRule(t *testing.T) {
 	_, err := NormalizeCreate(time.Now(), CreateInput{
 		Name:      "test",
+		TenantID:  validTenantID,
 		CheckType: CheckTypeHTTPHealth,
 		AssertionRules: []AssertionRule{
 			{Metric: "", Operator: ">", Threshold: 100, Severity: "warning"},
@@ -59,6 +66,7 @@ func TestNormalizeCreate_InvalidAssertionRule(t *testing.T) {
 func TestNormalizeCreate_InvalidOperator(t *testing.T) {
 	_, err := NormalizeCreate(time.Now(), CreateInput{
 		Name:      "test",
+		TenantID:  validTenantID,
 		CheckType: CheckTypeHTTPHealth,
 		AssertionRules: []AssertionRule{
 			{Metric: "latency", Operator: "invalid", Threshold: 100, Severity: "warning"},
@@ -72,6 +80,7 @@ func TestNormalizeCreate_InvalidOperator(t *testing.T) {
 func TestNormalizeCreate_InvalidSeverity(t *testing.T) {
 	_, err := NormalizeCreate(time.Now(), CreateInput{
 		Name:      "test",
+		TenantID:  validTenantID,
 		CheckType: CheckTypeHTTPHealth,
 		AssertionRules: []AssertionRule{
 			{Metric: "latency", Operator: ">", Threshold: 100, Severity: "info"},
@@ -88,7 +97,9 @@ func TestNormalizeCreate_IntervalSchedule(t *testing.T) {
 
 	spec, err := NormalizeCreate(now, CreateInput{
 		Name:         "test",
+		TenantID:     validTenantID,
 		CheckType:    CheckTypeHTTPHealth,
+		CheckConfig:  map[string]any{"url": "http://example.com"},
 		ScheduleType: ScheduleTypeInterval,
 		IntervalSec:  &interval,
 	})
@@ -106,6 +117,7 @@ func TestNormalizeCreate_IntervalSchedule(t *testing.T) {
 func TestNormalizeCreate_MissingCronExpr(t *testing.T) {
 	_, err := NormalizeCreate(time.Now(), CreateInput{
 		Name:         "test",
+		TenantID:     validTenantID,
 		CheckType:    CheckTypeHTTPHealth,
 		ScheduleType: ScheduleTypeCron,
 	})

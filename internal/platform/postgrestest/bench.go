@@ -11,6 +11,12 @@ import (
 )
 
 // BenchDB opens a PostgreSQL connection for benchmarks.
+//
+// It mirrors Open: the handle is scoped to a schema of its own, built from
+// db/migrations, and dropped when the benchmark finishes. The previous version
+// returned a handle on the bare DSN, which resolved to whatever the server's
+// default search_path named -- so a benchmark read and wrote tables shared with
+// every other run, and the truncation helper below had no schema it could own.
 func BenchDB(b *testing.B) *sql.DB {
 	b.Helper()
 
@@ -19,47 +25,50 @@ func BenchDB(b *testing.B) *sql.DB {
 		b.Skip("TEST_DATABASE_DSN is not set")
 	}
 
-	db, err := sql.Open("postgres", dsn)
+	benchDSN, schemaName, err := testDSN(dsn, b.Name())
 	if err != nil {
-		b.Fatalf("open db: %v", err)
+		b.Fatalf("scope benchmark dsn: %v", redactDSN(err.Error()))
+	}
+
+	db, err := open(benchDSN)
+	if err != nil {
+		b.Fatalf("open benchmark db: %v", redactDSN(err.Error()))
 	}
 	b.Cleanup(func() { _ = db.Close() })
-
-	db.SetMaxOpenConns(50)
-	db.SetMaxIdleConns(50)
-	db.SetConnMaxLifetime(5 * time.Minute)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := db.PingContext(ctx); err != nil {
-		b.Fatalf("ping db: %v", err)
+		b.Fatalf("ping benchmark db: %v", redactDSN(err.Error()))
 	}
+
+	if err := withAdvisoryLock(
+		benchDSN,
+		sharedSchemaLockClassID,
+		lockObjectID(benchDSN),
+		func(_ *sql.DB) error {
+			return applySchemaWithDB(benchDSN, db)
+		},
+	); err != nil {
+		b.Fatalf("prepare benchmark schema: %v", redactDSN(err.Error()))
+	}
+	b.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+
+		if err := dropSchema(cleanupCtx, db, schemaName); err != nil {
+			b.Errorf("drop benchmark schema %q: %v", schemaName, err)
+		}
+	})
 
 	return db
 }
 
-// BenchTruncate truncates all data tables and restarts sequences.
+// BenchTruncate empties every table in the benchmark's schema and restarts its
+// sequences.
 func BenchTruncate(b *testing.B, db *sql.DB) {
 	b.Helper()
-	_, err := db.ExecContext(context.Background(), `
-		TRUNCATE TABLE audit_events, job_instance_attempts, job_instances, workers, jobs RESTART IDENTITY CASCADE
-	`)
-	if err != nil {
+	if err := resetTestData(context.Background(), db); err != nil {
 		b.Fatalf("truncate: %v", err)
 	}
-}
-
-// BenchSeedJob inserts a minimal manual job and returns its ID.
-func BenchSeedJob(b *testing.B, db *sql.DB, name, tenantID, handlerType string, priority int) int64 {
-	b.Helper()
-	var id int64
-	err := db.QueryRowContext(context.Background(), `
-		INSERT INTO jobs (name, tenant_id, trigger_type, handler_type, handler_payload, timeout_sec, status, priority)
-		VALUES ($1, $2, 'manual', $3, '{}'::jsonb, 60, 'active', $4)
-		RETURNING id
-	`, name, tenantID, handlerType, priority).Scan(&id)
-	if err != nil {
-		b.Fatalf("seed job: %v", err)
-	}
-	return id
 }

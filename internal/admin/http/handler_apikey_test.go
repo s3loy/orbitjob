@@ -71,6 +71,7 @@ func newAPIKeyTestRouter(t *testing.T, h *Handler) *gin.Engine {
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
 		c.Request = c.Request.WithContext(middleware.WithTenantID(c.Request.Context(), "tenant1", middleware.TenantSourceAPIKey))
+		grantAllPolicies(c, "tenant1")
 		c.Next()
 	})
 	h.Register(r)
@@ -86,7 +87,7 @@ func TestHandler_CreateAPIKey(t *testing.T) {
 			CreatedAt: time.Now().UTC().Format(time.RFC3339),
 		},
 	}
-	handler := NewHandler(nil, nil, nil, nil, nil)
+	handler := NewHandler(nil, nil, nil)
 	handler.SetCreateAPIKeyUseCase(uc)
 
 	router := newAPIKeyTestRouter(t, handler)
@@ -118,7 +119,7 @@ func TestHandler_CreateAPIKey(t *testing.T) {
 
 func TestHandler_CreateAPIKey_BindError(t *testing.T) {
 	uc := &stubCreateAPIKeyUseCase{}
-	handler := NewHandler(nil, nil, nil, nil, nil)
+	handler := NewHandler(nil, nil, nil)
 	handler.SetCreateAPIKeyUseCase(uc)
 
 	router := newAPIKeyTestRouter(t, handler)
@@ -139,7 +140,7 @@ func TestHandler_CreateAPIKey_BindError(t *testing.T) {
 
 func TestHandler_CreateAPIKey_BodyBindError(t *testing.T) {
 	uc := &stubCreateAPIKeyUseCase{}
-	handler := NewHandler(nil, nil, nil, nil, nil)
+	handler := NewHandler(nil, nil, nil)
 	handler.SetCreateAPIKeyUseCase(uc)
 
 	router := newAPIKeyTestRouter(t, handler)
@@ -160,7 +161,7 @@ func TestHandler_CreateAPIKey_BodyBindError(t *testing.T) {
 
 func TestHandler_CreateAPIKey_UseCaseError(t *testing.T) {
 	uc := &stubCreateAPIKeyUseCase{err: errors.New("db down")}
-	handler := NewHandler(nil, nil, nil, nil, nil)
+	handler := NewHandler(nil, nil, nil)
 	handler.SetCreateAPIKeyUseCase(uc)
 
 	router := newAPIKeyTestRouter(t, handler)
@@ -183,7 +184,7 @@ func TestHandler_ListAPIKeys(t *testing.T) {
 			{ID: "01HZX", KeyPrefix: "otj_abc123", CreatedAt: createdAt},
 		},
 	}
-	handler := NewHandler(nil, nil, nil, nil, nil)
+	handler := NewHandler(nil, nil, nil)
 	handler.SetListAPIKeysUseCase(uc)
 
 	router := newAPIKeyTestRouter(t, handler)
@@ -217,7 +218,7 @@ func TestHandler_ListAPIKeys(t *testing.T) {
 
 func TestHandler_ListAPIKeys_BindError(t *testing.T) {
 	uc := &stubListAPIKeysUseCase{}
-	handler := NewHandler(nil, nil, nil, nil, nil)
+	handler := NewHandler(nil, nil, nil)
 	handler.SetListAPIKeysUseCase(uc)
 
 	router := newAPIKeyTestRouter(t, handler)
@@ -237,7 +238,7 @@ func TestHandler_ListAPIKeys_BindError(t *testing.T) {
 
 func TestHandler_ListAPIKeys_UseCaseError(t *testing.T) {
 	uc := &stubListAPIKeysUseCase{err: errors.New("db down")}
-	handler := NewHandler(nil, nil, nil, nil, nil)
+	handler := NewHandler(nil, nil, nil)
 	handler.SetListAPIKeysUseCase(uc)
 
 	router := newAPIKeyTestRouter(t, handler)
@@ -254,7 +255,7 @@ func TestHandler_ListAPIKeys_UseCaseError(t *testing.T) {
 
 func TestHandler_RevokeAPIKey(t *testing.T) {
 	uc := &stubRevokeAPIKeyUseCase{}
-	handler := NewHandler(nil, nil, nil, nil, nil)
+	handler := NewHandler(nil, nil, nil)
 	handler.SetRevokeAPIKeyUseCase(uc)
 
 	router := newAPIKeyTestRouter(t, handler)
@@ -280,7 +281,7 @@ func TestHandler_RevokeAPIKey(t *testing.T) {
 
 func TestHandler_RevokeAPIKey_NotFound(t *testing.T) {
 	uc := &stubRevokeAPIKeyUseCase{err: &resource.NotFoundError{Resource: "api_key", ID: "01HZX"}}
-	handler := NewHandler(nil, nil, nil, nil, nil)
+	handler := NewHandler(nil, nil, nil)
 	handler.SetRevokeAPIKeyUseCase(uc)
 
 	router := newAPIKeyTestRouter(t, handler)
@@ -297,7 +298,7 @@ func TestHandler_RevokeAPIKey_NotFound(t *testing.T) {
 
 func TestHandler_RevokeAPIKey_BindError(t *testing.T) {
 	uc := &stubRevokeAPIKeyUseCase{}
-	handler := NewHandler(nil, nil, nil, nil, nil)
+	handler := NewHandler(nil, nil, nil)
 	handler.SetRevokeAPIKeyUseCase(uc)
 
 	router := newAPIKeyTestRouter(t, handler)
@@ -317,13 +318,14 @@ func TestHandler_RevokeAPIKey_BindError(t *testing.T) {
 
 func TestHandler_RevokeAPIKey_AdminCrossTenant(t *testing.T) {
 	uc := &stubRevokeAPIKeyUseCase{}
-	handler := NewHandler(nil, nil, nil, nil, nil)
+	handler := NewHandler(nil, nil, nil)
 	handler.SetRevokeAPIKeyUseCase(uc)
 
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
 		c.Request = c.Request.WithContext(middleware.WithTenantID(c.Request.Context(), "00000000000000000000000001", middleware.TenantSourceAPIKey))
+		grantAllPolicies(c, "00000000000000000000000001")
 		c.Next()
 	})
 	handler.Register(r)
@@ -349,7 +351,7 @@ func TestHandler_RevokeAPIKey_AdminCrossTenant(t *testing.T) {
 
 func TestHandler_RevokeAPIKey_UseCaseError(t *testing.T) {
 	uc := &stubRevokeAPIKeyUseCase{err: errors.New("db down")}
-	handler := NewHandler(nil, nil, nil, nil, nil)
+	handler := NewHandler(nil, nil, nil)
 	handler.SetRevokeAPIKeyUseCase(uc)
 
 	router := newAPIKeyTestRouter(t, handler)
