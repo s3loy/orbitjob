@@ -66,17 +66,29 @@ at `127.0.0.1:55432`; the cluster database is install state. The same loopback
 `trust` trap as the entry above applies when verifying credentials from the
 host — a port-forwarded check proves nothing.
 
-### The loadtest workflow has never completed a profile on GitHub
+### The loadtest workflow could not complete a profile on GitHub
 
-**Verified.** Runs 35319872763 and 35321959556 died in `prepare` with "17x
-declared definitions have no active revision after 10m" (two earlier runs
-died before that, building an operator whose source was never committed).
-The workflow's operator-log dump shows the operator healthy — cache synced
-(5 resources), leadership taken, schedule ticks firing — with no reconcile
-errors naming the load namespaces, so the declared CRs most likely never
-reach the operator (namespace/tenancy mapping or CRD install), not a
-reconcile defect. The evidence needed to close it is captured on every
-failure since 35321959556.
+**Resolved 2026-09-19, run 35387532919.** The first end-to-end green Load
+Test: prepare cleared in ~50s once the client stopped starving on client-go's
+silent 5-QPS default (f8283fc), manual triggers were admitted 500/500 once
+the load namespaces carried the admin-api Role the chart grants per
+scheduling namespace (a4b04d6), and the verifier could read the ledger after
+switching from the grant-less bootstrap DSN to the SELECT-only admin DSN
+(same commit). Three earlier runs (35319872763, 35321959556, 35363809165)
+died in `prepare` with "no active revision after 10m"; run 35380354290
+cleared prepare but exposed the two plumbing gaps above while the operator
+itself logged zero errors.
+
+One gate still reports what it should: `expected-terminal-state` FAILs on
+~4% of runs (20/500) — expected-Succeeded scenarios whose Kubernetes Job
+misses its deadline while queued behind a cohort burst on the small runner
+(DeadlineExceeded events; same class as the 6-run apply-storm deaths
+documented above). Ruled 2026-09-19: this stays a signal, not a hard gate —
+the casualties feed workload/algorithm tuning, and a future change should
+surface event-evidenced environmental deaths as a bounded WARN rather than
+failing the verdict. Note the workflow currently shows a green check on a
+FAIL verdict because the verifier does not exit nonzero on its own verdict;
+that honesty gap is tracked separately.
 
 ### generate still skips the profile validation every later stage performs
 

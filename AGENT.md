@@ -35,15 +35,15 @@ Each type of information should be defined in exactly one place. All other locat
 
 **Deprecation ≠ immediate removal**. Evolution path for old methods/configs:
 
-### Phase 1: Deprecation Period (v0.2.0 → v0.2.1)
+### Phase 1: Deprecation Period
 - Code retains compatibility
-- Documentation marks: `> **Deprecated**: This method will be removed in v0.3.0. Please migrate to [new method](link).`
+- Documentation marks: `> **Deprecated**: This method will be removed in the next release. Please migrate to [new method](link).`
 - CHANGELOG records deprecation
 
-### Phase 2: Removal (v0.3.0)
+### Phase 2: Removal
 - Remove compatibility layer from code
 - Remove or move documentation to "historical versions" section
-- Archive migration guide to `docs/migrations/v0.2-to-v0.3.md`
+- Archive the migration guide under `docs/migrations/`
 
 **Current Examples**:
 - Docker Compose method: **removed** together with the legacy execution path — docs now describe it only as history; do not present `docker compose` / `make docker-up` as current behavior
