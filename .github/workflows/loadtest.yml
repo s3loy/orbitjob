@@ -32,11 +32,6 @@
 name: Load Test
 
 on:
-  push:
-    # The refactor branch runs its own smoke on every push until the
-    # workflows reach the default branch and dispatch/schedule unlock.
-    branches:
-      - refactor
   schedule:
     # Weekly smoke: off-peak UTC (evening Americas, small hours Europe).
     - cron: "30 2 * * 3"
