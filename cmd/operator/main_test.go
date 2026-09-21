@@ -461,6 +461,9 @@ func TestRun_WiresControllerAndRuns(t *testing.T) {
 	if recorder.config.Resync != resyncInterval {
 		t.Fatalf("controller resync = %s, want %s", recorder.config.Resync, resyncInterval)
 	}
+	if !reflect.DeepEqual(recorder.config.Namespaces, []string{"tasks"}) {
+		t.Fatalf("controller namespaces = %v, want [tasks]", recorder.config.Namespaces)
+	}
 
 	controller := recorder.controller
 	if controller.Dynamic == nil || controller.Kubernetes == nil {

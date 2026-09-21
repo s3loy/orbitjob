@@ -20,14 +20,19 @@ permissions:
 jobs:
   verify:
     name: Verify
+    needs: [resolve]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
 
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           cache: true
+
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
 
       # Published images must be verified, so the quality gate is not skipped here.
       # golangci-lint is not preinstalled on the runner; install-only leaves the
@@ -41,13 +46,21 @@ jobs:
       - name: Run quality gate
         run: make check
 
+      - name: Validate Helm chart
+        run: make helm-check
+
   resolve:
     name: Resolve release
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      sha: ${{ steps.version.outputs.sha }}
       hub_enabled: ${{ steps.hub.outputs.enabled }}
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
+        with:
+          fetch-depth: 0
+
       - name: Resolve version
         id: version
         env:
@@ -60,16 +73,14 @@ jobs:
           else
             version="${GITHUB_REF_NAME}"
           fi
-          # Reject shell metacharacters: a tag may only contain alphanumerics and . _ -
-          case "$version" in
-            *[!A-Za-z0-9._-]*) echo "tag contains invalid characters: $version" >&2; exit 1 ;;
-          esac
-          case "$version" in
-            v*) ;;
-            *) echo "tag must start with v, got: $version" >&2; exit 1 ;;
-          esac
+          bash scripts/validate-release-version.sh "$version"
+          sha="$(git rev-parse --verify "refs/tags/${version}^{commit}")" || {
+            echo "tag does not exist or does not resolve to a commit: $version" >&2
+            exit 1
+          }
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "releasing $version"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "releasing $version at $sha"
 
       - name: Check Docker Hub credentials
         id: hub
@@ -99,6 +110,8 @@ jobs:
           - { component: bootstrap,  target: bootstrap }
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
 
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
@@ -126,7 +139,6 @@ jobs:
           push: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/orbitjob-${{ matrix.component }}:${{ needs.resolve.outputs.version }}
-            ghcr.io/${{ github.repository_owner }}/orbitjob-${{ matrix.component }}:latest
           cache-from: type=gha,scope=${{ matrix.component }}
           cache-to: type=gha,mode=max,scope=${{ matrix.component }}
 
@@ -140,7 +152,6 @@ jobs:
           push: true
           tags: |
             docker.io/${{ secrets.DOCKERHUB_USERNAME }}/orbitjob-${{ matrix.component }}:${{ needs.resolve.outputs.version }}
-            docker.io/${{ secrets.DOCKERHUB_USERNAME }}/orbitjob-${{ matrix.component }}:latest
           cache-from: type=gha,scope=${{ matrix.component }}
 
   chart:
@@ -149,6 +160,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
 
       - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
 
@@ -169,3 +182,41 @@ jobs:
           name: helm-chart
           path: dist/*.tgz
           retention-days: 90
+
+  publish:
+    name: Move latest aliases
+    needs: [resolve, images, chart]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        if: needs.resolve.outputs.hub_enabled == 'true'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Move latest aliases after the release succeeds
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          HUB_ENABLED: ${{ needs.resolve.outputs.hub_enabled }}
+          HUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+          set -eu
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          for component in admin-api scheduler operator migrate bootstrap; do
+            ghcr="ghcr.io/${owner}/orbitjob-${component}"
+            docker buildx imagetools create -t "${ghcr}:latest" "${ghcr}:${VERSION}"
+            if [ "$HUB_ENABLED" = true ]; then
+              hub="docker.io/${HUB_USERNAME}/orbitjob-${component}"
+              docker buildx imagetools create -t "${hub}:latest" "${hub}:${VERSION}"
+            fi
+          done

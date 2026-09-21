@@ -105,6 +105,7 @@ export RUN_ID="smoke-$(date -u +%Y%m%dT%H%M%SZ)"
 export ORBITJOB_API_KEY=$(kubectl get secret bootstrap-api-key \
   -n orbitjob-system -o jsonpath='{.data.api-key}' | base64 -d)
 CONFIG=test/load/config/smoke.yaml
+PROFILE=smoke
 ```
 
 `bootstrap-api-key` is the Secret holding the plaintext key.
@@ -128,7 +129,8 @@ Without `--check-only` it also verifies the images exist, which needs Docker.
 
 ```bash
 go run ./scripts/loadtest generate --config "$CONFIG" \
-  --images test/load/config/images.lock.yaml --run-id "$RUN_ID"
+  --images test/load/config/images.lock.yaml --profile "$PROFILE" \
+  --run-id "$RUN_ID"
 ```
 
 Writes `test/load/runs/$RUN_ID/generated/` — 1200 ScheduledJob declarations
@@ -361,7 +363,7 @@ a test fails if a family is added without one
 | `select-one` | postgres, `SELECT 1` over a connection URI in the args |
 | `invalid-sql` | postgres, a statement that does not parse — fails |
 | `dns-resolution` | busybox, resolves the load PostgreSQL by DNS |
-| `secret-read-denied` | kubectl, reads a Secret the default identity is denied — fails |
+| `service-account-token-absent` | busybox, succeeds only when the projected ServiceAccount token path is absent |
 | `forced-exit-nonzero`, `exit-nonzero-message` | a message then a non-zero exit — fails |
 | `cancel-while-running` | python, runs long enough for the cancel to land |
 | `plain-success` | python, the ordinary hash body |
@@ -371,12 +373,11 @@ a test fails if a family is added without one
 under each category's own total because the categories test different things
 around it — one is doing database work, the other is producing a failure.
 
-Operator-rendered Jobs run as the namespace's default service account — the
-CRD's job template has no service account field — so the old `pods-list`
-family, which needed the operations Role, became the `dns-resolution` family
-above. `secret-read-denied` stays meaningful: the default identity holds no
-grants, so the API server denies the read and the job fails for exactly the
-least-privilege reason `deploy/load/operations-rbac.yaml` documents.
+Operator-rendered Jobs set `automountServiceAccountToken: false`. The old
+`pods-list` family, which needed the operations Role, became the
+`dns-resolution` family above. `service-account-token-absent` directly checks
+that the standard projected token file does not exist, so the scenario proves
+the tokenless workload boundary instead of inferring it from an API failure.
 
 The `curl` families reach the fixture at `deploy/load/fixture-configmap.yaml`,
 one endpoint each:

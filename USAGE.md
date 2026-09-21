@@ -81,7 +81,7 @@ make kind-up
 # Install PostgreSQL and generate the orbitjob-database Secret (must precede helm install)
 make kind-db
 
-# Build images locally and load them; skip to pull published ghcr.io/s3loy images
+# Build and load local development images
 make docker-build TAG=dev
 make kind-load TAG=dev
 
@@ -91,6 +91,10 @@ helm upgrade --install orbitjob ./charts/orbitjob \
   --namespace orbitjob-system \
   -f deploy/kind/values-dev.yaml \
   --wait --timeout=10m
+
+# For published images, add these after the values file instead of building/loading:
+#   --set-string global.imageTag=v0.2.1 \
+#   --set-string global.imagePullPolicy=IfNotPresent
 
 # Export the environment variables (make kind-env)
 source <(make kind-env)
@@ -255,7 +259,7 @@ Namespace layout after install:
 | Namespace | Contents |
 |---|---|
 | `orbitjob-system` | Control plane: the admin-api, scheduler and operator Deployments and the install hook Jobs |
-| `orbitjob-tasks` | Container Jobs rendered by the operator from JobRun CRs |
+| Namespaces configured in `operator.namespaceTenants` | ScheduledJob and JobRun CRs, plus the container Jobs rendered from them |
 | `monitoring` | kube-prometheus-stack: Prometheus, Grafana, alerting (optional, installed via `make monitoring-up`) |
 
 One installation uses one `orbitjob-database` Secret, shared by all replicas.
@@ -289,24 +293,26 @@ Full constraints: [`docs/database-setup.md`](docs/database-setup.md).
 
 ```yaml
 global:
-  imageTag: "0.2.1"
+  imageRegistry: registry.example.com
+  imageTag: "v0.2.1"
 
 images:
-  admin: {repository: registry.example.com/orbitjob/admin-api}
-  scheduler: {repository: registry.example.com/orbitjob/scheduler}
-  operator: {repository: registry.example.com/orbitjob/operator}
-  bootstrap: {repository: registry.example.com/orbitjob/bootstrap}
-  migrate: {repository: registry.example.com/orbitjob/migrate}
+  admin: {repository: orbitjob-admin-api}
+  scheduler: {repository: orbitjob-scheduler}
+  bootstrap: {repository: orbitjob-bootstrap}
+  migrate: {repository: orbitjob-migrate}
 
 operator:
+  image: {repository: orbitjob-operator}
   # Mandatory: the namespace-to-tenant mapping. There is no default — a default
   # would bind some namespace to a tenant nobody chose. A missing value fails
   # the install and names this value.
   namespaceTenants: "team-a=00000000000000000000000001,team-b=00000000000000000000000002"
 
 taskNamespace:
-  create: true
-  name: orbitjob-tasks
+  # Optional namespace bootstrap. Jobs run here only when this name is also a
+  # key in operator.namespaceTenants.
+  create: false
 ```
 
 Note: comma-carrying values must go in a values file (as above), never through `--set`.
@@ -364,7 +370,7 @@ kubectl config set-context --current --namespace=orbitjob-system
 |---|---|
 | `kubectl get pods -A` | Cluster-wide overview, quickly locate abnormal pods |
 | `kubectl get pods,svc,deploy -o wide` | Control-plane resources + IPs + nodes |
-| `kubectl get jobs -n orbitjob-tasks` | Container Job executions |
+| `kubectl get jobs -n <tenant-namespace>` | Container Job executions in a namespace configured by `operator.namespaceTenants` |
 | `kubectl get endpoints` | Confirm a Service has pods behind it — empty endpoints are a common failure source |
 | `helm list -A` | Installed releases and revisions |
 
@@ -428,7 +434,7 @@ Uninstall:
 helm uninstall orbitjob -n orbitjob-system
 ```
 
-The chart does not delete external PostgreSQL data and does not clean up leftover Jobs in the `orbitjob-tasks` namespace.
+The chart does not delete external PostgreSQL data and does not clean up leftover Jobs in tenant namespaces configured through `operator.namespaceTenants`.
 
 ### 7.5 Common troubleshooting
 
@@ -453,14 +459,14 @@ kubectl get endpoints orbitjob-postgres -n orbitjob
 **Container Job not running:**
 
 ```bash
-kubectl -n orbitjob-tasks get jobs,pods
-kubectl -n orbitjob-tasks describe job <name>
+kubectl -n <tenant-namespace> get jobs,pods
+kubectl -n <tenant-namespace> describe job <name>
 kubectl auth can-i create jobs \
   --as system:serviceaccount:orbitjob-system:orbitjob-operator \
-  -n orbitjob-tasks
+  -n <tenant-namespace>
 ```
 
-Check the image and command, the task ServiceAccount, RBAC, namespace and Pod Security restrictions; then compare with the status conditions of the corresponding JobRun CR.
+Use the namespace key mapped to the JobRun's tenant in `operator.namespaceTenants`. Check the image and command, operator RBAC, quotas and Pod Security restrictions; then compare with the status conditions of the corresponding JobRun CR. Rendered workload Pods have `automountServiceAccountToken: false`, so they receive no Kubernetes API token.
 
 **ImagePullBackOff.** Forgetting `kind load docker-image` after rebuilding an image, so the kind node cannot find the locally built image. After rebuilding, run `kind load docker-image --name <cluster> <image>:<tag>`, then delete the pod to force recreation.
 
@@ -641,8 +647,9 @@ Kubernetes Job and the run becomes `Canceled`. When a ledger row exists but the 
 
 ## 11. ScheduledJob reference and execution semantics
 
-- Runs execute as `batch/v1` Jobs rendered from the definition's `jobTemplate`, in the
-  `orbitjob-tasks` namespace, with the `orbitjob-task` ServiceAccount (no API access).
+- Runs execute as `batch/v1` Jobs rendered from the definition's `jobTemplate`
+  in the namespace mapped to their tenant. Their Pod spec disables service-account
+  token mounting, including in namespaces created after chart installation.
 - The platform owns retry: attempt counts live in the ledger (`attempt`/`max_attempts`),
   and `backoffLimit` is handed to Kubernetes for in-Job pod retries.
 - History: the in-process `exec`/`http`/`webhook`/`pg_notify`/`container` handlers were removed
@@ -808,14 +815,14 @@ hits quotas or admission restrictions.
 ### Container Job not running
 
 ```bash
-kubectl -n orbitjob-tasks get jobs,pods
-kubectl -n orbitjob-tasks describe job <name>
+kubectl -n <tenant-namespace> get jobs,pods
+kubectl -n <tenant-namespace> describe job <name>
 kubectl auth can-i create jobs \
   --as system:serviceaccount:orbitjob-system:orbitjob-operator \
-  -n orbitjob-tasks
+  -n <tenant-namespace>
 ```
 
-Check the image and command, the task ServiceAccount, RBAC, namespace and Pod Security restrictions.
+Use the namespace key mapped to the tenant in `operator.namespaceTenants`. Check the image and command, operator RBAC, quotas and Pod Security restrictions. Rendered workload Pods do not mount ServiceAccount tokens.
 
 ## 15. Smoke test and sample data
 

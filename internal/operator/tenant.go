@@ -52,6 +52,16 @@ func (r NamespaceTenantResolver) TenantIDs() []string {
 	return out
 }
 
+// Namespaces lists the exact Kubernetes namespaces this resolver accepts.
+func (r NamespaceTenantResolver) Namespaces() []string {
+	out := make([]string, 0, len(r.Tenants))
+	for namespace := range r.Tenants {
+		out = append(out, namespace)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // TenantIDs implements the scheduler's tenant listing for a single-tenant
 // installation.
 func (r DefaultTenantResolver) TenantIDs() []string {
@@ -60,3 +70,7 @@ func (r DefaultTenantResolver) TenantIDs() []string {
 	}
 	return []string{r.Tenant}
 }
+
+// Namespaces is empty because the legacy single-tenant resolver accepts any
+// namespace and therefore requires the controller's cluster-wide mode.
+func (r DefaultTenantResolver) Namespaces() []string { return nil }

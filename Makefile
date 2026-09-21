@@ -253,7 +253,7 @@ loadtest-preflight:
 	go run ./scripts/loadtest preflight --config "$(LOADTEST_CONFIG)" --images "$(LOADTEST_IMAGES)" --profile "$(LOADTEST_PROFILE)"
 
 loadtest-generate:
-	go run ./scripts/loadtest generate --config "$(LOADTEST_CONFIG)" --images "$(LOADTEST_IMAGES)" --run-id "$(RUN_ID)"
+	go run ./scripts/loadtest generate --config "$(LOADTEST_CONFIG)" --images "$(LOADTEST_IMAGES)" --profile "$(LOADTEST_PROFILE)" --run-id "$(RUN_ID)"
 
 # The fixture TLS secret is generated right before it is applied, never
 # committed: the private key does not enter git history.

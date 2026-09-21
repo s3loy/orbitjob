@@ -25,6 +25,20 @@ func TestParseNamespaceTenants(t *testing.T) {
 	}
 }
 
+func TestNamespaceTenantResolverListsNamespacesDeterministically(t *testing.T) {
+	resolver := NamespaceTenantResolver{Tenants: map[string]string{
+		"platform": "tenant-b",
+		"finance":  "tenant-a",
+	}}
+	got := resolver.Namespaces()
+	if len(got) != 2 || got[0] != "finance" || got[1] != "platform" {
+		t.Fatalf("namespaces = %v", got)
+	}
+	if got := (DefaultTenantResolver{Tenant: "tenant-a"}).Namespaces(); got != nil {
+		t.Fatalf("default resolver namespaces = %v, want nil", got)
+	}
+}
+
 func TestParseNamespaceTenantsRejectsBadInput(t *testing.T) {
 	tests := []struct {
 		name string
@@ -36,6 +50,7 @@ func TestParseNamespaceTenantsRejectsBadInput(t *testing.T) {
 		{"missing namespace", "=tenant-a"},
 		{"missing tenant", "finance="},
 		{"only separators", ",,"},
+		{"duplicate namespace", "finance=tenant-a,finance=tenant-b"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

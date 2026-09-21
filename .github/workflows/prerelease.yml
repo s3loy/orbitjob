@@ -22,7 +22,7 @@ name: Pre-release Images
 on:
   push:
     branches:
-      - refactor
+      - dev
   workflow_dispatch:
 
 permissions:
@@ -142,6 +142,7 @@ jobs:
         run: |
           set -e
           owner="${GITHUB_REPOSITORY_OWNER,,}"
+          # shellcheck disable=SC2153 # VERSION is injected through the step env above.
           version="$VERSION"
           for component in admin-api scheduler operator migrate bootstrap; do
             image="${REGISTRY}/${owner}/orbitjob-${component}"
@@ -155,6 +156,7 @@ jobs:
           VERSION: ${{ needs.images.outputs.version }}
         run: |
           owner="${GITHUB_REPOSITORY_OWNER,,}"
+          # shellcheck disable=SC2153 # VERSION is injected through the step env above.
           cat <<EOF
 
           Images pushed: ghcr.io/${owner}/orbitjob-*:${VERSION} (alias :rc)

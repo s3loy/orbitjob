@@ -22,9 +22,8 @@ const (
 	loadPGPassword = "loadtest-local"
 	loadPGDatabase = "loadtest"
 
-	// operationsDeniedSecret is the Secret the operations Role is forbidden to
-	// read. ValidateLoadManifests rejects any operations Role that grants
-	// secrets, so a read of this Secret is denied by RBAC and the job fails.
+	// operationsDeniedSecret is retained for kubectl image definitions. Current
+	// scenarios verify the stronger tokenless boundary directly with busybox.
 	operationsDeniedSecret = "orbitjob-database"
 )
 
@@ -287,6 +286,9 @@ func workloadArgs(image, familyID, terminalState, caseID string) []string {
 		}
 		return []string{fmt.Sprintf("echo -n '%s' | sha256sum", caseID)}
 	case "busybox":
+		if familyID == "service-account-token-absent" {
+			return []string{"test ! -e /var/run/secrets/kubernetes.io/serviceaccount/token"}
+		}
 		return []string{"nslookup load-postgres.orbitjob-load.svc.cluster.local"}
 	case "postgres":
 		// The connection rides the first argument as a URI: no PG* environment
@@ -300,10 +302,6 @@ func workloadArgs(image, familyID, terminalState, caseID string) []string {
 	case "curl":
 		return curlArgs(familyID, failed, caseID)
 	case "kubectl":
-		// Operator-rendered Jobs run as the namespace's default service
-		// account, which holds no grants. A read that needs any permission is
-		// therefore denied by the API server and exits non-zero, which is what
-		// this failure-expecting family asserts.
 		return []string{"get", "secret", operationsDeniedSecret, "-n", WorkloadNamespace()}
 	default:
 		return []string{fmt.Sprintf("import hashlib,json; print(hashlib.sha256('%s'.encode()).hexdigest())", caseID)}

@@ -124,7 +124,11 @@ func run() error {
 		return err
 	}
 
-	controller, err := inClusterFn(operator.Config{Resync: resyncInterval, Workers: defaultWorkers()})
+	controller, err := inClusterFn(operator.Config{
+		Resync:     resyncInterval,
+		Workers:    defaultWorkers(),
+		Namespaces: tenants.Namespaces(),
+	})
 	if err != nil {
 		return fmt.Errorf("build in-cluster controller: %w", err)
 	}
@@ -179,6 +183,7 @@ func run() error {
 type tenantResolver interface {
 	operator.TenantResolver
 	TenantIDs() []string
+	Namespaces() []string
 }
 
 func loadTenantResolver() (tenantResolver, error) {

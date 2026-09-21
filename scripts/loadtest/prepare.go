@@ -368,7 +368,20 @@ func quotedList(values []string) string {
 // absorbs a full cohort without changing what a single job may use.
 func ensureTenantNamespace(ctx context.Context, tenantID string) error {
 	namespace := TenantNamespace(tenantID)
-	manifest := fmt.Sprintf(`apiVersion: v1
+	manifest := tenantNamespaceManifest(namespace, WorkloadNamespace())
+	cmd := exec.CommandContext(ctx, "kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(manifest)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// tenantNamespaceManifest mirrors the chart's operator Role and RoleBinding.
+// Load-test namespaces are created after Helm installation, so their runtime
+// grant must exist before the operator restarts with those namespaces watched.
+func tenantNamespaceManifest(namespace, releaseNamespace string) string {
+	return fmt.Sprintf(`apiVersion: v1
 kind: Namespace
 metadata:
   name: %s
@@ -398,13 +411,48 @@ spec:
       defaultRequest: {cpu: 10m, memory: 16Mi}
       default: {cpu: 500m, memory: 256Mi}
       max: {cpu: 500m, memory: 256Mi}
-`, namespace, loadManagedByLabelKey, loadManagedByLabelValue, namespace, namespace, namespace, namespace)
-	cmd := exec.CommandContext(ctx, "kubectl", "apply", "-f", "-")
-	cmd.Stdin = strings.NewReader(manifest)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
-	}
-	return nil
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: orbitjob-operator
+  namespace: %s
+rules:
+  - apiGroups: ["workloads.orbitjob.io"]
+    resources: ["scheduledjobs"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["workloads.orbitjob.io"]
+    resources: ["jobruns"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["workloads.orbitjob.io"]
+    resources: ["workflowjobs", "workflowruns"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["workloads.orbitjob.io"]
+    resources: ["scheduledjobs/status", "jobruns/status", "workflowruns/status", "workflowjobs/status"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: orbitjob-operator
+  namespace: %s
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: orbitjob-operator
+subjects:
+  - kind: ServiceAccount
+    name: orbitjob-operator
+    namespace: %s
+`, namespace, loadManagedByLabelKey, loadManagedByLabelValue,
+		namespace, namespace, namespace, namespace,
+		namespace, namespace, releaseNamespace)
 }
 
 // watchTenantNamespaces extends the operator's namespace-to-tenant table with

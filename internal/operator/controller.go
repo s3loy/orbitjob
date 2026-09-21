@@ -40,6 +40,10 @@ var watchedResources = []schema.GroupVersionResource{scheduledJobGVR, jobRunGVR,
 const reconcileBudget = 60 * time.Second
 
 type Config struct {
+	// Namespaces limits every informer list/watch to the configured tenant
+	// namespaces. Empty preserves the cluster-wide mode for callers that do not
+	// have a namespace table.
+	Namespaces []string
 	// Resync re-delivers every watched object periodically. It is the safety net
 	// for events dropped while the operator was down.
 	Resync time.Duration
@@ -86,7 +90,10 @@ type objectCache struct {
 // read decides authoritatively, and a transient index error must not fail a
 // reconcile that would have succeeded.
 func (o objectCache) get(resource, namespace, name string) (unstructured.Unstructured, bool) {
-	informer, ok := o.byResource[resource]
+	informer, ok := o.byResource[resource+"\x00"+namespace]
+	if !ok {
+		informer, ok = o.byResource[resource]
+	}
 	if !ok {
 		return unstructured.Unstructured{}, false
 	}
@@ -115,31 +122,45 @@ func (c Controller) Run(ctx context.Context) error {
 		log = slog.Default()
 	}
 
-	factory := dynamicinformer.NewDynamicSharedInformerFactory(c.Dynamic, c.Config.Resync)
 	// Per-item exponential backoff: a reconcile that fails for a persistent
 	// reason backs off instead of spinning.
 	queue := workqueue.NewTypedRateLimitingQueue(
 		workqueue.DefaultTypedControllerRateLimiter[string](),
 	)
 
-	byResource := make(map[string]cache.SharedIndexInformer, len(watchedResources))
-	informers := make([]cache.SharedIndexInformer, 0, len(watchedResources))
-	for _, gvr := range watchedResources {
-		gvr := gvr
-		informer := factory.ForResource(gvr).Informer()
-		informers = append(informers, informer)
-		if _, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-			AddFunc:    func(obj any) { enqueue(queue, gvr, obj) },
-			UpdateFunc: func(_, obj any) { enqueue(queue, gvr, obj) },
-			DeleteFunc: func(obj any) { enqueue(queue, gvr, obj) },
-		}); err != nil {
-			return fmt.Errorf("watch %s: %w", gvr.Resource, err)
+	namespaces := c.Config.Namespaces
+	if len(namespaces) == 0 {
+		namespaces = []string{""}
+	}
+	factories := make([]dynamicinformer.DynamicSharedInformerFactory, 0, len(namespaces))
+	byResource := make(map[string]cache.SharedIndexInformer, len(watchedResources)*len(namespaces))
+	informers := make([]cache.SharedIndexInformer, 0, len(watchedResources)*len(namespaces))
+	for _, namespace := range namespaces {
+		factory := dynamicinformer.NewFilteredDynamicSharedInformerFactory(c.Dynamic, c.Config.Resync, namespace, nil)
+		factories = append(factories, factory)
+		for _, gvr := range watchedResources {
+			gvr := gvr
+			informer := factory.ForResource(gvr).Informer()
+			informers = append(informers, informer)
+			if _, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+				AddFunc:    func(obj any) { enqueue(queue, gvr, obj) },
+				UpdateFunc: func(_, obj any) { enqueue(queue, gvr, obj) },
+				DeleteFunc: func(obj any) { enqueue(queue, gvr, obj) },
+			}); err != nil {
+				return fmt.Errorf("watch %s in namespace %q: %w", gvr.Resource, namespace, err)
+			}
+			key := gvr.Resource
+			if namespace != "" {
+				key += "\x00" + namespace
+			}
+			byResource[key] = informer
 		}
-		byResource[gvr.Resource] = informer
 	}
 	watched := objectCache{byResource: byResource}
 
-	factory.Start(ctx.Done())
+	for _, factory := range factories {
+		factory.Start(ctx.Done())
+	}
 
 	synced := make([]cache.InformerSynced, 0, len(informers))
 	for _, informer := range informers {
@@ -148,7 +169,7 @@ func (c Controller) Run(ctx context.Context) error {
 	if !cache.WaitForCacheSync(ctx.Done(), synced...) {
 		return ctx.Err()
 	}
-	log.Info("operator cache synced", "resources", len(watchedResources))
+	log.Info("operator cache synced", "resources", len(watchedResources), "namespaces", len(namespaces), "informers", len(informers))
 
 	workers := c.Config.Workers
 	if workers < 1 {

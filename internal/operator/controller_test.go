@@ -9,6 +9,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
@@ -232,6 +233,59 @@ func TestEnqueueNamespacesKeysByResource(t *testing.T) {
 	item, _ := queue.Get()
 	if item != "jobruns:finance/run-1" {
 		t.Fatalf("key = %q", item)
+	}
+}
+
+func TestRunListsOnlyConfiguredNamespaces(t *testing.T) {
+	listKinds := map[schema.GroupVersionResource]string{
+		scheduledJobGVR: "ScheduledJobList",
+		jobRunGVR:       "JobRunList",
+		workflowJobGVR:  "WorkflowJobList",
+		workflowRunGVR:  "WorkflowRunList",
+		jobGVR:          "JobList",
+	}
+	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), listKinds)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- (Controller{
+			Config:    Config{Namespaces: []string{"team-a", "team-b"}},
+			Dynamic:   client,
+			Reconcile: func(context.Context, string, unstructured.Unstructured, bool) error { return nil },
+			Log:       discardLogger(),
+		}).Run(ctx)
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		counts := map[string]int{}
+		for _, action := range client.Actions() {
+			if action.GetVerb() == "list" {
+				counts[action.GetNamespace()]++
+			}
+		}
+		if counts["team-a"] == len(watchedResources) && counts["team-b"] == len(watchedResources) {
+			if counts[""] != 0 || len(counts) != 2 {
+				cancel()
+				t.Fatalf("list namespaces = %v, want only team-a and team-b", counts)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			t.Fatalf("timed out waiting for namespaced informer lists: %v", counts)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatalf("Run() error = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run() did not stop after cancellation")
 	}
 }
 

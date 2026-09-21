@@ -210,8 +210,9 @@ and is what the chart sets.
 ## Database
 
 PostgreSQL runs as a Deployment named `orbitjob-postgres` in the `orbitjob`
-namespace — a different namespace from the workloads, which live in
-`orbitjob-system`.
+namespace. Control-plane workloads live in `orbitjob-system`; rendered Jobs
+live in the namespace mapped to their tenant by `operator.namespaceTenants`
+(`default` in `deploy/kind/values-dev.yaml`).
 
 ```bash
 kubectl exec -n orbitjob deployment/orbitjob-postgres -- \
@@ -258,10 +259,10 @@ kubectl exec -n orbitjob deployment/orbitjob-postgres -- \
 Migrations run forward only. There is no down migration to roll back with;
 recover by fixing forward or by recreating the database.
 
-The repository has not published a release. Its earlier development schemas
-are intentionally unsupported by the Kubernetes-only baseline, and their data
-is disposable: delete and recreate the development database instead of trying
-to preserve or edit its `schema_migrations` history.
+Release `0.2.1` starts from the Kubernetes-only baseline. Earlier development
+schemas are unsupported and their data is disposable: delete and recreate the
+development database instead of trying to preserve or edit its
+`schema_migrations` history.
 
 ## Load testing
 
@@ -330,9 +331,10 @@ The key comes from the `bootstrap-api-key` Secret, not from
 ### Resetting
 
 ```bash
-kubectl delete namespace orbitjob-system    # workloads
+kubectl delete namespace orbitjob-system    # control plane
 kubectl delete namespace orbitjob           # PostgreSQL and its data
 ```
 
-Then start again from step 2. Deleting the whole cluster is
-`kind delete cluster --name orbitjob-dev`, followed by step 1.
+Do not delete the shared `default` namespace just to remove local tenant
+workloads. For a complete reset, delete the isolated development cluster with
+`kind delete cluster --name orbitjob-dev`, then restart from step 1.

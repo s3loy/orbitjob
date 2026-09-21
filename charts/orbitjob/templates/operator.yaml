@@ -11,8 +11,13 @@ spec:
     metadata: {labels: {app.kubernetes.io/name: orbitjob-operator}}
     spec:
       serviceAccountName: orbitjob-operator
+      automountServiceAccountToken: true
+      securityContext:
+{{ include "orbitjob.podSecurityContext" . | indent 8 }}
       containers:
         - name: operator
+          securityContext:
+{{ include "orbitjob.securityContext" . | indent 12 }}
           image: {{ include "orbitjob.image" (dict "root" . "image" .Values.operator.image) | quote }}
           imagePullPolicy: {{ include "orbitjob.imagePullPolicy" (dict "root" . "image" .Values.operator.image) }}
           env:

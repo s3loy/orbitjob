@@ -45,6 +45,9 @@ func TestBuildJobStampsOwnershipAndExecutionSpec(t *testing.T) {
 	if job.Spec.Template.Spec.RestartPolicy != corev1.RestartPolicyNever {
 		t.Fatalf("restart policy = %s", job.Spec.Template.Spec.RestartPolicy)
 	}
+	if job.Spec.Template.Spec.AutomountServiceAccountToken == nil || *job.Spec.Template.Spec.AutomountServiceAccountToken {
+		t.Fatal("task pod must not mount a Kubernetes service-account token")
+	}
 	if job.Spec.BackoffLimit == nil || *job.Spec.BackoffLimit != 3 {
 		t.Fatalf("backoff limit = %v", job.Spec.BackoffLimit)
 	}

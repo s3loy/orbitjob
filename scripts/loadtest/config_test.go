@@ -50,6 +50,17 @@ func TestValidateSmoke(t *testing.T) {
 	}
 }
 
+func TestRunGenerateRejectsProfileConfigMismatch(t *testing.T) {
+	err := runGenerate([]string{
+		"--config", "../../test/load/config/smoke.yaml",
+		"--profile", "standard",
+		"--run-root", t.TempDir(),
+	})
+	if err == nil || !strings.Contains(err.Error(), "validate profile") {
+		t.Fatalf("error = %v, want profile validation failure", err)
+	}
+}
+
 func TestValidateSmokeRejectsQualificationTrue(t *testing.T) {
 	cfg, err := LoadConfig("../../test/load/config/smoke.yaml")
 	if err != nil {

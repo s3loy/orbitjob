@@ -34,7 +34,11 @@ func ParseNamespaceTenants(raw string) (map[string]string, error) {
 		if !ok || strings.TrimSpace(namespace) == "" || strings.TrimSpace(tenant) == "" {
 			return nil, fmt.Errorf("invalid namespace/tenant mapping %q", entry)
 		}
-		out[strings.TrimSpace(namespace)] = strings.TrimSpace(tenant)
+		namespace = strings.TrimSpace(namespace)
+		if _, exists := out[namespace]; exists {
+			return nil, fmt.Errorf("duplicate namespace/tenant mapping for %q", namespace)
+		}
+		out[namespace] = strings.TrimSpace(tenant)
 	}
 	if len(out) == 0 {
 		return nil, fmt.Errorf("%s contains no mappings", NamespaceTenantsTableEnv)

@@ -66,37 +66,6 @@ at `127.0.0.1:55432`; the cluster database is install state. The same loopback
 `trust` trap as the entry above applies when verifying credentials from the
 host — a port-forwarded check proves nothing.
 
-### generate still skips the profile validation every later stage performs
-
-**Updated 2026-09-19.** `validateProfile` runs in preflight, prepare and run
-(`scripts/loadtest/main.go:70`, `prepare.go:127`, `main.go:210`) — prepare's
-gate closed the older half of this entry. `runGenerate` (`main.go:124`) still
-applies only the tenant gate (`ValidateTenants`, `main.go:141`) plus the image
-lock (`main.go:144`), so a manifest can still be generated against a config
-the next stage refuses.
-
-### The operator's two loop cadences have different units
-
-**Verified.** `OPERATOR_SCHEDULE_INTERVAL_SEC` is seconds — default `5`, ticker
-`time.Duration(seconds) * time.Second` (`cmd/operator/main.go:36`, `:43`,
-`:452`). `OPERATOR_RETENTION_INTERVAL_MIN` is minutes — default `5`, ticker
-`time.Duration(minutes) * time.Minute` (`:37`, `:44`, `:411`). The two sit side
-by side in the rendered Deployment (`charts/orbitjob/templates/operator.yaml:22-25`);
-the chart's values comments state the split (`charts/orbitjob/values.yaml:26-29`)
-and nothing else does. A value meant as minutes silently spins the schedule loop
-that many times per minute.
-
-**Resolved 2026-09-18:** the loops no longer share one env var — the
-`..._SEC` / `..._MIN` suffixes now name the units at the call site.
-
-### The integration harness's seed replay is landing
-
-**Landed.** `internal/platform/postgrestest/presets.go` is committed
-(`4c2d324`, on `refactor`): the harness replays the baseline's preset policy
-seed by extracting the statement from `0001_baseline.up.sql` at runtime, and
-`postgrestest/schema.sql` is deleted with the suite building from
-`db/migrations/`. This entry is historical.
-
 ### Schedule adherence has its input but no derivation
 
 **Verified.** `job_run_control_plane.scheduled_for` exists so that "did the
@@ -106,36 +75,18 @@ SLI from it: the SLI type vocabulary is `availability`, `latency`, `quality`,
 `custom` (`internal/core/domain/sli/create_input.go:5-8`) and the only source
 type is `job_run` (`:18`). No owner.
 
-### A labeled Job without an owning attempt is reconciled forever
-
-**Verified.** `UpdateAttemptPhase` refuses to record a phase when no attempt
-row matches the Job name and tenant — `sql.ErrNoRows` becomes `ErrNoAttempt`
-(`internal/core/store/postgres/control_plane_repository.go:36`, `:936`), by
-design, so that "a Job left over from a previous installation is not mistaken
-for this attempt's". The refusal is correct. The caller is not:
-`ReconcileJob` wraps it as an error (`internal/operator/job_handler.go:44-49`),
-and a failed reconcile requeues with rate limiting and logs at ERROR
-(`internal/operator/controller.go:215-217`). The answer can never change — no
-future event creates the missing attempt row — so every redelivery burns a
-PostgreSQL transaction, an ERROR log line and a
-`orbitjob_operator_reconcile_errors_total{resource="jobs"}` increment, on a
-10-minute resync loop (`cmd/operator/main.go:47`), forever.
-
-Three ways to hit it: a hand-created Job carrying the `orbitjob.io/*` labels;
-a Job whose run row retention has pruned (pruning does not delete the
-Kubernetes Job); a namespace-to-tenant remap, since the match is by name and
-tenant.
-
-**Verified live** (kind cluster, 2026-09-18): one labeled probe Job with no
-ledger row produced 12 `reconcile failed ... "no attempt owns kubernetes job"`
-errors in under a minute and stayed permanently in the retry queue until the
-Job was deleted.
-
-Ending the loop means `ReconcileJob` treating `errors.Is(err, ErrNoAttempt)`
-as a skip-and-drop instead of a requeued error. The refusal itself must stay:
-it is what stops a foreign Job from being adopted into a run. No owner.
-
 ## Resolved
+
+**Resolved 2026-09-21:** `generate` accepts the same explicit profile as the
+other load-test stages and rejects a config/profile mismatch before writing a
+manifest (`scripts/loadtest/main.go`, `Makefile`).
+
+- **Operator cadence units are explicit.** Resolved 2026-09-18 by distinct
+  `OPERATOR_SCHEDULE_INTERVAL_SEC` and `OPERATOR_RETENTION_INTERVAL_MIN` names.
+- **The integration harness replays the baseline seed.** Resolved by deriving
+  the preset statement from `0001_baseline.up.sql`; no parallel schema remains.
+- **Orphan labeled Jobs no longer retry forever.** `ReconcileJob` treats
+  `ErrNoAttempt` as a safe skip while preserving the store's anti-adoption gate.
 
 - **The hosted loadtest harness could not complete a profile.** Resolved on
   2026-09-19 in run 35387532919: prepare cleared, manual triggers were admitted

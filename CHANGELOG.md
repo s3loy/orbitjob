@@ -4,10 +4,9 @@ All notable changes to OrbitJob are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-No version has been released yet: the repository has no tags. Everything below
-is on the `refactor` branch, unreleased.
-
 ## [Unreleased]
+
+## [0.2.1] - 2026-09-21
 
 ### Added
 
@@ -32,6 +31,14 @@ is on the `refactor` branch, unreleased.
 
 ### Fixed
 
+- User workload Pods no longer receive a projected Kubernetes service-account
+  token, and the operator's Kubernetes permissions are limited to the tenant
+  namespaces it actually watches.
+- Manual releases now resolve an existing tag to one immutable commit; all
+  artifacts use that commit, and moving-image aliases update only after every
+  versioned image and the Helm chart have succeeded.
+- Load-test manifest generation now enforces the selected profile before
+  writing output.
 - The operator no longer loses its apiserver watches to silent connection
   stalls: the shared client carries TCP keepalive and HTTP/2 read-idle health
   checks, reconciles read their objects from the informer store under a

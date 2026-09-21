@@ -257,6 +257,9 @@ func TestBusyboxTargetsLoadPostgres(t *testing.T) {
 		if !strings.Contains(def.ScheduledJob.Image, "/busybox") {
 			continue
 		}
+		if strings.Contains(def.CaseID, "service-account-token-absent") {
+			continue
+		}
 		sawBusybox = true
 		joined := strings.Join(def.ScheduledJob.Args, " ")
 		if !strings.Contains(joined, "load-postgres.orbitjob-load.svc.cluster.local") {
@@ -265,6 +268,28 @@ func TestBusyboxTargetsLoadPostgres(t *testing.T) {
 	}
 	if !sawBusybox {
 		t.Fatal("no busybox definitions found")
+	}
+}
+
+func TestServiceAccountTokenScenarioChecksProjectedTokenAbsence(t *testing.T) {
+	manifest := mustGenerate(t)
+	found := 0
+	for _, def := range manifest.Definitions {
+		if !strings.Contains(def.CaseID, "service-account-token-absent") {
+			continue
+		}
+		found++
+		if def.Expected.TerminalState != "success" {
+			t.Fatalf("%s terminal state = %q, want success", def.CaseID, def.Expected.TerminalState)
+		}
+		got := strings.Join(def.ScheduledJob.Args, " ")
+		want := "test ! -e /var/run/secrets/kubernetes.io/serviceaccount/token"
+		if got != want {
+			t.Fatalf("%s args = %q, want %q", def.CaseID, got, want)
+		}
+	}
+	if found != 15 {
+		t.Fatalf("token absence definitions = %d, want 15", found)
 	}
 }
 
@@ -482,18 +507,18 @@ var nonCurlFamilies = map[string]struct {
 	Image    string
 	Terminal string
 }{
-	"data-processing/sha256-json-document": {Image: "python", Terminal: "success"},
-	"data-processing/sha256-text":          {Image: "alpine", Terminal: "success"},
-	"database/select-one":                  {Image: "postgres", Terminal: "success"},
-	"database/invalid-sql":                 {Image: "postgres", Terminal: "failed"},
-	"failure/forced-exit-nonzero":          {Image: "python", Terminal: "failed"},
-	"failure/cancel-while-running":         {Image: "python", Terminal: "canceled"},
-	"failure/plain-success":                {Image: "python", Terminal: "success"},
-	"failure/exit-nonzero-message":         {Image: "alpine", Terminal: "failed"},
-	"failure/invalid-sql":                  {Image: "postgres", Terminal: "failed"},
-	"operations/dns-resolution":            {Image: "busybox", Terminal: "success"},
-	"operations/secret-read-denied":        {Image: "kubectl", Terminal: "failed"},
-	"external-probes/dns-lookup":           {Image: "busybox", Terminal: "success"},
+	"data-processing/sha256-json-document":    {Image: "python", Terminal: "success"},
+	"data-processing/sha256-text":             {Image: "alpine", Terminal: "success"},
+	"database/select-one":                     {Image: "postgres", Terminal: "success"},
+	"database/invalid-sql":                    {Image: "postgres", Terminal: "failed"},
+	"failure/forced-exit-nonzero":             {Image: "python", Terminal: "failed"},
+	"failure/cancel-while-running":            {Image: "python", Terminal: "canceled"},
+	"failure/plain-success":                   {Image: "python", Terminal: "success"},
+	"failure/exit-nonzero-message":            {Image: "alpine", Terminal: "failed"},
+	"failure/invalid-sql":                     {Image: "postgres", Terminal: "failed"},
+	"operations/dns-resolution":               {Image: "busybox", Terminal: "success"},
+	"operations/service-account-token-absent": {Image: "busybox", Terminal: "success"},
+	"external-probes/dns-lookup":              {Image: "busybox", Terminal: "success"},
 }
 
 // Every non-curl family the scenario files declare must match the image and the

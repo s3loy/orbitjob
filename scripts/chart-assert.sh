@@ -58,7 +58,7 @@ tenants=(
 values_enabled=$workdir/values-enabled.yaml
 {
   echo "operator:"
-  echo "  namespaceTenants: \"${tenants[0]},${tenants[1]}\""
+  echo "  namespaceTenants: \"${tenants[0]%%=*} = ${tenants[0]#*=}, ${tenants[1]%%=*} = ${tenants[1]#*=}\""
 } >"$values_enabled"
 
 values_disabled=$workdir/values-disabled.yaml
@@ -66,6 +66,12 @@ values_disabled=$workdir/values-disabled.yaml
   echo "operator:"
   echo "  enabled: false"
 } >"$values_disabled"
+
+values_duplicate=$workdir/values-duplicate.yaml
+{
+  echo "operator:"
+  echo "  namespaceTenants: \"${tenants[0]}, ${tenants[0]}\""
+} >"$values_duplicate"
 
 manifest=$workdir/manifest.yaml
 if helm template chart-assert "$chart_dir" \
@@ -75,6 +81,14 @@ if helm template chart-assert "$chart_dir" \
 else
   sed 's/^/       /' "$workdir/render-enabled.err" >&2
   fail "render-enabled: helm template failed against $chart_dir"
+fi
+
+if helm template chart-assert "$chart_dir" \
+  --namespace "$release_ns" -f "$values_duplicate" \
+  >"$workdir/manifest-duplicate.yaml" 2>"$workdir/render-duplicate.err"; then
+  fail "render-duplicate: whitespace-prefixed duplicate namespace was accepted"
+else
+  ok "render-duplicate: normalized duplicate namespace is rejected"
 fi
 
 manifest_disabled=$workdir/manifest-disabled.yaml
@@ -107,7 +121,7 @@ extract_facts() {
       if (kind == "Role") {
         for (i = 1; i <= nrules; i++) printf "RULE\t%d\t%s\n", docno, rule[i]
       }
-      if (kind == "RoleBinding") {
+      if (kind == "RoleBinding" || kind == "ClusterRoleBinding") {
         printf "RB\t%d\t%s/%s\n", docno, rrkind, rrname
         for (i = 1; i <= nsubj; i++)
           printf "SUBJ\t%d\t%s\t%s\t%s\n", docno, subjkind[i], subjname[i], subjns[i]
@@ -161,7 +175,7 @@ extract_facts() {
         }
         next
       }
-      if (kind == "RoleBinding" && topkey == "roleRef") {
+      if ((kind == "RoleBinding" || kind == "ClusterRoleBinding") && topkey == "roleRef") {
         if (line ~ /^roleRef: /) {
           flow = substr(line, 10)
           if (match(flow, /kind:[^,}]*/)) rrkind = trimq(substr(flow, RSTART + 5, RLENGTH - 5))
@@ -175,7 +189,7 @@ extract_facts() {
         }
         next
       }
-      if (kind == "RoleBinding" && topkey == "subjects") {
+      if ((kind == "RoleBinding" || kind == "ClusterRoleBinding") && topkey == "subjects") {
         if (line ~ /^  - /) { nsubj++; part = substr(line, 4) }
         else part = trimq(line)
         colon = index(part, ":")
@@ -195,6 +209,38 @@ extract_facts() {
 
 facts=$workdir/facts-enabled.tsv
 [[ -s $manifest ]] && extract_facts "$manifest" "$facts"
+
+# Prove the fact extractor cannot hide a renamed cluster-wide binding to the
+# operator identity. The production manifest must not contain this object; the
+# synthetic copy exists only to exercise the deny assertion's input.
+scope_probe=$workdir/manifest-scope-probe.yaml
+cp "$manifest" "$scope_probe"
+cat >>"$scope_probe" <<EOF
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: renamed-broad-grant
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: orbitjob-operator
+    namespace: $release_ns
+EOF
+scope_probe_facts=$workdir/facts-scope-probe.tsv
+extract_facts "$scope_probe" "$scope_probe_facts"
+scope_probe_subject=$(awk -F'\t' -v release_ns="$release_ns" '
+  $1 == "DOC" { kind[$2] = $3; next }
+  $1 == "SUBJ" && kind[$2] == "ClusterRoleBinding" && $3 == "ServiceAccount" && $4 == "orbitjob-operator" && $5 == release_ns { print $4 "@" $5 }
+' "$scope_probe_facts")
+if [[ $scope_probe_subject == "orbitjob-operator@$release_ns" ]]; then
+  ok "operator-rbac-scope-probe: renamed ClusterRoleBinding subject is visible to assertions"
+else
+  fail "operator-rbac-scope-probe: extractor hid a renamed ClusterRoleBinding subject"
+fi
 
 count_doc() { # <kind> <namespace-or-empty> <name> <facts-file>
   awk -F'\t' -v k="$1" -v ns="$2" -v n="$3" \
@@ -296,10 +342,105 @@ for kind in Role RoleBinding; do
   fi
 done
 
+for entry in "${tenants[@]}"; do
+  ns=${entry%%=*}
+  for kind in Role RoleBinding; do
+    count=$(count_doc "$kind" "$ns" orbitjob-operator "$facts")
+    if [[ $count == 1 ]]; then
+      ok "operator-rbac:$ns exactly one $kind orbitjob-operator"
+    else
+      fail "operator-rbac:$ns expected exactly 1 $kind orbitjob-operator, found $count"
+    fi
+  done
+
+  operator_rule=$(awk -F'\t' -v ns="$ns" '
+    $1 == "DOC" && $3 == "Role" && $4 == ns && $5 == "orbitjob-operator" { d = $2 }
+    $1 == "RULE" && $2 == d { print $3 }' "$facts")
+  expected_operator_rule='apiGroups=["workloads.orbitjob.io"];resources=["scheduledjobs"];verbs=["get","list","watch","update","patch"]
+apiGroups=["workloads.orbitjob.io"];resources=["jobruns"];verbs=["get","list","watch","create","update","patch","delete"]
+apiGroups=["workloads.orbitjob.io"];resources=["workflowjobs","workflowruns"];verbs=["get","list","watch","patch"]
+apiGroups=["workloads.orbitjob.io"];resources=["scheduledjobs/status","jobruns/status","workflowruns/status","workflowjobs/status"];verbs=["get","update","patch"]
+apiGroups=["batch"];resources=["jobs"];verbs=["get","list","watch","create","update","patch","delete"]
+apiGroups=[""];resources=["pods"];verbs=["get","list","watch"]'
+  if [[ $operator_rule == "$expected_operator_rule" ]]; then
+    ok "operator-rbac-rule:$ns grants the exact reconciliation surface"
+  else
+    fail "operator-rbac-rule:$ns Role rules are [$operator_rule], want [$expected_operator_rule]"
+  fi
+
+  operator_ref=$(awk -F'\t' -v ns="$ns" '
+    $1 == "DOC" && $3 == "RoleBinding" && $4 == ns && $5 == "orbitjob-operator" { d = $2 }
+    $1 == "RB" && $2 == d { print $3 }' "$facts")
+  if [[ $operator_ref == "Role/orbitjob-operator" ]]; then
+    ok "operator-rbac-rolebinding-ref:$ns binds Role orbitjob-operator"
+  else
+    fail "operator-rbac-rolebinding-ref:$ns roleRef is [$operator_ref], want [Role/orbitjob-operator]"
+  fi
+
+  operator_subj=$(awk -F'\t' -v ns="$ns" '
+    $1 == "DOC" && $3 == "RoleBinding" && $4 == ns && $5 == "orbitjob-operator" { d = $2 }
+    $1 == "SUBJ" && $2 == d { print $3 "/" $4 "@" $5 }' "$facts")
+  if [[ $operator_subj == "ServiceAccount/orbitjob-operator@$release_ns" ]]; then
+    ok "operator-rbac-subject:$ns subject is ServiceAccount orbitjob-operator@$release_ns"
+  else
+    fail "operator-rbac-subject:$ns subjects are [$operator_subj], want [ServiceAccount/orbitjob-operator@$release_ns]"
+  fi
+done
+
+cluster_grants=$(awk -F'\t' '$1 == "DOC" && ($3 == "ClusterRole" || $3 == "ClusterRoleBinding") && $5 == "orbitjob-operator" { c++ } END { print c + 0 }' "$facts")
+if [[ $cluster_grants == 0 ]]; then
+  ok "operator-rbac-scope: no cluster-wide operator grant renders"
+else
+  fail "operator-rbac-scope: found $cluster_grants cluster-wide operator grants"
+fi
+
+cluster_operator_bindings=$(awk -F'\t' -v release_ns="$release_ns" '
+  $1 == "DOC" { kind[$2] = $3; name[$2] = $5; next }
+  $1 == "SUBJ" && kind[$2] == "ClusterRoleBinding" && $3 == "ServiceAccount" && $4 == "orbitjob-operator" && $5 == release_ns {
+    print name[$2]
+  }' "$facts")
+if [[ -z $cluster_operator_bindings ]]; then
+  ok "operator-rbac-scope: no ClusterRoleBinding grants the operator ServiceAccount"
+else
+  fail "operator-rbac-scope: ClusterRoleBindings grant the operator ServiceAccount: [$cluster_operator_bindings]"
+fi
+
+for kind in Role RoleBinding; do
+  count=$(count_doc "$kind" "$release_ns" orbitjob-operator-leader-election "$facts")
+  if [[ $count == 1 ]]; then
+    ok "operator-leader-election: exactly one namespaced $kind"
+  else
+    fail "operator-leader-election: expected exactly 1 namespaced $kind, found $count"
+  fi
+done
+
+
+leader_rule=$(awk -F'\t' -v ns="$release_ns" '
+  $1 == "DOC" && $3 == "Role" && $4 == ns && $5 == "orbitjob-operator-leader-election" { d = $2 }
+  $1 == "RULE" && $2 == d { print $3 }' "$facts")
+expected_leader_rule='apiGroups=["coordination.k8s.io"];resources=["leases"];verbs=["get","create","update","delete"]'
+if [[ $leader_rule == "$expected_leader_rule" ]]; then
+  ok "operator-leader-election-rule: grants only the required lease verbs"
+else
+  fail "operator-leader-election-rule: Role rules are [$leader_rule], want [$expected_leader_rule]"
+fi
+
+leader_ref=$(awk -F'\t' -v ns="$release_ns" '
+  $1 == "DOC" && $3 == "RoleBinding" && $4 == ns && $5 == "orbitjob-operator-leader-election" { d = $2 }
+  $1 == "RB" && $2 == d { print $3 }' "$facts")
+leader_subj=$(awk -F'\t' -v ns="$release_ns" '
+  $1 == "DOC" && $3 == "RoleBinding" && $4 == ns && $5 == "orbitjob-operator-leader-election" { d = $2 }
+  $1 == "SUBJ" && $2 == d { print $3 "/" $4 "@" $5 }' "$facts")
+if [[ $leader_ref == "Role/orbitjob-operator-leader-election" && $leader_subj == "ServiceAccount/orbitjob-operator@$release_ns" ]]; then
+  ok "operator-leader-election-binding: binds the operator ServiceAccount to the namespaced Role"
+else
+  fail "operator-leader-election-binding: roleRef [$leader_ref], subjects [$leader_subj]"
+fi
+
 rogue=$(awk -F'\t' '
   $1 == "DOC" { rkind[$2] = $3; rns[$2] = $4; rname[$2] = $5; next }
   $1 == "RULE" && index($3, "resources=[\"jobruns\"]") > 0 {
-    if (rkind[$2] == "Role" && rname[$2] == "orbitjob-admin-api") next
+    if (rkind[$2] == "Role" && (rname[$2] == "orbitjob-admin-api" || rname[$2] == "orbitjob-operator")) next
     if (rkind[$2] == "Role") print "  Role " rname[$2] " ns=" rns[$2] ": " $3
   }' "$facts")
 if [[ -z $rogue ]]; then

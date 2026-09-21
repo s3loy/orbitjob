@@ -1,10 +1,7 @@
 category: operations
-# Operator-rendered Kubernetes Jobs run with the namespace's default service
-# account: the Job template the CRD carries has image, command and args only,
-# so there is nothing to mount the operations Role on any more. The positive
-# family therefore resolves a namespace-internal service by DNS, and the
-# negative family asserts that the default identity is denied a Secret read --
-# the same least-privilege assertion the operations RBAC manifest documents.
+# Operator-rendered Kubernetes Jobs do not mount a ServiceAccount token. The
+# second family succeeds only when the standard projected token path is absent,
+# proving the workload has no Kubernetes API credential.
 families:
   - {id: dns-resolution, count: 125, image: busybox}
-  - {id: secret-read-denied, count: 15, image: kubectl, terminal_state: failed}
+  - {id: service-account-token-absent, count: 15, image: busybox}

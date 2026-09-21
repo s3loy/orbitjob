@@ -49,10 +49,19 @@ to report here, before anything is created.
 */}}
 {{- define "orbitjob.operatorNamespaceTenants" -}}
 {{- $raw := required "operator.namespaceTenants is required when operator.enabled is true. Set it to \"namespace=tenant[,namespace=tenant]\", or set operator.enabled=false to install without the operator." .Values.operator.namespaceTenants -}}
-{{- $entry := "[^=,]+=[^=,]+" -}}
-{{- $pattern := printf "^%s(,%s)*$" $entry $entry -}}
-{{- if not (regexMatch $pattern $raw) -}}
+{{- $normalized := list -}}
+{{- range $rawEntry := splitList "," $raw -}}
+{{- $entry := trim $rawEntry -}}
+{{- $parts := splitList "=" $entry -}}
+{{- if ne (len $parts) 2 -}}
 {{- fail (printf "operator.namespaceTenants must be \"namespace=tenant[,namespace=tenant]\", got %q" $raw) -}}
 {{- end -}}
-{{- $raw -}}
+{{- $namespace := trim (index $parts 0) -}}
+{{- $tenant := trim (index $parts 1) -}}
+{{- if or (not (regexMatch "^[^=,[:space:]]+$" $namespace)) (not (regexMatch "^[^=,[:space:]]+$" $tenant)) -}}
+{{- fail (printf "operator.namespaceTenants must be \"namespace=tenant[,namespace=tenant]\", got %q" $raw) -}}
+{{- end -}}
+{{- $normalized = append $normalized (printf "%s=%s" $namespace $tenant) -}}
+{{- end -}}
+{{- join "," $normalized -}}
 {{- end }}

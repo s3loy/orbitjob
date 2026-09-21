@@ -4,6 +4,8 @@
 # Builder base: shared module cache
 # ============================================================
 FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS base
+ARG GOPROXY=https://goproxy.cn,direct
+ENV GOPROXY=$GOPROXY
 RUN apk add --no-cache git ca-certificates tzdata
 WORKDIR /src
 COPY go.mod go.sum ./

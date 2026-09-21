@@ -8,6 +8,7 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 tag=${ORBITJOB_IMAGE_TAG:-dev}
 created_cluster=false
 workdir=
+archive_workdir=
 dsn_file=
 port_forward_pid=
 
@@ -93,6 +94,7 @@ cleanup() {
     kubectl logs -n "$namespace" -l job-name --all-containers --tail=100 2>/dev/null || true
   fi
   [[ -z ${workdir:-} ]] || rm -rf "$workdir"
+  [[ -z ${archive_workdir:-} ]] || rm -rf "$archive_workdir"
   [[ -z ${config_dir:-} ]] || rm -rf "$config_dir"
   [[ -z ${dsn_file:-} ]] || rm -f "$dsn_file"
   [[ -z ${port_forward_pid:-} ]] || kill "$port_forward_pid" 2>/dev/null || true
@@ -114,6 +116,28 @@ if ! kind get clusters | grep -qx "$cluster"; then
   created_cluster=true
 fi
 kubectl config use-context "kind-$cluster" >/dev/null
+
+# kind's containerd does not inherit Docker Desktop registry mirrors. Pull the
+# database image through the host daemon first, then import a single-platform
+# Docker archive. Stripping the OCI index also avoids kind --all-platforms
+# following attestations and manifests the host daemon did not download.
+archive_workdir=$(mktemp -d "${TMPDIR:-/tmp}/orbitjob-verify.XXXXXX")
+node="${cluster}-control-plane"
+case "$(docker exec "$node" uname -m)" in
+  aarch64|arm64) platform=linux/arm64 ;;
+  x86_64|amd64) platform=linux/amd64 ;;
+  *) printf 'unsupported kind node architecture\n' >&2; exit 1 ;;
+esac
+postgres_image=postgres:17-alpine
+docker pull --platform "$platform" "$postgres_image"
+archive_dir="$archive_workdir/postgres-image"
+mkdir -p "$archive_dir"
+docker image save -o "$archive_dir/source.tar" "$postgres_image"
+tar -xf "$archive_dir/source.tar" -C "$archive_dir"
+tar -cf "$archive_dir/docker.tar" -C "$archive_dir" manifest.json blobs
+docker exec --privileged -i "$node" ctr --namespace=k8s.io images import \
+  --digests --snapshotter=overlayfs - <"$archive_dir/docker.tar"
+
 kubectl apply -f "$root/deploy/kind/postgres-17.yaml"
 kubectl rollout status deployment/orbitjob-postgres -n "$namespace" --timeout=3m
 
@@ -153,7 +177,7 @@ fi
 printf '%s\n' "postgres://postgres:${postgres_password}@127.0.0.1:15432/orbitjob?sslmode=disable" >"$dsn_file"
 go -C "$root" run ./cmd/configure setup --mode external --database-dsn-file "$dsn_file" --state "$config_dir/database.json" --runtime-env "$config_dir/database.env"
 set -a
-# shellcheck disable=SC1090
+# shellcheck disable=SC1091
 . "$config_dir/database.env"
 set +a
 kubectl create secret generic orbitjob-database -n "$namespace" \

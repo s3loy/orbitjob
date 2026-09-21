@@ -16,7 +16,9 @@ Testing in unauthorized environments is prohibited. Never send real API keys, da
 
 ## Response and disclosure
 
-Once maintainers acknowledge a report, fix and disclosure are coordinated on the basis of a reproduction. The project has no stable release yet, so no fixed SLA is promised. Please do not publish exploit details before the fix commit is public.
+Once maintainers acknowledge a report, fix and disclosure are coordinated on
+the basis of a reproduction. Version `0.2.1` has no fixed response-time SLA.
+Please do not publish exploit details before the fix commit is public.
 
 ## Current security model
 
@@ -95,20 +97,22 @@ Before adding a cross-tenant query, adjust the data model or use a tenant-scoped
 
 ### Kubernetes workloads
 
-The operator renders each `JobRun` into a `batch/v1` Job in the task namespace
-(`orbitjob-tasks`), from the container image, command and args declared in the
-`ScheduledJob` job template. Pods run with `restartPolicy: Never` — a failed pod
-is one failed attempt, and retry is owned by the platform, never a silent
-in-process restart. The platform sets no pod security context by itself; the
-task ServiceAccount `orbitjob-task` deliberately has no API access, because a
-job is workload, not control plane.
+The operator renders each `JobRun` into a `batch/v1` Job in the Kubernetes
+namespace mapped to its tenant by `operator.namespaceTenants`, from the
+container image, command and args declared in the `ScheduledJob` job template.
+Pods run with `restartPolicy: Never` — a failed pod is one failed attempt, and
+retry is owned by the platform, never a silent in-process restart. Every
+rendered Pod sets `automountServiceAccountToken: false`, so workload containers
+receive no Kubernetes API credential even if the namespace's default
+ServiceAccount later gains permissions.
 
-The task ServiceAccount must never be granted cluster-level permissions. If a
-workload needs to call an API, create a separate, narrowly scoped
-ServiceAccount for it and reference that one from the job template.
+Workload Pods must remain tokenless. Kubernetes API access is not part of the
+current job-template contract; adding it requires a reviewed API extension and
+a dedicated, narrowly scoped ServiceAccount rather than widening the default
+or operator identity.
 
 A container image runs with whatever privileges its own manifest requests,
-inside the boundary the task namespace and its ServiceAccount define. Treat job
+inside the boundary the mapped tenant namespace and its admission policies define. Treat job
 images as untrusted inputs: pin them to an immutable digest at the registry or
 admission layer if mutable tags are a concern.
 
@@ -137,7 +141,7 @@ The application logs structurally with trace IDs. New log lines must never inclu
 
 ## Known boundaries
 
-- The project has no formal release or long-term-support version.
+- `0.2.1` is the first supported release line; no long-term-support line is promised.
 - The operator elects a singleton via Kubernetes Lease; the scheduler's etcd election is optional. PG epoch fencing (writer epoch) was removed together with the legacy execution path.
 - The API has no full management RBAC yet. Never expose the tenant/API-key management endpoints directly to untrusted networks; add access control at the ingress or API gateway layer.
 - OpenAPI does not yet fully express the Bearer security scheme and some DELETE version bodies. The middleware is authoritative for authentication; deleting a Check/SLI/SLO requires the current `version`.
@@ -148,7 +152,7 @@ The application logs structurally with trace IDs. New log lines must never inclu
 
 | Version | Security updates |
 |---|---|
-| No formal release yet | Maintainers prioritize reproducible issues on the `dev` branch; no long-term support promised |
+| 0.2.1 | Security fixes until the next minor release; no long-term support promised |
 
 ## Credits
 

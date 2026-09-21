@@ -26,7 +26,7 @@ make kind-up
 # 2. Install PostgreSQL and generate the orbitjob-database Secret
 make kind-db
 
-# 3. Build images locally and load them (skip to pull published ghcr.io/s3loy images)
+# 3. Build and load local development images
 make docker-build TAG=dev
 make kind-load TAG=dev
 
@@ -35,6 +35,11 @@ helm upgrade --install orbitjob ./charts/orbitjob \
   --namespace orbitjob-system \
   -f deploy/kind/values-dev.yaml \
   --wait --timeout=10m
+
+# To use published images instead, keep the tenant mapping from values-dev but
+# override its local-only tag and pull policy:
+#   --set-string global.imageTag=v0.2.1 \
+#   --set-string global.imagePullPolicy=IfNotPresent
 
 # 5. Restart the deployments so pods pick up the freshly built :dev images
 for d in orbitjob-admin-api orbitjob-scheduler orbitjob-operator; do

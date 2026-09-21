@@ -125,6 +125,7 @@ func runGenerate(args []string) error {
 	flags := flag.NewFlagSet("generate", flag.ContinueOnError)
 	configPath := flags.String("config", "test/load/config/standard.yaml", "load config")
 	imagesPath := flags.String("images", "test/load/config/images.lock.yaml", "image lock")
+	profile := flags.String("profile", "standard", "load profile: standard|smoke|long")
 	scenariosPath := flags.String("scenarios", "test/load/scenarios", "scenario directory")
 	runID := flags.String("run-id", "generation-check", "run ID")
 	runRoot := flags.String("run-root", "test/load/runs", "run root")
@@ -134,6 +135,9 @@ func runGenerate(args []string) error {
 	cfg, err := LoadConfig(*configPath)
 	if err != nil {
 		return err
+	}
+	if err := validateProfile(*profile, cfg); err != nil {
+		return fmt.Errorf("validate profile: %w", err)
 	}
 	// The same tenant-mode gate preflight, prepare and run apply. Without it
 	// generate happily writes a manifest for a profile the next step refuses,

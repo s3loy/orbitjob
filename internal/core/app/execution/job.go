@@ -41,6 +41,7 @@ type Template struct {
 // caller mutating the revision cannot change the desired Job after the fact.
 func BuildJob(identity Identity, namespace string, template Template) *batchv1.Job {
 	backoff := template.BackoffLimit
+	automountServiceAccountToken := false
 	if backoff < 0 {
 		backoff = 0
 	}
@@ -61,6 +62,10 @@ func BuildJob(identity Identity, namespace string, template Template) *batchv1.J
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
+					// User workloads do not call the Kubernetes API. Disabling the
+					// projected credential here protects every tenant namespace,
+					// including namespaces created after the chart was installed.
+					AutomountServiceAccountToken: &automountServiceAccountToken,
 					// The platform owns retry. A Pod that fails is one failed
 					// attempt inside this Job, never a silent in-Pod restart.
 					RestartPolicy: corev1.RestartPolicyNever,
