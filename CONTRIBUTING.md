@@ -215,25 +215,24 @@ Descriptions are lowercase English, no trailing period, at most 72 characters. C
 
 Do not fold unrelated features into one commit, and do not split one logical unit into per-file commits.
 
-## PR content
+## PR descriptions
 
-PRs target `dev`. The description contains at least:
+PRs target `dev`. Write for the reviewer, not as release notes: start with why
+the change exists, then explain the behavior or design that changed. A small
+change may need only one sentence. A larger change should explain causality,
+tradeoffs, migration impact, known limitations and any issue, ADR or prior PR
+that provides necessary context.
 
-```markdown
-## Summary
-The problem solved and the user- or operator-visible change.
+Do not force a fixed section structure. Avoid enumerating files, commits or
+every feature in the diff, and do not repeat CI checks visible on the PR.
+Mention a test, benchmark, manual check, skipped test or failure only when it
+materially helps review. Use headings or bullets only when they make a long
+description easier to review.
 
-## Changes
-Main code, database and deployment changes.
-
-## Testing
-How it was tested and the results.
-
-## Related
-Related Issues and design documents. Use `Fixes #issue` to auto-close.
-```
-
-Breaking changes, irreversible migrations, Secret key names and upgrade order belong in the PR body, not only in review comments.
+Breaking changes, irreversible migrations, Secret key names and upgrade order
+belong in the PR body, not only in review comments. Use `Fixes #issue` when the
+PR resolves an issue. The author owns every claim; agent-assisted drafts must
+be verified and rewritten in the author's own voice before submission.
 
 ## Code of conduct
 

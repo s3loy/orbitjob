@@ -1,4 +1,4 @@
-# Agent Workflow Guidelines
+# Repository Agent Workflow Guidelines
 
 **Purpose**: Prevent documentation-code divergence, inconsistent information across files, and stale references.
 
@@ -129,6 +129,7 @@ As an AI agent, I commit to:
 5. **SSOT, no duplication**: When finding duplicate definitions → alert s3 and merge to single source
 6. **Proactively clean stale info**: When finding docs not matching code → fix immediately, don't wait for s3 to discover
 7. **Multi-language sync**: Modify `README.md` → automatically sync `README.zh.md`
+8. **Write PR prose for reviewers**: Follow `CONTRIBUTING.md`; do not default to fixed `Summary` / `Changes` / `Testing` sections, diff inventories or exhaustive CI checklists
 
 **Penalty for violations**: s3 has the right to reject PR, requiring documentation re-sync.
 
