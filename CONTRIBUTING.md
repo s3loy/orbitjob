@@ -2,6 +2,12 @@
 
 Open an Issue before submitting major features or interface changes, describing the problem scope, edge cases and verification plan. Small fixes can go straight to a PR.
 
+Issues and pull requests use a small multi-axis taxonomy: `kind/*` describes
+the work, `area/*` identifies the affected subsystem, and `priority/*` records
+maintainer scheduling. Pull requests receive objective `area/*` labels from
+their changed paths. Priority, security impact, release-note eligibility, and
+breaking changes are always classified by a maintainer.
+
 ## Development environment
 
 - Go 1.27.1

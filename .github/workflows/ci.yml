@@ -139,3 +139,16 @@ jobs:
               --cache-to "type=gha,mode=max,scope=docker-$name" \
               .
           done
+
+  gate:
+    # Keep the push context distinct so a successful dev push cannot satisfy
+    # the required check for a later dev-to-main pull request at the same SHA.
+    name: ${{ github.event_name == 'pull_request' && 'CI / Gate' || 'CI / Post-merge' }}
+    if: always()
+    needs: [docker]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require successful CI
+        env:
+          RESULT: ${{ needs.docker.result }}
+        run: test "$RESULT" = success

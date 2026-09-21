@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   golangci-lint:
-    name: golangci-lint
+    name: ${{ github.event_name == 'pull_request' && 'golangci-lint' || 'golangci-lint-post-merge' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
