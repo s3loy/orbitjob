@@ -11,18 +11,18 @@ the resolved list at the bottom with a one-line receipt pointing at the fix.
 
 ## Open
 
-### The long and standard profiles have never been run
+### The long and standard profiles have no recorded completed result
 
-`smoke` is the only profile that has completed end to end. `standard` is four
-hours of schedule and `long` is eight; neither has been started. `long` cannot
-run on a hosted CI job at all, which is capped at six hours.
+`standard` is four hours of schedule and `long` is eight. Neither has a
+completed result recorded in this repository. `long` cannot run on a hosted
+GitHub Actions job, which is capped at six hours.
 
-**In progress.** `.github/workflows/loadtest.yml` (dispatched by hand) runs
-either profile on a hosted runner — `timeout-minutes: 350` for `standard`, 90
-otherwise — with `scripts/loadtest-ci.sh` doing the sequence the guide walks a
-human through. Nothing in it is verified until it runs on GitHub: the installed
-kind cluster, the image build and the four-hour schedule all have to fit one
-runner.
+**In progress.** `.github/workflows/loadtest.yml` runs `smoke` and `standard`
+only by manual dispatch — `timeout-minutes: 350` for `standard`, 90 otherwise —
+with `scripts/loadtest-ci.sh` doing the sequence the guide walks a human
+through. These profiles are advisory operator evidence, not merge gates; an
+operator decides when a fresh run is useful and records its artifact outside
+the repository.
 
 ### Rotating the database password silently breaks every workload
 
@@ -65,30 +65,6 @@ The red line is unchanged: integration suites run ONLY against `ojtest-pg`
 at `127.0.0.1:55432`; the cluster database is install state. The same loopback
 `trust` trap as the entry above applies when verifying credentials from the
 host — a port-forwarded check proves nothing.
-
-### The loadtest workflow could not complete a profile on GitHub
-
-**Resolved 2026-09-19, run 35387532919.** The first end-to-end green Load
-Test: prepare cleared in ~50s once the client stopped starving on client-go's
-silent 5-QPS default (f8283fc), manual triggers were admitted 500/500 once
-the load namespaces carried the admin-api Role the chart grants per
-scheduling namespace (a4b04d6), and the verifier could read the ledger after
-switching from the grant-less bootstrap DSN to the SELECT-only admin DSN
-(same commit). Three earlier runs (35319872763, 35321959556, 35363809165)
-died in `prepare` with "no active revision after 10m"; run 35380354290
-cleared prepare but exposed the two plumbing gaps above while the operator
-itself logged zero errors.
-
-One gate still reports what it should: `expected-terminal-state` FAILs on
-~4% of runs (20/500) — expected-Succeeded scenarios whose Kubernetes Job
-misses its deadline while queued behind a cohort burst on the small runner
-(DeadlineExceeded events; same class as the 6-run apply-storm deaths
-documented above). Ruled 2026-09-19: this stays a signal, not a hard gate —
-the casualties feed workload/algorithm tuning, and a future change should
-surface event-evidenced environmental deaths as a bounded WARN rather than
-failing the verdict. Note the workflow currently shows a green check on a
-FAIL verdict because the verifier does not exit nonzero on its own verdict;
-that honesty gap is tracked separately.
 
 ### generate still skips the profile validation every later stage performs
 
@@ -161,6 +137,13 @@ it is what stops a foreign Job from being adopted into a run. No owner.
 
 ## Resolved
 
+- **The hosted loadtest harness could not complete a profile.** Resolved on
+  2026-09-19 in run 35387532919: prepare cleared, manual triggers were admitted
+  500/500, and evidence reads used the SELECT-only admin DSN. Load testing is
+  intentionally advisory. A green workflow means the harness completed and
+  uploaded evidence; the product result remains the independent verdict in
+  `result.json`, which an operator reviews rather than using as a merge gate.
+
 - **The operator went deaf 15–20 minutes after start, and its workers hung
   behind the dead watches.** Three stacked defects produced one symptom (runs
   materializing but never reaching a terminal phase, 893 in flight on the
@@ -219,5 +202,5 @@ it is what stops a foreign Job from being adopted into a run. No owner.
   that.
 - **Documentation drift in the load-test guide.** The `long`-as-qualification
   listing, the `expected-terminal-state` false-failure note and the stale family
-  table are gone; the guide now says only `smoke` has run end to end
-  (`docs/loadtest-guide.md:31-33`).
+  table are gone. The guide no longer hard-codes run history; workflow artifacts
+  and local run directories are the evidence source for individual results.

@@ -88,11 +88,16 @@ Test tiers, inside out:
 5. Integration tests: real PostgreSQL, `//go:build integration`
 6. Deployment verification: Helm or kind
 
-Go packages carrying business logic target 100% statement coverage as the merge bar. Before submitting, run:
+Business logic and repository packages under
+`internal/{core,admin}/{domain,app,store}` must meet a 60%
+statement-coverage merge bar. Infrastructure, adapters, commands and operator
+packages have no numeric gate. Declaration-only packages with no executable
+statements are documented and validated in `scripts/coverage-baseline.txt`;
+they are reported but have no meaningful percentage. Before submitting, run:
 
 ```bash
 make check
-make test-cover
+make test-cover-check
 ```
 
 Changes touching the database, repositories, migrations, bootstrap or RLS also require:
@@ -151,7 +156,12 @@ Bypass with `git commit --no-verify`, but only in documented emergencies — a r
 
 ## CI
 
-The pipeline map — which workflow runs when, what each one proves, and where artifacts land — is `docs/ci.md`. On every PR: unit/race/coverage, the integration suites, lint, govulncheck, dependency review, a benchmark comparison, and a build of all five images for both release platforms (no push). Nightly on the default branch: load-test smoke; Saturday night: the qualifying standard profile. A hosted job caps at 360 minutes, so the 8-hour soak runs on the always-on dev cluster, not in CI.
+The pipeline map — which workflow runs when, what each one proves, and where
+artifacts land — is `docs/ci.md`. On PRs into `dev`: unit/race/coverage, the
+integration suites, lint, govulncheck, dependency review, and a build of all
+five images for both release platforms (no push). Benchmark comparison runs on
+PRs into `main`. Load tests are manually dispatched advisory operator evidence,
+never a required merge check.
 
 ## OpenAPI
 

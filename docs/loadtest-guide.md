@@ -2,12 +2,12 @@
 
 Running a load test against a local cluster, from preflight to report.
 
-Every command here was executed against a freshly built `orbitjob-dev` cluster.
-The numbers quoted are from that run. The tooling has since moved onto the
-Kubernetes control plane — definitions are now ScheduledJob custom resources and
-every run is a ledger row under `job_run_control_plane` — and the rewritten
-steps have not yet had a full live pass on the rebuilt cluster; where the text
-quotes numbers from the previous architecture they are marked as such.
+The tooling drives the Kubernetes control plane: definitions are ScheduledJob
+custom resources and every run is a ledger row under
+`job_run_control_plane`. Load tests are operator-run, advisory evidence. They
+do not block PRs or merges, and a completed workflow only means the harness
+produced its evidence; the operator reads the verdict in `result.json` and
+decides how to use it.
 
 ## Profiles
 
@@ -28,9 +28,11 @@ existed to test is gone. Every surviving profile lists its tenants as
 a slug such as `default` is a name, never a tenant identifier, and validation
 refuses one before any cluster is touched.
 
-Only `smoke` has been run end to end on the previous architecture. Treat the
-other two as untested here, and `standard` as the one whose verdict carries
-qualification weight.
+`standard` is called a qualification profile because it applies the full
+four-hour workload and minimum-instance rule. That label belongs to the load
+report, not to the repository's merge policy. Run history is intentionally not
+hard-coded here; use workflow artifacts or a local run directory as the source
+for a particular result.
 
 ## Before you start
 

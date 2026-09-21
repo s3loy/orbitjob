@@ -15,7 +15,7 @@
 
 本地需要 Kind 和 Helm：`kind`、`kubectl`、`helm`、`make`。
 
-`bash scripts/quickstart.sh` 
+`bash scripts/quickstart.sh`
 
 手动：
 

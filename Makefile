@@ -45,7 +45,7 @@ test-cover:
 	go test -coverprofile=coverage.out ./...
 	go tool cover -func=coverage.out
 
-# Tiered coverage gate, thresholds defined in CLAUDE.md
+# Coverage gate, threshold defined in CONTRIBUTING.md
 test-cover-check: test-cover
 	bash scripts/check-coverage.sh coverage.out
 

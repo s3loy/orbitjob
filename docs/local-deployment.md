@@ -159,7 +159,7 @@ steps above when something is broken and you need to see which part.
 
 ```bash
 make check              # lint, vet, race tests, openapi and tidy checks
-make test-cover-check   # tiered coverage gate
+make test-cover-check   # 60% coverage gate
 make integration        # needs TEST_DATABASE_DSN, see below
 
 make docker-build TAG=dev
@@ -257,6 +257,11 @@ kubectl exec -n orbitjob deployment/orbitjob-postgres -- \
 
 Migrations run forward only. There is no down migration to roll back with;
 recover by fixing forward or by recreating the database.
+
+The repository has not published a release. Its earlier development schemas
+are intentionally unsupported by the Kubernetes-only baseline, and their data
+is disposable: delete and recreate the development database instead of trying
+to preserve or edit its `schema_migrations` history.
 
 ## Load testing
 

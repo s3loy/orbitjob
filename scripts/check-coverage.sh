@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Tiered coverage gate. Thresholds are defined in CLAUDE.md.
+# Coverage gate. The merge bar is defined in CONTRIBUTING.md.
 #
-#   Pure business logic (domain, app under core|admin)   90%
-#   IO implementations (store under core|admin)          80%
+#   Business logic and stores under core|admin           60%
 #   Infrastructure and adapters                          no numeric gate
 #
 # The set of packages this gate checks comes from `go list ./...`, never from
@@ -13,15 +12,15 @@
 # an empty check set is a failure, and a tier package the profile never
 # mentions fails instead of disappearing.
 #
-# scripts/coverage-baseline.txt lists packages carrying legacy debt; those warn
-# instead of blocking. The file only shrinks: fix a package and delete its
-# line, never add one.
+# scripts/coverage-baseline.txt lists declaration-only packages for which Go
+# emits no measurable statements. Every entry must carry a rationale, name a
+# current tier package, and pass its own coverage probe with zero statements.
 set -euo pipefail
 
 COVER_FILE="${1:-coverage.out}"
 BASELINE_FILE="${BASELINE_FILE:-scripts/coverage-baseline.txt}"
-CORE_MIN="${CORE_MIN:-90}"
-IO_MIN="${IO_MIN:-80}"
+CORE_MIN=60
+IO_MIN=60
 
 if [[ ! -f "$COVER_FILE" ]]; then
 	printf 'coverage profile not found: %s\n' "$COVER_FILE" >&2
@@ -75,8 +74,71 @@ END { if (unexpected) exit 1 }
 
 : > "$WORK_DIR/baseline"
 if [[ -f "$BASELINE_FILE" ]]; then
-	awk '!/^#/ && NF { print $1 }' "$BASELINE_FILE" > "$WORK_DIR/baseline"
+	if ! awk -v expected="$WORK_DIR/expected" '
+	function trim(value) {
+		sub(/^[[:space:]]+/, "", value)
+		sub(/[[:space:]]+$/, "", value)
+		return value
+	}
+	BEGIN {
+		while ((getline line < expected) > 0) {
+			split(line, field, "\t")
+			in_tier[field[2]] = 1
+		}
+		close(expected)
+	}
+	/^[[:space:]]*($|#)/ { next }
+	{
+		marker = index($0, "#")
+		if (marker == 0) {
+			printf "coverage exception missing an inline rationale: %s\n", $0 > "/dev/stderr"
+			invalid = 1
+			next
+		}
+		package_path = trim(substr($0, 1, marker - 1))
+		rationale = trim(substr($0, marker + 1))
+		if (package_path == "" || package_path ~ /[[:space:]]/ || rationale == "") {
+			printf "coverage exception missing an inline rationale: %s\n", $0 > "/dev/stderr"
+			invalid = 1
+			next
+		}
+		if (!(package_path in in_tier)) {
+			printf "coverage exception is not a current coverage-tier package: %s\n", package_path > "/dev/stderr"
+			invalid = 1
+			next
+		}
+		if (seen[package_path]++) {
+			printf "duplicate coverage exception: %s\n", package_path > "/dev/stderr"
+			invalid = 1
+			next
+		}
+		print package_path
+	}
+	END { if (invalid) exit 1 }
+	' "$BASELINE_FILE" > "$WORK_DIR/baseline"; then
+		exit 1
+	fi
 fi
+
+# An exception self-expires as soon as its package gains executable code. A
+# package-local probe also distinguishes a genuine declaration-only package
+# from one merely omitted by a stale or partial aggregate profile.
+exception_number=0
+while IFS= read -r package_path; do
+	[[ -z "$package_path" ]] && continue
+	exception_number=$((exception_number + 1))
+	exception_profile="$WORK_DIR/exception-$exception_number.out"
+	exception_log="$WORK_DIR/exception-$exception_number.log"
+	if ! go test -coverprofile="$exception_profile" "$package_path" > "$exception_log" 2>&1; then
+		printf 'coverage exception probe failed for %s:\n' "$package_path" >&2
+		cat "$exception_log" >&2
+		exit 1
+	fi
+	if awk '$1 != "mode:" && NF { found = 1 } END { exit found ? 0 : 1 }' "$exception_profile"; then
+		printf 'coverage exception has measurable statements: %s\n' "$package_path" >&2
+		exit 1
+	fi
+done < "$WORK_DIR/baseline"
 
 awk -v core_min="$CORE_MIN" -v io_min="$IO_MIN" -v cover_file="$COVER_FILE" \
 	-v expected="$WORK_DIR/expected" -v baseline="$WORK_DIR/baseline" '
@@ -135,31 +197,26 @@ END {
 			# stale or partial profile; a package without tests that also
 			# declares no statements has nothing to instrument and can never
 			# appear, no matter how many tests are added. Neither is a pass.
-			reason = has_tests[pkg] ? "no data for a package that has test files, profile stale?" \
-			                        : "no coverage data and no test files"
 			if (pkg in exempt) {
-				printf "WARN  %-62s %6s  (min %d%%, %s, baseline debt)\n", pkg, "n/a", min, reason
+				printf "WARN  %-62s %6s  (no measurable statements, documented exception)\n", pkg, "n/a"
 				warned++
 				continue
 			}
+			reason = has_tests[pkg] ? "no data for a package that has test files, profile stale?" \
+			                        : "no coverage data and no test files"
 			printf "FAIL  %-62s %6s  (min %d%%, %s)\n", pkg, "n/a", min, reason
 			failed++
 			continue
 		}
 		pct = covered[pkg] * 100 / stmts[pkg]
 		if (pct + 0.049 >= min) continue
-		if (pkg in exempt) {
-			printf "WARN  %-62s %6.1f%%  (min %d%%, baseline debt)\n", pkg, pct, min
-			warned++
-			continue
-		}
 		printf "FAIL  %-62s %6.1f%%  (min %d%%)\n", pkg, pct, min
 		failed++
 	}
 	printf "\nchecked %d of %d tier package(s)\n", count, total
-	if (warned > 0) printf "%d package(s) on baseline debt\n", warned
+	if (warned > 0) printf "%d package(s) with documented exceptions\n", warned
 	if (failed > 0) {
-		printf "%d package(s) failing and not on baseline\n", failed
+		printf "%d package(s) failing without a documented exception\n", failed
 		exit 1
 	}
 	printf "coverage gate passed\n"

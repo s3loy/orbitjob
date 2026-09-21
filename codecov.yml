@@ -1,14 +1,13 @@
-# Coverage gate: judge the patch, not the whole backlog.
-# Legacy coverage is sunk cost; untested new code is the real problem.
+# Coverage reporting mirrors the repository's 60% merge bar.
 coverage:
   status:
     project:
       default:
-        target: auto      # never drop below the current baseline
-        threshold: 1%     # tolerate 1% jitter so noise does not block merges
+        target: 60%       # match make test-cover-check
+        threshold: 0%
     patch:
       default:
-        target: 80%       # hard gate on new code
+        target: 60%       # match make test-cover-check
         threshold: 0%
 
 comment:

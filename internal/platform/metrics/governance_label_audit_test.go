@@ -11,10 +11,9 @@ import (
 //
 // The 2026-09 governance rules forbid tenant_id / run_id / user-id labels and
 // require help text that describes each declared label. A slice of the metric
-// surface predates those rules and still carries that debt; this repo's
-// convention for such debt is a named, cited baseline that suppresses exactly
-// the listed violations and nothing else (see scripts/coverage-baseline.txt
-// and its gate: warn instead of block, delete a line when fixed, never add).
+// surface predates those rules and still carries that debt. This metrics gate
+// names and cites each known violation so it suppresses exactly the existing
+// set and rejects every new one.
 //
 // Deleting an entry once the metric is relabeled is required housekeeping.
 // Any violation on a metric not listed below fails the suite, so the baseline

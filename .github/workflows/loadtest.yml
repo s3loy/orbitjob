@@ -1,44 +1,23 @@
 # Runs a load-test profile against a real installation on a hosted runner.
 #
-# This exists because the profiles were only ever run by hand on one laptop,
-# which is the weakest possible evidence: the machine's own sleep behaviour
-# silently stretched a 30-minute schedule to nearly two hours, and nobody
-# noticed until the timings were compared against the clock.
+# This is an advisory operational test, not a required PR or merge check. The
+# workflow status says whether the harness completed; the product result is the
+# PASS/FAIL/INCONCLUSIVE verdict in the job summary and uploaded result.json.
+# Operators decide when that evidence is required for a release.
 #
-# Both profiles have since been proven against a real installation, so the
-# wall-clock commitment is now scheduled:
+# An operator chooses either hosted profile through workflow_dispatch:
 #
-#   smoke    weekly, Wednesday 02:30 UTC   ~40 minutes, non-qualifying
-#   standard weekly, Saturday 22:00 UTC    ~4 hours of schedule plus setup,
-#                                          settle and verify; qualifying
-#
-# The standard run gets its own night rather than following smoke on the
-# same night: behind the shared concurrency group the two would serialize
-# into one ~6.5-hour runner occupation, and standard's own verify phase
-# already covers what a follow-up smoke would re-prove. Weekly rather than
-# nightly standard, because a qualifying run costs GitHub-hosted runner
-# time by the hour and the profile exists to catch drift, not to be a
-# daily status light.
-#
-# Manual workflow_dispatch keeps both profiles available ad hoc; its input
-# overrides the schedule's choice.
+#   smoke      ~40 minutes, non-qualifying
+#   standard   ~4 hours of schedule plus setup, settle and verify; qualifying
 #
 # `long` is not offered on hosted runners: it is eight hours of schedule
 # alone, and a GitHub-hosted job is hard-capped at 360 minutes (6 hours),
 # so 8h cannot fit even before install, settle and verify are counted. The
 # soak runs on the always-on dev cluster instead (docs/loadtest-guide.md).
 #
-# Scheduled workflows fire only from the default branch.
 name: Load Test
 
 on:
-  schedule:
-    # Weekly smoke: off-peak UTC (evening Americas, small hours Europe).
-    - cron: "30 2 * * 3"
-    # Weekly qualification: standard profile, Saturday night UTC, finishing
-    # before Sunday morning in Europe. Manual runs stay available any time
-    # via workflow_dispatch on any branch.
-    - cron: "0 22 * * 6"
   workflow_dispatch:
     inputs:
       profile:
@@ -63,10 +42,8 @@ env:
   HELM_VERSION: "v4.2.4"
 
 jobs:
-  # Scheduled events carry no inputs, so the profile is resolved once, here:
-  # a manual dispatch takes its input, the Saturday cron means standard, and
-  # any other trigger is the weekly smoke. The decision is a job output
-  # because timeout-minutes cannot read a job-level env.
+  # Resolve the operator's choice once because timeout-minutes cannot read a
+  # job-level env.
   plan:
     name: Resolve profile
     runs-on: ubuntu-latest
@@ -76,16 +53,7 @@ jobs:
       - id: profile
         env:
           REQUESTED: ${{ inputs.profile }}
-          SCHEDULE: ${{ github.event.schedule }}
-          STANDARD_CRON: "0 22 * * 6"
-        run: |
-          if [ -n "$REQUESTED" ]; then
-            echo "profile=$REQUESTED" >> "$GITHUB_OUTPUT"
-          elif [ "$SCHEDULE" = "$STANDARD_CRON" ]; then
-            echo "profile=standard" >> "$GITHUB_OUTPUT"
-          else
-            echo "profile=smoke" >> "$GITHUB_OUTPUT"
-          fi
+        run: echo "profile=$REQUESTED" >> "$GITHUB_OUTPUT"
 
   loadtest:
     name: Load test (${{ needs.plan.outputs.profile }})

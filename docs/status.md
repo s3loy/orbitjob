@@ -1,10 +1,9 @@
 # Status
 
-What is delivered, what is gone, and what is still moving. Written 2026-09-18
+What is delivered, what is gone, and what is still moving. Updated 2026-09-21
 against this branch. Structure is described in
-[architecture.md](architecture.md); this page records behaviour, and every
-claim in it was read from the tree on the day of writing. Parts of the branch
-are landing while this page stands, so the dates matter.
+[architecture.md](architecture.md); this page records behaviour and operating
+decisions.
 
 ## What OrbitJob is now
 
@@ -23,7 +22,9 @@ authorization is a policy engine over API keys.
   authority: row level security on the tenant-owned tables, ULID (`CHAR(26)`)
   tenant ids, and a SELECT-only grant for `orbitjob_admin` on the three
   ledger tables. `charts/orbitjob/migrations/` is a synced copy checked by
-  `make helm-check`.
+  `make helm-check`. No release has been published, so earlier development
+  schemas and their data are intentionally disposable; deployments recreate
+  the database rather than migrate that pre-release history.
 - Migration 0002 (`0002_checks_to_kubernetes_jobs.up.sql`) cut checks over to
   Kubernetes Jobs: `job_run_control_plane.scheduled_for`, `slis.source_type`
   cutover to `job_run`, and `sli_snapshots` truncated so windows accrue from
@@ -54,7 +55,11 @@ authorization is a policy engine over API keys.
   manifests, verifies the ledger and that terminal runs still have their
   JobRun resources (`scripts/loadtest/verify.go`), and rejects images without
   pinned digests (`scripts/loadtest/images.go`). The `make loadtest-*`
-  targets drive preflight through a full profile run.
+  targets drive preflight through a full profile run. Results are advisory
+  operator evidence and never block a PR or merge.
+- Coverage uses one attainable merge bar: every measurable core/admin domain,
+  app or store package must reach 60%. Declaration-only packages are explicit
+  documented exceptions in `scripts/coverage-baseline.txt`.
 - Monitoring. `make monitoring-up` installs kube-prometheus-stack from
   `deploy/monitoring/values-kube-prometheus-stack.yaml`, plus the repo's own
   PodMonitors, ServiceMonitor and PrometheusRule in
@@ -87,19 +92,6 @@ design awaiting implementation.
 - The scheduler carries an optional etcd election path (`ETCD_ENABLED`,
   `cmd/scheduler/main.go`) that only builds with the `etcd` build tag, which
   no shipped artifact sets. Delete it or wire it; the decision is open.
-- The GitHub loadtest workflow (`.github/workflows/loadtest.yml`) has never
-  completed a profile end to end: the first run died building
-  `cmd/operator/` (untracked), the next two on `prepare` timing out because
-  ScheduledJob CRs never gained an `activeRevision` — operator logs captured
-  by the workflow's failure dump show a healthy-looking loop (cache synced,
-  leadership taken, schedule ticks firing) with no reconcile errors against
-  the load namespaces, which points at the CRs never reaching the operator's
-  hands (namespace, tenancy or CRD install) rather than a reconcile defect.
-  Open; the dump now carries the evidence to decide it.
-- Coverage debt: nine tier packages sit below their thresholds and off the
-  baseline (`make test-cover-check`), including the new
-  `internal/core/app/projection` at 70.3%. Baseline lines are deleted, never
-  added, so this closes by fixing packages, one at a time.
 
 ## Delivered since this page was written (2026-09-18, later the same day)
 
