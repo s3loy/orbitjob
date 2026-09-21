@@ -32,7 +32,7 @@ func (r *JobRepository) List(ctx context.Context, in query.ListInput) ([]query.L
 	}
 	defer func() { _ = rows.Close() }()
 
-	out := make([]query.ListItem, 0, in.Limit)
+	out := make([]query.ListItem, 0)
 	for rows.Next() {
 		item, err := scanDefinitionListItem(rows)
 		if err != nil {

@@ -58,7 +58,7 @@ func (r *RunRepository) List(ctx context.Context, in runquery.ListInput) ([]runq
 	}
 	defer func() { _ = rows.Close() }()
 
-	out := make([]runquery.ListItem, 0, in.Limit)
+	out := make([]runquery.ListItem, 0)
 	for rows.Next() {
 		var item runquery.ListItem
 		if err := rows.Scan(
