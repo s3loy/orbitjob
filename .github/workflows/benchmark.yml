@@ -21,13 +21,32 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
 
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
       - name: Run benchmarks
         run: make bench
+
+      - name: Prepare benchmark branch
+        id: baseline
+        shell: bash
+        run: |
+          if git ls-remote --exit-code --heads origin gh-pages >/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            status=$?
+            if [ "$status" -ne 2 ]; then
+              exit "$status"
+            fi
+            empty_tree="$(git hash-object -t tree /dev/null)"
+            initial_commit="$(git -c user.name=github-action-benchmark \
+              -c user.email=github@users.noreply.github.com \
+              commit-tree "$empty_tree" -m "initialize benchmark data")"
+            git branch gh-pages "$initial_commit"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@4322e5726e6334590d251fc4f92bec0efafc45dc # v1.22.2
@@ -36,6 +55,7 @@ jobs:
           output-file-path: bench.txt
           github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: true
+          skip-fetch-gh-pages: ${{ steps.baseline.outputs.exists == 'false' }}
           alert-threshold: "200%"
           comment-on-alert: true
           fail-on-alert: false
@@ -52,7 +72,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
 
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
