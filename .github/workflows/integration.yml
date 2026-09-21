@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   postgres:
-    name: postgres-integration
+    name: ${{ github.event_name == 'pull_request' && 'postgres-integration' || 'postgres-integration-post-merge' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
 

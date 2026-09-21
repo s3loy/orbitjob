@@ -1,0 +1,70 @@
+name: Bug report
+description: Report behavior that does not match OrbitJob's contract.
+title: ""
+labels:
+  - kind/bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search existing issues first. Remove credentials, API keys, and private workload data from logs.
+
+  - type: input
+    id: version
+    attributes:
+      label: OrbitJob version
+      description: Release tag, image digest, or commit SHA.
+      placeholder: v0.2.1
+    validations:
+      required: true
+
+  - type: input
+    id: kubernetes
+    attributes:
+      label: Kubernetes environment
+      description: Kubernetes distribution and version.
+      placeholder: kind v0.32.0 with Kubernetes v1.35.0
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Provide the smallest sequence of commands or manifests that reproduces the problem.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Include timestamps and component names. Redact secrets and private workload data.
+      render: shell
+
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Impact
+      options:
+        - A release cannot be installed or used
+        - Runs or ledger data may be incorrect
+        - A security boundary may be affected
+        - A non-critical workflow is affected
+        - Cosmetic or documentation issue
+    validations:
+      required: true

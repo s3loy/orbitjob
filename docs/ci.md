@@ -8,7 +8,7 @@ they never participate in the required merge-check set.
 
 | Workflow | Trigger | Proves | Leaves behind |
 |---|---|---|---|
-| CI (`ci.yml`) | push, PR → `main`/`dev` | unit + race tests, the 60% per-package coverage bar, OpenAPI freshness, all binaries, all five image targets build for `linux/amd64` **and** `linux/arm64` (no push) | `binaries` artifact (7 days), Codecov upload |
+| CI (`ci.yml`) | push, PR → `main`/`dev` | unit + race tests, the 60% per-package coverage bar, OpenAPI freshness, all binaries, all five image targets build for `linux/amd64` **and** `linux/arm64` (no push); `CI / Gate` is the stable required-check endpoint for this chain | `binaries` artifact (7 days), Codecov upload |
 | Integration (`integration.yml`) | push, PR → `main`/`dev`, manual | six suites (`db/migrations`, `postgrestest`, admin + core repositories, bootstrap, admin HTTP) against real PostgreSQL 17, with deployment roles provisioned | — |
 | Lint (`lint.yml`) | push, PR → `main`/`dev`, manual | golangci-lint | — |
 | Govulncheck (`govulncheck.yml`) | push, PR → `main`/`dev`, manual | no known vulnerabilities reachable from the module | — |
@@ -19,6 +19,20 @@ they never participate in the required merge-check set.
 | Release (`release.yml`) | tag `v*` | requires the tag to resolve to the current `main` commit and all five version tags to be unused, runs the quality and Helm gates, publishes those versioned images once, and packages the chart; mutable `latest` aliases are not published | `helm-chart` artifact (90 days), published images |
 
 The five image targets — `admin-api`, `scheduler`, `operator`, `migrate`, `bootstrap` — are defined once in the Makefile (`DOCKER_COMPONENTS`). CI parses that list, so the PR check and the dev loop (`make docker-build`) cannot drift.
+
+The `main` ruleset requires `CI / Gate`, `postgres-integration`,
+`golangci-lint`, `govulncheck`, and `dependency-review`. GitHub Actions cannot
+make a job depend on jobs in another workflow, so `CI / Gate` deliberately
+summarizes only the dependency chain in `ci.yml`; the other workflows remain
+independent required checks. Benchmark comparison remains review evidence, not
+a merge gate. Push events use distinct `*-post-merge` check names, including
+`CI / Post-merge`, so a successful dev push cannot satisfy required
+pull-request contexts for the same commit.
+
+Pull requests are labeled from changed paths by `.github/labeler.yml`. Path
+rules only assign objective `area/*` labels. Priority, security impact,
+release-note eligibility, and breaking-change labels require maintainer
+judgment.
 
 GitHub caps a hosted job at **360 minutes (6 hours)**. That is why the 8-hour
 `long` soak is not offered in GitHub Actions; an operator runs it on the

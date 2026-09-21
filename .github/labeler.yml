@@ -1,0 +1,57 @@
+area/operator:
+  - changed-files:
+      - any-glob-to-any-file:
+          - api/kubernetes/**
+          - cmd/operator/**
+          - internal/operator/**
+
+area/api:
+  - changed-files:
+      - any-glob-to-any-file:
+          - api/openapi.yaml
+          - cmd/admin-api/**
+          - internal/admin/**
+
+area/ledger:
+  - changed-files:
+      - any-glob-to-any-file:
+          - charts/orbitjob/migrations/**
+          - cmd/migrate/**
+          - db/migrations/**
+          - internal/core/**
+          - internal/platform/migrate/**
+
+area/helm:
+  - changed-files:
+      - any-glob-to-any-file:
+          - charts/**
+          - deploy/kind/**
+          - scripts/chart-assert.sh
+          - scripts/helm-migrations.sh
+          - scripts/quickstart.sh
+
+area/ci:
+  - changed-files:
+      - any-glob-to-any-file:
+          - .github/**
+          - .golangci.yml
+          - .pre-commit-config.yaml
+          - Makefile
+          - codecov.yml
+          - scripts/check-coverage.sh
+          - scripts/commit-msg.sh
+          - scripts/no-artifacts.sh
+          - scripts/no-cjk.sh
+
+area/observability:
+  - changed-files:
+      - any-glob-to-any-file:
+          - deploy/monitoring/**
+
+area/loadtest:
+  - changed-files:
+      - any-glob-to-any-file:
+          - test/load/**
+          - .github/workflows/loadtest.yml
+          - scripts/loadtest/**
+          - scripts/loadtest-ci.sh

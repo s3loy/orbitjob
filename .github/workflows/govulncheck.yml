@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   govulncheck:
-    name: govulncheck
+    name: ${{ github.event_name == 'pull_request' && 'govulncheck' || 'govulncheck-post-merge' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
