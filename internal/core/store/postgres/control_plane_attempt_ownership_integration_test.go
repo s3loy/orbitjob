@@ -17,7 +17,11 @@ func TestUpdateAttemptPhaseRequiresPersistedJobUID(t *testing.T) {
 
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO tenants (id, slug, name)
-		VALUES ($1::char(26), 'attempt-owner', 'Attempt Owner');
+		VALUES ($1::char(26), 'attempt-owner', 'Attempt Owner')
+	`, tenantID); err != nil {
+		t.Fatalf("seed attempt ownership tenant: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `
 		WITH revision AS (
 		  INSERT INTO job_definition_revisions
 		    (tenant_id, source_mode, source_uid, source_namespace, source_name,
