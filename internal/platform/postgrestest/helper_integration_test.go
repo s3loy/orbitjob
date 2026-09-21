@@ -20,6 +20,12 @@ const (
 	expectedLockObjectID = 260326
 )
 
+// helperTenantID seeds the tenant row the checks inserts below require:
+// checks.tenant_id references tenants(id), and the schema harness truncates
+// every table after building the schema, so no tenant exists until one is
+// inserted. 26 characters, matching tenants.id.
+const helperTenantID = "20000000000000000000000001"
+
 func TestApplySchemaWaitsForSharedDatabaseLock(t *testing.T) {
 	dsn := packageTestDSN(t)
 	holderDB := openTestDB(t, dsn, "holder")
@@ -65,21 +71,27 @@ func TestOpenIsolatesParallelTests(t *testing.T) {
 			defer cancel()
 
 			if _, err := db.ExecContext(ctx, `
-				INSERT INTO jobs (name, tenant_id, trigger_type, handler_type)
-				VALUES ($1, $2, $3, $4)
-			`, "same-name", "default", "manual", "http"); err != nil {
-				t.Fatalf("insert job: %v", err)
+				INSERT INTO tenants (id, slug, name)
+				VALUES ($1, 'isolation', 'isolation')
+			`, helperTenantID); err != nil {
+				t.Fatalf("insert tenant: %v", err)
+			}
+			if _, err := db.ExecContext(ctx, `
+				INSERT INTO checks (name, tenant_id, check_type, schedule_type, cron_expr)
+				VALUES ($1, $2, 'http_health', 'cron', '*/5 * * * *')
+			`, "same-name", helperTenantID); err != nil {
+				t.Fatalf("insert check: %v", err)
 			}
 
 			ready <- struct{}{}
 			<-start
 
 			var count int
-			if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM jobs`).Scan(&count); err != nil {
-				t.Fatalf("count jobs: %v", err)
+			if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM checks`).Scan(&count); err != nil {
+				t.Fatalf("count checks: %v", err)
 			}
 			if count != 1 {
-				t.Fatalf("expected isolated jobs table count=1, got %d", count)
+				t.Fatalf("expected isolated checks table count=1, got %d", count)
 			}
 		})
 	}
@@ -100,10 +112,16 @@ func TestOpenCleansUpTestSchema(t *testing.T) {
 		defer cancel()
 
 		if _, err := db.ExecContext(ctx, `
-			INSERT INTO jobs (name, tenant_id, trigger_type, handler_type)
-			VALUES ($1, $2, $3, $4)
-		`, "cleanup-check", "default", "manual", "http"); err != nil {
-			t.Fatalf("insert job: %v", err)
+			INSERT INTO tenants (id, slug, name)
+			VALUES ($1, 'cleanup-check', 'cleanup-check')
+		`, helperTenantID); err != nil {
+			t.Fatalf("insert tenant: %v", err)
+		}
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO checks (name, tenant_id, check_type, schedule_type, cron_expr)
+			VALUES ('cleanup-check', $1, 'http_health', 'cron', '*/5 * * * *')
+		`, helperTenantID); err != nil {
+			t.Fatalf("insert check: %v", err)
 		}
 	})
 

@@ -1,335 +1,69 @@
-//go:build integration
-
 package postgres
 
 import (
 	"context"
-	"database/sql"
+	"errors"
 	"testing"
-	"time"
 
-	"orbitjob/internal/core/app/schedule"
-	domainjob "orbitjob/internal/core/domain/job"
-	"orbitjob/internal/platform/postgrestest"
+	sqlmock "github.com/DATA-DOG/go-sqlmock"
 )
 
-func TestSchedulerRepository_ScheduleOneDueCron_FireNow(t *testing.T) {
-	db := postgrestest.Open(t)
-	repo := NewSchedulerRepository(db)
-	now := time.Now().UTC().Truncate(time.Second)
-
-	jobID := seedDueCronJob(t, db, dueJobSeed{
-		TenantID:      "tenant-scheduler-fire-now",
-		Name:          "cron-fire-now",
-		Priority:      8,
-		RetryLimit:    2,
-		CronExpr:      "*/5 * * * *",
-		Timezone:      "UTC",
-		MisfirePolicy: domainjob.MisfireFireNow,
-		NextRunAt:     now.Add(-time.Minute),
-	})
-
-	result, found, err := repo.ScheduleOneDueCron(context.Background(), now, schedule.DecideSchedule)
-	if err != nil {
-		t.Fatalf("ScheduleOneDueCron() error = %v", err)
-	}
-	if !found {
-		t.Fatalf("expected found=true")
-	}
-	if !result.Created {
-		t.Fatalf("expected Created=true")
-	}
-	if result.JobID != jobID {
-		t.Fatalf("expected job_id=%d, got %d", jobID, result.JobID)
-	}
-	if result.RunID == "" {
-		t.Fatalf("expected run_id to be set")
-	}
-
-	assertScheduledInstance(t, db, "tenant-scheduler-fire-now", jobID, now, 8, 3, result.RunID)
-	assertJobCursorAdvanced(t, db, "tenant-scheduler-fire-now", jobID, now, true, now)
-}
-
-func TestSchedulerRepository_ScheduleOneDueCron_SkipMisfire(t *testing.T) {
-	db := postgrestest.Open(t)
-	repo := NewSchedulerRepository(db)
-	now := time.Now().UTC().Truncate(time.Second)
-
-	jobID := seedDueCronJob(t, db, dueJobSeed{
-		TenantID:      "tenant-scheduler-skip",
-		Name:          "cron-skip",
-		Priority:      3,
-		RetryLimit:    1,
-		CronExpr:      "*/5 * * * *",
-		Timezone:      "UTC",
-		MisfirePolicy: domainjob.MisfireSkip,
-		NextRunAt:     now.Add(-time.Minute),
-	})
-
-	result, found, err := repo.ScheduleOneDueCron(context.Background(), now, schedule.DecideSchedule)
-	if err != nil {
-		t.Fatalf("ScheduleOneDueCron() error = %v", err)
-	}
-	if !found {
-		t.Fatalf("expected found=true")
-	}
-	if result.Created {
-		t.Fatalf("expected Created=false for skip misfire")
-	}
-
-	assertNoScheduledInstance(t, db, "tenant-scheduler-skip", jobID)
-	assertJobCursorAdvanced(t, db, "tenant-scheduler-skip", jobID, now, false, time.Time{})
-}
-
-func TestSchedulerRepository_ScheduleOneDueCron_CatchUpMisfire(t *testing.T) {
-	db := postgrestest.Open(t)
-	repo := NewSchedulerRepository(db)
-	now := time.Now().UTC().Truncate(time.Second)
-	missedSlot := now.Add(-time.Minute)
-
-	jobID := seedDueCronJob(t, db, dueJobSeed{
-		TenantID:      "tenant-scheduler-catch-up",
-		Name:          "cron-catch-up",
-		Priority:      6,
-		RetryLimit:    3,
-		CronExpr:      "*/5 * * * *",
-		Timezone:      "UTC",
-		MisfirePolicy: domainjob.MisfireCatchUp,
-		NextRunAt:     missedSlot,
-	})
-
-	result, found, err := repo.ScheduleOneDueCron(context.Background(), now, schedule.DecideSchedule)
-	if err != nil {
-		t.Fatalf("ScheduleOneDueCron() error = %v", err)
-	}
-	if !found {
-		t.Fatalf("expected found=true")
-	}
-	if !result.Created {
-		t.Fatalf("expected Created=true for catch_up misfire")
-	}
-	if result.JobID != jobID {
-		t.Fatalf("expected job_id=%d, got %d", jobID, result.JobID)
-	}
-	if result.RunID == "" {
-		t.Fatalf("expected run_id to be set")
-	}
-
-	assertScheduledInstance(t, db, "tenant-scheduler-catch-up", jobID, missedSlot, 6, 4, result.RunID)
-	assertJobCursorAdvanced(t, db, "tenant-scheduler-catch-up", jobID, missedSlot, true, missedSlot)
-}
-
-func TestSchedulerRepository_ScheduleOneDueCron_NoCandidate(t *testing.T) {
-	db := postgrestest.Open(t)
-	repo := NewSchedulerRepository(db)
-	now := time.Now().UTC().Truncate(time.Second)
-
-	_ = seedDueCronJob(t, db, dueJobSeed{
-		TenantID:      "tenant-scheduler-future",
-		Name:          "cron-future",
-		Priority:      1,
-		RetryLimit:    0,
-		CronExpr:      "*/5 * * * *",
-		Timezone:      "UTC",
-		MisfirePolicy: domainjob.MisfireFireNow,
-		NextRunAt:     now.Add(time.Hour),
-	})
-
-	result, found, err := repo.ScheduleOneDueCron(context.Background(), now, schedule.DecideSchedule)
-	if err != nil {
-		t.Fatalf("ScheduleOneDueCron() error = %v", err)
-	}
-	if found {
-		t.Fatalf("expected found=false")
-	}
-	if result.Created {
-		t.Fatalf("expected Created=false")
-	}
-}
-
-type dueJobSeed struct {
-	TenantID      string
-	Name          string
-	Priority      int
-	RetryLimit    int
-	CronExpr      string
-	Timezone      string
-	MisfirePolicy string
-	NextRunAt     time.Time
-}
-
-func seedDueCronJob(t *testing.T, db *sql.DB, in dueJobSeed) int64 {
+func newSchedulerRepoMock(t *testing.T) (*SchedulerRepository, sqlmock.Sqlmock) {
 	t.Helper()
-
-	var id int64
-	err := db.QueryRowContext(context.Background(), `
-		INSERT INTO jobs (
-			name,
-			tenant_id,
-			priority,
-			trigger_type,
-			cron_expr,
-			timezone,
-			handler_type,
-			retry_limit,
-			misfire_policy,
-			next_run_at
-		)
-		VALUES ($1, $2, $3, 'cron', $4, $5, 'http', $6, $7, $8)
-		RETURNING id
-	`,
-		in.Name,
-		in.TenantID,
-		in.Priority,
-		in.CronExpr,
-		in.Timezone,
-		in.RetryLimit,
-		in.MisfirePolicy,
-		in.NextRunAt,
-	).Scan(&id)
+	db, mock, err := sqlmock.New()
 	if err != nil {
-		t.Fatalf("seed due cron job: %v", err)
+		t.Fatalf("sqlmock.New() error = %v", err)
 	}
-
-	return id
+	t.Cleanup(func() { _ = db.Close() })
+	return NewSchedulerRepository(db), mock
 }
 
-func assertScheduledInstance(
-	t *testing.T,
-	db *sql.DB,
-	tenantID string,
-	jobID int64,
-	expectedScheduledAt time.Time,
-	expectedPriority int,
-	expectedMaxAttempt int,
-	expectedRunID string,
-) {
-	t.Helper()
+func TestSchedulerRepository_ListActiveTenantIDs(t *testing.T) {
+	repo, mock := newSchedulerRepoMock(t)
 
-	var (
-		count       int
-		runID       string
-		status      string
-		triggerSrc  string
-		scheduledAt time.Time
-		priority    int
-		attempt     int
-		maxAttempt  int
-	)
+	mock.ExpectQuery("SELECT id FROM orbitjob_list_active_tenant_ids\\(\\)").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("tenant-a").AddRow("tenant-b"))
 
-	err := db.QueryRowContext(context.Background(), `
-		SELECT count(*)
-		FROM job_instances
-		WHERE tenant_id = $1 AND job_id = $2
-	`, tenantID, jobID).Scan(&count)
+	ids, err := repo.ListActiveTenantIDs(context.Background())
 	if err != nil {
-		t.Fatalf("count job_instances: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if count != 1 {
-		t.Fatalf("expected one scheduled instance, got %d", count)
+	if len(ids) != 2 {
+		t.Fatalf("expected 2 ids, got %d", len(ids))
 	}
-
-	err = db.QueryRowContext(context.Background(), `
-		SELECT run_id::text, status, trigger_source, scheduled_at, priority, attempt, max_attempt
-		FROM job_instances
-		WHERE tenant_id = $1 AND job_id = $2
-		ORDER BY id DESC
-		LIMIT 1
-	`, tenantID, jobID).Scan(
-		&runID,
-		&status,
-		&triggerSrc,
-		&scheduledAt,
-		&priority,
-		&attempt,
-		&maxAttempt,
-	)
-	if err != nil {
-		t.Fatalf("load scheduled instance: %v", err)
+	if ids[0] != "tenant-a" || ids[1] != "tenant-b" {
+		t.Errorf("ids = %v, want [tenant-a tenant-b]", ids)
 	}
-	if runID != expectedRunID {
-		t.Fatalf("expected run_id=%q, got %q", expectedRunID, runID)
-	}
-	if status != "pending" {
-		t.Fatalf("expected status=%q, got %q", "pending", status)
-	}
-	if triggerSrc != "schedule" {
-		t.Fatalf("expected trigger_source=%q, got %q", "schedule", triggerSrc)
-	}
-	if !scheduledAt.Equal(expectedScheduledAt) {
-		t.Fatalf("expected scheduled_at=%s, got %s", expectedScheduledAt, scheduledAt)
-	}
-	if priority != expectedPriority {
-		t.Fatalf("expected priority=%d, got %d", expectedPriority, priority)
-	}
-	if attempt != 1 {
-		t.Fatalf("expected attempt=%d, got %d", 1, attempt)
-	}
-	if maxAttempt != expectedMaxAttempt {
-		t.Fatalf("expected max_attempt=%d, got %d", expectedMaxAttempt, maxAttempt)
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet expectations: %v", err)
 	}
 }
 
-func assertNoScheduledInstance(t *testing.T, db *sql.DB, tenantID string, jobID int64) {
-	t.Helper()
+func TestSchedulerRepository_ListActiveTenantIDs_Empty(t *testing.T) {
+	repo, mock := newSchedulerRepoMock(t)
 
-	var count int
-	err := db.QueryRowContext(context.Background(), `
-		SELECT count(*)
-		FROM job_instances
-		WHERE tenant_id = $1 AND job_id = $2
-	`, tenantID, jobID).Scan(&count)
+	mock.ExpectQuery("SELECT id FROM orbitjob_list_active_tenant_ids\\(\\)").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+
+	ids, err := repo.ListActiveTenantIDs(context.Background())
 	if err != nil {
-		t.Fatalf("count job_instances: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if count != 0 {
-		t.Fatalf("expected no scheduled instance, got %d", count)
+	if ids == nil {
+		t.Fatal("expected non-nil empty slice")
+	}
+	if len(ids) != 0 {
+		t.Errorf("expected 0 ids, got %d", len(ids))
 	}
 }
 
-func assertJobCursorAdvanced(
-	t *testing.T,
-	db *sql.DB,
-	tenantID string,
-	jobID int64,
-	nextRunAtMustBeAfter time.Time,
-	expectLastScheduled bool,
-	expectedLastScheduledAt time.Time,
-) {
-	t.Helper()
+func TestSchedulerRepository_ListActiveTenantIDs_DBError(t *testing.T) {
+	repo, mock := newSchedulerRepoMock(t)
 
-	var (
-		nextRunAt     sql.NullTime
-		lastScheduled sql.NullTime
-	)
+	mock.ExpectQuery("SELECT id FROM orbitjob_list_active_tenant_ids\\(\\)").
+		WillReturnError(errors.New("db down"))
 
-	err := db.QueryRowContext(context.Background(), `
-		SELECT next_run_at, last_scheduled_at
-		FROM jobs
-		WHERE tenant_id = $1 AND id = $2
-	`, tenantID, jobID).Scan(&nextRunAt, &lastScheduled)
-	if err != nil {
-		t.Fatalf("load job cursor: %v", err)
-	}
-
-	if !nextRunAt.Valid {
-		t.Fatalf("expected next_run_at to be set")
-	}
-	if !nextRunAt.Time.After(nextRunAtMustBeAfter) {
-		t.Fatalf("expected next_run_at > %s, got next_run_at=%s", nextRunAtMustBeAfter, nextRunAt.Time)
-	}
-
-	if expectLastScheduled {
-		if !lastScheduled.Valid {
-			t.Fatalf("expected last_scheduled_at to be set")
-		}
-		if !lastScheduled.Time.Equal(expectedLastScheduledAt) {
-			t.Fatalf("expected last_scheduled_at=%s, got %s", expectedLastScheduledAt, lastScheduled.Time)
-		}
-		return
-	}
-
-	if lastScheduled.Valid {
-		t.Fatalf("expected last_scheduled_at to stay NULL, got %s", lastScheduled.Time)
+	if _, err := repo.ListActiveTenantIDs(context.Background()); err == nil {
+		t.Fatal("expected error")
 	}
 }

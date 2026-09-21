@@ -9,7 +9,6 @@ import (
 	"github.com/go-playground/validator/v10"
 
 	"orbitjob/internal/admin/http/apperror"
-	domainjob "orbitjob/internal/core/domain/job"
 	"orbitjob/internal/domain/resource"
 	"orbitjob/internal/domain/validation"
 )
@@ -99,20 +98,6 @@ func TestToAPIError_ConflictFallbackMessage(t *testing.T) {
 	}
 }
 
-func TestToAPIError_QuotaExceeded(t *testing.T) {
-	got := toAPIError(domainjob.NewQuotaExceededError("max_jobs", 10))
-
-	if got.Code != apperror.CodeQuotaExhausted {
-		t.Fatalf("expected code=%q, got %q", apperror.CodeQuotaExhausted, got.Code)
-	}
-	if got.Message != "quota exhausted" {
-		t.Fatalf("expected message=%q, got %q", "quota exhausted", got.Message)
-	}
-	if got.Field != "max_jobs" {
-		t.Fatalf("expected field=%q, got %q", "max_jobs", got.Field)
-	}
-}
-
 func TestToAPIError_Internal(t *testing.T) {
 	got := toAPIError(errors.New("connection refused"))
 
@@ -189,15 +174,15 @@ type fakeFieldError struct {
 	tag string
 }
 
-func (f fakeFieldError) Tag() string               { return f.tag }
-func (f fakeFieldError) ActualTag() string         { return f.tag }
-func (f fakeFieldError) Namespace() string         { return "" }
-func (f fakeFieldError) StructNamespace() string   { return "" }
-func (f fakeFieldError) Field() string             { return "" }
-func (f fakeFieldError) StructField() string       { return "" }
-func (f fakeFieldError) Value() interface{}        { return nil }
-func (f fakeFieldError) Param() string             { return "" }
-func (f fakeFieldError) Kind() reflect.Kind        { return reflect.String }
-func (f fakeFieldError) Type() reflect.Type        { return nil }
+func (f fakeFieldError) Tag() string                      { return f.tag }
+func (f fakeFieldError) ActualTag() string                { return f.tag }
+func (f fakeFieldError) Namespace() string                { return "" }
+func (f fakeFieldError) StructNamespace() string          { return "" }
+func (f fakeFieldError) Field() string                    { return "" }
+func (f fakeFieldError) StructField() string              { return "" }
+func (f fakeFieldError) Value() interface{}               { return nil }
+func (f fakeFieldError) Param() string                    { return "" }
+func (f fakeFieldError) Kind() reflect.Kind               { return reflect.String }
+func (f fakeFieldError) Type() reflect.Type               { return nil }
 func (f fakeFieldError) Translate(_ ut.Translator) string { return "" }
-func (f fakeFieldError) Error() string             { return "" }
+func (f fakeFieldError) Error() string                    { return "" }

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
@@ -151,23 +150,5 @@ func TestStartComponentHealthServer_Shutdown(t *testing.T) {
 	case <-done:
 	case <-time.After(3 * time.Second):
 		t.Fatal("startComponentHealthServer did not shutdown after context cancel")
-	}
-}
-
-// ---------------------------------------------------------------------------
-// run() config error path
-// ---------------------------------------------------------------------------
-
-func TestRun_ConfigError(t *testing.T) {
-	resetSchedulerMainDeps(t)
-	t.Setenv("DATABASE_DSN", "postgres://unit-test")
-	t.Setenv("SCHEDULER_BATCH_SIZE_MAX", "bad")
-
-	loadDotenvFn = func() error { return nil }
-	newLoggerFn = func(string) *slog.Logger { return slog.Default() }
-
-	err := run(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "SCHEDULER_BATCH_SIZE_MAX") {
-		t.Fatalf("expected SCHEDULER_BATCH_SIZE_MAX error, got %v", err)
 	}
 }

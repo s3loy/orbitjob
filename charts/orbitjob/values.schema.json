@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["database"],
+  "properties": {
+    "database": {
+      "type": "object",
+      "required": ["secretName", "keys"],
+      "properties": {
+        "secretName": {"type": "string", "minLength": 1},
+        "keys": {
+          "type": "object",
+          "required": ["bootstrapOwner", "migrator", "admin", "runtime", "migratorPassword", "adminPassword", "runtimePassword", "bootstrapAPIKey"],
+          "properties": {
+            "bootstrapOwner": {"type": "string", "minLength": 1},
+            "migrator": {"type": "string", "minLength": 1},
+            "admin": {"type": "string", "minLength": 1},
+            "runtime": {"type": "string", "minLength": 1},
+            "migratorPassword": {"type": "string", "minLength": 1},
+            "adminPassword": {"type": "string", "minLength": 1},
+            "runtimePassword": {"type": "string", "minLength": 1},
+            "bootstrapAPIKey": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    }
+  }
+}

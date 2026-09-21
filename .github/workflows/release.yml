@@ -1,0 +1,225 @@
+name: Release
+
+# A tag push triggers a release: verify, build every versioned image, push to GHCR and Docker Hub, package the chart.
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  verify:
+    name: Verify
+    needs: [resolve]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+
+      # Published images must be verified, so the quality gate is not skipped here.
+      # golangci-lint is not preinstalled on the runner; install-only leaves the
+      # run itself to make check, and the version matches the one lint.yml pins.
+      - name: Install golangci-lint
+        uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9.2.0
+        with:
+          version: v2.13.1
+          install-only: true
+
+      - name: Run quality gate
+        run: make check
+
+      - name: Validate Helm chart
+        run: make helm-check
+
+  resolve:
+    name: Resolve release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      sha: ${{ steps.version.outputs.sha }}
+      hub_enabled: ${{ steps.hub.outputs.enabled }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: version
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          version="${GITHUB_REF_NAME}"
+          bash scripts/validate-release-version.sh "$version"
+          sha="$(git rev-parse --verify "refs/tags/${version}^{commit}")" || {
+            echo "tag does not exist or does not resolve to a commit: $version" >&2
+            exit 1
+          }
+          git fetch --no-tags origin "refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}"
+          bash scripts/validate-release-commit.sh "$sha" "origin/${DEFAULT_BRANCH}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "releasing $version at $sha"
+
+      - name: Check Docker Hub credentials
+        id: hub
+        env:
+          USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -n "$USERNAME" ] && [ -n "$TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::DOCKERHUB_USERNAME / DOCKERHUB_TOKEN not set, pushing to GHCR only"
+          fi
+
+  preflight:
+    name: Refuse existing version tags
+    needs: [resolve]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        if: needs.resolve.outputs.hub_enabled == 'true'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Require unused version tags
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          HUB_ENABLED: ${{ needs.resolve.outputs.hub_enabled }}
+          HUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+          set -eu
+          check_absent() {
+            reference="$1"
+            if output="$(docker buildx imagetools inspect "$reference" 2>&1)"; then
+              echo "release tag already exists and is immutable: $reference" >&2
+              exit 1
+            fi
+            if ! grep -Eiq 'not found|manifest unknown|no such manifest' <<<"$output"; then
+              printf '%s\n' "$output" >&2
+              echo "could not prove release tag is unused: $reference" >&2
+              exit 1
+            fi
+          }
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          for component in admin-api scheduler operator migrate bootstrap; do
+            check_absent "ghcr.io/${owner}/orbitjob-${component}:${VERSION}"
+            if [ "$HUB_ENABLED" = true ]; then
+              check_absent "docker.io/${HUB_USERNAME}/orbitjob-${component}:${VERSION}"
+            fi
+          done
+
+  images:
+    name: ${{ matrix.component }}
+    needs: [verify, resolve, preflight]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { component: admin-api,  target: admin }
+          - { component: scheduler,  target: scheduler }
+          - { component: operator,   target: operator }
+          - { component: migrate,    target: migrate }
+          - { component: bootstrap,  target: bootstrap }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        if: needs.resolve.outputs.hub_enabled == 'true'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Build stages stay on the runner architecture and cross-compile via Go, so no QEMU is needed.
+      - name: Build and push to GHCR
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          target: ${{ matrix.target }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/orbitjob-${{ matrix.component }}:${{ needs.resolve.outputs.version }}
+          cache-from: type=gha,scope=${{ matrix.component }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+
+      - name: Build and push to Docker Hub
+        if: needs.resolve.outputs.hub_enabled == 'true'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          target: ${{ matrix.target }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            docker.io/${{ secrets.DOCKERHUB_USERNAME }}/orbitjob-${{ matrix.component }}:${{ needs.resolve.outputs.version }}
+          cache-from: type=gha,scope=${{ matrix.component }}
+
+  chart:
+    name: Package Helm chart
+    needs: [resolve, images]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+
+      - name: Package chart
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          app_version="${VERSION#v}"
+          helm package charts/orbitjob \
+            --version "$app_version" \
+            --app-version "$app_version" \
+            --destination dist
+          ls -l dist/
+
+      - name: Upload chart
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: helm-chart
+          path: dist/*.tgz
+          retention-days: 90

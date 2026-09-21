@@ -53,7 +53,7 @@ type stubGetCheckUseCase struct {
 	err    error
 }
 
-func (s *stubGetCheckUseCase) Get(ctx context.Context, tenantID string, id int64) (checkquery.GetResult, error) {
+func (s *stubGetCheckUseCase) Get(ctx context.Context, tenantID, _ string, id int64) (checkquery.GetResult, error) {
 	s.called = true
 	return s.out, s.err
 }
@@ -132,7 +132,7 @@ func newCheckHandler(t *testing.T,
 ) (*Handler, *gin.Engine) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	h := NewHandler(nil, nil, nil, nil, nil)
+	h := NewHandler(nil, nil, nil)
 	if createUC != nil {
 		h.SetCreateCheckUseCase(createUC)
 	}

@@ -1,0 +1,6 @@
+category: database
+# One body per outcome: a statement that runs and succeeds, one that does not
+# parse and fails. Both names describe the statement the postgres image runs.
+families:
+  - {id: select-one, count: 185, image: postgres}
+  - {id: invalid-sql, count: 35, image: postgres, terminal_state: failed}

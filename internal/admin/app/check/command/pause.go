@@ -7,19 +7,22 @@ import (
 )
 
 type checkStatusChanger interface {
-	ChangeStatus(ctx context.Context, tenantID string, id int64, version int, action string) (domaincheck.Snapshot, error)
+	ChangeStatus(ctx context.Context, tenantID, resourceGroupID string, id int64, version int, action string) (domaincheck.Snapshot, error)
 }
 
 type ChangeStatusInput struct {
 	TenantID string
-	ID       int64
-	Version  int
+	// ResourceGroupID is the caller's own resource group scope, empty when the
+	// caller is not scoped to one.
+	ResourceGroupID string
+	ID              int64
+	Version         int
 }
 
 type ChangeStatusResult struct {
-	ID        int64  `json:"id"`
-	Status    string `json:"status"`
-	Version   int    `json:"version"`
+	ID      int64  `json:"id"`
+	Status  string `json:"status"`
+	Version int    `json:"version"`
 }
 
 type PauseCheckUseCase struct {
@@ -31,7 +34,7 @@ func NewPauseCheckUseCase(repo checkStatusChanger) *PauseCheckUseCase {
 }
 
 func (uc *PauseCheckUseCase) Pause(ctx context.Context, in ChangeStatusInput) (ChangeStatusResult, error) {
-	out, err := uc.repo.ChangeStatus(ctx, in.TenantID, in.ID, in.Version, domaincheck.ActionPause)
+	out, err := uc.repo.ChangeStatus(ctx, in.TenantID, in.ResourceGroupID, in.ID, in.Version, domaincheck.ActionPause)
 	if err != nil {
 		return ChangeStatusResult{}, err
 	}
@@ -47,7 +50,7 @@ func NewResumeCheckUseCase(repo checkStatusChanger) *ResumeCheckUseCase {
 }
 
 func (uc *ResumeCheckUseCase) Resume(ctx context.Context, in ChangeStatusInput) (ChangeStatusResult, error) {
-	out, err := uc.repo.ChangeStatus(ctx, in.TenantID, in.ID, in.Version, domaincheck.ActionResume)
+	out, err := uc.repo.ChangeStatus(ctx, in.TenantID, in.ResourceGroupID, in.ID, in.Version, domaincheck.ActionResume)
 	if err != nil {
 		return ChangeStatusResult{}, err
 	}

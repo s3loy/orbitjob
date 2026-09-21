@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: load-fixture
+  namespace: orbitjob-load
+  labels: {app: load-fixture}
+spec:
+  # One replica, because the fixture keeps its state in the process: the
+  # attempt counters behind fail-then-succeed and rate-limit-then-success, and
+  # the idempotency ledger. A second replica gives each client a coin flip on
+  # which half of that state it reaches, which is not a flaw the scenarios can
+  # tolerate -- with two replicas the three retry-then-succeed families failed
+  # about half the time, because no single pod ever saw a third attempt, and
+  # the ledger the duplicate-side-effect check reads held only half its
+  # entries. If more throughput is ever needed, the state has to move out of
+  # the process first, or the Service needs ClientIP session affinity.
+  replicas: 1
+  # Recreate rather than the default rolling update. Two things go wrong with a
+  # surge here: the namespace quota is one CPU and a second fixture pod pushes
+  # postgres plus both fixtures past it, so the new pod is refused and the
+  # rollout hangs; and two fixtures running at once is exactly the split state
+  # the single replica exists to avoid.
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: load-fixture}}
+  template:
+    metadata: {labels: {app: load-fixture}}
+    spec:
+      containers:
+        - name: fixture
+          image: docker.io/library/python:3.14-alpine@sha256:26730869004e2b9c4b9ad09cab8625e81d256d1ce97e72df5520e806b1709f92
+          command: [python, /app/server.py]
+          ports:
+            - {name: http, containerPort: 8080}
+            - {name: https, containerPort: 8443}
+          # The whole fixture now runs in one process, so it gets the share the
+          # two replicas used to split between them. The totals are unchanged
+          # and still fit the namespace ResourceQuota.
+          resources:
+            requests: {cpu: 200m, memory: 64Mi}
+            limits: {cpu: 400m, memory: 256Mi}
+          # Both probes are here on purpose. The TLS listener runs on its own
+          # thread, so a certificate that failed to load would leave a pod that
+          # looks ready and answers no HTTPS at all.
+          readinessProbe:
+            httpGet: {path: /healthz, port: 8080}
+            initialDelaySeconds: 2
+            periodSeconds: 2
+          livenessProbe:
+            httpGet: {path: /healthz, port: 8443, scheme: HTTPS}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - {name: code, mountPath: /app, readOnly: true}
+            - {name: tls, mountPath: /app/tls, readOnly: true}
+      volumes:
+        - name: code
+          configMap: {name: load-fixture}
+        - name: tls
+          secret: {secretName: load-fixture-tls}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: load-fixture
+  namespace: orbitjob-load
+spec:
+  selector: {app: load-fixture}
+  ports:
+    - {name: http, port: 8080, targetPort: 8080}
+    - {name: https, port: 8443, targetPort: 8443}

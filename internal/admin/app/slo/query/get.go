@@ -8,7 +8,7 @@ import (
 
 // sloReader retrieves SLOs.
 type sloReader interface {
-	Get(ctx context.Context, tenantID string, id int64) (slo.Snapshot, error)
+	Get(ctx context.Context, tenantID, resourceGroupID string, id int64) (slo.Snapshot, error)
 }
 
 // budgetReader retrieves current budgets.
@@ -34,19 +34,19 @@ type GetInput struct {
 
 // GetItem is the read model for a single SLO.
 type GetItem struct {
-	ID                int64     `json:"id"`
-	Name              string    `json:"name"`
-	Description       *string   `json:"description,omitempty"`
-	SLIID             int64     `json:"sli_id"`
-	Target            float64   `json:"target"`
-	WindowType        string    `json:"window_type"`
-	WindowDuration    string    `json:"window_duration"`
-	AlertFastBurnRate float64   `json:"alert_fast_burn_rate"`
-	AlertSlowBurnRate float64   `json:"alert_slow_burn_rate"`
-	Status            string    `json:"status"`
-	Version           int       `json:"version"`
-	CreatedAt         string    `json:"created_at"`
-	UpdatedAt         string    `json:"updated_at"`
+	ID                int64   `json:"id"`
+	Name              string  `json:"name"`
+	Description       *string `json:"description,omitempty"`
+	SLIID             int64   `json:"sli_id"`
+	Target            float64 `json:"target"`
+	WindowType        string  `json:"window_type"`
+	WindowDuration    string  `json:"window_duration"`
+	AlertFastBurnRate float64 `json:"alert_fast_burn_rate"`
+	AlertSlowBurnRate float64 `json:"alert_slow_burn_rate"`
+	Status            string  `json:"status"`
+	Version           int     `json:"version"`
+	CreatedAt         string  `json:"created_at"`
+	UpdatedAt         string  `json:"updated_at"`
 
 	// Current budget (if available).
 	CurrentBudget *BudgetItem `json:"current_budget,omitempty"`
@@ -64,8 +64,8 @@ type BudgetItem struct {
 }
 
 // Get retrieves a single SLO with its current budget.
-func (uc *GetSLOUseCase) Get(ctx context.Context, tenantID string, id int64) (GetItem, error) {
-	snap, err := uc.sloRepo.Get(ctx, tenantID, id)
+func (uc *GetSLOUseCase) Get(ctx context.Context, tenantID, resourceGroupID string, id int64) (GetItem, error) {
+	snap, err := uc.sloRepo.Get(ctx, tenantID, resourceGroupID, id)
 	if err != nil {
 		return GetItem{}, err
 	}

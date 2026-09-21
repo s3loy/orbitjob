@@ -1,0 +1,20 @@
+{{- $taskNamespace := .Values.taskNamespace.name -}}
+{{- if .Values.taskNamespace.create }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $taskNamespace }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    orbitjob.io/task-namespace: "true"
+{{- end }}
+---
+# The identity a container job runs as. It deliberately has no API access:
+# a job is workload, not control plane, and automountServiceAccountToken is off
+# so a compromised job carries no credential to escalate with.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.taskNamespace.serviceAccountName }}
+  namespace: {{ $taskNamespace }}
+automountServiceAccountToken: false

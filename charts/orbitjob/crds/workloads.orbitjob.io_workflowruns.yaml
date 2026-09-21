@@ -1,0 +1,107 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: workflowruns.workloads.orbitjob.io
+spec:
+  group: workloads.orbitjob.io
+  scope: Namespaced
+  names:
+    plural: workflowruns
+    singular: workflowrun
+    kind: WorkflowRun
+    shortNames: [wr]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            spec:
+              type: object
+              required: [workflowRef, definitionRevision, trigger, actor, occurrenceKey]
+              properties:
+                # The WorkflowJob definition this run executes.
+                workflowRef:
+                  type: object
+                  required: [name, uid]
+                  properties:
+                    name: {type: string, minLength: 1}
+                    uid: {type: string, minLength: 1}
+                # The workflow revision the run is pinned to, required before
+                # publish: the operator refuses a run whose revision it cannot
+                # load, so a forged or stale reference cannot invent work.
+                definitionRevision: {type: integer, format: int64, minimum: 1}
+                # The WorkflowRun resource is the manual-trigger transport;
+                # scheduled workflow runs are row-first and carry no CR, so
+                # Manual is the only admitted value.
+                trigger: {type: string, enum: [Manual]}
+                # Who asked for this run. Required and non-empty, under the same
+                # discipline as a JobRun's actor: the ledger's actor column is
+                # NOT NULL with a non-empty CHECK, and the value is exactly as
+                # trustworthy as the RBAC that governs who may write a
+                # WorkflowRun in a tenant namespace. That write is granted to the
+                # admin API alone (create, get, patch -- the patch exists for
+                # cancel requests and only ever sets spec.cancelRequested).
+                # Nothing on this path makes the value unforgeable to a writer
+                # that holds the grant; a mutating admission webhook stamping
+                # spec.actor from request.userInfo.username would be the one
+                # place to do it.
+                actor: {type: string, minLength: 1, maxLength: 255}
+                # Deduplicates this run against its workflow definition; a
+                # retried manual trigger derives the same key and resolves to
+                # the run that already exists.
+                occurrenceKey: {type: string, minLength: 1}
+                # The user's stop intent. The operator fans it out to the
+                # workflow's non-terminal step runs; the workflow only reaches
+                # Canceled once its steps are observed terminal.
+                cancelRequested: {type: boolean}
+            status:
+              type: object
+              properties:
+                # Workflow-level lifecycle. A run with a CancelUnknown step
+                # stays CancelUnknown and non-terminal, exactly as its step
+                # does: a stop nobody could confirm is not an outcome.
+                phase:
+                  type: string
+                  enum: [Pending, Running, CancelRequested, Succeeded, Failed, Canceled, CancelUnknown]
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    required: [type, status]
+                    properties:
+                      type: {type: string}
+                      status: {type: string, enum: ["True", "False", Unknown]}
+                      reason: {type: string}
+                      message: {type: string}
+                      lastTransitionTime: {type: string, format: date-time}
+                # Per-step state, the operator-maintained read model over the
+                # step rows. A step's authoritative facts are its
+                # job_run_control_plane row and its JobRun object; this list is
+                # how one workflow run answers "what happened to each task" in
+                # one place.
+                steps:
+                  type: array
+                  items:
+                    type: object
+                    required: [task]
+                    properties:
+                      task: {type: string, minLength: 1}
+                      phase: {type: string, enum: [Pending, CreatingAttempt, Running, RetryWaiting, Succeeded, Failed, CancelRequested, Canceled, CancelUnknown]}
+                      attempt: {type: integer, format: int32, minimum: 0}
+                      # The step key, from which the step's JobRun object name
+                      # is derived; cancel and inspection address the step
+                      # through it like any run.
+                      occurrenceKey: {type: string}
+                      startedAt: {type: string, format: date-time}
+                      completedAt: {type: string, format: date-time}
+                      # A skipped task never got a run row. skipReason carries
+                      # the decision: canceled, fail_fast, condition, deadline.
+                      skipped: {type: boolean}
+                      skipReason: {type: string}
+                startedAt: {type: string, format: date-time}
+                completedAt: {type: string, format: date-time}
+      subresources: {status: {}}

@@ -1,0 +1,221 @@
+# OrbitJob scrape wiring and alert rules for the kube-prometheus-stack
+# release. Applied by `make monitoring-up`. Lives in the "monitoring"
+# namespace; the release values set empty selectors, so Prometheus discovers
+# these monitors and rules wherever they live.
+#
+# admin-api gets a PodMonitor like the others. The design sketched a
+# ServiceMonitor (admin-api is the one component with a Service), but the
+# Service object carries only helm's managed-by label, not
+# app.kubernetes.io/name, so a label-selected ServiceMonitor can only match by
+# accident. The pods all carry app.kubernetes.io/name and declare the named
+# container port "health" (8080 for admin-api), which serves /healthz and
+# /metrics on the same listener; the /metrics route is auth-exempt.
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: orbitjob-admin-api
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: orbitjob-observability
+spec:
+  jobLabel: app.kubernetes.io/name
+  namespaceSelector:
+    matchNames:
+      - orbitjob-system
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: orbitjob-admin-api
+  podMetricsEndpoints:
+    - port: health
+      path: /metrics
+      interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: orbitjob-scheduler
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: orbitjob-observability
+spec:
+  jobLabel: app.kubernetes.io/name
+  namespaceSelector:
+    matchNames:
+      - orbitjob-system
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: orbitjob-scheduler
+  podMetricsEndpoints:
+    - port: health
+      path: /metrics
+      interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: orbitjob-operator
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: orbitjob-observability
+spec:
+  jobLabel: app.kubernetes.io/name
+  namespaceSelector:
+    matchNames:
+      - orbitjob-system
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: orbitjob-operator
+  podMetricsEndpoints:
+    # Numeric portNumber: the operator deployment declares no named
+    # containerPort yet. (Plain targetPort is treated as a name and matches
+    # nothing on prometheus-operator v3.)
+    - portNumber: 8082
+      path: /metrics
+      interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: orbitjob-postgres-exporter
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: orbitjob-observability
+spec:
+  jobLabel: app
+  namespaceSelector:
+    matchNames:
+      - orbitjob
+  selector:
+    matchLabels:
+      app: orbitjob-postgres-exporter
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+---
+# Alert rules from the observability design (docs/superpowers/plans/
+# observability-design.md section 7), plus the admin-api 5xx alert that the
+# design marked as not-yet-expressible and which orbitjob_http_requests_total
+# now makes real. All metric names are from the audited catalog in
+# internal/platform/metrics or kube-state-metrics builtins.
+#
+# jobrun_phase is a StateSet: every run carries one series per known phase,
+# value 1 on the current phase and 0 on the rest, so "currently in phase X" is
+# value==1, not mere presence.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: orbitjob-observability
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: orbitjob-observability
+spec:
+  groups:
+    - name: orbitjob-observability
+      rules:
+        - alert: OrbitJobScrapeTargetDown
+          expr: up{job=~"orbitjob-.*", job!="orbitjob-admin-api"} == 0
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "OrbitJob component {{ $labels.job }} is not scrapeable"
+            description: "Prometheus cannot scrape {{ $labels.instance }} (job {{ $labels.job }}). The component is down, just restarted, or its /metrics endpoint is broken."
+        - alert: OrbitJobAdminAPIDown
+          expr: up{job="orbitjob-admin-api"} == 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "admin-api is not scrapeable"
+            description: "Prometheus cannot scrape {{ $labels.instance }} (job orbitjob-admin-api). The admin-api process is down or its /metrics endpoint is broken; the ledger API is unreachable."
+        - alert: OperatorReconcileErrors
+          expr: sum by (resource) (increase(orbitjob_operator_reconcile_errors_total[10m])) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: "Operator reconcile errors for {{ $labels.resource }}"
+            description: "The operator failed to reconcile {{ $labels.resource }} at least once in the last 10 minutes; the run census may lag reality until this stops."
+        - alert: OperatorJobEnsureFailures
+          expr: increase(orbitjob_operator_job_creation_failures_total[10m]) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: "Operator failed to create or adopt Kubernetes Jobs"
+            description: "At least one Kubernetes Job ensure failed in the last 10 minutes. A burst here usually precedes runs stuck in Pending."
+        - alert: OperatorLeaderLeaseStale
+          expr: |
+            absent(kube_lease_renew_time{lease="orbitjob-operator-singleton", namespace="orbitjob-system"}) == 1
+              or (time() - kube_lease_renew_time{lease="orbitjob-operator-singleton", namespace="orbitjob-system"} > 60)
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Operator leader lease is stale or missing"
+            description: "The orbitjob-operator-singleton Lease in orbitjob-system has not been renewed for over a minute (or is absent). The schedule and retention loops only run under leadership, so nothing schedules until this recovers."
+        - alert: RunsStuckPending
+          expr: sum(jobrun_phase{phase="Pending"} == 1) > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "JobRuns stuck in Pending"
+            description: "{{ $value }} run(s) have been Pending for 15 minutes, which on this cluster means the operator never materialized them into Kubernetes Jobs."
+        - alert: CancelNotConverging
+          expr: |
+            jobrun_info{cancel_requested="true"}
+              and on(namespace, name) (jobrun_phase{phase!="Canceled", phase!=""} == 1)
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Cancel request not converging for {{ $labels.namespace }}/{{ $labels.name }}"
+            description: "spec.cancelRequested was set 10 minutes ago but the run's current phase is still not Canceled. Either the operator cannot delete the Kubernetes Job or the cancel contract is broken."
+        - alert: SchedulerUnreachable
+          expr: up{job="orbitjob-scheduler"} == 0
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Scheduler process is down"
+            description: "The scheduler's /metrics endpoint is unreachable. Leadership itself emits no metric in the default build; process liveness is the closest safe signal."
+        - alert: PostgresExporterDown
+          expr: up{job="orbitjob-postgres-exporter"} == 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "postgres-exporter is not scrapeable"
+            description: "The ledger's database probe is dark: either the exporter is down or it was never installed (it is deployed separately from deploy/monitoring/postgres-exporter.yaml)."
+        - alert: NodePressure
+          expr: kube_node_status_condition{condition=~"MemoryPressure|DiskPressure", status="true"} == 1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Node {{ $labels.node }} reports {{ $labels.condition }}"
+            description: "Sustained node pressure is the most common dev-cluster failure mode for task pods."
+        - alert: TaskPodsCrashLooping
+          expr: |
+            sum by (namespace) (
+              increase(kube_pod_container_status_restarts_total{namespace=~"orbitjob-.*"}[15m])
+            ) > 3
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Task pods restarting rapidly in {{ $labels.namespace }}"
+            description: "More than 3 container restarts in 15 minutes in {{ $labels.namespace }}. Crash-looping task images render runs Failed; catch it before the ledger fills with failures."
+        - alert: OrbitJobAPIErrorRateHigh
+          expr: |
+            (
+              sum(rate(orbitjob_http_requests_total{status=~"5.."}[5m]))
+                / clamp_min(sum(rate(orbitjob_http_requests_total[5m])), 1e-9)
+            ) > 0.05
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "admin-api 5xx rate above 5%"
+            description: "More than 5% of admin-api requests over the last 5 minutes returned a 5xx. The counter's path label (gin route template) narrows which endpoint is failing."

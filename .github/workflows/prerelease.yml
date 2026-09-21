@@ -1,0 +1,172 @@
+# Pre-release images: build the branch's code and push it to GHCR as a
+# testable tag, without tagging the repository or waiting for a merge to the
+# default branch.
+#
+# Why this exists: release.yml (the real release path) only fires from the
+# default branch, so a feature branch's operator could never be installed
+# from a registry — every test install needed a laptop-side docker build and
+# kind load. This workflow gives a branch the same artifact the release
+# produces, under an unmistakably non-release tag.
+#
+# The tag is `rc-<run number>-<short sha>` and NEVER moves to another commit
+# except as an extra `rc` alias on the newest run: an install pinned to
+# rc-7-9a4f21c keeps building that exact commit, while `rc` tracks the latest
+# for convenience in a dev cluster. Version tags (v*) stay reserved for
+# release.yml; a release must be exactly what the default branch tagged.
+#
+# Dispatch it from any branch with an optional Helm values override string;
+# the run page prints the install command using it.
+
+name: Pre-release Images
+
+on:
+  push:
+    branches:
+      - dev
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: prerelease-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
+
+      - name: Setup Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Published images must be verified, so the quality gate is not skipped
+      # here either: an rc tag is something another machine will install.
+      # golangci-lint is not preinstalled on the runner; the action installs
+      # the binary into PATH before make check reaches the lint target.
+      - name: Install golangci-lint
+        uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9.2.0
+        with:
+          version: v2.13.1
+          # Lint runs here as part of make check; skip the action's own run.
+          install-only: true
+
+      - name: Run quality gate
+        run: make check
+
+  images:
+    name: ${{ matrix.component }}
+    needs: [verify]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { component: admin-api,  target: admin }
+          - { component: scheduler,  target: scheduler }
+          - { component: operator,   target: operator }
+          - { component: migrate,    target: migrate }
+          - { component: bootstrap,  target: bootstrap }
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
+
+      - name: Resolve rc tag
+        id: tag
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          sha="$(git rev-parse --short=7 HEAD)"
+          echo "version=rc-${RUN_NUMBER}-${sha}" >> "$GITHUB_OUTPUT"
+          echo "tagging as rc-${RUN_NUMBER}-${sha}"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build stages stay on the runner architecture and cross-compile via Go,
+      # so no QEMU is needed — same contract as release.yml.
+      - name: Build and push
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          target: ${{ matrix.target }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/orbitjob-${{ matrix.component }}:${{ steps.tag.outputs.version }}
+          cache-from: type=gha,scope=rc-${{ matrix.component }}
+          cache-to: type=gha,mode=max,scope=rc-${{ matrix.component }}
+
+  publish:
+    name: Move rc alias and print install command
+    needs: [images]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # `rc` is a moving alias for "newest pre-release build". It is retagged
+      # with a manifest list copy — the image contents are identical — after
+      # every component push succeeded, so an alias move can never point at a
+      # partial build.
+      - name: Move rc alias
+        env:
+          VERSION: ${{ needs.images.outputs.version }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          # shellcheck disable=SC2153 # VERSION is injected through the step env above.
+          version="$VERSION"
+          for component in admin-api scheduler operator migrate bootstrap; do
+            image="${REGISTRY}/${owner}/orbitjob-${component}"
+            docker buildx imagetools create \
+              -t "${image}:rc" "${image}:${version}"
+            echo "[OK] ${image}:rc -> ${version}"
+          done
+
+      - name: Print install command
+        env:
+          VERSION: ${{ needs.images.outputs.version }}
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          # shellcheck disable=SC2153 # VERSION is injected through the step env above.
+          cat <<EOF
+
+          Images pushed: ghcr.io/${owner}/orbitjob-*:${VERSION} (alias :rc)
+
+          Install on any cluster:
+            helm upgrade --install orbitjob charts/orbitjob \\
+              --set global.imageTag=${VERSION}
+
+          Or track the latest pre-release:
+            helm upgrade --install orbitjob charts/orbitjob \\
+              --set global.imageTag=rc
+
+          EOF

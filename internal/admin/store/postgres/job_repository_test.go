@@ -3,222 +3,204 @@ package postgres
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 
-	query "orbitjob/internal/admin/app/job/query"
-	"orbitjob/internal/domain/resource"
+	jobquery "orbitjob/internal/admin/app/job/query"
 )
 
-func TestNewJobRepository(t *testing.T) {
-	db, _, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+// nightlySpec is a normalized spec as the operator projects it, so the decode
+// from the revision row can be asserted field by field.
+const nightlySpec = `{"schedule":"*/5 * * * *","concurrencyPolicy":"Forbid","misfirePolicy":"Skip",` +
+	`"timeoutSeconds":300,"jobTemplate":{"image":"curl:8","command":["curl"],"args":["-fsSL"],"backoffLimit":2},` +
+	`"retryPolicy":{"maxAttempts":3}}`
 
-	repo := NewJobRepository(db)
-	if repo == nil {
-		t.Fatal("expected non-nil repository")
-	}
-	if repo.db != db {
-		t.Fatal("expected db to be set")
-	}
-}
-
-func TestJobRepository_Get_Success(t *testing.T) {
+func TestJobRepository_Get(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("open mock: %v", err)
 	}
-	t.Cleanup(func() { _ = db.Close() })
+	defer func() { _ = db.Close() }()
 
-	now := time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC)
-	rows := sqlmock.NewRows([]string{
-		"id", "name", "tenant_id", "version", "priority",
-		"trigger_type", "partition_key", "cron_expr", "timezone",
-		"handler_type", "handler_payload",
-		"timeout_sec", "retry_limit", "retry_backoff_sec", "retry_backoff_strategy",
-		"concurrency_policy", "misfire_policy", "status",
-		"next_run_at", "last_scheduled_at", "created_at", "updated_at",
-	}).AddRow(
-		42, "demo-job", "default", 1, 5,
-		"cron", "tenant-a:batch", "*/5 * * * *", "UTC",
-		"http", []byte(`{"url":"https://example.com"}`),
-		120, 3, 10, "exponential",
-		"forbid", "fire_now", "active",
-		now, now, now, now,
-	)
+	created := time.Date(2026, 9, 1, 8, 0, 0, 0, time.UTC)
+	expectTenantTx(t, mock, "tenant-a")
+	mock.ExpectQuery(`SELECT (.+) FROM job_definition_revisions WHERE tenant_id = \$1 AND id = \$2 AND is_active`).
+		WithArgs("tenant-a", int64(11)).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "tenant_id", "source_mode", "source_uid", "source_namespace", "source_name",
+			"generation", "spec_hash", "normalized_spec", "actor", "created_at",
+		}).AddRow(
+			11, "tenant-a", "kubernetes", "nightly", "jobs", "nightly",
+			3, "hash-3", []byte(nightlySpec), "operator", created,
+		))
+	mock.ExpectCommit()
 
-	mock.ExpectQuery(`SELECT (.+) FROM jobs WHERE tenant_id = \$1 AND id = \$2 AND deleted_at IS NULL`).
-		WithArgs("default", int64(42)).
-		WillReturnRows(rows)
-
-	repo := NewJobRepository(db)
-	item, err := repo.Get(context.Background(), query.GetInput{ID: 42, TenantID: "default"})
+	item, err := NewJobRepository(db).Get(context.Background(), jobquery.GetInput{ID: 11, TenantID: "tenant-a"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-
-	if item.ID != 42 || item.Name != "demo-job" {
-		t.Fatalf("unexpected item: %+v", item)
+	if item.ID != 11 || item.TenantID != "tenant-a" || item.SourceUID != "nightly" {
+		t.Fatalf("identity did not survive the scan: %+v", item)
+	}
+	if item.Generation != 3 || item.SpecHash != "hash-3" || item.Actor != "operator" {
+		t.Fatalf("revision fields did not survive the scan: %+v", item)
+	}
+	if item.Schedule != "*/5 * * * *" || item.Suspend {
+		t.Errorf("schedule = %q suspend = %v", item.Schedule, item.Suspend)
+	}
+	if item.ConcurrencyPolicy != "Forbid" || item.MisfirePolicy != "Skip" {
+		t.Errorf("policies = %s/%s", item.ConcurrencyPolicy, item.MisfirePolicy)
+	}
+	if item.TimeoutSeconds != 300 || item.RetryMaxAttempts != 3 {
+		t.Errorf("timeout = %d retry = %d", item.TimeoutSeconds, item.RetryMaxAttempts)
+	}
+	if item.JobTemplate.Image != "curl:8" || item.JobTemplate.BackoffLimit != 2 {
+		t.Errorf("job template = %+v", item.JobTemplate)
+	}
+	if item.ScheduleSummary != "cron: */5 * * * *" {
+		t.Errorf("schedule summary = %q", item.ScheduleSummary)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet expectations: %v", err)
 	}
 }
 
 func TestJobRepository_Get_NotFound(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("open mock: %v", err)
 	}
-	t.Cleanup(func() { _ = db.Close() })
+	defer func() { _ = db.Close() }()
 
-	mock.ExpectQuery(`SELECT (.+) FROM jobs WHERE tenant_id = \$1 AND id = \$2 AND deleted_at IS NULL`).
-		WithArgs("default", int64(42)).
+	expectTenantTx(t, mock, "tenant-a")
+	mock.ExpectQuery(`SELECT (.+) FROM job_definition_revisions`).
+		WithArgs("tenant-a", int64(99)).
 		WillReturnError(sql.ErrNoRows)
+	mock.ExpectRollback()
 
-	repo := NewJobRepository(db)
-	_, err = repo.Get(context.Background(), query.GetInput{ID: 42, TenantID: "default"})
-	if err == nil {
-		t.Fatal("expected error")
-	}
-
-	var notFound *resource.NotFoundError
-	if !errors.As(err, &notFound) {
-		t.Fatalf("expected NotFoundError, got %T: %v", err, err)
+	_, err = NewJobRepository(db).Get(context.Background(), jobquery.GetInput{ID: 99, TenantID: "tenant-a"})
+	assertNotFound(t, err, "job")
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet expectations: %v", err)
 	}
 }
 
-func TestJobRepository_Get_DBError(t *testing.T) {
+func TestJobRepository_Get_CorruptSpecSurfaces(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("open mock: %v", err)
 	}
-	t.Cleanup(func() { _ = db.Close() })
+	defer func() { _ = db.Close() }()
 
-	mock.ExpectQuery(`SELECT (.+) FROM jobs WHERE tenant_id = \$1 AND id = \$2 AND deleted_at IS NULL`).
-		WithArgs("default", int64(42)).
-		WillReturnError(errors.New("connection refused"))
+	created := time.Date(2026, 9, 1, 8, 0, 0, 0, time.UTC)
+	expectTenantTx(t, mock, "tenant-a")
+	// A revision row whose normalized spec does not parse is a write-side
+	// defect; serving an empty job would read as "exists, does nothing".
+	mock.ExpectQuery(`SELECT (.+) FROM job_definition_revisions`).
+		WithArgs("tenant-a", int64(11)).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "tenant_id", "source_mode", "source_uid", "source_namespace", "source_name",
+			"generation", "spec_hash", "normalized_spec", "actor", "created_at",
+		}).AddRow(
+			11, "tenant-a", "kubernetes", "nightly", "jobs", "nightly",
+			3, "hash-3", []byte(`{not-json`), "operator", created,
+		))
+	mock.ExpectRollback()
 
-	repo := NewJobRepository(db)
-	_, err = repo.Get(context.Background(), query.GetInput{ID: 42, TenantID: "default"})
-	if err == nil {
-		t.Fatal("expected error")
+	if _, err := NewJobRepository(db).Get(context.Background(), jobquery.GetInput{ID: 11, TenantID: "tenant-a"}); err == nil {
+		t.Fatal("expected the corrupt spec to surface")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet expectations: %v", err)
 	}
 }
 
-func TestJobRepository_List_AllStatuses(t *testing.T) {
+func TestJobRepository_List(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("open mock: %v", err)
 	}
-	t.Cleanup(func() { _ = db.Close() })
+	defer func() { _ = db.Close() }()
 
-	now := time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC)
-	rows := sqlmock.NewRows([]string{
-		"id", "name", "tenant_id", "priority",
-		"trigger_type", "partition_key", "cron_expr", "timezone",
-		"handler_type", "concurrency_policy", "misfire_policy", "status",
-		"next_run_at", "last_scheduled_at", "created_at", "updated_at",
-	}).AddRow(
-		1, "job-1", "default", 3,
-		"manual", nil, nil, "UTC",
-		"http", "allow", "skip", "active",
-		nil, nil, now, now,
-	).AddRow(
-		2, "job-2", "default", 7,
-		"cron", "tenant-a:batch", "0 */2 * * *", "Asia/Shanghai",
-		"exec", "forbid", "fire_now", "active",
-		now, now, now, now,
-	)
+	created := time.Date(2026, 9, 1, 8, 0, 0, 0, time.UTC)
+	expectTenantTx(t, mock, "tenant-a")
+	mock.ExpectQuery(`SELECT (.+) FROM job_definition_revisions WHERE tenant_id = \$1 AND is_active`).
+		WithArgs("tenant-a", 50, 0).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "tenant_id", "source_namespace", "source_name", "source_uid",
+			"generation", "actor", "normalized_spec", "created_at",
+		}).
+			AddRow(12, "tenant-a", "jobs", "hourly", "hourly", 1, "operator", []byte(`{"schedule":"0 * * * *"}`), created).
+			AddRow(11, "tenant-a", "jobs", "nightly", "nightly", 3, "operator", []byte(nightlySpec), created))
+	mock.ExpectCommit()
 
-	mock.ExpectQuery(`SELECT (.+) FROM jobs WHERE tenant_id = \$1 AND deleted_at IS NULL ORDER BY id DESC LIMIT \$2 OFFSET \$3`).
-		WithArgs("default", 50, 0).
-		WillReturnRows(rows)
-
-	repo := NewJobRepository(db)
-	items, err := repo.List(context.Background(), query.ListInput{
-		TenantID: "default",
-		Limit:    50,
-		Offset:   0,
-	})
+	items, err := NewJobRepository(db).List(context.Background(), jobquery.ListInput{TenantID: "tenant-a", Limit: 50, Offset: 0})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(items) != 2 {
 		t.Fatalf("expected 2 items, got %d", len(items))
 	}
+	if items[0].Name != "hourly" || items[0].ScheduleSummary != "cron: 0 * * * *" {
+		t.Errorf("items[0] = %+v", items[0])
+	}
+	if items[1].Schedule != "*/5 * * * *" || items[1].ConcurrencyPolicy != "Forbid" {
+		t.Errorf("items[1] = %+v", items[1])
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet expectations: %v", err)
+	}
 }
 
-func TestJobRepository_List_FilterByStatus(t *testing.T) {
+func TestJobRepository_List_SuspendedSummary(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("open mock: %v", err)
 	}
-	t.Cleanup(func() { _ = db.Close() })
+	defer func() { _ = db.Close() }()
 
-	now := time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC)
-	rows := sqlmock.NewRows([]string{
-		"id", "name", "tenant_id", "priority",
-		"trigger_type", "partition_key", "cron_expr", "timezone",
-		"handler_type", "concurrency_policy", "misfire_policy", "status",
-		"next_run_at", "last_scheduled_at", "created_at", "updated_at",
-	}).AddRow(
-		1, "paused-job", "default", 5,
-		"manual", nil, nil, "UTC",
-		"http", "allow", "skip", "paused",
-		nil, nil, now, now,
-	)
+	created := time.Date(2026, 9, 1, 8, 0, 0, 0, time.UTC)
+	expectTenantTx(t, mock, "tenant-a")
+	mock.ExpectQuery(`SELECT (.+) FROM job_definition_revisions`).
+		WithArgs("tenant-a", 50, 0).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "tenant_id", "source_namespace", "source_name", "source_uid",
+			"generation", "actor", "normalized_spec", "created_at",
+		}).AddRow(11, "tenant-a", "jobs", "nightly", "nightly", 3, "operator",
+			[]byte(`{"schedule":"*/5 * * * *","suspend":true}`), created))
+	mock.ExpectCommit()
 
-	mock.ExpectQuery(`SELECT (.+) FROM jobs WHERE tenant_id = \$1 AND deleted_at IS NULL AND status = \$2 ORDER BY id DESC LIMIT \$3 OFFSET \$4`).
-		WithArgs("default", "paused", 50, 0).
-		WillReturnRows(rows)
-
-	repo := NewJobRepository(db)
-	items, err := repo.List(context.Background(), query.ListInput{
-		TenantID: "default",
-		Status:   "paused",
-		Limit:    50,
-		Offset:   0,
-	})
+	// Suspend wins over the expression: a stopped definition must not be
+	// described by the cron it no longer follows.
+	items, err := NewJobRepository(db).List(context.Background(), jobquery.ListInput{TenantID: "tenant-a", Limit: 50, Offset: 0})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(items) != 1 {
-		t.Fatalf("expected 1 item, got %d", len(items))
-	}
-	if items[0].Status != "paused" {
-		t.Fatalf("expected status=paused, got %s", items[0].Status)
+	if len(items) != 1 || items[0].ScheduleSummary != "suspended" {
+		t.Fatalf("items = %+v, want a suspended summary", items)
 	}
 }
 
 func TestJobRepository_List_Empty(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("open mock: %v", err)
 	}
-	t.Cleanup(func() { _ = db.Close() })
+	defer func() { _ = db.Close() }()
 
-	rows := sqlmock.NewRows([]string{
-		"id", "name", "tenant_id", "priority",
-		"trigger_type", "partition_key", "cron_expr", "timezone",
-		"handler_type", "concurrency_policy", "misfire_policy", "status",
-		"next_run_at", "last_scheduled_at", "created_at", "updated_at",
-	})
+	expectTenantTx(t, mock, "tenant-a")
+	mock.ExpectQuery(`SELECT (.+) FROM job_definition_revisions`).
+		WithArgs("tenant-a", 50, 0).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "tenant_id", "source_namespace", "source_name", "source_uid",
+			"generation", "actor", "normalized_spec", "created_at",
+		}))
+	mock.ExpectCommit()
 
-	mock.ExpectQuery(`SELECT (.+) FROM jobs WHERE tenant_id = \$1 AND deleted_at IS NULL`).
-		WithArgs("default", 50, 0).
-		WillReturnRows(rows)
-
-	repo := NewJobRepository(db)
-	items, err := repo.List(context.Background(), query.ListInput{
-		TenantID: "default",
-		Limit:    50,
-		Offset:   0,
-	})
+	items, err := NewJobRepository(db).List(context.Background(), jobquery.ListInput{TenantID: "tenant-a", Limit: 50, Offset: 0})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -230,388 +212,20 @@ func TestJobRepository_List_Empty(t *testing.T) {
 func TestJobRepository_List_DBError(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("open mock: %v", err)
 	}
-	t.Cleanup(func() { _ = db.Close() })
+	defer func() { _ = db.Close() }()
 
-	mock.ExpectQuery(`SELECT (.+) FROM jobs`).
-		WithArgs("default", 50, 0).
-		WillReturnError(errors.New("connection refused"))
+	expectTenantTx(t, mock, "tenant-a")
+	mock.ExpectQuery(`SELECT (.+) FROM job_definition_revisions`).
+		WithArgs("tenant-a", 50, 0).
+		WillReturnError(errors.New("db down"))
+	mock.ExpectRollback()
 
-	repo := NewJobRepository(db)
-	_, err = repo.List(context.Background(), query.ListInput{
-		TenantID: "default",
-		Limit:    50,
-		Offset:   0,
-	})
-	if err == nil {
-		t.Fatal("expected error")
+	if _, err := NewJobRepository(db).List(context.Background(), jobquery.ListInput{TenantID: "tenant-a", Limit: 50, Offset: 0}); err == nil {
+		t.Fatal("expected error, got nil")
 	}
-}
-
-func TestJobRepository_GetQuota_Success(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-
-	quotas := map[string]any{
-		"max_jobs":       float64(10),
-		"max_concurrent": float64(3),
-	}
-	raw, err := json.Marshal(quotas)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	rows := sqlmock.NewRows([]string{"quotas"}).AddRow(raw)
-	mock.ExpectQuery(`SELECT quotas FROM tenants WHERE id = \$1`).
-		WithArgs("default").
-		WillReturnRows(rows)
-
-	repo := NewJobRepository(db)
-	result, err := repo.GetQuota(context.Background(), "default")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result == nil {
-		t.Fatal("expected non-nil quotas map")
-	}
-	if result["max_jobs"] != float64(10) {
-		t.Fatalf("expected max_jobs=10, got %v", result["max_jobs"])
-	}
-}
-
-func TestJobRepository_GetQuota_TenantNotFound(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-
-	mock.ExpectQuery(`SELECT quotas FROM tenants WHERE id = \$1`).
-		WithArgs("missing-tenant").
-		WillReturnError(sql.ErrNoRows)
-
-	repo := NewJobRepository(db)
-	result, err := repo.GetQuota(context.Background(), "missing-tenant")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result != nil {
-		t.Fatalf("expected nil quotas for missing tenant, got %v", result)
-	}
-}
-
-func TestJobRepository_GetQuota_EmptyQuota(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-
-	// Empty JSON bytes -> treated as nil quotas
-	rows := sqlmock.NewRows([]string{"quotas"}).AddRow([]byte{})
-	mock.ExpectQuery(`SELECT quotas FROM tenants WHERE id = \$1`).
-		WithArgs("default").
-		WillReturnRows(rows)
-
-	repo := NewJobRepository(db)
-	result, err := repo.GetQuota(context.Background(), "default")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result != nil {
-		t.Fatalf("expected nil quotas for empty raw, got %v", result)
-	}
-}
-
-func TestJobRepository_GetQuota_DBError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-
-	mock.ExpectQuery(`SELECT quotas FROM tenants WHERE id = \$1`).
-		WithArgs("default").
-		WillReturnError(errors.New("connection refused"))
-
-	repo := NewJobRepository(db)
-	_, err = repo.GetQuota(context.Background(), "default")
-	if err == nil {
-		t.Fatal("expected error")
-	}
-}
-
-func TestJobRepository_GetQuota_InvalidJSON(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-
-	rows := sqlmock.NewRows([]string{"quotas"}).AddRow([]byte("{invalid"))
-	mock.ExpectQuery(`SELECT quotas FROM tenants WHERE id = \$1`).
-		WithArgs("default").
-		WillReturnRows(rows)
-
-	repo := NewJobRepository(db)
-	_, err = repo.GetQuota(context.Background(), "default")
-	if err == nil {
-		t.Fatal("expected error for invalid JSON")
-	}
-}
-
-// ===== scanJobGetItem edge cases =====
-
-func TestScanJobGetItem_EmptyPayload(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-
-	now := time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC)
-	rows := sqlmock.NewRows([]string{
-		"id", "name", "tenant_id", "version", "priority",
-		"trigger_type", "partition_key", "cron_expr", "timezone",
-		"handler_type", "handler_payload",
-		"timeout_sec", "retry_limit", "retry_backoff_sec", "retry_backoff_strategy",
-		"concurrency_policy", "misfire_policy", "status",
-		"next_run_at", "last_scheduled_at", "created_at", "updated_at",
-	}).AddRow(
-		42, "demo-job", "default", 1, 5,
-		"manual", nil, nil, "UTC",
-		"http", []byte{}, // empty payload
-		60, 3, 10, "fixed",
-		"allow", "skip", "active",
-		nil, nil, now, now,
-	)
-
-	mock.ExpectQuery(`SELECT (.+) FROM jobs`).
-		WithArgs("default", int64(42)).
-		WillReturnRows(rows)
-
-	repo := NewJobRepository(db)
-	item, err := repo.Get(context.Background(), query.GetInput{ID: 42, TenantID: "default"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(item.HandlerPayload) != 0 {
-		t.Fatalf("expected empty handler payload, got %+v", item.HandlerPayload)
-	}
-}
-
-func TestScanJobGetItem_NilPayloadAfterUnmarshal(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-
-	now := time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC)
-	rows := sqlmock.NewRows([]string{
-		"id", "name", "tenant_id", "version", "priority",
-		"trigger_type", "partition_key", "cron_expr", "timezone",
-		"handler_type", "handler_payload",
-		"timeout_sec", "retry_limit", "retry_backoff_sec", "retry_backoff_strategy",
-		"concurrency_policy", "misfire_policy", "status",
-		"next_run_at", "last_scheduled_at", "created_at", "updated_at",
-	}).AddRow(
-		42, "demo-job", "default", 1, 5,
-		"manual", nil, nil, "UTC",
-		"http", []byte("null"), // JSON null
-		60, 3, 10, "fixed",
-		"allow", "skip", "active",
-		nil, nil, now, now,
-	)
-
-	mock.ExpectQuery(`SELECT (.+) FROM jobs`).
-		WithArgs("default", int64(42)).
-		WillReturnRows(rows)
-
-	repo := NewJobRepository(db)
-	item, err := repo.Get(context.Background(), query.GetInput{ID: 42, TenantID: "default"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(item.HandlerPayload) != 0 {
-		t.Fatalf("expected empty handler payload for null JSON, got %+v", item.HandlerPayload)
-	}
-}
-
-func TestScanJobGetItem_InvalidJSON(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-
-	now := time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC)
-	rows := sqlmock.NewRows([]string{
-		"id", "name", "tenant_id", "version", "priority",
-		"trigger_type", "partition_key", "cron_expr", "timezone",
-		"handler_type", "handler_payload",
-		"timeout_sec", "retry_limit", "retry_backoff_sec", "retry_backoff_strategy",
-		"concurrency_policy", "misfire_policy", "status",
-		"next_run_at", "last_scheduled_at", "created_at", "updated_at",
-	}).AddRow(
-		42, "demo-job", "default", 1, 5,
-		"manual", nil, nil, "UTC",
-		"http", []byte("{invalid"), // invalid JSON
-		60, 3, 10, "fixed",
-		"allow", "skip", "active",
-		nil, nil, now, now,
-	)
-
-	mock.ExpectQuery(`SELECT (.+) FROM jobs`).
-		WithArgs("default", int64(42)).
-		WillReturnRows(rows)
-
-	repo := NewJobRepository(db)
-	_, err = repo.Get(context.Background(), query.GetInput{ID: 42, TenantID: "default"})
-	if err == nil {
-		t.Fatal("expected error for invalid JSON payload")
-	}
-}
-
-// ===== List edge cases =====
-
-func TestJobRepository_List_WithOffset(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-
-	rows := sqlmock.NewRows([]string{
-		"id", "name", "tenant_id", "priority",
-		"trigger_type", "partition_key", "cron_expr", "timezone",
-		"handler_type", "concurrency_policy", "misfire_policy", "status",
-		"next_run_at", "last_scheduled_at", "created_at", "updated_at",
-	})
-
-	mock.ExpectQuery(`SELECT (.+) FROM jobs WHERE tenant_id = \$1 AND deleted_at IS NULL ORDER BY id DESC LIMIT \$2 OFFSET \$3`).
-		WithArgs("default", 20, 10). // limit=20, offset=10
-		WillReturnRows(rows)
-
-	repo := NewJobRepository(db)
-	items, err := repo.List(context.Background(), query.ListInput{
-		TenantID: "default",
-		Limit:    20,
-		Offset:   10,
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if items != nil {
-		t.Fatalf("expected nil slice for empty rows, got %+v", items)
-	}
-}
-
-func TestJobRepository_List_FilteredEmpty(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-
-	rows := sqlmock.NewRows([]string{
-		"id", "name", "tenant_id", "priority",
-		"trigger_type", "partition_key", "cron_expr", "timezone",
-		"handler_type", "concurrency_policy", "misfire_policy", "status",
-		"next_run_at", "last_scheduled_at", "created_at", "updated_at",
-	})
-
-	mock.ExpectQuery(`SELECT (.+) FROM jobs WHERE tenant_id = \$1 AND deleted_at IS NULL AND status = \$2 ORDER BY id DESC LIMIT \$3 OFFSET \$4`).
-		WithArgs("default", "active", 50, 0).
-		WillReturnRows(rows)
-
-	repo := NewJobRepository(db)
-	items, err := repo.List(context.Background(), query.ListInput{
-		TenantID: "default",
-		Status:   "active",
-		Limit:    50,
-		Offset:   0,
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if items != nil {
-		t.Fatalf("expected nil for empty filtered result, got %+v", items)
-	}
-}
-
-func TestScanJobListItem_ScanError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-
-	// Create a row with a type mismatch: provide an int where a string is expected
-	// for the 'name' column (second field), causing scan to fail.
-	rows := sqlmock.NewRows([]string{
-		"id", "name", "tenant_id", "priority",
-		"trigger_type", "partition_key", "cron_expr", "timezone",
-		"handler_type", "concurrency_policy", "misfire_policy", "status",
-		"next_run_at", "last_scheduled_at", "created_at", "updated_at",
-	}).AddRow(
-		"not-a-number", // Scan into int64 ID fails
-		"job-1", "default", 3,
-		"manual", nil, nil, "UTC",
-		"http", "allow", "skip", "active",
-		nil, nil, time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC), time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC),
-	)
-
-	mock.ExpectQuery(`SELECT (.+) FROM jobs WHERE tenant_id = \$1 AND deleted_at IS NULL`).
-		WithArgs("default", 50, 0).
-		WillReturnRows(rows)
-
-	repo := NewJobRepository(db)
-	_, err = repo.List(context.Background(), query.ListInput{
-		TenantID: "default",
-		Limit:    50,
-		Offset:   0,
-	})
-	if err == nil {
-		t.Fatal("expected scan error, got nil")
-	}
-}
-
-func TestJobRepository_List_ScanError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-
-	now := time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC)
-	rows := sqlmock.NewRows([]string{
-		"id", "name", "tenant_id", "priority",
-		"trigger_type", "partition_key", "cron_expr", "timezone",
-		"handler_type", "concurrency_policy", "misfire_policy", "status",
-		"next_run_at", "last_scheduled_at", "created_at", "updated_at",
-	}).AddRow(
-		1, "job-1", "default", 3,
-		"manual", nil, nil, "UTC",
-		"http", "allow", "skip", "active",
-		nil, nil, now, now,
-	).RowError(0, errors.New("scan: conversion error"))
-
-	mock.ExpectQuery(`SELECT (.+) FROM jobs WHERE tenant_id = \$1 AND deleted_at IS NULL`).
-		WithArgs("default", 50, 0).
-		WillReturnRows(rows)
-
-	repo := NewJobRepository(db)
-	_, err = repo.List(context.Background(), query.ListInput{
-		TenantID: "default",
-		Limit:    50,
-		Offset:   0,
-	})
-	if err == nil {
-		t.Fatal("expected scan error, got nil")
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet expectations: %v", err)
 	}
 }

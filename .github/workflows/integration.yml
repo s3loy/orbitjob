@@ -52,8 +52,22 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Run postgres integration test helpers
+      # Creates the orbitjob_* deployment roles and sets their login passwords
+      # to the itest-* values the integration suites authenticate with. The
+      # bootstrap and admin HTTP suites must connect as orbitjob_admin (the
+      # baseline's bootstrap function refuses any other session_user), and they
+      # derive that role's DSN from TEST_DATABASE_DSN plus these passwords.
+      - name: Provision deployment roles
+        run: go run ./scripts/provision-test-roles
+
+      - name: Migration baseline suite
+        run: go test -count=1 -tags integration ./db/migrations
+
+      - name: Postgres test helpers suite
         run: go test -count=1 -tags integration ./internal/platform/postgrestest
 
-      - name: Run postgres repository integration tests
+      - name: Repository suites
         run: go test -count=1 -tags integration ./internal/admin/store/postgres ./internal/core/store/postgres
+
+      - name: Bootstrap + admin HTTP suites
+        run: go test -count=1 -tags integration ./internal/admin/bootstrap ./internal/admin/http

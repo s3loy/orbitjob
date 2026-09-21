@@ -26,6 +26,9 @@ go.work.sum
 
 # env file
 .env
+.runtime/
+# quickstart exports the bootstrap API key here
+.kind/
 
 # Editor/IDE
 # .idea/
@@ -43,6 +46,7 @@ docs/superpowers/
 CLAUDE.md
 
 # Benchmark temporary output files
+bench.txt
 bench-*.txt
 bench-*.err
 # Stray build binaries (go build in repo root)
@@ -50,3 +54,17 @@ bench-*.err
 /scheduler
 /worker
 /devserver
+/loadtest
+
+# Claude Code working state
+/.claude/
+
+/test/load/runs/
+
+# Local build artifacts
+/operator
+/orbitjob
+/smoke-test-results.md
+
+# Load fixture TLS secret: generated at apply time by deploy/load/make-tls-cert.sh
+/deploy/load/fixture-tls-secret.yaml

@@ -1,0 +1,11 @@
+{{- if .Values.operator.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: orbitjob-operator-runtime
+  labels: {app.kubernetes.io/name: orbitjob-operator}
+data:
+  reconcile-mode: informer
+  watched-resources: scheduledjobs,jobruns,jobs
+  status-writeback: enabled
+{{- end }}

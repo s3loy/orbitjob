@@ -4,11 +4,13 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"orbitjob/internal/admin/http/apperror"
 )
 
 type pointerParameterModel struct {
 	ID       int64  `uri:"id" binding:"required,min=1"`
-	TenantID string `form:"tenant_id" binding:"omitempty,max=64"`
+	TenantID string `form:"tenant_id" binding:"omitempty,len=26"`
 	TraceID  string `header:"X-Trace-ID" binding:"omitempty,max=128"`
 	Ignored  string `json:"ignored"`
 }
@@ -65,8 +67,8 @@ func TestParametersFromModel_WithPointerInputAndDefaults(t *testing.T) {
 	}
 
 	tenantSchema := parameterSchema(params, "tenant_id", "query")
-	if tenantSchema.Default != "default" {
-		t.Fatalf("expected tenant_id default=default, got %+v", tenantSchema.Default)
+	if tenantSchema.Default != nil {
+		t.Fatalf("expected no tenant_id default, got %+v", tenantSchema.Default)
 	}
 
 	idSchema := parameterSchema(params, "id", "path")
@@ -215,34 +217,31 @@ func TestApplySchemaDefaults_NoMutationForOtherSchemas(t *testing.T) {
 
 	registry.applySchemaDefaults("OtherSchema", &schema)
 	if schema.Properties["name"].Default != nil {
-		t.Fatalf("expected non-CreateJobRequest schemas to remain unchanged, got %+v", schema)
+		t.Fatalf("expected schemas other than the special-cased one to remain unchanged, got %+v", schema)
 	}
 }
 
-func TestApplySchemaDefaults_CreateJobRequest_PreservesLengthConstraints(t *testing.T) {
+func TestApplySchemaDefaults_APIError_InjectsCodeEnum(t *testing.T) {
 	registry := newSchemaRegistry()
+	schema := Schema{Properties: map[string]Schema{"code": {Type: "string"}}}
 
-	_ = registry.schemaForModel(CreateJobRequest{}, schemaModeRequest)
+	registry.applySchemaDefaults("APIError", &schema)
 
-	schema, ok := registry.components["CreateJobRequest"]
-	if !ok {
-		t.Fatalf("expected CreateJobRequest schema component")
+	code := schema.Properties["code"]
+	if len(code.Enum) == 0 {
+		t.Fatal("expected the APIError code property to carry the error-code enum")
 	}
-
-	tenant := schema.Properties["tenant_id"]
-	if tenant.MaxLength == nil || *tenant.MaxLength != 64 {
-		t.Fatalf("expected tenant_id maxLength=64, got %+v", tenant.MaxLength)
-	}
-	if tenant.Default != "default" {
-		t.Fatalf("expected tenant_id default=default, got %+v", tenant.Default)
-	}
-
-	timezone := schema.Properties["timezone"]
-	if timezone.MaxLength == nil || *timezone.MaxLength != 64 {
-		t.Fatalf("expected timezone maxLength=64, got %+v", timezone.MaxLength)
-	}
-	if timezone.Default != "UTC" {
-		t.Fatalf("expected timezone default=UTC, got %+v", timezone.Default)
+	for _, want := range []string{string(apperror.CodeValidation), string(apperror.CodeNotFound)} {
+		found := false
+		for _, v := range code.Enum {
+			if v == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("error-code enum is missing %q: %+v", want, code.Enum)
+		}
 	}
 }
 
@@ -278,7 +277,7 @@ type doublePtrModel struct {
 }
 
 type unexportedFieldModel struct {
-	Exported  string `uri:"id" binding:"required"`
+	Exported   string `uri:"id" binding:"required"`
 	unexported string `uri:"hidden"`
 }
 
@@ -372,6 +371,12 @@ func TestOpenAPIPathWithMultipleColons(t *testing.T) {
 	if path != "/api/v1/jobs/{id}/trigger" {
 		t.Fatalf("expected path transformation, got %q", path)
 	}
+}
+
+// actorIDHeaderRequest is a fixture for a request whose identity travels in a
+// required header rather than the path.
+type actorIDHeaderRequest struct {
+	ActorID string `header:"X-Actor-ID" binding:"required,max=128"`
 }
 
 func TestParametersFromModel_NonPathRequired(t *testing.T) {

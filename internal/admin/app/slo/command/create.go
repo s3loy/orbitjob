@@ -24,7 +24,9 @@ func NewCreateSLOUseCase(repo sloWriter) *CreateSLOUseCase {
 
 // CreateInput is the raw input for creating an SLO.
 type CreateInput struct {
-	TenantID          string
+	TenantID string
+	// ResourceGroupID is the creating key's scope, recorded on the row.
+	ResourceGroupID   string
 	Name              string
 	Description       *string
 	SLIID             int64
@@ -37,24 +39,25 @@ type CreateInput struct {
 
 // CreateResult is the output of creating an SLO.
 type CreateResult struct {
-	ID                int64         `json:"id"`
-	Name              string        `json:"name"`
-	Description       *string       `json:"description,omitempty"`
-	SLIID             int64         `json:"sli_id"`
-	Target            float64       `json:"target"`
-	WindowType        string        `json:"window_type"`
-	WindowDuration    string        `json:"window_duration"`
-	AlertFastBurnRate float64       `json:"alert_fast_burn_rate"`
-	AlertSlowBurnRate float64       `json:"alert_slow_burn_rate"`
-	Status            string        `json:"status"`
-	Version           int           `json:"version"`
-	CreatedAt         string        `json:"created_at"`
+	ID                int64   `json:"id"`
+	Name              string  `json:"name"`
+	Description       *string `json:"description,omitempty"`
+	SLIID             int64   `json:"sli_id"`
+	Target            float64 `json:"target"`
+	WindowType        string  `json:"window_type"`
+	WindowDuration    string  `json:"window_duration"`
+	AlertFastBurnRate float64 `json:"alert_fast_burn_rate"`
+	AlertSlowBurnRate float64 `json:"alert_slow_burn_rate"`
+	Status            string  `json:"status"`
+	Version           int     `json:"version"`
+	CreatedAt         string  `json:"created_at"`
 }
 
 // Create validates and creates a new SLO.
 func (uc *CreateSLOUseCase) Create(ctx context.Context, in CreateInput) (CreateResult, error) {
 	spec, err := slo.NormalizeCreate(slo.CreateInput{
 		Name:              in.Name,
+		ResourceGroupID:   in.ResourceGroupID,
 		Description:       in.Description,
 		SLIID:             in.SLIID,
 		Target:            in.Target,

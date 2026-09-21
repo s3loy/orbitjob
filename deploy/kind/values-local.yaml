@@ -1,0 +1,16 @@
+# Values for the throwaway verify cluster (deploy/kind/verify-install.sh).
+# The script builds bare image names and loads them into kind, so the registry
+# prefix is cleared here. The tag and the pull policy come from the helm command
+# line (global.imageTag, global.imagePullPolicy=Never), so this file holds no
+# image constant that a rebuild could leave stale.
+global:
+  imageRegistry: ""
+images:
+  admin: {repository: orbitjob-admin-api}
+  scheduler: {repository: orbitjob-scheduler}
+  bootstrap: {repository: orbitjob-bootstrap}
+  migrate: {repository: orbitjob-migrate}
+operator:
+  image: {repository: orbitjob-operator}
+taskNamespace:
+  serviceAccountName: orbitjob-task

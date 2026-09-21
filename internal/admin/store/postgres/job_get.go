@@ -6,121 +6,96 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 
+	v1alpha1 "orbitjob/api/kubernetes/workloads/v1alpha1"
 	query "orbitjob/internal/admin/app/job/query"
 	"orbitjob/internal/domain/resource"
-	"orbitjob/internal/platform/scan"
 )
 
-// Get queries one control-plane job detail item.
+// Get reads the active revision of one job definition.
+//
+// A job is a ScheduledJob Custom Resource; the API serves the revision the
+// operator projected from it. Only the active revision is served, because that
+// is the definition new runs use — an inactive revision is history, not the job.
 func (r *JobRepository) Get(ctx context.Context, in query.GetInput) (query.GetItem, error) {
-	row := r.db.QueryRowContext(ctx, `
-		SELECT
-			id,
-			name,
-			tenant_id,
-			version,
-			priority,
-			trigger_type,
-			partition_key,
-			cron_expr,
-			timezone,
-			handler_type,
-			handler_payload,
-			timeout_sec,
-			retry_limit,
-			retry_backoff_sec,
-			retry_backoff_strategy,
-			concurrency_policy,
-			misfire_policy,
-			status,
-			next_run_at,
-			last_scheduled_at,
-			created_at,
-			updated_at
-		FROM jobs
-		WHERE tenant_id = $1
-		  AND id = $2
-		  AND deleted_at IS NULL
-	`,
-		in.TenantID,
-		in.ID,
-	)
+	tx, err := WithTenant(ctx, r.db, in.TenantID)
+	if err != nil {
+		return query.GetItem{}, fmt.Errorf("begin job get tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
 
-	item, err := scanJobGetItem(row)
+	row := tx.QueryRowContext(ctx, `
+		SELECT id, tenant_id, source_mode, source_uid, source_namespace, source_name,
+		       generation, rtrim(spec_hash), normalized_spec::text, actor, created_at
+		FROM job_definition_revisions
+		WHERE tenant_id = $1 AND id = $2 AND is_active
+	`, in.TenantID, in.ID)
+
+	item, err := scanDefinitionDetail(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return query.GetItem{}, &resource.NotFoundError{
-				Resource: "job",
-				ID:       in.ID,
-			}
+			return query.GetItem{}, &resource.NotFoundError{Resource: "job", ID: in.ID}
 		}
-
-		slog.Error("job get failed",
-			"error", err.Error(),
-			"tenant_id", in.TenantID,
-			"id", in.ID,
-		)
-		return query.GetItem{}, fmt.Errorf("query job detail: %w", err)
+		return query.GetItem{}, fmt.Errorf("query job definition: %w", err)
 	}
-
+	if err := tx.Commit(); err != nil {
+		return query.GetItem{}, fmt.Errorf("commit job get tx: %w", err)
+	}
 	return item, nil
 }
 
-func scanJobGetItem(scanner rowScanner) (query.GetItem, error) {
-	var out query.GetItem
-	var partitionKey sql.NullString
-	var cronExpr sql.NullString
-	var nextRunAt sql.NullTime
-	var lastScheduledAt sql.NullTime
-	var payloadBytes []byte
-
-	err := scanner.Scan(
-		&out.ID,
-		&out.Name,
-		&out.TenantID,
-		&out.Version,
-		&out.Priority,
-		&out.TriggerType,
-		&partitionKey,
-		&cronExpr,
-		&out.Timezone,
-		&out.HandlerType,
-		&payloadBytes,
-		&out.TimeoutSec,
-		&out.RetryLimit,
-		&out.RetryBackoffSec,
-		&out.RetryBackoffStrategy,
-		&out.ConcurrencyPolicy,
-		&out.MisfirePolicy,
-		&out.Status,
-		&nextRunAt,
-		&lastScheduledAt,
-		&out.CreatedAt,
-		&out.UpdatedAt,
+func scanDefinitionDetail(scanner rowScanner) (query.GetItem, error) {
+	var (
+		out query.GetItem
+		raw []byte
 	)
-	if err != nil {
+	if err := scanner.Scan(
+		&out.ID,
+		&out.TenantID,
+		&out.SourceMode,
+		&out.SourceUID,
+		&out.Namespace,
+		&out.Name,
+		&out.Generation,
+		&out.SpecHash,
+		&raw,
+		&out.Actor,
+		&out.CreatedAt,
+	); err != nil {
 		return query.GetItem{}, err
 	}
 
-	out.PartitionKey = scan.NullStringPtr(partitionKey)
-	out.CronExpr = scan.NullStringPtr(cronExpr)
-	out.NextRunAt = scan.NullTimePtr(nextRunAt)
-	out.LastScheduledAt = scan.NullTimePtr(lastScheduledAt)
-	out.ScheduleSummary = query.BuildScheduleSummary(out.TriggerType, out.CronExpr, out.Timezone)
-
-	if len(payloadBytes) == 0 {
-		out.HandlerPayload = map[string]any{}
-		return out, nil
+	spec, err := decodeScheduledJobSpec(raw)
+	if err != nil {
+		return query.GetItem{}, err
 	}
-
-	if err := json.Unmarshal(payloadBytes, &out.HandlerPayload); err != nil {
-		return query.GetItem{}, fmt.Errorf("decode handler_payload: %w", err)
+	out.Schedule = spec.Schedule
+	out.Suspend = spec.Suspend
+	out.ConcurrencyPolicy = string(spec.ConcurrencyPolicy)
+	out.MisfirePolicy = string(spec.MisfirePolicy)
+	out.TimeoutSeconds = spec.TimeoutSeconds
+	out.RetryMaxAttempts = spec.RetryPolicy.MaxAttempts
+	out.JobTemplate = query.JobTemplate{
+		Image:        spec.JobTemplate.Image,
+		Command:      spec.JobTemplate.Command,
+		Args:         spec.JobTemplate.Args,
+		BackoffLimit: spec.JobTemplate.BackoffLimit,
 	}
-	if out.HandlerPayload == nil {
-		out.HandlerPayload = map[string]any{}
-	}
-
+	out.ScheduleSummary = query.BuildScheduleSummary(out.Schedule, out.Suspend)
 	return out, nil
+}
+
+// decodeScheduledJobSpec decodes a revision's normalized spec. The projection
+// stores the full ScheduledJob spec, so a row that does not parse is a
+// write-side defect rather than a missing definition; return the error instead
+// of an empty job that would read as "exists, does nothing".
+func decodeScheduledJobSpec(raw []byte) (v1alpha1.ScheduledJobSpec, error) {
+	var spec v1alpha1.ScheduledJobSpec
+	if len(raw) == 0 {
+		return spec, nil
+	}
+	if err := json.Unmarshal(raw, &spec); err != nil {
+		return v1alpha1.ScheduledJobSpec{}, fmt.Errorf("decode normalized spec: %w", err)
+	}
+	return spec, nil
 }

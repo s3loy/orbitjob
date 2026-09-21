@@ -1,0 +1,7 @@
+category: operations
+# Operator-rendered Kubernetes Jobs do not mount a ServiceAccount token. The
+# second family succeeds only when the standard projected token path is absent,
+# proving the workload has no Kubernetes API credential.
+families:
+  - {id: dns-resolution, count: 125, image: busybox}
+  - {id: service-account-token-absent, count: 15, image: busybox}

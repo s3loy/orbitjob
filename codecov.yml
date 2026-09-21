@@ -1,0 +1,16 @@
+# Coverage reporting mirrors the repository's 60% merge bar.
+coverage:
+  status:
+    project:
+      default:
+        target: 60%       # match make test-cover-check
+        threshold: 0%
+    patch:
+      default:
+        target: 60%       # match make test-cover-check
+        threshold: 0%
+
+comment:
+  layout: "reach,diff,flags,files"
+  behavior: default
+  require_changes: false

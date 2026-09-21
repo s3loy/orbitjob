@@ -2,7 +2,7 @@ package config
 
 import "context"
 
-// Watcher observes configuration changes from a backing store (etcd or env fallback).
+// Watcher observes configuration changes from a backing store.
 type Watcher interface {
 	// Watch starts watching a configuration key. The callback is invoked
 	// whenever the value changes. Initial value is fetched immediately.

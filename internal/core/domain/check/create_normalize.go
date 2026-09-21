@@ -2,6 +2,7 @@ package check
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,6 +33,15 @@ func NormalizeCreate(now time.Time, in CreateInput) (CreateSpec, error) {
 	checkConfig, err := normalizeJSONB(in.CheckConfig, "check_config")
 	if err != nil {
 		return CreateSpec{}, err
+	}
+
+	// The probe rendering executes exactly what check_config describes, so the
+	// admin boundary enforces the http_health shape here rather than letting a
+	// malformed config surface later as a Kubernetes Job that fails opaquely.
+	if checkType == CheckTypeHTTPHealth {
+		if _, err := NormalizeProbeConfig(checkConfig); err != nil {
+			return CreateSpec{}, err
+		}
 	}
 
 	assertionRules, err := normalizeAssertionRules(in.AssertionRules)
@@ -75,21 +85,22 @@ func NormalizeCreate(now time.Time, in CreateInput) (CreateSpec, error) {
 	}
 
 	return CreateSpec{
-		Name:           name,
-		Description:    description,
-		TenantID:       tenantID,
-		CheckType:      checkType,
-		CheckConfig:    checkConfig,
-		AssertionRules: assertionRules,
-		ScheduleType:   scheduleType,
-		CronExpr:       cronExpr,
-		IntervalSec:    intervalSec,
-		Timezone:       timezone,
-		TimeoutSec:     timeoutSec,
-		RetryLimit:     retryLimit,
-		Priority:       priority,
-		Labels:         labels,
-		NextRunAt:      nextRunAt,
+		Name:            name,
+		Description:     description,
+		TenantID:        tenantID,
+		ResourceGroupID: strings.TrimSpace(in.ResourceGroupID),
+		CheckType:       checkType,
+		CheckConfig:     checkConfig,
+		AssertionRules:  assertionRules,
+		ScheduleType:    scheduleType,
+		CronExpr:        cronExpr,
+		IntervalSec:     intervalSec,
+		Timezone:        timezone,
+		TimeoutSec:      timeoutSec,
+		RetryLimit:      retryLimit,
+		Priority:        priority,
+		Labels:          labels,
+		NextRunAt:       nextRunAt,
 	}, nil
 }
 
@@ -118,13 +129,18 @@ func normalizeOptionalString(in *string, field string, maxLen int) (*string, err
 	return &value, nil
 }
 
+// normalizeTenantID refuses anything that is not a tenant id. The schema's
+// tenant_id columns are CHAR(26) ULIDs, so an empty or differently shaped value
+// would create a check no tenant context could ever read or schedule; falling
+// back to a hardcoded tenant would instead silently file it under whichever
+// tenant that constant named.
 func normalizeTenantID(in string) (string, error) {
 	value := strings.TrimSpace(in)
 	if value == "" {
-		value = DefaultTenantID
+		return "", validationError("tenant_id", "is required")
 	}
-	if len(value) > 64 {
-		return "", validationError("tenant_id", "must be <= 64 characters")
+	if len(value) != TenantIDLength {
+		return "", validationErrorf("tenant_id", "must be exactly %d characters", TenantIDLength)
 	}
 	return value, nil
 }
@@ -157,31 +173,39 @@ func normalizeAssertionRules(in []AssertionRule) ([]AssertionRule, error) {
 
 	out := make([]AssertionRule, len(in))
 	for i, rule := range in {
-		if strings.TrimSpace(rule.Metric) == "" {
-			return nil, validationErrorf("assertion_rules[%d].metric", "is required")
+		metric := strings.TrimSpace(rule.Metric)
+		if metric == "" {
+			return nil, validationError(assertionRuleField(i, "metric"), "is required")
 		}
-		if len(rule.Metric) > 64 {
-			return nil, validationErrorf("assertion_rules[%d].metric", "must be <= 64 characters")
+		if len(metric) > 64 {
+			return nil, validationErrorf(assertionRuleField(i, "metric"), "must be <= 64 characters")
 		}
 
 		operator := strings.TrimSpace(rule.Operator)
 		if !isOneOf(operator, ">", "<", "==", "!=", ">=", "<=") {
-			return nil, validationErrorf("assertion_rules[%d].operator", "must be one of: >, <, ==, !=, >=, <=")
+			return nil, validationErrorf(assertionRuleField(i, "operator"), "must be one of: >, <, ==, !=, >=, <=")
 		}
 
 		severity := strings.TrimSpace(rule.Severity)
 		if !isOneOf(severity, "warning", "critical") {
-			return nil, validationErrorf("assertion_rules[%d].severity", "must be one of: warning, critical")
+			return nil, validationErrorf(assertionRuleField(i, "severity"), "must be one of: warning, critical")
 		}
 
 		out[i] = AssertionRule{
-			Metric:    rule.Metric,
+			Metric:    metric,
 			Operator:  operator,
 			Threshold: rule.Threshold,
 			Severity:  severity,
 		}
 	}
 	return out, nil
+}
+
+// assertionRuleField names the offending rule by index. The field travels into
+// the API error body, so an index without its position would point every rule
+// fault at the same unadressable name.
+func assertionRuleField(rule int, name string) string {
+	return "assertion_rules[" + strconv.Itoa(rule) + "]." + name
 }
 
 func normalizeScheduleType(in string) (string, error) {
@@ -234,9 +258,16 @@ func normalizeRetryLimit(in int) (int, error) {
 	return in, nil
 }
 
+// normalizePriority applies the same zero-means-default convention as
+// normalizeTimeoutSec and normalizeRetryLimit: the schema column defaults to 5
+// and the admin API documents priority as optional, so an omitted priority must
+// land on DefaultPriority rather than silently ranking the check last.
 func normalizePriority(in int) (int, error) {
 	if in < 0 {
 		return 0, validationError("priority", "must be >= 0")
+	}
+	if in == 0 {
+		in = DefaultPriority
 	}
 	return in, nil
 }
@@ -263,8 +294,11 @@ func normalizeSchedule(now time.Time, loc *time.Location, scheduleType string, c
 		return &expr, nil, &next, nil
 
 	case ScheduleTypeInterval:
-		if intervalSec == nil || *intervalSec < 1 {
-			return nil, nil, nil, validationError("interval_sec", "is required and must be >= 1 for interval schedule")
+		if intervalSec == nil {
+			return nil, nil, nil, validationErrorf("interval_sec", "is required and must be >= %d for interval schedule", MinimumIntervalSec)
+		}
+		if *intervalSec < MinimumIntervalSec {
+			return nil, nil, nil, validationErrorf("interval_sec", "must be >= %d for interval schedule", MinimumIntervalSec)
 		}
 		next := now.Add(time.Duration(*intervalSec) * time.Second).UTC()
 		return nil, intervalSec, &next, nil

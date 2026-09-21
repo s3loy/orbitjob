@@ -34,8 +34,12 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # v1.1.4 pins x/tools v0.29.0, whose SSA builder panics
+      # ("unexpected expr: *ast.KeyValueExpr") while parsing Go 1.27
+      # syntax — a tool crash, not a finding. Any current release carries
+      # an x/tools that understands the toolchain in go.mod.
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
 
       - name: Run govulncheck
         run: govulncheck ./...

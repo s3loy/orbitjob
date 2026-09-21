@@ -10,7 +10,12 @@ const (
 
 // Source type constants.
 const (
-	SourceTypeCheckRun = "check_run"
+	// SourceTypeJobRun marks an SLI whose events derive from the run ledger:
+	// source_config names its source definition by source_uid, e.g.
+	// {"source_uid": "check-42"} for a check, or the ScheduledJob CR's UID for
+	// a declared job. It replaced the check_run source, which read the old
+	// check_runs work queue that no longer executes anything.
+	SourceTypeJobRun = "job_run"
 )
 
 // Aggregation constants.
@@ -29,7 +34,7 @@ var ValidSLITypes = map[string]bool{
 
 // ValidSourceTypes is the set of supported source types.
 var ValidSourceTypes = map[string]bool{
-	SourceTypeCheckRun: true,
+	SourceTypeJobRun: true,
 }
 
 // ValidAggregations is the set of supported aggregation methods.
@@ -43,11 +48,13 @@ const MaxNameLength = 128
 
 // CreateInput is the raw input for creating an SLI.
 type CreateInput struct {
-	Name               string
-	Description        *string
-	SLIType            string
-	SourceType         string
-	SourceConfig       map[string]any
-	Aggregation        string
-	GoodEventCriteria  map[string]any
+	Name string
+	// ResourceGroupID is the creating key's own scope.
+	ResourceGroupID   string
+	Description       *string
+	SLIType           string
+	SourceType        string
+	SourceConfig      map[string]any
+	Aggregation       string
+	GoodEventCriteria map[string]any
 }

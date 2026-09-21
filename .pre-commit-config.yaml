@@ -1,0 +1,90 @@
+# Local commit gates. One-time setup: install pre-commit and ggshield,
+# authenticate ggshield, then run `make hooks`. See CONTRIBUTING.md,
+# "Local hooks".
+#
+# Discipline: every gate is staged-files-only. Gates that rewrite files
+# (trailing-whitespace, end-of-file-fixer, mixed-line-ending, go-fmt) exit
+# non-zero after fixing so the committer re-stages; no gate touches unstaged
+# or unrelated files. The heavyweight suites (lint, full tests, integration,
+# images) stay in CI — docs/ci.md; run `make check` before pushing.
+default_install_hook_types: [pre-commit, commit-msg]
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      # --unsafe swaps in the loader that constructs arbitrary Python objects,
+      # which turns a crafted YAML file in the repo into code execution on
+      # whoever runs pre-commit. It was only ever needed to accept multiple
+      # documents in one file, and that has its own flag.
+      - id: check-yaml
+        args: ['--allow-multiple-documents']
+        exclude: '^charts/.*/templates/.*\.yaml$'
+      - id: check-added-large-files
+        args: ['--maxkb=1024']
+      - id: check-merge-conflict
+      - id: mixed-line-ending
+
+  # Scan staged changes before they become part of repository history. The
+  # token lives in the developer's GitGuardian config or environment, never in
+  # this repository.
+  - repo: https://github.com/GitGuardian/ggshield
+    rev: v1.54.0
+    hooks:
+      - id: ggshield
+        language_version: python3
+        stages: [pre-commit]
+
+  - repo: local
+    hooks:
+      # gofmt exactly the staged *.go files, then fail so they get re-staged.
+      - id: go-fmt
+        name: gofmt (staged files)
+        entry: scripts/hooks/go-fmt.sh
+        language: system
+        files: \.go$
+        pass_filenames: false
+
+      # go vet only the packages that contain staged Go files.
+      - id: go-vet
+        name: go vet (staged packages)
+        entry: scripts/hooks/go-vet.sh
+        language: system
+        files: \.go$
+        pass_filenames: false
+
+      # English-uniform tree; README.zh.md is the sanctioned exception.
+      - id: no-cjk
+        name: no CJK characters (README.zh.md exempt)
+        entry: scripts/hooks/no-cjk.sh
+        language: system
+        pass_filenames: false
+
+      # Keep root binaries and bench/load-test debris out of history.
+      - id: no-artifacts
+        name: no build artifacts in the index
+        entry: scripts/hooks/no-artifacts.sh
+        language: system
+        pass_filenames: false
+
+      # Regenerate-and-diff the API spec whenever its inputs move.
+      - id: openapi-drift
+        name: openapi spec drift
+        entry: scripts/hooks/openapi-drift.sh
+        language: system
+        pass_filenames: false
+
+      # Lint + render + assert the chart whenever charts/ moves.
+      - id: chart-gate
+        name: helm chart gate
+        entry: scripts/hooks/chart-gate.sh
+        language: system
+        pass_filenames: false
+
+      # Subject: non-empty, <= 72 chars, no WIP prefix.
+      - id: commit-msg
+        name: commit message discipline
+        entry: scripts/hooks/commit-msg.sh
+        language: system
+        stages: [commit-msg]

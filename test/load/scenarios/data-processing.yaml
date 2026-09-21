@@ -1,0 +1,6 @@
+category: data-processing
+# The python and alpine images both hash here, and nothing else: one hashes a
+# JSON document, the other the case id as text. Each name says which.
+families:
+  - {id: sha256-json-document, count: 210, image: python}
+  - {id: sha256-text, count: 70, image: alpine}

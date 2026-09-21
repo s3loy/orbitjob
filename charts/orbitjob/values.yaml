@@ -1,0 +1,93 @@
+global:
+  # Image registry prefix. Defaults to GHCR; override for Docker Hub or a mirror.
+  imageRegistry: ghcr.io/s3loy
+  # Blanket override for every component's tag and pullPolicy. Empty means each component decides.
+  # Local development, after make docker-build + make kind-load:
+  #   --set global.imageTag=dev --set global.imagePullPolicy=Never
+  imageTag: ""
+  imagePullPolicy: ""
+
+operator:
+  # Deploys the reconciler that turns ScheduledJob and JobRun into Kubernetes
+  # Jobs. Set false to install the control plane without it.
+  enabled: true
+  image:
+    repository: orbitjob-operator
+    tag: ""
+    pullPolicy: ""
+  # Namespace-to-tenant mapping, "namespace=tenant,namespace=tenant".
+  #
+  # Required when enabled, and deliberately without a default. The operator
+  # reads tenancy from configuration so a workload cannot claim a tenant by
+  # writing a Custom Resource; a default here would bind some namespace to some
+  # tenant that nobody chose. Install fails with a message naming this value
+  # rather than starting a pod that cannot run.
+  namespaceTenants: ""
+  scheduleIntervalSec: 5
+  # Run-history retention sweep cadence in minutes; independent of the
+  # schedule loop's seconds-based interval.
+  retentionIntervalMin: 5
+  healthPort: 8082
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+images:
+  admin:
+    repository: orbitjob-admin-api
+    tag: ""
+    pullPolicy: ""
+  scheduler:
+    repository: orbitjob-scheduler
+    tag: ""
+    pullPolicy: ""
+  bootstrap:
+    repository: orbitjob-bootstrap
+    tag: ""
+    pullPolicy: ""
+  migrate:
+    repository: orbitjob-migrate
+    tag: ""
+    pullPolicy: ""
+
+runtimeResources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+database:
+  # `cmd/configure` creates this installation-level Secret once. All replicas
+  # inherit it; users do not configure per-process DSNs.
+  secretName: orbitjob-database
+  keys:
+    bootstrapOwner: bootstrap-owner-dsn
+    migrator: migrator-dsn
+    admin: admin-dsn
+    runtime: runtime-dsn
+    migratorPassword: migrator-password
+    adminPassword: admin-password
+    runtimePassword: runtime-password
+    bootstrapAPIKey: bootstrap-api-key
+
+adminapi:
+  rateLimits:
+    readRPS: 100
+    writeRPS: 100
+    triggerRPS: 10
+
+bootstrap:
+  secretName: orbitjob-bootstrap
+
+taskNamespace:
+  create: true
+  name: orbitjob-tasks
+  # The identity container jobs run as. It has no API access on purpose: a job
+  # is workload, not control plane.
+  serviceAccountName: orbitjob-task

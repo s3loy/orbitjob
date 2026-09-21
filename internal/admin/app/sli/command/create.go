@@ -23,7 +23,9 @@ func NewCreateSLIUseCase(repo sliWriter) *CreateSLIUseCase {
 
 // CreateInput is the raw input for creating an SLI.
 type CreateInput struct {
-	TenantID          string
+	TenantID string
+	// ResourceGroupID is the creating key's scope, recorded on the row.
+	ResourceGroupID   string
 	Name              string
 	Description       *string
 	SLIType           string
@@ -51,6 +53,7 @@ type CreateResult struct {
 func (uc *CreateSLIUseCase) Create(ctx context.Context, in CreateInput) (CreateResult, error) {
 	spec, err := sli.NormalizeCreate(sli.CreateInput{
 		Name:              in.Name,
+		ResourceGroupID:   in.ResourceGroupID,
 		Description:       in.Description,
 		SLIType:           in.SLIType,
 		SourceType:        in.SourceType,

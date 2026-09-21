@@ -10,7 +10,7 @@ import (
 
 // sloStatusChanger changes SLO status.
 type sloStatusChanger interface {
-	ChangeStatus(ctx context.Context, tenantID string, id int64, version int, status string) (slo.Snapshot, error)
+	ChangeStatus(ctx context.Context, tenantID, resourceGroupID string, id int64, version int, status string) (slo.Snapshot, error)
 }
 
 // ChangeSLOStatusUseCase handles SLO pause/resume.
@@ -25,9 +25,11 @@ func NewChangeSLOStatusUseCase(repo sloStatusChanger) *ChangeSLOStatusUseCase {
 
 // ChangeStatusInput contains the parameters for status change.
 type ChangeStatusInput struct {
-	ID      int64
-	Version int
-	Status  string
+	// ResourceGroupID is the caller's own resource group scope.
+	ResourceGroupID string
+	ID              int64
+	Version         int
+	Status          string
 }
 
 // ChangeStatusResult is the output of a status change.
@@ -45,7 +47,7 @@ func (uc *ChangeSLOStatusUseCase) ChangeStatus(ctx context.Context, tenantID str
 		return ChangeStatusResult{}, validation.New("status", fmt.Sprintf("invalid status: %s", in.Status))
 	}
 
-	snap, err := uc.repo.ChangeStatus(ctx, tenantID, in.ID, in.Version, in.Status)
+	snap, err := uc.repo.ChangeStatus(ctx, tenantID, in.ResourceGroupID, in.ID, in.Version, in.Status)
 	if err != nil {
 		return ChangeStatusResult{}, err
 	}

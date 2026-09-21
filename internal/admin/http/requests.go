@@ -1,6 +1,7 @@
 package http
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -8,84 +9,44 @@ import (
 	checkcommand "orbitjob/internal/admin/app/check/command"
 	checkquery "orbitjob/internal/admin/app/check/query"
 	checkrunquery "orbitjob/internal/admin/app/checkrun/query"
-	command "orbitjob/internal/admin/app/job/command"
-	query "orbitjob/internal/admin/app/job/query"
-	tenantcommand "orbitjob/internal/admin/app/tenant/command"
-	tenantquery "orbitjob/internal/admin/app/tenant/query"
+	jobquery "orbitjob/internal/admin/app/job/query"
+	policycommand "orbitjob/internal/admin/app/policy/command"
+	resourcegroupcommand "orbitjob/internal/admin/app/resourcegroup/command"
 	slicommand "orbitjob/internal/admin/app/sli/command"
 	sliquery "orbitjob/internal/admin/app/sli/query"
 	slocommand "orbitjob/internal/admin/app/slo/command"
 	sloquery "orbitjob/internal/admin/app/slo/query"
-	slobudgetquery "orbitjob/internal/admin/app/slobudget/query"
 	sloalertquery "orbitjob/internal/admin/app/sloalert/query"
+	slobudgetquery "orbitjob/internal/admin/app/slobudget/query"
+	tenantcommand "orbitjob/internal/admin/app/tenant/command"
+	tenantquery "orbitjob/internal/admin/app/tenant/query"
 	domaincheck "orbitjob/internal/core/domain/check"
-	domainjob "orbitjob/internal/core/domain/job"
 )
 
-// CreateJobRequest defines the HTTP payload for creating a job.
-type CreateJobRequest struct {
-	Name         string  `json:"name" binding:"required,max=128"`
-	TenantID     string  `json:"tenant_id" binding:"omitempty,max=64"`
-	Priority     int     `json:"priority" binding:"omitempty,min=0"`
-	PartitionKey *string `json:"partition_key" binding:"omitempty,max=64"`
-	TriggerType  string  `json:"trigger_type" binding:"required,oneof=cron manual"`
-	CronExpr     *string `json:"cron_expr"`
-	Timezone     string  `json:"timezone" binding:"omitempty,max=64"`
-
-	HandlerType    string         `json:"handler_type" binding:"required,oneof=exec http,max=32"`
-	HandlerPayload map[string]any `json:"handler_payload"`
-
-	TimeoutSec           int    `json:"timeout_sec" binding:"omitempty,min=1"`
-	RetryLimit           int    `json:"retry_limit" binding:"omitempty,min=0"`
-	RetryBackoffSec      int    `json:"retry_backoff_sec" binding:"omitempty,min=0"`
-	RetryBackoffStrategy string `json:"retry_backoff_strategy" binding:"omitempty,oneof=fixed exponential"`
-	ConcurrencyPolicy    string `json:"concurrency_policy" binding:"omitempty,oneof=allow forbid replace"`
-	MisfirePolicy        string `json:"misfire_policy" binding:"omitempty,oneof=skip fire_now catch_up"`
-}
-
-// ToCreateInput converts the HTTP request into an admin command input.
-func (r CreateJobRequest) ToCreateInput() command.CreateInput {
-	return command.CreateInput{
-		Name:                 r.Name,
-		TenantID:             r.TenantID,
-		Priority:             r.Priority,
-		PartitionKey:         r.PartitionKey,
-		TriggerType:          r.TriggerType,
-		CronExpr:             r.CronExpr,
-		Timezone:             r.Timezone,
-		HandlerType:          r.HandlerType,
-		HandlerPayload:       r.HandlerPayload,
-		TimeoutSec:           r.TimeoutSec,
-		RetryLimit:           r.RetryLimit,
-		RetryBackoffSec:      r.RetryBackoffSec,
-		RetryBackoffStrategy: r.RetryBackoffStrategy,
-		ConcurrencyPolicy:    r.ConcurrencyPolicy,
-		MisfirePolicy:        r.MisfirePolicy,
-	}
-}
-
-// ListJobsRequest defines the query parameters for listing jobs.
+// ListJobsRequest defines the query parameters for listing job definitions.
+//
+// There is no status filter: a definition is an immutable revision, so it has
+// no mutable status to filter on.
 type ListJobsRequest struct {
-	TenantID string `form:"tenant_id" binding:"omitempty,max=64"`
-	Status   string `form:"status" binding:"omitempty,oneof=active paused"`
+	TenantID string `form:"tenant_id" binding:"omitempty,len=26"`
 	Limit    int    `form:"limit" binding:"omitempty,min=1,max=100"`
 	Offset   int    `form:"offset" binding:"omitempty,min=0"`
 }
 
 // ToListInput converts the HTTP query parameters into a control-plane query input.
-func (r ListJobsRequest) ToListInput() query.ListInput {
-	return query.ListInput{
+func (r ListJobsRequest) ToListInput() jobquery.ListInput {
+	return jobquery.ListInput{
 		TenantID: r.TenantID,
-		Status:   r.Status,
 		Limit:    r.Limit,
 		Offset:   r.Offset,
 	}
 }
 
-// GetJobRequest defines the route and query parameters for reading one job.
+// GetJobRequest defines the route and query parameters for reading one job. The
+// id is the active revision id, which is the identity the read model exposes.
 type GetJobRequest struct {
 	ID       int64  `uri:"id" binding:"required,min=1"`
-	TenantID string `form:"tenant_id" binding:"omitempty,max=64"`
+	TenantID string `form:"tenant_id" binding:"omitempty,len=26"`
 }
 
 type jobIDURI struct {
@@ -93,183 +54,58 @@ type jobIDURI struct {
 }
 
 type tenantQueryRequest struct {
-	TenantID string `form:"tenant_id" binding:"omitempty,max=64"`
-}
-
-type actorIDHeaderRequest struct {
-	ActorID string `header:"X-Actor-ID" binding:"required,max=128"`
+	TenantID string `form:"tenant_id" binding:"omitempty,len=26"`
 }
 
 // ToGetInput converts the HTTP route and query parameters into a control-plane query input.
-func (r GetJobRequest) ToGetInput() query.GetInput {
-	return query.GetInput{
+func (r GetJobRequest) ToGetInput() jobquery.GetInput {
+	return jobquery.GetInput{
 		ID:       r.ID,
 		TenantID: r.TenantID,
 	}
 }
 
-// UpdateJobRequest defines the route, query, and payload fields for updating one job.
-type UpdateJobRequest struct {
-	ID       int64
-	TenantID string
-	Version  int `json:"version" binding:"required,min=1"`
-
-	Name         *string `json:"name" binding:"omitempty,max=128"`
-	Priority     *int    `json:"priority" binding:"omitempty,min=0"`
-	PartitionKey *string `json:"partition_key" binding:"omitempty,max=64"`
-	TriggerType  *string `json:"trigger_type" binding:"omitempty,oneof=cron manual"`
-	CronExpr     *string `json:"cron_expr"`
-	Timezone     *string `json:"timezone" binding:"omitempty,max=64"`
-
-	HandlerType    *string        `json:"handler_type" binding:"omitempty,oneof=exec http,max=32"`
-	HandlerPayload map[string]any `json:"handler_payload"`
-
-	TimeoutSec           *int    `json:"timeout_sec" binding:"omitempty,min=1"`
-	RetryLimit           *int    `json:"retry_limit" binding:"omitempty,min=0"`
-	RetryBackoffSec      *int    `json:"retry_backoff_sec" binding:"omitempty,min=0"`
-	RetryBackoffStrategy *string `json:"retry_backoff_strategy" binding:"omitempty,oneof=fixed exponential"`
-	ConcurrencyPolicy    *string `json:"concurrency_policy" binding:"omitempty,oneof=allow forbid replace"`
-	MisfirePolicy        *string `json:"misfire_policy" binding:"omitempty,oneof=skip fire_now catch_up"`
-}
-
-// ChangeStatusRequest defines the route, query, and payload fields for pause/resume.
-type ChangeStatusRequest struct {
-	ID       int64
-	TenantID string
-	Version  int `json:"version" binding:"required,min=1"`
-}
-
-// ToChangeStatusInput converts the HTTP request into a lifecycle status command input.
-func (r ChangeStatusRequest) ToChangeStatusInput(changedBy string) command.ChangeStatusInput {
-	return command.ChangeStatusInput{
-		ID:        r.ID,
-		TenantID:  r.TenantID,
-		Version:   r.Version,
-		ChangedBy: changedBy,
-	}
-}
-
-// ToUpdateInput merges sparse HTTP update fields onto the current job state.
-func (r UpdateJobRequest) ToUpdateInput(current query.GetItem, changedBy string) command.UpdateInput {
-	triggerType := current.TriggerType
-	if r.TriggerType != nil {
-		triggerType = *r.TriggerType
-	}
-
-	partitionKey := cloneOptionalString(current.PartitionKey)
-	if r.PartitionKey != nil {
-		partitionKey = cloneOptionalString(r.PartitionKey)
-	}
-
-	cronExpr := cloneOptionalString(current.CronExpr)
-	if r.CronExpr != nil {
-		cronExpr = cloneOptionalString(r.CronExpr)
-	}
-	if triggerType == domainjob.TriggerTypeManual && r.TriggerType != nil && *r.TriggerType == domainjob.TriggerTypeManual && r.CronExpr == nil {
-		cronExpr = nil
-	}
-
-	return command.UpdateInput{
-		ID:                   r.ID,
-		TenantID:             r.TenantID,
-		ChangedBy:            changedBy,
-		Version:              r.Version,
-		Name:                 stringValueOrDefault(r.Name, current.Name),
-		Priority:             intValueOrDefault(r.Priority, current.Priority),
-		PartitionKey:         partitionKey,
-		TriggerType:          triggerType,
-		CronExpr:             cronExpr,
-		Timezone:             stringValueOrDefault(r.Timezone, current.Timezone),
-		HandlerType:          stringValueOrDefault(r.HandlerType, current.HandlerType),
-		HandlerPayload:       mapValueOrDefault(r.HandlerPayload, current.HandlerPayload),
-		TimeoutSec:           intValueOrDefault(r.TimeoutSec, current.TimeoutSec),
-		RetryLimit:           intValueOrDefault(r.RetryLimit, current.RetryLimit),
-		RetryBackoffSec:      intValueOrDefault(r.RetryBackoffSec, current.RetryBackoffSec),
-		RetryBackoffStrategy: stringValueOrDefault(r.RetryBackoffStrategy, current.RetryBackoffStrategy),
-		ConcurrencyPolicy:    stringValueOrDefault(r.ConcurrencyPolicy, current.ConcurrencyPolicy),
-		MisfirePolicy:        stringValueOrDefault(r.MisfirePolicy, current.MisfirePolicy),
-	}
-}
-
-func stringValueOrDefault(value *string, fallback string) string {
-	if value == nil {
-		return fallback
-	}
-
-	return *value
-}
-
-func intValueOrDefault(value *int, fallback int) int {
-	if value == nil {
-		return fallback
-	}
-
-	return *value
-}
-
-func mapValueOrDefault(value, fallback map[string]any) map[string]any {
-	if value == nil {
-		return cloneMap(fallback)
-	}
-
-	return cloneMap(value)
-}
-
-func cloneMap(in map[string]any) map[string]any {
-	if len(in) == 0 {
-		return map[string]any{}
-	}
-
-	out := make(map[string]any, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-
-	return out
-}
-
-func cloneOptionalString(in *string) *string {
-	if in == nil {
-		return nil
-	}
-
-	value := *in
-	return &value
-}
-
 type instanceRunIDURI struct {
-	RunID string `uri:"run_id" binding:"required,min=1,max=64"`
+	RunID int64 `uri:"run_id" binding:"required,min=1"`
 }
 
-// CancelInstanceRequest defines the HTTP payload for canceling an instance.
-type CancelInstanceRequest struct {
-	Version int `json:"version" binding:"required,min=1"`
-}
-
+// ListInstancesRequest filters the run ledger. phase is the ledger's own
+// vocabulary: a run is Pending, Running or Succeeded, and renaming that to a
+// client-side synonym would make the API disagree with the table it reads.
 type ListInstancesRequest struct {
-	Status string `form:"status" binding:"omitempty,oneof=pending dispatched running retry_wait success failed canceled"`
+	Phase  string `form:"phase" binding:"omitempty,oneof=Pending CreatingAttempt Running RetryWaiting Succeeded Failed CancelRequested Canceled CancelUnknown"`
 	Limit  int    `form:"limit" binding:"omitempty,min=1,max=100"`
 	Offset int    `form:"offset" binding:"omitempty,min=0"`
+}
+
+// VersionRequest is the optimistic-locking body shared by the delete routes
+// whose stores still check a version. It exists as a named type so the OpenAPI
+// document declares the body those handlers already parse.
+type VersionRequest struct {
+	Version int `json:"version" binding:"required,min=1"`
 }
 
 // ==================== Check Requests ====================
 
 // CreateCheckRequest defines the HTTP payload for creating a check.
 type CreateCheckRequest struct {
-	Name           string                  `json:"name" binding:"required,max=128"`
-	Description    *string                 `json:"description" binding:"omitempty,max=512"`
-	TenantID       string                  `json:"tenant_id" binding:"omitempty,max=64"`
-	CheckType      string                  `json:"check_type" binding:"required,oneof=http_health,max=32"`
-	CheckConfig    map[string]any          `json:"check_config"`
+	Name           string                      `json:"name" binding:"required,max=128"`
+	Description    *string                     `json:"description" binding:"omitempty,max=512"`
+	TenantID       string                      `json:"tenant_id" binding:"omitempty,len=26"`
+	CheckType      string                      `json:"check_type" binding:"required,oneof=http_health,max=32"`
+	CheckConfig    map[string]any              `json:"check_config"`
 	AssertionRules []domaincheck.AssertionRule `json:"assertion_rules"`
-	ScheduleType   string                  `json:"schedule_type" binding:"omitempty,oneof=cron interval"`
-	CronExpr       *string                 `json:"cron_expr"`
-	IntervalSec    *int                    `json:"interval_sec" binding:"omitempty,min=1"`
-	Timezone       string                  `json:"timezone" binding:"omitempty,max=64"`
-	TimeoutSec     int                     `json:"timeout_sec" binding:"omitempty,min=1"`
-	RetryLimit     int                     `json:"retry_limit" binding:"omitempty,min=0"`
-	Priority       int                     `json:"priority" binding:"omitempty,min=0"`
-	Labels         map[string]any          `json:"labels"`
+	ScheduleType   string                      `json:"schedule_type" binding:"omitempty,oneof=cron interval"`
+	CronExpr       *string                     `json:"cron_expr"`
+	// The interval floor matches the domain's MinimumIntervalSec: every
+	// occurrence is its own Kubernetes Job, so probes this fast would spend
+	// the cluster on work nobody reads.
+	IntervalSec *int           `json:"interval_sec" binding:"omitempty,min=30"`
+	Timezone    string         `json:"timezone" binding:"omitempty,max=64"`
+	TimeoutSec  int            `json:"timeout_sec" binding:"omitempty,min=1"`
+	RetryLimit  int            `json:"retry_limit" binding:"omitempty,min=0"`
+	Priority    int            `json:"priority" binding:"omitempty,min=0"`
+	Labels      map[string]any `json:"labels"`
 }
 
 func (r CreateCheckRequest) ToCreateInput() checkcommand.CreateInput {
@@ -293,7 +129,7 @@ func (r CreateCheckRequest) ToCreateInput() checkcommand.CreateInput {
 
 // ListChecksRequest defines the query parameters for listing checks.
 type ListChecksRequest struct {
-	TenantID string `form:"tenant_id" binding:"omitempty,max=64"`
+	TenantID string `form:"tenant_id" binding:"omitempty,len=26"`
 	Status   string `form:"status" binding:"omitempty,oneof=active paused"`
 	Limit    int    `form:"limit" binding:"omitempty,min=1,max=100"`
 	Offset   int    `form:"offset" binding:"omitempty,min=0"`
@@ -315,7 +151,7 @@ func (r ListChecksRequest) ToListInput() checkquery.ListChecksInput {
 // GetCheckRequest defines the route and query parameters for reading one check.
 type GetCheckRequest struct {
 	ID       int64  `uri:"id" binding:"required,min=1"`
-	TenantID string `form:"tenant_id" binding:"omitempty,max=64"`
+	TenantID string `form:"tenant_id" binding:"omitempty,len=26"`
 }
 
 type checkIDURI struct {
@@ -326,20 +162,24 @@ type checkIDURI struct {
 type ChangeCheckStatusRequest struct {
 	ID       int64
 	TenantID string
-	Version  int `json:"version" binding:"required,min=1"`
+	// ResourceGroupID is the caller's scope, filled from the authenticated
+	// principal rather than the request body.
+	ResourceGroupID string
+	Version         int `json:"version" binding:"required,min=1"`
 }
 
 func (r ChangeCheckStatusRequest) ToChangeStatusInput() checkcommand.ChangeStatusInput {
 	return checkcommand.ChangeStatusInput{
-		ID:       r.ID,
-		TenantID: r.TenantID,
-		Version:  r.Version,
+		ID:              r.ID,
+		TenantID:        r.TenantID,
+		ResourceGroupID: r.ResourceGroupID,
+		Version:         r.Version,
 	}
 }
 
 // ListCheckRunsRequest defines the query parameters for listing check runs.
 type ListCheckRunsRequest struct {
-	TenantID string `form:"tenant_id" binding:"omitempty,max=64"`
+	TenantID string `form:"tenant_id" binding:"omitempty,len=26"`
 	CheckID  int64  `form:"check_id" binding:"omitempty,min=1"`
 	Status   string `form:"status" binding:"omitempty,oneof=pending running success failed"`
 	Limit    int    `form:"limit" binding:"omitempty,min=1,max=100"`
@@ -372,10 +212,13 @@ type GetCheckRunRequest struct {
 // --- SLI Requests ---
 
 type CreateSLIRequest struct {
-	Name              string         `json:"name" binding:"required,max=128"`
-	Description       *string        `json:"description,omitempty"`
-	SLIType           string         `json:"sli_type" binding:"required,oneof=availability latency quality custom"`
-	SourceType        string         `json:"source_type" binding:"omitempty,oneof=check_run"`
+	Name        string  `json:"name" binding:"required,max=128"`
+	Description *string `json:"description,omitempty"`
+	SLIType     string  `json:"sli_type" binding:"required,oneof=availability latency quality custom"`
+	// source_type only admits job_run: SLI events derive from the run ledger,
+	// naming their source definition by source_uid in source_config. The old
+	// check_run source read a work queue that no longer executes anything.
+	SourceType        string         `json:"source_type" binding:"omitempty,oneof=job_run"`
 	SourceConfig      map[string]any `json:"source_config"`
 	Aggregation       string         `json:"aggregation" binding:"omitempty,oneof=ratio count"`
 	GoodEventCriteria map[string]any `json:"good_event_criteria"`
@@ -501,11 +344,11 @@ type GetSLOAlertRequest struct {
 }
 
 type ListSLOAlertsRequest struct {
-	TenantID string `form:"tenant_id"`
-	SLOID    *int64 `form:"slo_id,omitempty"`
+	TenantID string  `form:"tenant_id"`
+	SLOID    *int64  `form:"slo_id,omitempty"`
 	Status   *string `form:"status,omitempty"`
-	Limit    int    `form:"limit,default=50" binding:"min=1,max=100"`
-	Offset   int    `form:"offset,default=0" binding:"min=0"`
+	Limit    int     `form:"limit,default=50" binding:"min=1,max=100"`
+	Offset   int     `form:"offset,default=0" binding:"min=0"`
 }
 
 func (r ListSLOAlertsRequest) ToListInput() sloalertquery.ListInput {
@@ -557,16 +400,157 @@ type TenantURI struct {
 // ==================== API Keys ====================
 
 // CreateAPIKeyRequest defines the HTTP payload for creating an API key.
-type CreateAPIKeyRequest struct{}
+//
+// All three fields are optional: a bare request mints a key with no grants,
+// which can authenticate but reach no guarded route.
+type CreateAPIKeyRequest struct {
+	// Policies names the policy documents the new key carries.
+	Policies []string `json:"policies"`
+	// BoundaryPolicyID caps what those policies can ever grant.
+	BoundaryPolicyID string `json:"boundary_policy_id"`
+	// ResourceGroupID scopes the key to one resource group.
+	ResourceGroupID string `json:"resource_group_id"`
+}
 
-// ToCreateInput converts the HTTP request into an admin command input.
-func (r CreateAPIKeyRequest) ToCreateInput(tenantID string) apikeycommand.CreateInput {
+// ToCreateInput converts the HTTP request into an admin command input. The
+// caller is passed through because what may be granted depends on what the
+// granter already holds.
+func (r CreateAPIKeyRequest) ToCreateInput(tenantID string, caller apikeycommand.Caller) apikeycommand.CreateInput {
 	return apikeycommand.CreateInput{
-		TenantID: tenantID,
+		TenantID:         tenantID,
+		PolicyIDs:        r.Policies,
+		BoundaryPolicyID: r.BoundaryPolicyID,
+		ResourceGroupID:  r.ResourceGroupID,
+		Caller:           caller,
 	}
 }
 
 // APIKeyURI defines the route parameters for revoking one API key.
 type APIKeyURI struct {
 	ID string `uri:"id" binding:"required,max=26"`
+}
+
+// ==================== Policies ====================
+
+// CreatePolicyRequest defines the HTTP payload for creating a policy.
+//
+// The document is carried raw rather than decoded into policy.Document: the
+// domain parses and validates the submitted bytes, and those same bytes are
+// what gets stored. Decoding and re-encoding would store a document nobody
+// checked.
+type CreatePolicyRequest struct {
+	Name        string          `json:"name" binding:"required,max=128"`
+	Description string          `json:"description" binding:"omitempty,max=2000"`
+	Document    json.RawMessage `json:"document" binding:"required"`
+}
+
+// ToCreateInput converts the HTTP request into an admin command input.
+func (r CreatePolicyRequest) ToCreateInput(tenantID, actorID string) policycommand.CreateInput {
+	return policycommand.CreateInput{
+		TenantID:    tenantID,
+		Name:        r.Name,
+		Description: r.Description,
+		Document:    r.Document,
+		ActorID:     actorID,
+	}
+}
+
+// PolicyURI defines the route parameters for reading or deleting one policy.
+type PolicyURI struct {
+	ID string `uri:"id" binding:"required,max=26"`
+}
+
+// ==================== Resource groups ====================
+
+// CreateResourceGroupRequest defines the HTTP payload for creating a group.
+type CreateResourceGroupRequest struct {
+	Slug string `json:"slug" binding:"required,max=64"`
+	Name string `json:"name" binding:"required,max=128"`
+}
+
+// ToCreateInput converts the HTTP request into an admin command input.
+func (r CreateResourceGroupRequest) ToCreateInput(tenantID, actorID string) resourcegroupcommand.CreateInput {
+	return resourcegroupcommand.CreateInput{
+		TenantID: tenantID,
+		Slug:     r.Slug,
+		Name:     r.Name,
+		ActorID:  actorID,
+	}
+}
+
+// ==================== Function Requests ====================
+
+// ListFunctionsRequest defines the query parameters for listing function
+// definitions. There is no status filter in v1 for the same reason jobs have
+// none: what a caller can address is the live row, and paused is a property
+// the body already carries.
+type ListFunctionsRequest struct {
+	TenantID string `form:"tenant_id" binding:"omitempty,len=26"`
+	Limit    int    `form:"limit" binding:"omitempty,min=1,max=100"`
+	Offset   int    `form:"offset" binding:"omitempty,min=0"`
+}
+
+// GetFunctionRequest defines the route and query parameters for reading one
+// function definition.
+type GetFunctionRequest struct {
+	ID       int64  `uri:"id" binding:"required,min=1"`
+	TenantID string `form:"tenant_id" binding:"omitempty,len=26"`
+}
+
+// InvokeFunctionRequest defines the route and query parameters for an
+// invocation. wait_seconds is the synchronous variant's budget: zero (or
+// absent) means async-with-reference, and the cap keeps one HTTP request from
+// being held open past the platform's honest latency promise.
+type InvokeFunctionRequest struct {
+	ID          int64 `uri:"id" binding:"required,min=1"`
+	WaitSeconds int   `form:"wait_seconds" binding:"omitempty,min=0,max=60"`
+}
+
+// ListFunctionRunsRequest defines the route and query parameters for listing
+// one function's terminal invocations.
+type ListFunctionRunsRequest struct {
+	ID       int64  `uri:"id" binding:"required,min=1"`
+	TenantID string `form:"tenant_id" binding:"omitempty,len=26"`
+	Limit    int    `form:"limit" binding:"omitempty,min=1,max=100"`
+}
+
+// GetFunctionRunRequest defines the route parameters for reading one terminal
+// invocation. The run id is the read model's deterministic UUID, derived from
+// the ledger occurrence key, so a replayed recording addresses the same row.
+type GetFunctionRunRequest struct {
+	ID    int64  `uri:"id" binding:"required,min=1"`
+	RunID string `uri:"run_id" binding:"required,max=64"`
+}
+
+// ==================== Workflow Requests ====================
+
+// ListWorkflowsRequest defines the query parameters for listing workflow
+// definitions.
+type ListWorkflowsRequest struct {
+	TenantID string `form:"tenant_id" binding:"omitempty,len=26"`
+	Limit    int    `form:"limit" binding:"omitempty,min=1,max=100"`
+	Offset   int    `form:"offset" binding:"omitempty,min=0"`
+}
+
+// GetWorkflowRequest defines the route and query parameters for reading one
+// workflow definition. The id is the active revision id, the jobs convention.
+type GetWorkflowRequest struct {
+	ID       int64  `uri:"id" binding:"required,min=1"`
+	TenantID string `form:"tenant_id" binding:"omitempty,len=26"`
+}
+
+// ListWorkflowRunsRequest defines the route and query parameters for listing
+// one workflow's runs.
+type ListWorkflowRunsRequest struct {
+	ID       int64  `uri:"id" binding:"required,min=1"`
+	TenantID string `form:"tenant_id" binding:"omitempty,len=26"`
+	Limit    int    `form:"limit" binding:"omitempty,min=1,max=100"`
+	Offset   int    `form:"offset" binding:"omitempty,min=0"`
+}
+
+// workflowRunIDURI addresses one run under one workflow: the workflow by its
+// active revision id, the run by its ledger id.
+type workflowRunIDURI struct {
+	ID    int64 `uri:"id" binding:"required,min=1"`
+	RunID int64 `uri:"run_id" binding:"required,min=1"`
 }
