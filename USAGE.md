@@ -31,14 +31,14 @@ brew install kind kubectl helm
 # Option 1: use the script (recommended for first runs)
 bash scripts/quickstart.sh
 
-# Option 2: manual steps
+# Option 2: install the published v0.2.1 images manually
 make kind-up                    # create the kind cluster
 make kind-db                    # install PostgreSQL and generate the orbitjob-database Secret
-make docker-build TAG=dev       # build the images
-make kind-load TAG=dev          # load them into the cluster
 helm upgrade --install orbitjob ./charts/orbitjob \
   --namespace orbitjob-system \
   -f deploy/kind/values-dev.yaml \
+  --set-string global.imageTag=v0.2.1 \
+  --set-string global.imagePullPolicy=IfNotPresent \
   --wait --timeout=10m
 
 # Export the environment variables (recommended)

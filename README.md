@@ -15,9 +15,8 @@ Cron and manual triggers, retry policy with attempt accounting, concurrency and 
 
 ## Quick Start
 
-Local development uses Kind + Helm. Requires `kind`, `kubectl`, `helm`, `make`.
-
-`bash scripts/quickstart.sh` runs every step below in order. The manual steps:
+The quickest released installation uses Kind + Helm. It requires `kind`,
+`kubectl`, `helm`, and `make`.
 
 ```bash
 # 1. Create the kind cluster (cluster only, no database)
@@ -26,32 +25,22 @@ make kind-up
 # 2. Install PostgreSQL and generate the orbitjob-database Secret
 make kind-db
 
-# 3. Build and load local development images
-make docker-build TAG=dev
-make kind-load TAG=dev
-
-# 4. Install OrbitJob from the dev values file
+# 3. Install the v0.2.1 images; the values file supplies the local tenant mapping
 helm upgrade --install orbitjob ./charts/orbitjob \
   --namespace orbitjob-system \
   -f deploy/kind/values-dev.yaml \
+  --set-string global.imageTag=v0.2.1 \
+  --set-string global.imagePullPolicy=IfNotPresent \
   --wait --timeout=10m
 
-# To use published images instead, keep the tenant mapping from values-dev but
-# override its local-only tag and pull policy:
-#   --set-string global.imageTag=v0.2.1 \
-#   --set-string global.imagePullPolicy=IfNotPresent
-
-# 5. Restart the deployments so pods pick up the freshly built :dev images
-for d in orbitjob-admin-api orbitjob-scheduler orbitjob-operator; do
-  kubectl -n orbitjob-system rollout restart deployment/$d
-  kubectl -n orbitjob-system rollout status deployment/$d --timeout=5m
-done
-
-# 6. Export the API key and verify
+# 4. Export the API key and verify
 source <(make kind-env)
 kubectl -n orbitjob-system port-forward svc/orbitjob-admin-api 18080:8080 &
 curl -H "Authorization: Bearer $ORBITJOB_API_KEY" http://localhost:18080/api/v1/tenants
 ```
+
+For local source builds, run `bash scripts/quickstart.sh`; it builds and loads
+`:dev` images. See [`docs/local-deployment.md`](docs/local-deployment.md).
 
 The admin API also serves `/metrics` and `/openapi.json`. Observability is a separate kube-prometheus-stack release:
 
@@ -70,7 +59,8 @@ Full kind guide: [`docs/local-deployment.md`](docs/local-deployment.md).
 ```bash
 helm upgrade --install orbitjob charts/orbitjob \
   --namespace orbitjob-system --create-namespace \
-  -f my-values.yaml
+  -f my-values.yaml \
+  --set-string global.imageTag=v0.2.1
 ```
 
 `operator.namespaceTenants` is mandatory: the namespace-to-tenant mapping. Installation fails when it is missing. The chart does not install PostgreSQL. Database configuration: [`docs/database-setup.md`](docs/database-setup.md).

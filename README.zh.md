@@ -13,11 +13,7 @@
 
 ## 快速启动
 
-本地需要 Kind 和 Helm：`kind`、`kubectl`、`helm`、`make`。
-
-`bash scripts/quickstart.sh`
-
-手动：
+使用已发布版本快速安装需要 `kind`、`kubectl`、`helm` 和 `make`：
 
 ```bash
 # 1. 创建 kind 集群
@@ -26,27 +22,22 @@ make kind-up
 # 2. 安装 PostgreSQL 并生成 orbitjob-database Secret
 make kind-db
 
-# 3. 本地构建镜像并加载
-make docker-build TAG=dev
-make kind-load TAG=dev
-
-# 4. 从 dev values 文件安装 OrbitJob
+# 3. 安装 v0.2.1 镜像；values 文件提供本地 tenant 映射
 helm upgrade --install orbitjob ./charts/orbitjob \
   --namespace orbitjob-system \
   -f deploy/kind/values-dev.yaml \
+  --set-string global.imageTag=v0.2.1 \
+  --set-string global.imagePullPolicy=IfNotPresent \
   --wait --timeout=10m
 
-# 5. 重启各 Deployment，让 Pod 用上刚构建的 :dev 镜像
-for d in orbitjob-admin-api orbitjob-scheduler orbitjob-operator; do
-  kubectl -n orbitjob-system rollout restart deployment/$d
-  kubectl -n orbitjob-system rollout status deployment/$d --timeout=5m
-done
-
-# 6. 导出 API key 并验证
+# 4. 导出 API key 并验证
 source <(make kind-env)
 kubectl -n orbitjob-system port-forward svc/orbitjob-admin-api 18080:8080 &
 curl -H "Authorization: Bearer $ORBITJOB_API_KEY" http://localhost:18080/api/v1/tenants
 ```
+
+验证本地源码时运行 `bash scripts/quickstart.sh`，它会构建并加载 `:dev`
+镜像。完整流程见 [`docs/local-deployment.md`](docs/local-deployment.md)。
 
 Admin API 顺带暴露 `/metrics` 和 `/openapi.json`。
 
@@ -67,11 +58,8 @@ kubectl -n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80 &
 ```bash
 helm upgrade --install orbitjob charts/orbitjob \
   --namespace orbitjob-system --create-namespace \
-  -f my-values.yaml
-
-# 若 values 文件使用本地开发镜像，改用已发布的正式镜像时覆盖 tag 和拉取策略：
-#   --set-string global.imageTag=v0.2.1 \
-#   --set-string global.imagePullPolicy=IfNotPresent
+  -f my-values.yaml \
+  --set-string global.imageTag=v0.2.1
 ```
 
 `operator.namespaceTenants` 必填，是 namespace 到 tenant 的映射。
