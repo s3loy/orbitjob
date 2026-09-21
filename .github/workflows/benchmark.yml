@@ -60,7 +60,22 @@ jobs:
       - name: Run benchmarks
         run: make bench
 
+      - name: Check for benchmark baseline
+        id: baseline
+        shell: bash
+        run: |
+          if git ls-remote --exit-code --heads origin gh-pages >/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            status=$?
+            if [ "$status" -ne 2 ]; then
+              exit "$status"
+            fi
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Compare with main
+        if: steps.baseline.outputs.exists == 'true'
         uses: benchmark-action/github-action-benchmark@4322e5726e6334590d251fc4f92bec0efafc45dc # v1.22.2
         with:
           tool: "go"
@@ -69,3 +84,7 @@ jobs:
           auto-push: false
           comment-always: true
           save-data-file: false
+
+      - name: Report missing baseline
+        if: steps.baseline.outputs.exists == 'false'
+        run: echo "No benchmark baseline exists yet; comparison starts after the first push to main." >> "$GITHUB_STEP_SUMMARY"
