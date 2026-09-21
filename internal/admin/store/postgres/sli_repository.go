@@ -21,7 +21,7 @@ func NewSLIReadRepository(db *sql.DB) *SLIReadRepository {
 }
 
 // Get retrieves an SLI by ID.
-func (r *SLIReadRepository) Get(ctx context.Context, tenantID string, id int64) (sli.Snapshot, error) {
+func (r *SLIReadRepository) Get(ctx context.Context, tenantID, resourceGroupID string, id int64) (sli.Snapshot, error) {
 	var snap sli.Snapshot
 	var sourceConfigRaw, goodEventRaw []byte
 
@@ -35,7 +35,8 @@ func (r *SLIReadRepository) Get(ctx context.Context, tenantID string, id int64) 
 			SELECT id, tenant_id, name, description, sli_type, source_type, source_config, aggregation, good_event_criteria, version, created_at, updated_at
 			FROM slis
 			WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
-		`, tenantID, id).Scan(
+			  AND ($3::text IS NULL OR resource_group_id = $3)
+		`, tenantID, id, nullableGroup(resourceGroupID)).Scan(
 		&snap.ID, &snap.TenantID, &snap.Name, &snap.Description, &snap.SLIType, &snap.SourceType,
 		&sourceConfigRaw, &snap.Aggregation, &goodEventRaw, &snap.Version, &snap.CreatedAt, &snap.UpdatedAt,
 	)
@@ -62,17 +63,22 @@ func (r *SLIReadRepository) Get(ctx context.Context, tenantID string, id int64) 
 }
 
 // List retrieves a paginated list of SLIs.
-func (r *SLIReadRepository) List(ctx context.Context, tenantID string, limit, offset int) ([]sli.Snapshot, int64, error) {
+func (r *SLIReadRepository) List(ctx context.Context, tenantID, resourceGroupID string, limit, offset int) ([]sli.Snapshot, int64, error) {
 	tx, err := WithTenant(ctx, r.db, tenantID)
 	if err != nil {
 		return nil, 0, fmt.Errorf("begin sli list tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	// The group predicate belongs in the query, not in a filter over the page:
+	// post-filtering would report a total that counts rows the caller may not
+	// see.
 	var total int64
 	if err = tx.QueryRowContext(ctx, `
-			SELECT COUNT(*) FROM slis WHERE tenant_id = $1 AND deleted_at IS NULL
-		`, tenantID).Scan(&total); err != nil {
+			SELECT COUNT(*) FROM slis
+			WHERE tenant_id = $1 AND deleted_at IS NULL
+			  AND ($2::text IS NULL OR resource_group_id = $2)
+		`, tenantID, nullableGroup(resourceGroupID)).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count slis: %w", err)
 	}
 
@@ -80,9 +86,10 @@ func (r *SLIReadRepository) List(ctx context.Context, tenantID string, limit, of
 			SELECT id, tenant_id, name, description, sli_type, source_type, source_config, aggregation, good_event_criteria, version, created_at, updated_at
 			FROM slis
 			WHERE tenant_id = $1 AND deleted_at IS NULL
+			  AND ($2::text IS NULL OR resource_group_id = $2)
 			ORDER BY id DESC
-			LIMIT $2 OFFSET $3
-		`, tenantID, limit, offset)
+			LIMIT $3 OFFSET $4
+		`, tenantID, nullableGroup(resourceGroupID), limit, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list slis: %w", err)
 	}

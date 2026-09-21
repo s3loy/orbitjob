@@ -14,7 +14,7 @@ type stubSLIReader struct {
 	err error
 }
 
-func (s *stubSLIReader) Get(_ context.Context, _ string, _ int64) (sli.Snapshot, error) {
+func (s *stubSLIReader) Get(_ context.Context, _, _ string, _ int64) (sli.Snapshot, error) {
 	return s.out, s.err
 }
 
@@ -25,7 +25,7 @@ type stubSLILister struct {
 	err       error
 }
 
-func (s *stubSLILister) List(_ context.Context, _ string, limit, _ int) ([]sli.Snapshot, int64, error) {
+func (s *stubSLILister) List(_ context.Context, _, _ string, limit, _ int) ([]sli.Snapshot, int64, error) {
 	s.lastLimit = limit
 	return s.items, s.total, s.err
 }
@@ -37,7 +37,7 @@ func TestGetSLI_Success(t *testing.T) {
 	}}
 	uc := NewGetSLIUseCase(repo)
 
-	result, err := uc.Get(context.Background(), "t1", 1)
+	result, err := uc.Get(context.Background(), "t1", "", 1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestGetSLI_Error(t *testing.T) {
 	repo := &stubSLIReader{err: errors.New("not found")}
 	uc := NewGetSLIUseCase(repo)
 
-	_, err := uc.Get(context.Background(), "t1", 1)
+	_, err := uc.Get(context.Background(), "t1", "", 1)
 	if err == nil {
 		t.Fatal("expected error")
 	}

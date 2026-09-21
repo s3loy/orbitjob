@@ -2,7 +2,6 @@ package migrate
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"strings"
 	"testing"
@@ -28,8 +27,12 @@ func TestEnsureRolesExecutesIdempotentRoleSetup(t *testing.T) {
 	}
 	defer func() { _ = db.Close() }()
 
-	mock.ExpectExec(`CREATE EXTENSION IF NOT EXISTS pgcrypto`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`DO \$\$`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("SELECT pg_advisory_lock").WithArgs(RoleSetupLockClassID, RoleSetupLockObjectID).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA public`).WillReturnResult(sqlmock.NewResult(0, 0))
+	// The role-setup statement's DO $$ bodies and trailing grants match this
+	// loose pattern; sqlmock matches in order, one call each.
+	mock.ExpectExec(`DO \$\$|GRANT|REVOKE`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("SELECT pg_advisory_unlock").WithArgs(RoleSetupLockClassID, RoleSetupLockObjectID).WillReturnResult(sqlmock.NewResult(0, 0))
 	if err := EnsureRoles(context.Background(), db); err != nil {
 		t.Fatalf("EnsureRoles() error = %v", err)
 	}
@@ -59,7 +62,7 @@ func TestEnsureRolePasswordsRequiresEveryPasswordBeforeWriting(t *testing.T) {
 
 func TestEnsureRolePasswordsUsesFixedAllowlist(t *testing.T) {
 	orig := passwordAlreadyCorrect
-	passwordAlreadyCorrect = func(_ context.Context, _ *sql.DB, _, _ string) (bool, error) { return false, nil }
+	passwordAlreadyCorrect = func(_ context.Context, _ querier, _, _ string) (bool, error) { return false, nil }
 	defer func() { passwordAlreadyCorrect = orig }()
 
 	db, mock, err := sqlmock.New()
@@ -74,9 +77,12 @@ func TestEnsureRolePasswordsUsesFixedAllowlist(t *testing.T) {
 		RoleRuntime:  "runtime",
 		"attacker":   "ignored",
 	}
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT pg_advisory_xact_lock").WithArgs(RoleSetupLockClassID, RoleSetupLockObjectID).WillReturnResult(sqlmock.NewResult(0, 0))
 	for _, role := range managedLoginRoles {
 		mock.ExpectExec("ALTER ROLE \\\"" + role + "\\\" PASSWORD '").WillReturnResult(sqlmock.NewResult(0, 0))
 	}
+	mock.ExpectCommit()
 
 	if err := EnsureRolePasswords(context.Background(), db, passwords); err != nil {
 		t.Fatalf("EnsureRolePasswords() error = %v", err)
@@ -88,7 +94,7 @@ func TestEnsureRolePasswordsUsesFixedAllowlist(t *testing.T) {
 
 func TestEnsureRolePasswordsSkipsWhenPasswordAlreadyCorrect(t *testing.T) {
 	orig := passwordAlreadyCorrect
-	passwordAlreadyCorrect = func(_ context.Context, _ *sql.DB, _, _ string) (bool, error) { return true, nil }
+	passwordAlreadyCorrect = func(_ context.Context, _ querier, _, _ string) (bool, error) { return true, nil }
 	defer func() { passwordAlreadyCorrect = orig }()
 
 	db, mock, err := sqlmock.New()
@@ -103,6 +109,10 @@ func TestEnsureRolePasswordsSkipsWhenPasswordAlreadyCorrect(t *testing.T) {
 		RoleRuntime:  "runtime",
 	}
 	// All three passwords are already correct — zero ALTER ROLE calls expected.
+	// The transaction and its lock are still taken and released.
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT pg_advisory_xact_lock").WithArgs(RoleSetupLockClassID, RoleSetupLockObjectID).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
 
 	if err := EnsureRolePasswords(context.Background(), db, passwords); err != nil {
 		t.Fatalf("EnsureRolePasswords() error = %v", err)
@@ -114,16 +124,20 @@ func TestEnsureRolePasswordsSkipsWhenPasswordAlreadyCorrect(t *testing.T) {
 
 func TestEnsureRolePasswordsPropagatesVerificationError(t *testing.T) {
 	orig := passwordAlreadyCorrect
-	passwordAlreadyCorrect = func(_ context.Context, _ *sql.DB, _, _ string) (bool, error) {
+	passwordAlreadyCorrect = func(_ context.Context, _ querier, _, _ string) (bool, error) {
 		return false, errors.New("cannot reach server")
 	}
 	defer func() { passwordAlreadyCorrect = orig }()
 
-	db, _, err := sqlmock.New()
+	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = db.Close() }()
+	// The lock transaction is taken before the verification runs; the error
+	// path rolls it back.
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT pg_advisory_xact_lock").WithArgs(RoleSetupLockClassID, RoleSetupLockObjectID).WillReturnResult(sqlmock.NewResult(0, 0))
 
 	passwords := map[string]string{
 		RoleMigrator: "migrator",
@@ -139,7 +153,7 @@ func TestEnsureRolePasswordsPropagatesVerificationError(t *testing.T) {
 
 func TestEnsureRolePasswordsPropagatesDatabaseError(t *testing.T) {
 	orig := passwordAlreadyCorrect
-	passwordAlreadyCorrect = func(_ context.Context, _ *sql.DB, _, _ string) (bool, error) { return false, nil }
+	passwordAlreadyCorrect = func(_ context.Context, _ querier, _, _ string) (bool, error) { return false, nil }
 	defer func() { passwordAlreadyCorrect = orig }()
 
 	db, mock, err := sqlmock.New()
@@ -153,7 +167,10 @@ func TestEnsureRolePasswordsPropagatesDatabaseError(t *testing.T) {
 		RoleAdmin:    "admin",
 		RoleRuntime:  "runtime",
 	}
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT pg_advisory_xact_lock").WithArgs(RoleSetupLockClassID, RoleSetupLockObjectID).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`ALTER ROLE "orbitjob_migrator" PASSWORD 'migrator'`).WillReturnError(errors.New("denied"))
+	// The deferred rollback on the error path releases the transaction.
 
 	err = EnsureRolePasswords(context.Background(), db, passwords)
 	if err == nil || !strings.Contains(err.Error(), "set password for orbitjob_migrator") {

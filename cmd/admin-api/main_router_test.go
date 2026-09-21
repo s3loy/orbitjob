@@ -12,6 +12,7 @@ import (
 
 	adminhttp "orbitjob/internal/admin/http"
 	"orbitjob/internal/admin/http/middleware"
+	"orbitjob/internal/admin/kube"
 )
 
 func TestNewRouter_WithAuth(t *testing.T) {
@@ -23,13 +24,7 @@ func TestNewRouter_WithAuth(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	handler := adminhttp.NewHandler(
-		&stubCreateJobUseCase{},
-		&stubListJobsUseCase{},
-		&stubGetJobUseCase{},
-		&stubUpdateJobUseCase{},
-		&stubChangeStatusUseCase{},
-	)
+	handler := adminhttp.NewHandler(nil, nil, nil)
 	auth := middleware.NewAuth(db)
 	router := newRouter(handler, auth, nil)
 
@@ -53,13 +48,7 @@ func TestNewRouter_WithRateLimiter(t *testing.T) {
 
 	rl := middleware.NewRateLimiter(context.Background())
 
-	handler := adminhttp.NewHandler(
-		&stubCreateJobUseCase{},
-		&stubListJobsUseCase{},
-		&stubGetJobUseCase{},
-		&stubUpdateJobUseCase{},
-		&stubChangeStatusUseCase{},
-	)
+	handler := adminhttp.NewHandler(nil, nil, nil)
 	router := newRouter(handler, nil, rl)
 
 	// Healthz is in groupPublic so rate limiting is skipped
@@ -82,13 +71,7 @@ func TestNewRouter_WithAuthAndRateLimiter(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	handler := adminhttp.NewHandler(
-		&stubCreateJobUseCase{},
-		&stubListJobsUseCase{},
-		&stubGetJobUseCase{},
-		&stubUpdateJobUseCase{},
-		&stubChangeStatusUseCase{},
-	)
+	handler := adminhttp.NewHandler(nil, nil, nil)
 	auth := middleware.NewAuth(db)
 	rl := middleware.NewRateLimiter(context.Background())
 
@@ -137,5 +120,41 @@ func TestNewRouter_NilHandlerDoesNotRegisterJobRoutes(t *testing.T) {
 	// Gin returns 404 when no route matches (not 405)
 	if resp.Code != http.StatusNotFound {
 		t.Fatalf("expected status=%d (not found), got %d", http.StatusNotFound, resp.Code)
+	}
+}
+
+// TestBuildHandlerRegistersFunctionAndWorkflowRoutes is the compile-and-wire
+// proof for the Functions/Workflows surface: every use case the storage work
+// owed is constructed over the real repositories, so the enabled-gates pass
+// and the eleven routes the surface declares are registered. A gate that
+// fails -- a use case left nil, a store that stopped satisfying its consumer
+// interface -- removes paths from this document and fails the test.
+func TestBuildHandlerRegistersFunctionAndWorkflowRoutes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	db, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	handler := buildHandler(db, kube.JobRunPublisher{}, kube.WorkflowRunPublisher{})
+	paths := handler.OpenAPIDocument().Paths
+
+	for _, path := range []string{
+		"/api/v1/functions",
+		"/api/v1/functions/{id}",
+		"/api/v1/functions/{id}/invoke",
+		"/api/v1/functions/{id}/runs",
+		"/api/v1/functions/{id}/runs/{run_id}",
+		"/api/v1/workflows",
+		"/api/v1/workflows/{id}",
+		"/api/v1/workflows/{id}/runs",
+		"/api/v1/workflows/{id}/runs/{run_id}",
+		"/api/v1/workflows/{id}/runs/{run_id}/cancel",
+	} {
+		if _, ok := paths[path]; !ok {
+			t.Errorf("route %s is not registered; its use case wiring is broken", path)
+		}
 	}
 }

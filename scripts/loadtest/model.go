@@ -10,8 +10,13 @@ const (
 	VerdictInconclusive Verdict = "INCONCLUSIVE"
 )
 
+// TenantIDLen is the exact length of a tenant identifier. Every tenants.id is
+// a CHAR(26) ULID and the API rejects anything else, so a profile that lists
+// slugs would fail at trigger time rather than at decode time unless
+// validation refuses it here.
+const TenantIDLen = 26
+
 type Config struct {
-	SchemaVersion    string            `yaml:"schema_version"`
 	Profile          string            `yaml:"profile"`
 	Qualification    bool              `yaml:"qualification"`
 	Seed             string            `yaml:"seed"`
@@ -20,12 +25,15 @@ type Config struct {
 	MinimumInstances int               `yaml:"minimum_instances"`
 	Environment      EnvironmentConfig `yaml:"environment"`
 	Definitions      DefinitionConfig  `yaml:"definitions"`
-	Tenants          []string          `yaml:"tenants"`
-	Phases           []Phase           `yaml:"phases"`
-	Burst            BurstConfig       `yaml:"burst"`
-	Sampling         SamplingConfig    `yaml:"sampling"`
-	Dynamic          DynamicConfig     `yaml:"dynamic"`
-	Faults           FaultsConfig      `yaml:"faults"`
+	// Tenants are the tenant identifiers this profile runs against, each a
+	// 26-character ULID. There is exactly one execution path (the Kubernetes
+	// control plane), so a profile declares who runs, not how.
+	Tenants  []string       `yaml:"tenants"`
+	Phases   []Phase        `yaml:"phases"`
+	Burst    BurstConfig    `yaml:"burst"`
+	Sampling SamplingConfig `yaml:"sampling"`
+	Dynamic  DynamicConfig  `yaml:"dynamic"`
+	Faults   FaultsConfig   `yaml:"faults"`
 }
 
 // FaultsConfig optionally overrides the fault injection plan. Profiles that
@@ -42,9 +50,9 @@ type FaultPhase struct {
 }
 
 type DynamicConfig struct {
-	Enabled  bool               `yaml:"enabled"`
+	Enabled  bool                `yaml:"enabled"`
 	Resource ResourceModelConfig `yaml:"resource"`
-	Feedback FeedbackConfig     `yaml:"feedback"`
+	Feedback FeedbackConfig      `yaml:"feedback"`
 }
 
 func (c Config) DynamicTuningEnabled() bool { return c.Dynamic.Enabled }
@@ -111,14 +119,45 @@ type SamplingConfig struct {
 }
 
 type Definition struct {
-	CaseID             string         `json:"case_id"`
-	Tenant             string         `json:"tenant"`
-	Category           string         `json:"category"`
-	ProductTriggerType string         `json:"product_trigger_type"`
-	TriggerOrigin      string         `json:"trigger_origin"`
-	Request            map[string]any `json:"request"`
-	Expected           Expected       `json:"expected"`
+	CaseID             string `json:"case_id"`
+	Tenant             string `json:"tenant"`
+	Category           string `json:"category"`
+	ProductTriggerType string `json:"product_trigger_type"`
+	TriggerOrigin      string `json:"trigger_origin"`
+	// ScheduledJob is the Custom Resource spec this definition is declared
+	// with. The Admin API has no create route: definitions are ScheduledJob
+	// custom resources the operator materializes into revisions.
+	ScheduledJob ScheduledJobSpec `json:"scheduled_job"`
+	Expected     Expected         `json:"expected"`
 }
+
+// ScheduledJobSpec is the subset of the ScheduledJob CRD the load corpus
+// needs. Env and service account fields are absent on purpose: the operator
+// renders Kubernetes Jobs with image, command and args only, so scenario
+// bodies receive their configuration as baked-in argument values.
+type ScheduledJobSpec struct {
+	// Schedule is a standard cron expression. Definitions that are only ever
+	// triggered manually carry neverFiresCron: the CRD requires a non-empty
+	// schedule, while an expression that matches no instant keeps the
+	// scheduler out of the way.
+	Schedule string `json:"schedule"`
+	// History limits. The default retention (3 per outcome) would prune
+	// evidence mid-run, so generated definitions raise both; the load tool
+	// verifies rows the run created, not rows retention kept.
+	HistorySuccessful int      `json:"history_successful"`
+	HistoryFailed     int      `json:"history_failed"`
+	TimeoutSeconds    int      `json:"timeout_seconds"`
+	Image             string   `json:"image"`
+	Command           []string `json:"command,omitempty"`
+	Args              []string `json:"args,omitempty"`
+	BackoffLimit      int32    `json:"backoff_limit"`
+}
+
+// neverFiresCron is minute 0, hour 0, February 30th. It parses as a standard
+// five-field cron expression and matches no instant in any year, so a manual
+// definition satisfies the CRD's non-empty schedule without the scheduler
+// ever creating occurrences for it.
+const neverFiresCron = "0 0 30 2 *"
 
 type Expected struct {
 	TerminalState string `json:"terminal_state"`
@@ -155,7 +194,14 @@ type CheckResult struct {
 // is false when the engine stopped early (timeout) — a truncated run cannot
 // produce a PASS verdict.
 type RunStats struct {
-	RunID           string             `json:"run_id"`
+	RunID string `json:"run_id"`
+	// Profile and Seed record what this run was, so a later verify cannot
+	// relabel it. Without them the run record took its profile from whatever
+	// --config the verify caller passed, and a smoke run verified without one
+	// was written down as a qualification run.
+	Profile         string             `json:"profile"`
+	Seed            string             `json:"seed"`
+	Qualification   bool               `json:"qualification"`
 	StartedAt       time.Time          `json:"started_at"`
 	FinishedAt      time.Time          `json:"finished_at"`
 	ScheduledEvents int                `json:"scheduled_events"`
@@ -169,7 +215,6 @@ type RunStats struct {
 }
 
 type Result struct {
-	SchemaVersion string        `json:"schema_version"`
 	RunID         string        `json:"run_id"`
 	Qualification bool          `json:"qualification"`
 	Verdict       Verdict       `json:"verdict"`

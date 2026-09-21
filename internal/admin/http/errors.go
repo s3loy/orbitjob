@@ -6,7 +6,7 @@ import (
 	"github.com/go-playground/validator/v10"
 
 	"orbitjob/internal/admin/http/apperror"
-	domainjob "orbitjob/internal/core/domain/job"
+	"orbitjob/internal/core/domain/policy"
 	"orbitjob/internal/domain/resource"
 	"orbitjob/internal/domain/validation"
 )
@@ -17,7 +17,7 @@ import (
 // When multiple validation failures exist, only the first is reported.
 func toBindAPIError(err error) apperror.APIError {
 	var ve validator.ValidationErrors
-	if errors.As(err, &ve) {
+	if errors.As(err, &ve) && len(ve) > 0 {
 		fe := ve[0]
 		return apperror.APIError{
 			Code:    apperror.CodeValidation,
@@ -90,12 +90,35 @@ func toAPIError(err error) apperror.APIError {
 		}
 	}
 
-	var qe *domainjob.QuotaExceededError
-	if errors.As(err, &qe) {
+	// A scope that cannot be applied to the resource is a refusal too. The
+	// alternative — serving the request without the scope — would hand the
+	// caller more than its grant covers, which is the one outcome an
+	// authorization check must never produce.
+	var se *resource.ScopeError
+	if errors.As(err, &se) {
 		return apperror.APIError{
-			Code:    apperror.CodeQuotaExhausted,
-			Message: "quota exhausted",
-			Field:   qe.Quota,
+			Code:    apperror.CodeForbidden,
+			Message: se.Error(),
+			Field:   se.Resource,
+		}
+	}
+
+	// Granting a permission the caller does not itself hold is a refusal, not a
+	// server fault: the request was understood and denied.
+	if errors.Is(err, policy.ErrPrivilegeEscalation) {
+		return apperror.APIError{
+			Code:    apperror.CodeForbidden,
+			Message: "the request would grant permissions the caller does not hold",
+		}
+	}
+
+	// A platform preset is installation-wide, so no caller may delete one. That
+	// is a refusal too, and one worth stating plainly: a 404 would suggest the
+	// policy is simply absent from their view.
+	if errors.Is(err, policy.ErrPlatformPolicyImmutable) {
+		return apperror.APIError{
+			Code:    apperror.CodeForbidden,
+			Message: "platform policies cannot be modified",
 		}
 	}
 

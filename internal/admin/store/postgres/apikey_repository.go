@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"orbitjob/internal/core/domain/apikey"
+	"orbitjob/internal/core/domain/audit"
 	"orbitjob/internal/domain/resource"
 )
 
@@ -17,21 +18,53 @@ type APIKeyRepository struct{ db *sql.DB }
 func NewAPIKeyRepository(db *sql.DB) *APIKeyRepository { return &APIKeyRepository{db: db} }
 
 // Create inserts a new API key.
-func (r *APIKeyRepository) Create(ctx context.Context, tenantID, id, keyHash, keyPrefix string) error {
-	tx, err := WithTenant(ctx, r.db, tenantID)
+// Create writes a key and its grants in one transaction. The guards that decide
+// what may be granted have already run by the time this is called; this method
+// only has to keep the key and its bindings from ever being half-written.
+// Create writes the key and its grants, and records the grant, in one
+// transaction.
+func (r *APIKeyRepository) Create(ctx context.Context, in apikey.PersistInput, ev audit.Event) error {
+	tx, err := WithTenant(ctx, r.db, in.TenantID)
 	if err != nil {
 		return fmt.Errorf("begin tenant transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	_, err = tx.ExecContext(ctx, `
-			INSERT INTO api_keys (id, tenant_id, key_hash, key_prefix)
-			VALUES ($1, $2, $3, $4)
-		`, id, tenantID, keyHash, keyPrefix)
-	if err != nil {
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO api_keys (id, tenant_id, kind, resource_group_id, boundary_policy_id,
+		                      key_hash, key_prefix, created_by)
+		VALUES ($1, $2, 'tenant', $3, $4, $5, $6, $7)
+	`, in.ID, in.TenantID,
+		nullIfEmpty(in.ResourceGroupID), nullIfEmpty(in.BoundaryPolicyID),
+		in.KeyHash, in.KeyPrefix, nullIfEmpty(in.BoundBy)); err != nil {
 		return fmt.Errorf("insert api key: %w", err)
 	}
-	return tx.Commit()
+
+	for _, policyID := range in.PolicyIDs {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO key_policies (key_id, policy_id, bound_by) VALUES ($1, $2, $3)
+		`, in.ID, policyID, nullIfEmpty(in.BoundBy)); err != nil {
+			return fmt.Errorf("bind policy %s: %w", policyID, err)
+		}
+	}
+
+	if err := insertAuditEvent(ctx, tx, ev); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit tenant transaction: %w", err)
+	}
+	return nil
+}
+
+// nullIfEmpty keeps optional columns NULL rather than storing an empty string,
+// so the kind/tenant check constraint and the "no group" semantics both hold.
+func nullIfEmpty(v string) any {
+	if v == "" {
+		return nil
+	}
+	return v
 }
 
 // ListByTenant returns all API keys for a tenant, excluding key_hash.
@@ -97,11 +130,16 @@ func (r *APIKeyRepository) RevokeCrossTenant(ctx context.Context, id string) err
 	if err != nil {
 		return err
 	}
-	return r.Revoke(ctx, tenantID, id)
+	// The revocation is recorded without an actor: this path resolves the key's
+	// tenant but never learns who asked, and the event table requires a tenant.
+	// The gap is deliberate and worth closing -- closing it means resolving the
+	// caller alongside the tenant.
+	return r.Revoke(ctx, tenantID, id, newGrantEvent(tenantID, "", audit.EventRevoke, audit.ResourceAPIKey, id, nil))
 }
 
-// Revoke marks an API key as revoked if it belongs to the tenant and is not already revoked.
-func (r *APIKeyRepository) Revoke(ctx context.Context, tenantID, id string) error {
+// Revoke marks an API key as revoked if it belongs to the tenant and is not
+// already revoked, recording the revocation in the same transaction.
+func (r *APIKeyRepository) Revoke(ctx context.Context, tenantID, id string, ev audit.Event) error {
 	tx, err := WithTenant(ctx, r.db, tenantID)
 	if err != nil {
 		return fmt.Errorf("begin tenant transaction: %w", err)
@@ -123,6 +161,12 @@ func (r *APIKeyRepository) Revoke(ctx context.Context, tenantID, id string) erro
 	}
 	if affected == 0 {
 		return &resource.NotFoundError{Resource: "api_key", ID: id}
+	}
+
+	// Recorded only once the update is known to have matched a row, so a
+	// revocation that never happened leaves no trace claiming it did.
+	if err := insertAuditEvent(ctx, tx, ev); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

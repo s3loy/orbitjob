@@ -21,7 +21,6 @@ func TestStatusForCode(t *testing.T) {
 		{CodeNotFound, http.StatusNotFound},
 		{CodeConflict, http.StatusConflict},
 		{CodeRateLimited, http.StatusTooManyRequests},
-		{CodeQuotaExhausted, http.StatusTooManyRequests},
 		{CodeInternal, http.StatusInternalServerError},
 		{CodeServiceUnavailable, http.StatusServiceUnavailable},
 		{"unknown", http.StatusInternalServerError},
@@ -96,20 +95,5 @@ func TestWrite_RateLimitedPreservesCallerRetryAfter(t *testing.T) {
 
 	if got := w.Header().Get("Retry-After"); got != "5" {
 		t.Errorf("expected caller Retry-After=5, got %q", got)
-	}
-}
-
-func TestWrite_QuotaExhaustedSetsRetryAfter(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-
-	Write(c, http.StatusTooManyRequests, APIError{
-		Code:    CodeQuotaExhausted,
-		Message: "quota exhausted",
-	})
-
-	if got := w.Header().Get("Retry-After"); got != "1" {
-		t.Errorf("expected Retry-After=1, got %q", got)
 	}
 }

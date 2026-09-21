@@ -1,10 +1,6 @@
-schema_version: v020-scenarios/v1
 category: data-processing
+# The python and alpine images both hash here, and nothing else: one hashes a
+# JSON document, the other the case id as text. Each name says which.
 families:
-  - {id: json-group-sum, count: 60, image: python}
-  - {id: json-schema-validation, count: 30, image: python}
-  - {id: csv-aggregate, count: 50, image: python}
-  - {id: csv-to-json, count: 30, image: python}
-  - {id: log-statistics, count: 40, image: python}
-  - {id: archive-roundtrip-checksum, count: 30, image: alpine}
-  - {id: hash-sort-deduplicate, count: 40, image: alpine}
+  - {id: sha256-json-document, count: 210, image: python}
+  - {id: sha256-text, count: 70, image: alpine}

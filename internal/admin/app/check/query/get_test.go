@@ -14,7 +14,7 @@ type stubCheckGetter struct {
 	err error
 }
 
-func (s *stubCheckGetter) Get(_ context.Context, _ string, _ int64) (domaincheck.Snapshot, error) {
+func (s *stubCheckGetter) Get(_ context.Context, _, _ string, _ int64) (domaincheck.Snapshot, error) {
 	return s.out, s.err
 }
 
@@ -38,7 +38,7 @@ func TestGetCheck_Success(t *testing.T) {
 	}}
 	uc := NewGetCheckUseCase(repo)
 
-	result, err := uc.Get(context.Background(), "t1", 1)
+	result, err := uc.Get(context.Background(), "t1", "", 1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestGetCheck_Error(t *testing.T) {
 	repo := &stubCheckGetter{err: errors.New("not found")}
 	uc := NewGetCheckUseCase(repo)
 
-	_, err := uc.Get(context.Background(), "t1", 1)
+	_, err := uc.Get(context.Background(), "t1", "", 1)
 	if err == nil {
 		t.Fatal("expected error")
 	}

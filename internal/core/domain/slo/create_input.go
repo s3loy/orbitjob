@@ -52,7 +52,9 @@ const (
 
 // CreateInput is the raw input for creating an SLO.
 type CreateInput struct {
-	Name              string
+	Name string
+	// ResourceGroupID is the creating key's own scope.
+	ResourceGroupID   string
 	Description       *string
 	SLIID             int64
 	Target            float64
@@ -64,8 +66,11 @@ type CreateInput struct {
 
 // CreateSpec is the normalized, validated specification for creating an SLO.
 type CreateSpec struct {
-	Name              string
-	Description       *string
+	Name        string
+	Description *string
+	// ResourceGroupID is the creating key's own scope, recorded so a
+	// group-scoped key can see the rows it created.
+	ResourceGroupID   string
 	SLIID             int64
 	Target            float64
 	WindowType        string

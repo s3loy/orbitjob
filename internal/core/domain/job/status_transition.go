@@ -17,27 +17,3 @@ type ChangeStatusSpec struct {
 	NextStatus    string
 	Action        string
 }
-
-// Pause validates whether a job can transition from active to paused.
-func Pause(status string, version int) (string, error) {
-	if version < 1 {
-		return "", validationError("version", "must be >= 1")
-	}
-	if status != StatusActive {
-		return "", validationError("status", "only active jobs can be paused")
-	}
-
-	return StatusPaused, nil
-}
-
-// Resume validates whether a job can transition from paused to active.
-func Resume(status string, version int) (string, error) {
-	if version < 1 {
-		return "", validationError("version", "must be >= 1")
-	}
-	if status != StatusPaused {
-		return "", validationError("status", "only paused jobs can be resumed")
-	}
-
-	return StatusActive, nil
-}

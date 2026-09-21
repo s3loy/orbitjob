@@ -1,0 +1,184 @@
+# kube-prometheus-stack release values for the kind dev cluster (orbitjob-dev).
+#
+# Installed by `make monitoring-up` as its OWN helm release into the
+# "monitoring" namespace. This is cluster observability, not product: it must
+# never become part of charts/orbitjob (different release cadence, and the
+# cluster-wide read scope needed here must not leak into the product chart).
+#
+# Kind posture: control-plane component scraping is disabled because kind does
+# not expose kube-controller-manager/kube-scheduler/etcd/kube-proxy endpoints;
+# everything else uses chart defaults. Sizing is dev-scale on purpose.
+
+fullnameOverride: kube-prometheus-stack
+
+# kind cannot serve these endpoints; enabling the jobs only produces
+# permanently down targets.
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeEtcd:
+  enabled: false
+kubeProxy:
+  enabled: false
+
+prometheus:
+  prometheusSpec:
+    retention: 36h
+    retentionSize: 8GiB
+    scrapeInterval: 30s
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+    # This is a long-lived environment, not a loadtest: the TSDB persists on a
+    # PVC from the default StorageClass (local-path on kind) instead of an
+    # emptyDir that dies with the pod.
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 10Gi
+    # Discover ServiceMonitors, PodMonitors and PrometheusRules in ANY
+    # namespace regardless of release labels, so the OrbitJob monitors in
+    # orbitjob-observability.yaml are picked up without per-release surgery.
+    podMonitorSelector: {}
+    podMonitorNamespaceSelector: {}
+    serviceMonitorSelector: {}
+    serviceMonitorNamespaceSelector: {}
+    ruleSelector: {}
+    ruleNamespaceSelector: {}
+    podMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+
+grafana:
+  # Dev parity with the retired hand-rolled stack; explicitly acknowledged
+  # instead of silently inherited. Not a production posture.
+  adminUser: admin
+  adminPassword: admin
+  grafana.ini:
+    auth.anonymous:
+      enabled: true
+      org_role: Viewer
+  sidecar:
+    dashboards:
+      enabled: true
+      # Load dashboard ConfigMaps from any namespace, not only Grafana's own.
+      searchNamespace: ALL
+
+# Custom Resource State Metrics: the JobRun / ScheduledJob ledger becomes a
+# metric source, which is how "all my tasks" (run phase counts by tenant) get
+# answered without any operator code change. Phases are the nine exactly as
+# declared in internal/core/domain/jobrun/types.go.
+kube-state-metrics:
+  rbac:
+    extraRules:
+      - apiGroups:
+          - workloads.orbitjob.io
+        resources:
+          - jobruns
+          - scheduledjobs
+        verbs:
+          - get
+          - list
+          - watch
+  customResourceState:
+    enabled: true
+    config:
+      kind: CustomResourceStateMetrics
+      spec:
+        resources:
+          # jobrun_phase is a StateSet: jobrun_phase{phase="Pending"} == 1
+          # counts runs currently Pending, and sum by (phase) gives the census.
+          # jobrun_info carries the bounded trigger/cancel/definition labels.
+          - groupVersionKind:
+              group: workloads.orbitjob.io
+              version: v1alpha1
+              kind: JobRun
+            metricNamePrefix: ""
+            labelsFromPath:
+              name:
+                - metadata
+                - name
+            metrics:
+              - name: jobrun_phase
+                help: "The current phase of a JobRun, one series per known phase with 1 on the active one"
+                each:
+                  type: StateSet
+                  stateSet:
+                    labelName: phase
+                    path:
+                      - status
+                      - phase
+                    list:
+                      - Pending
+                      - CreatingAttempt
+                      - RetryWaiting
+                      - Running
+                      - Succeeded
+                      - Failed
+                      - CancelRequested
+                      - Canceled
+                      - CancelUnknown
+              - name: jobrun_info
+                help: "JobRun metadata: why the run exists (trigger), whether a cancel was requested, and which scheduled job definition it belongs to"
+                each:
+                  type: Info
+                  info:
+                    labelsFromPath:
+                      trigger:
+                        - spec
+                        - trigger
+                      cancel_requested:
+                        - spec
+                        - cancelRequested
+                      scheduled_job:
+                        - spec
+                        - scheduledJobRef
+                        - name
+          # ScheduledJob census: what is defined, is it suspended, which
+          # revision is active.
+          - groupVersionKind:
+              group: workloads.orbitjob.io
+              version: v1alpha1
+              kind: ScheduledJob
+            metricNamePrefix: ""
+            labelsFromPath:
+              name:
+                - metadata
+                - name
+            metrics:
+              - name: scheduledjob_info
+                help: "ScheduledJob metadata including whether the definition is suspended"
+                each:
+                  type: Info
+                  info:
+                    labelsFromPath:
+                      suspend:
+                        - spec
+                        - suspend
+              - name: scheduledjob_active_revision
+                help: "The definition revision a ScheduledJob currently projects"
+                each:
+                  type: Gauge
+                  gauge:
+                    path:
+                      - status
+                      - activeRevision
+
+alertmanager:
+  alertmanagerSpec:
+    resources:
+      requests:
+        cpu: 20m
+        memory: 50Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi

@@ -1,0 +1,9 @@
+# Documented coverage exceptions. Packages listed here warn instead of blocking.
+# Keep an inline rationale and limit this file to packages with no measurable
+# statements; every measurable tier package must meet the 60% merge bar.
+#
+# Format: <package path> # <rationale>
+orbitjob/internal/core/domain/apikey # declarations only; no executable statements
+orbitjob/internal/core/domain/audit # declarations and persisted constants only
+orbitjob/internal/core/domain/checkrun # persisted DTOs and constants only
+orbitjob/internal/core/domain/job # persisted DTOs and constants only

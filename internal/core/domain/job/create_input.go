@@ -29,8 +29,10 @@ const (
 
 // CreateInput is the domain input for job creation.
 type CreateInput struct {
-	Name                 string
-	TenantID             string
+	Name     string
+	TenantID string
+	// ResourceGroupID is the creating key's own scope, applied to the job.
+	ResourceGroupID      string
 	Priority             int
 	PartitionKey         *string
 	TriggerType          string

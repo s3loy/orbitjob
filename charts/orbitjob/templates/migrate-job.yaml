@@ -17,8 +17,8 @@ spec:
 {{ include "orbitjob.podSecurityContext" . | indent 8 }}
       containers:
         - name: migrate
-          image: "{{ .Values.images.migrate.repository }}:{{ .Values.images.migrate.tag }}"
-          imagePullPolicy: {{ .Values.images.migrate.pullPolicy }}
+          image: {{ include "orbitjob.image" (dict "root" . "image" .Values.images.migrate) | quote }}
+          imagePullPolicy: {{ include "orbitjob.imagePullPolicy" (dict "root" . "image" .Values.images.migrate) }}
           env:
             - name: MIGRATION_MODE
               value: migrate

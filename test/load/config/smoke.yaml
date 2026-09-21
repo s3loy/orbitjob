@@ -1,7 +1,6 @@
-schema_version: v020-load/v1
 profile: smoke
 qualification: false
-seed: v020-smoke-1
+seed: smoke-1
 duration: 30m
 minimum_instances: 0
 environment:
@@ -25,14 +24,17 @@ definitions:
     cron: 360
     webhook: 120
   cron_interval_minutes: 60
+# Tenant identifiers are ULIDs, matching tenants.id. Prefix digit marks the
+# profile (2=standard, 3=smoke, 4=long) so a tenant created by one profile can
+# never be confused with another's.
 tenants:
-  - smoke-alpha
-  - smoke-beta
-  - smoke-gamma
-  - smoke-adversarial
+  - 30000000000000000000000001
+  - 30000000000000000000000002
+  - 30000000000000000000000003
+  - 30000000000000000000000004
 # 30m smoke: definitions are cycled so the schedule covers the full duration.
-# Rates are capped to worker pool capacity (5) so the smoke run exercises the
-# full trigger->dispatch->execute chain without drowning the single worker.
+# Rates are capped so the run exercises the full trigger->schedule->execute
+# chain without overrunning the task namespace quota.
 phases:
   - {name: warmup, offset: 0m, duration: 2m, rate_per_minute: 5, max_active: 5}
   - {name: correctness, offset: 2m, duration: 8m, rate_per_minute: 8, max_active: 5}

@@ -18,7 +18,6 @@ const (
 	CodeNotFound           Code = "NOT_FOUND"
 	CodeConflict           Code = "CONFLICT"
 	CodeRateLimited        Code = "RATE_LIMITED"
-	CodeQuotaExhausted     Code = "QUOTA_EXHAUSTED"
 	CodeInternal           Code = "INTERNAL_ERROR"
 	CodeServiceUnavailable Code = "SERVICE_UNAVAILABLE"
 )
@@ -58,7 +57,7 @@ func StatusForCode(code Code) int {
 		return http.StatusNotFound
 	case CodeConflict:
 		return http.StatusConflict
-	case CodeRateLimited, CodeQuotaExhausted:
+	case CodeRateLimited:
 		return http.StatusTooManyRequests
 	case CodeInternal:
 		return http.StatusInternalServerError

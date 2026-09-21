@@ -18,8 +18,8 @@ spec:
 {{ include "orbitjob.podSecurityContext" . | indent 8 }}
       containers:
         - name: bootstrap
-          image: "{{ .Values.images.bootstrap.repository }}:{{ .Values.images.bootstrap.tag }}"
-          imagePullPolicy: {{ .Values.images.bootstrap.pullPolicy }}
+          image: {{ include "orbitjob.image" (dict "root" . "image" .Values.images.bootstrap) | quote }}
+          imagePullPolicy: {{ include "orbitjob.imagePullPolicy" (dict "root" . "image" .Values.images.bootstrap) }}
           env:
             - name: APP_ENV
               value: production

@@ -1,0 +1,71 @@
+# The admin API's identity and the only cluster writes it may perform.
+#
+# The API cannot write the run ledger: orbitjob_admin holds SELECT only on
+# job_run_control_plane and workflow_run_control_plane. A manual trigger
+# instead creates a JobRun Custom Resource, and the operator materialises the
+# row from it; a cancel request patches spec.cancelRequested, and the operator
+# performs the stop and the ledger write. A manual workflow trigger works the
+# same way one resource kind up: it creates a WorkflowRun Custom Resource,
+# which the operator materialises into workflow_run_control_plane and fans a
+# cancel request out over the workflow's step JobRuns. That makes JobRun and
+# WorkflowRun create, read, and patch the API's entire cluster surface: no
+# delete (the operator prunes), no status subresource access (the operator
+# owns status), no workflowjobs (definitions are applied out of band, like
+# ScheduledJobs), and no access to pods, secrets, or Kubernetes Jobs.
+#
+# The grants are namespaced, one Role per scheduling namespace, because the
+# scheduling namespaces are exactly the keys of operator.namespaceTenants --
+# the same list the operator watches and the only namespaces a definition can
+# live in. A cluster-scoped grant would let a compromised admin API mint a
+# JobRun in a namespace no tenant mapping covers and forge that tenant's
+# ledger rows; a per-namespace Role keeps the blast radius to namespaces
+# somebody mapped. Adding a tenant is a helm upgrade, which is the point:
+# widening the API's reach should be a deliberate act.
+#
+# The ServiceAccount exists unconditionally: the admin-api Deployment names it,
+# and an identity with no grants authenticates and reaches nothing, which is
+# the correct posture whenever operator.enabled is false and no process
+# consumes JobRun objects.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: orbitjob-admin-api
+  namespace: {{ .Release.Namespace }}
+{{- if .Values.operator.enabled }}
+{{- range $entry := splitList "," (include "orbitjob.operatorNamespaceTenants" $) }}
+{{- $namespace := first (splitList "=" $entry) }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: orbitjob-admin-api
+  namespace: {{ $namespace }}
+rules:
+  - apiGroups: ["workloads.orbitjob.io"]
+    resources: ["jobruns"]
+    # create publishes a manual run. get answers a replayed trigger: the
+    # AlreadyExists branch reads the existing object back so the same trigger
+    # reports the run that already exists rather than failing. patch carries a
+    # cancel request; the operator owns every effect of it.
+    verbs: ["create", "get", "patch"]
+  - apiGroups: ["workloads.orbitjob.io"]
+    resources: ["workflowruns"]
+    # create publishes a manual workflow run, which the operator materialises
+    # row-first into workflow_run_control_plane. get answers a replayed
+    # trigger the same way the jobruns grant does. patch carries a workflow
+    # cancel request; the operator fans it out over the workflow's non-terminal
+    # step JobRuns and owns every effect of it.
+    verbs: ["create", "get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: orbitjob-admin-api
+  namespace: {{ $namespace }}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: orbitjob-admin-api}
+subjects:
+  - kind: ServiceAccount
+    name: orbitjob-admin-api
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
+{{- end }}

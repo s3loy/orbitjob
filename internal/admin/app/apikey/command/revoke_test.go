@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"orbitjob/internal/core/domain/audit"
 	"orbitjob/internal/domain/resource"
 )
 
@@ -18,7 +19,7 @@ type stubAPIKeyRevoker struct {
 	crossTenantErr    error
 }
 
-func (s *stubAPIKeyRevoker) Revoke(ctx context.Context, tenantID, id string) error {
+func (s *stubAPIKeyRevoker) Revoke(ctx context.Context, tenantID, id string, _ audit.Event) error {
 	s.called = true
 	s.tenantID = tenantID
 	s.id = id

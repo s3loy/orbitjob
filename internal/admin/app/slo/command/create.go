@@ -24,7 +24,9 @@ func NewCreateSLOUseCase(repo sloWriter) *CreateSLOUseCase {
 
 // CreateInput is the raw input for creating an SLO.
 type CreateInput struct {
-	TenantID          string
+	TenantID string
+	// ResourceGroupID is the creating key's scope, recorded on the row.
+	ResourceGroupID   string
 	Name              string
 	Description       *string
 	SLIID             int64
@@ -55,6 +57,7 @@ type CreateResult struct {
 func (uc *CreateSLOUseCase) Create(ctx context.Context, in CreateInput) (CreateResult, error) {
 	spec, err := slo.NormalizeCreate(slo.CreateInput{
 		Name:              in.Name,
+		ResourceGroupID:   in.ResourceGroupID,
 		Description:       in.Description,
 		SLIID:             in.SLIID,
 		Target:            in.Target,

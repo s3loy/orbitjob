@@ -18,7 +18,7 @@ func testMigrations() []Migration {
 }
 
 func formalBaseline() []Migration {
-	return []Migration{{Version: 1, Name: "v020_baseline", SQL: "SELECT 1", Checksum: strings.Repeat("a", 64)}}
+	return []Migration{{Version: 1, Name: "baseline", SQL: "SELECT 1", Checksum: strings.Repeat("a", 64)}}
 }
 
 func expectLock(mock sqlmock.Sqlmock, migrationTable, jobsTable any) {
@@ -61,14 +61,14 @@ func TestClassifyExistingHistoryRejectsOldVersions(t *testing.T) {
 }
 
 func TestClassifyExistingHistoryPreservesFormalChecksumMismatch(t *testing.T) {
-	err := classifyExistingHistory(formalBaseline(), []AppliedMigration{{Version: 1, Name: "v020_baseline", Checksum: strings.Repeat("b", 64)}}, true)
+	err := classifyExistingHistory(formalBaseline(), []AppliedMigration{{Version: 1, Name: "baseline", Checksum: strings.Repeat("b", 64)}}, true)
 	if err == nil || !strings.Contains(err.Error(), "migration 0001 checksum mismatch") {
 		t.Fatalf("classifyExistingHistory() error = %v", err)
 	}
 }
 
 func TestClassifyExistingHistoryAcceptsFormalBaseline(t *testing.T) {
-	err := classifyExistingHistory(formalBaseline(), []AppliedMigration{{Version: 1, Name: "v020_baseline", Checksum: strings.Repeat("a", 64)}}, true)
+	err := classifyExistingHistory(formalBaseline(), []AppliedMigration{{Version: 1, Name: "baseline", Checksum: strings.Repeat("a", 64)}}, true)
 	if err != nil {
 		t.Fatalf("classifyExistingHistory() error = %v", err)
 	}

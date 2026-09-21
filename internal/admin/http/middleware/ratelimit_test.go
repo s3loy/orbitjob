@@ -144,7 +144,7 @@ func TestClassifyEndpoint(t *testing.T) {
 		{"GET", "/openapi.json", groupPublic},
 		{"GET", "/metrics", groupPublic},
 		{"POST", "/api/v1/jobs/:id/trigger", groupTrigger},
-		{"POST", "/api/v1/instances/:run_id/cancel", groupAdmin},
+		{"POST", "/api/v1/instances/:run_id/cancel", groupTrigger},
 		{"GET", "/api/v1/jobs", groupRead},
 		{"GET", "/api/v1/instances/:run_id", groupRead},
 		{"POST", "/api/v1/jobs", groupWrite},
@@ -321,7 +321,6 @@ func TestGroupEnvKey(t *testing.T) {
 		{groupRead, "RATELIMIT_READ_RPS"},
 		{groupWrite, "RATELIMIT_WRITE_RPS"},
 		{groupTrigger, "RATELIMIT_TRIGGER_RPS"},
-		{groupAdmin, "RATELIMIT_ADMIN_RPS"},
 		{groupPublic, ""},
 		{endpointGroup("unknown"), ""},
 	}

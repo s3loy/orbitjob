@@ -27,7 +27,7 @@ type stubSLIDeleter struct {
 	err          error
 }
 
-func (s *stubSLIDeleter) Delete(_ context.Context, tenantID string, id int64, version int) error {
+func (s *stubSLIDeleter) Delete(_ context.Context, tenantID, _ string, id int64, version int) error {
 	s.lastTenantID = tenantID
 	s.lastID = id
 	s.lastVersion = version
@@ -38,8 +38,8 @@ func validSLIInput() CreateInput {
 	return CreateInput{
 		Name:     "sli-1",
 		TenantID: "t1",
-		SLIType:  sli.TypeAvailability, SourceType: sli.SourceTypeCheckRun,
-		SourceConfig:      map[string]any{"check_id": 1},
+		SLIType:  sli.TypeAvailability, SourceType: sli.SourceTypeJobRun,
+		SourceConfig:      map[string]any{"source_uid": "check-1"},
 		Aggregation:       sli.AggregationRatio,
 		GoodEventCriteria: map[string]any{"field": "status", "op": "eq", "value": "success"},
 	}

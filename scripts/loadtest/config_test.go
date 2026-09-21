@@ -11,7 +11,7 @@ func TestLoadStandardConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Seed != "v020-standard-1" || cfg.Duration != 4*time.Hour {
+	if cfg.Seed != "standard-1" || cfg.Duration != 4*time.Hour {
 		t.Fatalf("config = %#v", cfg)
 	}
 	if cfg.Definitions.Total != 1200 || cfg.MinimumInstances != 10000 {
@@ -124,7 +124,7 @@ func TestValidateFaultsRejectsNonIncreasingOffsets(t *testing.T) {
 	cfg := Config{
 		Duration: 2 * time.Hour,
 		Faults: FaultsConfig{Plan: []FaultPhase{
-			{Name: "worker", Offset: 40 * time.Minute},
+			{Name: "scheduler", Offset: 40 * time.Minute},
 			{Name: "postgres", Offset: 30 * time.Minute},
 		}},
 	}
@@ -138,7 +138,7 @@ func TestValidateFaultsRejectsOffsetBeyondDuration(t *testing.T) {
 	cfg := Config{
 		Duration: time.Hour,
 		Faults: FaultsConfig{Plan: []FaultPhase{
-			{Name: "worker", Offset: 2 * time.Hour},
+			{Name: "scheduler", Offset: 2 * time.Hour},
 		}},
 	}
 	err := validateFaults(cfg)
@@ -152,9 +152,77 @@ func TestValidateStandardRejectsCustomFaultPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.Faults = FaultsConfig{Plan: []FaultPhase{{Name: "worker", Offset: time.Hour}}}
+	cfg.Faults = FaultsConfig{Plan: []FaultPhase{{Name: "operator", Offset: time.Hour}}}
 	err = ValidateStandard(cfg)
 	if err == nil || !strings.Contains(err.Error(), "fault") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestValidateTenantsRejectsDuplicateTenant(t *testing.T) {
+	tenant := strings.Repeat("2", 25) + "1"
+	cfg := Config{Tenants: []string{tenant, tenant}}
+	err := ValidateTenants(cfg)
+	if err == nil || !strings.Contains(err.Error(), "more than once") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestValidateTenantsRejectsAnEmptyEntry(t *testing.T) {
+	cfg := Config{Tenants: []string{""}}
+	err := ValidateTenants(cfg)
+	if err == nil || !strings.Contains(err.Error(), "empty") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+// TestValidateTenantsRejectsSlugs is the identifier rule: a slug is never a
+// tenant id. The schema's CHAR(26) foreign keys reject one, and this
+// validation refuses it before a cluster is touched.
+func TestValidateTenantsRejectsSlugs(t *testing.T) {
+	for _, slug := range []string{"default", "load-alpha", strings.Repeat("2", 25) + "I"} {
+		cfg := Config{Tenants: []string{slug}}
+		err := ValidateTenants(cfg)
+		if err == nil || !strings.Contains(err.Error(), "ULID") {
+			t.Fatalf("tenant %q accepted: %v", slug, err)
+		}
+	}
+}
+
+func TestValidateTenantsAcceptsUlidShapedIds(t *testing.T) {
+	cfg := Config{Tenants: []string{
+		"20000000000000000000000001",
+		"30000000000000000000000001",
+		"7Z0000000000000000000000ZZ",
+	}}
+	if err := ValidateTenants(cfg); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+}
+
+// TestWorkingConfigsStillValidate guards the five profiles that exist now:
+// the dual-runtime and kubernetes-only profiles were deleted with the
+// execution-mode split they existed to exercise.
+func TestWorkingConfigsStillValidate(t *testing.T) {
+	cases := map[string]string{
+		"smoke":            "smoke",
+		"smoke-faults":     "smoke",
+		"standard":         "standard",
+		"standard-dynamic": "standard",
+		"long":             "long",
+	}
+	for config, profile := range cases {
+		t.Run(config, func(t *testing.T) {
+			cfg, err := LoadConfig("../../test/load/config/" + config + ".yaml")
+			if err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if err := validateProfile(profile, cfg); err != nil {
+				t.Fatalf("validate: %v", err)
+			}
+			if err := ValidateTenants(cfg); err != nil {
+				t.Fatalf("tenants: %v", err)
+			}
+		})
 	}
 }

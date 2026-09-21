@@ -8,7 +8,7 @@ import (
 
 // sliDeleter soft-deletes SLIs.
 type sliDeleter interface {
-	Delete(ctx context.Context, tenantID string, id int64, version int) error
+	Delete(ctx context.Context, tenantID, resourceGroupID string, id int64, version int) error
 }
 
 // DeleteSLIUseCase handles SLI deletion.
@@ -24,8 +24,11 @@ func NewDeleteSLIUseCase(repo sliDeleter) *DeleteSLIUseCase {
 // DeleteInput contains the parameters for deletion.
 type DeleteInput struct {
 	TenantID string
-	ID       int64
-	Version  int
+	// ResourceGroupID is the caller's own resource group scope, empty when the
+	// caller is not scoped to one.
+	ResourceGroupID string
+	ID              int64
+	Version         int
 }
 
 // Delete soft-deletes an SLI.
@@ -33,5 +36,5 @@ func (uc *DeleteSLIUseCase) Delete(ctx context.Context, in DeleteInput) error {
 	if in.ID <= 0 {
 		return validation.New("id", "id must be positive")
 	}
-	return uc.repo.Delete(ctx, in.TenantID, in.ID, in.Version)
+	return uc.repo.Delete(ctx, in.TenantID, in.ResourceGroupID, in.ID, in.Version)
 }

@@ -1,0 +1,57 @@
+{{- if .Values.operator.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: orbitjob-operator
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: orbitjob-operator
+rules:
+  # ScheduledJobs are read from and have their status written back to; the
+  # operator projects them, it does not create or delete them.
+  - apiGroups: ["workloads.orbitjob.io"]
+    resources: ["scheduledjobs"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  # The operator is the only writer of JobRuns: it creates the occurrence for a
+  # scheduled trigger and deletes runs retention has pruned, so it needs create
+  # and delete on top of the read/update set. Nothing else writes JobRuns.
+  - apiGroups: ["workloads.orbitjob.io"]
+    resources: ["jobruns"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # WorkflowRuns are watched so a manual workflow execution is materialized
+  # into the workflow ledger and its status is projected back; patch carries
+  # that status projection. WorkflowJob steps are ordinary JobRuns, so the
+  # walker creates and cancels steps through the jobruns rules above.
+  - apiGroups: ["workloads.orbitjob.io"]
+    resources: ["workflowjobs", "workflowruns"]
+    verbs: ["get", "list", "watch", "patch"]
+  # WorkflowJobs are projected the way ScheduledJobs are, and their status
+  # carries the observed generation and the active revision id back to the
+  # declarer, so the status subresource rides the same rule.
+  - apiGroups: ["workloads.orbitjob.io"]
+    resources: ["scheduledjobs/status", "jobruns/status", "workflowruns/status", "workflowjobs/status"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  # Leader election. get/create/update are what a Lease holder needs; delete
+  # releases a lock early on graceful shutdown.
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "create", "update", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: orbitjob-operator
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: orbitjob-operator}
+subjects:
+  - kind: ServiceAccount
+    name: orbitjob-operator
+    namespace: "{{ .Release.Namespace }}"
+{{- end }}

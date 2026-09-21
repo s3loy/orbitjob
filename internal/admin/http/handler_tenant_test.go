@@ -67,7 +67,7 @@ func TestHandler_CreateTenant(t *testing.T) {
 			Status: tenant.StatusActive,
 		},
 	}
-	handler := NewHandler(nil, nil, nil, nil, nil)
+	handler := NewHandler(nil, nil, nil)
 	handler.SetCreateTenantUseCase(uc)
 
 	router := testRouter(handler)
@@ -105,7 +105,7 @@ func TestHandler_CreateTenant_BindError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	uc := &stubCreateTenantUseCase{}
-	handler := NewHandler(nil, nil, nil, nil, nil)
+	handler := NewHandler(nil, nil, nil)
 	handler.SetCreateTenantUseCase(uc)
 
 	router := testRouter(handler)
@@ -130,7 +130,7 @@ func TestHandler_CreateTenant_UseCaseError(t *testing.T) {
 	uc := &stubCreateTenantUseCase{
 		err: &validation.Error{Field: "slug", Message: "is required"},
 	}
-	handler := NewHandler(nil, nil, nil, nil, nil)
+	handler := NewHandler(nil, nil, nil)
 	handler.SetCreateTenantUseCase(uc)
 
 	router := testRouter(handler)
@@ -155,7 +155,7 @@ func TestHandler_ListTenants(t *testing.T) {
 			{ID: "01HZX", Slug: "acme", Name: "Acme Corp", Status: tenant.StatusActive},
 		},
 	}
-	handler := NewHandler(nil, nil, nil, nil, nil)
+	handler := NewHandler(nil, nil, nil)
 	handler.SetListTenantsUseCase(uc)
 
 	router := testRouter(handler)
@@ -194,7 +194,7 @@ func TestHandler_ListTenants_UseCaseError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	uc := &stubListTenantsUseCase{err: errors.New("db down")}
-	handler := NewHandler(nil, nil, nil, nil, nil)
+	handler := NewHandler(nil, nil, nil)
 	handler.SetListTenantsUseCase(uc)
 
 	router := testRouter(handler)
@@ -220,7 +220,7 @@ func TestHandler_GetTenant(t *testing.T) {
 			Status: tenant.StatusActive,
 		},
 	}
-	handler := NewHandler(nil, nil, nil, nil, nil)
+	handler := NewHandler(nil, nil, nil)
 	handler.SetGetTenantUseCase(uc)
 
 	router := testRouter(handler)
@@ -245,7 +245,7 @@ func TestHandler_GetTenant_BindError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	uc := &stubGetTenantUseCase{}
-	handler := NewHandler(nil, nil, nil, nil, nil)
+	handler := NewHandler(nil, nil, nil)
 	handler.SetGetTenantUseCase(uc)
 
 	router := testRouter(handler)
@@ -264,7 +264,7 @@ func TestHandler_GetTenant_UseCaseError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	uc := &stubGetTenantUseCase{err: errors.New("db down")}
-	handler := NewHandler(nil, nil, nil, nil, nil)
+	handler := NewHandler(nil, nil, nil)
 	handler.SetGetTenantUseCase(uc)
 
 	router := testRouter(handler)

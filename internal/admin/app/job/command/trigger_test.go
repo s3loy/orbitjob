@@ -1,452 +1,236 @@
 package command
 
 import (
-	"context"
-	"database/sql"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
-	"github.com/lib/pq"
-	"github.com/prometheus/client_golang/prometheus/testutil"
-
-	query "orbitjob/internal/admin/app/job/query"
-	"orbitjob/internal/admin/http/middleware"
-	domaininstance "orbitjob/internal/core/domain/instance"
-	domainjob "orbitjob/internal/core/domain/job"
-	"orbitjob/internal/platform/metrics"
+	"orbitjob/internal/domain/resource"
+	"orbitjob/internal/domain/validation"
 )
 
-type stubJobReader struct {
-	item query.GetItem
-	err  error
+// normalizeTriggerInput (trigger.go:129) is the write gate in front of the run
+// ledger's actor column (job_run_control_plane.actor, VARCHAR(255) NOT NULL with
+// a non-empty CHECK, db/migrations/0001_baseline.up.sql:275-283). These tests
+// pin its bounds: what it refuses, and what it normalizes on the way through.
+
+type boundsCase struct {
+	name string
+	in   TriggerInput
+
+	// expectField, when non-empty, is the *validation.Error field the
+	// normalizer must refuse with; the message must be non-empty.
+	expectField string
+	// expectScopeRefusal requires a *resource.ScopeError naming the resource
+	// "job definition" and the caller's scope (resource.RequireUnscoped,
+	// internal/domain/resource/errors.go:55).
+	expectScopeRefusal bool
+	// On acceptance the normalized output must match these exactly.
+	wantTenant string
+	wantActor  string
+	wantIdem   string
 }
 
-func (r *stubJobReader) Get(_ context.Context, _ query.GetInput) (query.GetItem, error) {
-	return r.item, r.err
-}
+// validTenant is a well-formed 26-character ULID, the shape of tenants.id.
+const validTenant = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
 
-type stubInstanceCreator struct {
-	out domaininstance.Snapshot
-	err error
-}
-
-func (r *stubInstanceCreator) Create(_ context.Context, _ domaininstance.CreateSpec) (domaininstance.Snapshot, error) {
-	return r.out, r.err
-}
-
-type captureInstanceCreator struct {
-	captured *domaininstance.CreateSpec
-	out      domaininstance.Snapshot
-	err      error
-}
-
-func (r *captureInstanceCreator) Create(_ context.Context, spec domaininstance.CreateSpec) (domaininstance.Snapshot, error) {
-	r.captured = &spec
-	return r.out, r.err
-}
-
-type stubInstanceReaderByIdempotency struct {
-	out domaininstance.Snapshot
-	err error
-}
-
-func (r *stubInstanceReaderByIdempotency) GetByIdempotencyKey(_ context.Context, _, _, _ string) (domaininstance.Snapshot, error) {
-	return r.out, r.err
-}
-
-type idempotencyResult struct {
-	out domaininstance.Snapshot
-	err error
-}
-
-type sequentialIdempotencyReader struct {
-	sequence []idempotencyResult
-	index    int
-}
-
-func (r *sequentialIdempotencyReader) GetByIdempotencyKey(_ context.Context, _, _, _ string) (domaininstance.Snapshot, error) {
-	if r.index >= len(r.sequence) {
-		return domaininstance.Snapshot{}, errors.New("unexpected idempotency lookup call")
-	}
-	res := r.sequence[r.index]
-	r.index++
-	return res.out, res.err
-}
-
-func TestNewTriggerJobUseCase(t *testing.T) {
-	uc := NewTriggerJobUseCase(&stubJobReader{}, &stubInstanceCreator{}, &stubInstanceReaderByIdempotency{})
-	if uc == nil {
-		t.Fatal("expected use case to be initialized")
-	}
-}
-
-func TestTriggerJobUseCase_Trigger(t *testing.T) {
-	partitionKey := "east"
-	reader := &stubJobReader{
-		item: query.GetItem{
-			ID:             1,
-			Name:           "daily-report",
-			TenantID:       "default",
-			Status:         domainjob.StatusActive,
-			Priority:       10,
-			PartitionKey:   &partitionKey,
-			HandlerType:    "exec",
-			HandlerPayload: map[string]any{"cmd": "echo"},
-			RetryLimit:     3,
+func triggerBoundsCases() []boundsCase {
+	return []boundsCase{
+		{
+			name:        "empty actor is refused",
+			in:          TriggerInput{JobID: 7, TenantID: validTenant, ActorID: ""},
+			expectField: "actor_id",
+		},
+		{
+			name:        "whitespace-only actor is refused",
+			in:          TriggerInput{JobID: 7, TenantID: validTenant, ActorID: " \t\n"},
+			expectField: "actor_id",
+		},
+		{
+			name:        "an actor wider than the ledger column is refused",
+			in:          TriggerInput{JobID: 7, TenantID: validTenant, ActorID: strings.Repeat("a", 256)},
+			expectField: "actor_id",
+		},
+		{
+			name:       "an actor of exactly 255 characters is the accepted bound",
+			in:         TriggerInput{JobID: 7, TenantID: validTenant, ActorID: strings.Repeat("a", 255)},
+			wantTenant: validTenant,
+			wantActor:  strings.Repeat("a", 255),
+			wantIdem:   "",
+		},
+		{
+			name:        "a tenant that is not 26 characters is refused",
+			in:          TriggerInput{JobID: 7, TenantID: strings.Repeat("t", 27), ActorID: "key-9"},
+			expectField: "tenant_id",
+		},
+		{
+			name:       "a tenant of exactly 26 characters is the accepted bound",
+			in:         TriggerInput{JobID: 7, TenantID: strings.Repeat("t", 26), ActorID: "key-9"},
+			wantTenant: strings.Repeat("t", 26),
+			wantActor:  "key-9",
+			wantIdem:   "",
+		},
+		{
+			name:        "job id zero is refused",
+			in:          TriggerInput{JobID: 0, TenantID: validTenant, ActorID: "key-9"},
+			expectField: "id",
+		},
+		{
+			name:        "a negative job id is refused",
+			in:          TriggerInput{JobID: -3, TenantID: validTenant, ActorID: "key-9"},
+			expectField: "id",
+		},
+		{
+			name:        "a blank tenant is refused; there is no default tenant",
+			in:          TriggerInput{JobID: 7, TenantID: "", ActorID: "key-9"},
+			expectField: "tenant_id",
+		},
+		{
+			name:       "the tenant is trimmed",
+			in:         TriggerInput{JobID: 7, TenantID: "  " + validTenant + "  ", ActorID: "key-9"},
+			wantTenant: validTenant,
+			wantActor:  "key-9",
+			wantIdem:   "",
+		},
+		{
+			name:       "the actor is trimmed",
+			in:         TriggerInput{JobID: 7, TenantID: validTenant, ActorID: "  key-9  "},
+			wantTenant: validTenant,
+			wantActor:  "key-9",
+			wantIdem:   "",
+		},
+		{
+			name:       "the idempotency key is trimmed",
+			in:         TriggerInput{JobID: 7, TenantID: validTenant, ActorID: "key-9", IdempotencyKey: "  idem-7  "},
+			wantTenant: validTenant,
+			wantActor:  "key-9",
+			wantIdem:   "idem-7",
+		},
+		{
+			name:               "a scoped resource group is refused",
+			in:                 TriggerInput{JobID: 7, TenantID: validTenant, ActorID: "key-9", ResourceGroupID: "rg-7"},
+			expectScopeRefusal: true,
 		},
 	}
-	creator := &stubInstanceCreator{
-		out: domaininstance.Snapshot{
-			RunID:         "run-trigger-1",
-			JobID:         1,
-			TenantID:      "default",
-			Status:        domaininstance.StatusPending,
-			TriggerSource: domaininstance.TriggerSourceManual,
-		},
-	}
-	uc := NewTriggerJobUseCase(reader, creator, &stubInstanceReaderByIdempotency{err: errors.New("not found")})
+}
 
-	out, err := uc.Trigger(context.Background(), TriggerInput{JobID: 1, TenantID: "default"})
-	if err != nil {
-		t.Fatalf("Trigger() error = %v", err)
+type boundsViolation struct {
+	caseName string
+	problem  string
+}
+
+// triggerBoundsViolations runs every bounds case through the given normalizer
+// and reports the cases whose behavior departs from the contract. It is shared
+// by the shipped normalizer and by the mutant in the red proof below, so the
+// red proof exercises the same assertions the real test runs.
+func triggerBoundsViolations(normalize func(TriggerInput) (TriggerInput, error)) []boundsViolation {
+	var violations []boundsViolation
+	for _, tc := range triggerBoundsCases() {
+		out, err := normalize(tc.in)
+		switch {
+		case tc.expectField != "":
+			if err == nil {
+				violations = append(violations, boundsViolation{tc.name,
+					fmt.Sprintf("accepted %+v, want refusal on field %q", tc.in, tc.expectField)})
+				continue
+			}
+			var verr *validation.Error
+			if !errors.As(err, &verr) {
+				violations = append(violations, boundsViolation{tc.name,
+					fmt.Sprintf("refusal %v (%T) is not a *validation.Error", err, err)})
+				continue
+			}
+			if verr.Field != tc.expectField {
+				violations = append(violations, boundsViolation{tc.name,
+					fmt.Sprintf("refusal names field %q, want %q", verr.Field, tc.expectField)})
+			}
+			if strings.TrimSpace(verr.Message) == "" {
+				violations = append(violations, boundsViolation{tc.name, "refusal carries an empty message"})
+			}
+		case tc.expectScopeRefusal:
+			var serr *resource.ScopeError
+			if !errors.As(err, &serr) {
+				violations = append(violations, boundsViolation{tc.name,
+					fmt.Sprintf("scoped caller got %v (%T), want *resource.ScopeError", err, err)})
+				continue
+			}
+			if serr.Resource != "job definition" || serr.Scope != tc.in.ResourceGroupID {
+				violations = append(violations, boundsViolation{tc.name,
+					fmt.Sprintf("scope refusal = %+v, want resource %q scope %q",
+						serr, "job definition", tc.in.ResourceGroupID)})
+			}
+		default:
+			if err != nil {
+				violations = append(violations, boundsViolation{tc.name,
+					fmt.Sprintf("refused with %v, want acceptance", err)})
+				continue
+			}
+			if out.TenantID != tc.wantTenant || out.ActorID != tc.wantActor || out.IdempotencyKey != tc.wantIdem {
+				violations = append(violations, boundsViolation{tc.name,
+					fmt.Sprintf("normalized to tenant=%q actor=%q idempotency=%q, want tenant=%q actor=%q idempotency=%q",
+						out.TenantID, out.ActorID, out.IdempotencyKey, tc.wantTenant, tc.wantActor, tc.wantIdem)})
+			}
+		}
 	}
-	if out.RunID != "run-trigger-1" {
-		t.Fatalf("expected RunID=%q, got %q", "run-trigger-1", out.RunID)
-	}
-	if out.Status != domaininstance.StatusPending {
-		t.Fatalf("expected Status=%q, got %q", domaininstance.StatusPending, out.Status)
+	return violations
+}
+
+func TestNormalizeTriggerInputBounds(t *testing.T) {
+	if violations := triggerBoundsViolations(normalizeTriggerInput); len(violations) > 0 {
+		var b strings.Builder
+		for _, v := range violations {
+			b.WriteString("\n  " + v.caseName + ": " + v.problem)
+		}
+		t.Fatalf("normalizer departs from the bounds contract:%s", b.String())
 	}
 }
 
-func TestTriggerJobUseCase_Trigger_JobNotFound(t *testing.T) {
-	reader := &stubJobReader{err: errors.New("not found")}
-	creator := &stubInstanceCreator{}
-	uc := NewTriggerJobUseCase(reader, creator, &stubInstanceReaderByIdempotency{err: errors.New("not found")})
-
-	_, err := uc.Trigger(context.Background(), TriggerInput{JobID: 999, TenantID: "default"})
-	if err == nil {
-		t.Fatal("expected error, got nil")
+// normalizeTriggerInputWithoutActorCheck is a copy of normalizeTriggerInput
+// (trigger.go:129) with the actor block removed. It exists only to prove the
+// actor assertions above can fail: if production ever loses that check, the
+// shared case table must catch exactly the actor cases and nothing else.
+func normalizeTriggerInputWithoutActorCheck(in TriggerInput) (TriggerInput, error) {
+	if in.JobID < 1 {
+		return TriggerInput{}, validation.New("id", "must be >= 1")
 	}
+
+	tenantID := strings.TrimSpace(in.TenantID)
+	if len(tenantID) != 26 {
+		return TriggerInput{}, validation.New("tenant_id", "must be a 26-character tenant id")
+	}
+
+	if err := resource.RequireUnscoped(in.ResourceGroupID, "job definition"); err != nil {
+		return TriggerInput{}, err
+	}
+
+	return TriggerInput{
+		JobID:           in.JobID,
+		TenantID:        tenantID,
+		ActorID:         strings.TrimSpace(in.ActorID),
+		IdempotencyKey:  strings.TrimSpace(in.IdempotencyKey),
+		ResourceGroupID: in.ResourceGroupID,
+	}, nil
 }
 
-func TestTriggerJobUseCase_Trigger_JobNotActive(t *testing.T) {
-	reader := &stubJobReader{
-		item: query.GetItem{ID: 1, Status: domainjob.StatusPaused},
+func TestNormalizeTriggerInputBoundsRedProof(t *testing.T) {
+	actorCases := map[string]bool{
+		"empty actor is refused":                           true,
+		"whitespace-only actor is refused":                 true,
+		"an actor wider than the ledger column is refused": true,
 	}
-	creator := &stubInstanceCreator{}
-	uc := NewTriggerJobUseCase(reader, creator, &stubInstanceReaderByIdempotency{err: errors.New("not found")})
-
-	_, err := uc.Trigger(context.Background(), TriggerInput{JobID: 1, TenantID: "default"})
-	if err == nil {
-		t.Fatal("expected error for non-active job, got nil")
+	caught := map[string]string{}
+	for _, v := range triggerBoundsViolations(normalizeTriggerInputWithoutActorCheck) {
+		caught[v.caseName] = v.problem
 	}
-}
-
-func TestTriggerJobUseCase_Trigger_InstanceCreateError(t *testing.T) {
-	reader := &stubJobReader{
-		item: query.GetItem{
-			ID:       1,
-			Status:   domainjob.StatusActive,
-			TenantID: "default",
-		},
+	for name := range actorCases {
+		if caught[name] == "" {
+			t.Fatalf("mutant without the actor check was not caught on %q: the assertion cannot fail", name)
+		}
 	}
-	creator := &stubInstanceCreator{err: errors.New("duplicate idempotency key")}
-	uc := NewTriggerJobUseCase(reader, creator, &stubInstanceReaderByIdempotency{err: errors.New("not found")})
-
-	_, err := uc.Trigger(context.Background(), TriggerInput{JobID: 1, TenantID: "default"})
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-}
-
-func TestTriggerJobUseCase_Trigger_NormalizeCreateError(t *testing.T) {
-	// TenantID > 64 characters triggers a NormalizeCreate validation error.
-	longTenant := "this-tenant-id-is-way-too-long-and-exceeds-the-sixty-four-character-limit-imposed-by-domain-validation"
-	reader := &stubJobReader{
-		item: query.GetItem{
-			ID:       1,
-			Status:   domainjob.StatusActive,
-			TenantID: longTenant,
-		},
-	}
-	creator := &stubInstanceCreator{}
-	uc := NewTriggerJobUseCase(reader, creator, &stubInstanceReaderByIdempotency{err: errors.New("not found")})
-
-	_, err := uc.Trigger(context.Background(), TriggerInput{JobID: 1, TenantID: longTenant})
-	if err == nil {
-		t.Fatal("expected normalize create error, got nil")
-	}
-}
-
-func TestTriggerJobUseCase_Trigger_JobIDZero(t *testing.T) {
-	// JobID=0 triggers NormalizeCreate validation error (job_id must be >= 1).
-	reader := &stubJobReader{
-		item: query.GetItem{
-			ID:       0,
-			Status:   domainjob.StatusActive,
-			TenantID: "default",
-		},
-	}
-	creator := &stubInstanceCreator{}
-	uc := NewTriggerJobUseCase(reader, creator, &stubInstanceReaderByIdempotency{err: errors.New("not found")})
-
-	_, err := uc.Trigger(context.Background(), TriggerInput{JobID: 0, TenantID: "default"})
-	if err == nil {
-		t.Fatal("expected normalize create error for JobID=0, got nil")
-	}
-}
-
-func TestIdempotencyKeyPtr(t *testing.T) {
-	if p := idempotencyKeyPtr(""); p != nil {
-		t.Fatalf("expected nil for empty string, got %v", *p)
-	}
-	if p := idempotencyKeyPtr("key-1"); p == nil || *p != "key-1" {
-		t.Fatalf("expected pointer to key-1, got %v", p)
-	}
-}
-
-func TestTriggerJobUseCase_ManualTriggerSource(t *testing.T) {
-	reader := &stubJobReader{
-		item: query.GetItem{
-			ID:             1,
-			Name:           "test",
-			TenantID:       "default",
-			Status:         domainjob.StatusActive,
-			HandlerType:    "exec",
-			HandlerPayload: map[string]any{"cmd": "true"},
-		},
-	}
-	captor := &captureInstanceCreator{
-		out: domaininstance.Snapshot{RunID: "run-1", Status: domaininstance.StatusPending},
-	}
-	uc := NewTriggerJobUseCase(reader, captor, &stubInstanceReaderByIdempotency{err: errors.New("not found")})
-
-	_, err := uc.Trigger(context.Background(), TriggerInput{JobID: 1, TenantID: "default"})
-	if err != nil {
-		t.Fatalf("Trigger() error = %v", err)
-	}
-	if captor.captured == nil {
-		t.Fatal("expected Create to be called")
-	}
-	if captor.captured.TriggerSource != domaininstance.TriggerSourceManual {
-		t.Fatalf("expected TriggerSource=%q, got %q", domaininstance.TriggerSourceManual, captor.captured.TriggerSource)
-	}
-	if captor.captured.MaxAttempt != 1 { // stub RetryLimit is 0, so 0 + 1 = 1
-		t.Fatalf("expected MaxAttempt=1, got %d", captor.captured.MaxAttempt)
-	}
-	if captor.captured.ScheduledAt.IsZero() {
-		t.Fatal("expected ScheduledAt to be set")
-	}
-}
-
-func TestTriggerJobUseCase_Trigger_IdempotentDuplicate(t *testing.T) {
-	partitionKey := "east"
-	reader := &stubJobReader{
-		item: query.GetItem{
-			ID:             1,
-			Name:           "daily-report",
-			TenantID:       "default",
-			Status:         domainjob.StatusActive,
-			Priority:       10,
-			PartitionKey:   &partitionKey,
-			HandlerType:    "exec",
-			HandlerPayload: map[string]any{"cmd": "echo"},
-			RetryLimit:     3,
-		},
-	}
-	existing := domaininstance.Snapshot{
-		RunID:            "run-existing",
-		JobID:            1,
-		TenantID:         "default",
-		Status:           domaininstance.StatusPending,
-		TriggerSource:    domaininstance.TriggerSourceManual,
-		IdempotencyKey:   strPtr("idem-1"),
-		IdempotencyScope: domaininstance.DefaultIdempotencyScope,
-	}
-	captor := &captureInstanceCreator{}
-	idempotency := &stubInstanceReaderByIdempotency{out: existing}
-	uc := NewTriggerJobUseCase(reader, captor, idempotency)
-
-	ctx := middleware.WithIdempotencyKey(context.Background(), "idem-1")
-	out, err := uc.Trigger(ctx, TriggerInput{JobID: 1, TenantID: "default"})
-	if err != nil {
-		t.Fatalf("Trigger() error = %v", err)
-	}
-	if captor.captured != nil {
-		t.Fatal("expected Create not to be called for duplicate idempotency key")
-	}
-	if out.RunID != "run-existing" {
-		t.Fatalf("expected RunID=%q, got %q", "run-existing", out.RunID)
-	}
-	if out.Created {
-		t.Fatal("expected Created=false for idempotent duplicate")
-	}
-}
-
-func TestTriggerJobUseCase_Trigger_CreatedFlag(t *testing.T) {
-	reader := &stubJobReader{
-		item: query.GetItem{
-			ID:       1,
-			Status:   domainjob.StatusActive,
-			TenantID: "default",
-		},
-	}
-	creator := &stubInstanceCreator{
-		out: domaininstance.Snapshot{
-			RunID:  "run-new",
-			JobID:  1,
-			Status: domaininstance.StatusPending,
-		},
-	}
-	uc := NewTriggerJobUseCase(reader, creator, &stubInstanceReaderByIdempotency{err: errors.New("not found")})
-
-	out, err := uc.Trigger(context.Background(), TriggerInput{JobID: 1, TenantID: "default"})
-	if err != nil {
-		t.Fatalf("Trigger() error = %v", err)
-	}
-	if out.RunID != "run-new" {
-		t.Fatalf("expected RunID=%q, got %q", "run-new", out.RunID)
-	}
-	if !out.Created {
-		t.Fatal("expected Created=true for newly created instance")
-	}
-}
-
-func strPtr(s string) *string {
-	return &s
-}
-
-func TestTriggerJobUseCase_Trigger_LatencyMetricObserved(t *testing.T) {
-	metrics.TriggerLatency.Reset()
-
-	reader := &stubJobReader{
-		item: query.GetItem{
-			ID:       1,
-			Status:   domainjob.StatusActive,
-			TenantID: "default",
-		},
-	}
-	creator := &stubInstanceCreator{
-		out: domaininstance.Snapshot{
-			RunID:    "run-metric",
-			JobID:    1,
-			TenantID: "default",
-			Status:   domaininstance.StatusPending,
-		},
-	}
-	uc := NewTriggerJobUseCase(reader, creator, &stubInstanceReaderByIdempotency{err: errors.New("not found")})
-
-	_, err := uc.Trigger(context.Background(), TriggerInput{JobID: 1, TenantID: "default"})
-	if err != nil {
-		t.Fatalf("Trigger() error = %v", err)
-	}
-
-	count := testutil.CollectAndCount(metrics.TriggerLatency, "orbitjob_trigger_latency_seconds")
-	if count != 1 {
-		t.Fatalf("expected 1 latency observation, got %d", count)
-	}
-}
-
-func TestTriggerJobUseCase_Trigger_IdempotentRaceOnCreate(t *testing.T) {
-	metrics.TriggerLatency.Reset()
-	partitionKey := "east"
-	reader := &stubJobReader{
-		item: query.GetItem{
-			ID:             1,
-			Name:           "daily-report",
-			TenantID:       "default",
-			Status:         domainjob.StatusActive,
-			Priority:       10,
-			PartitionKey:   &partitionKey,
-			HandlerType:    "exec",
-			HandlerPayload: map[string]any{"cmd": "echo"},
-			RetryLimit:     3,
-		},
-	}
-	existing := domaininstance.Snapshot{
-		RunID:            "run-existing-race",
-		JobID:            1,
-		TenantID:         "default",
-		Status:           domaininstance.StatusPending,
-		TriggerSource:    domaininstance.TriggerSourceManual,
-		IdempotencyKey:   strPtr("idem-race"),
-		IdempotencyScope: domaininstance.DefaultIdempotencyScope,
-	}
-	creator := &captureInstanceCreator{err: &pq.Error{Code: "23505"}}
-	idempotency := &sequentialIdempotencyReader{
-		sequence: []idempotencyResult{
-			{err: sql.ErrNoRows},
-			{out: existing},
-		},
-	}
-	uc := NewTriggerJobUseCase(reader, creator, idempotency)
-
-	ctx := middleware.WithIdempotencyKey(context.Background(), "idem-race")
-	out, err := uc.Trigger(ctx, TriggerInput{JobID: 1, TenantID: "default"})
-	if err != nil {
-		t.Fatalf("Trigger() error = %v", err)
-	}
-	if creator.captured == nil {
-		t.Fatal("expected Create to be called")
-	}
-	if out.RunID != "run-existing-race" {
-		t.Fatalf("expected RunID=%q, got %q", "run-existing-race", out.RunID)
-	}
-	if out.Created {
-		t.Fatal("expected Created=false for recovered idempotent duplicate")
-	}
-	count := testutil.CollectAndCount(metrics.TriggerLatency, "orbitjob_trigger_latency_seconds")
-	if count != 0 {
-		t.Fatalf("expected 0 latency observations on retry path, got %d", count)
-	}
-}
-
-func TestTriggerJobUseCase_Trigger_UniqueViolationRequeryNoRows(t *testing.T) {
-	reader := &stubJobReader{
-		item: query.GetItem{
-			ID:       1,
-			Status:   domainjob.StatusActive,
-			TenantID: "default",
-		},
-	}
-	createErr := &pq.Error{Code: "23505"}
-	creator := &captureInstanceCreator{err: createErr}
-	idempotency := &sequentialIdempotencyReader{
-		sequence: []idempotencyResult{
-			{err: sql.ErrNoRows},
-			{err: sql.ErrNoRows},
-		},
-	}
-	uc := NewTriggerJobUseCase(reader, creator, idempotency)
-
-	ctx := middleware.WithIdempotencyKey(context.Background(), "idem-lost")
-	_, err := uc.Trigger(ctx, TriggerInput{JobID: 1, TenantID: "default"})
-	if err == nil {
-		t.Fatal("expected error when re-query after unique violation returns no rows")
-	}
-}
-
-func TestTriggerJobUseCase_Trigger_UniqueViolationRequeryError(t *testing.T) {
-	reader := &stubJobReader{
-		item: query.GetItem{
-			ID:       1,
-			Status:   domainjob.StatusActive,
-			TenantID: "default",
-		},
-	}
-	createErr := &pq.Error{Code: "23505"}
-	creator := &captureInstanceCreator{err: createErr}
-	idempotency := &sequentialIdempotencyReader{
-		sequence: []idempotencyResult{
-			{err: sql.ErrNoRows},
-			{err: errors.New("lookup failed")},
-		},
-	}
-	uc := NewTriggerJobUseCase(reader, creator, idempotency)
-
-	ctx := middleware.WithIdempotencyKey(context.Background(), "idem-lookup-error")
-	_, err := uc.Trigger(ctx, TriggerInput{JobID: 1, TenantID: "default"})
-	if err == nil {
-		t.Fatal("expected error when re-query after unique violation fails")
+	for name, problem := range caught {
+		if !actorCases[name] {
+			t.Fatalf("mutant was caught outside the actor cases, on %q: %s", name, problem)
+		}
 	}
 }

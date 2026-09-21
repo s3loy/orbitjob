@@ -137,12 +137,19 @@ func (pc *PaceController) Update(ctx context.Context, client *PrometheusClient, 
 		}
 		return v
 	}
-	queueDepth := query("sum(orbitjob_dispatcher_queue_depth)")
-	workerDepth := query("sum(orbitjob_worker_queue_depth)")
-	workerCapacity := query("sum(orbitjob_worker_capacity)")
+	// The dispatcher, the worker and the scheduler's cron path are all gone, and
+	// with them every queue-depth and pool-pressure series this used to read.
+	// The two signals that still have a producer are the admin API's trigger
+	// latency and its rate-limit rejections.
+	//
+	// There is deliberately no third term. A run backlog would be the natural
+	// replacement -- runs created but not yet finished -- but nothing emits it:
+	// the operator knows it and does not publish it, and a term reading a series
+	// that does not exist is a permanent zero wearing a weight. That is worse
+	// than a missing term, because it silently halves the pressure the
+	// controller can ever see.
 	latency := query("histogram_quantile(0.99, sum(rate(orbitjob_trigger_latency_seconds_bucket[5m])) by (le))")
 	rateLimitHits := query("sum(rate(orbitjob_ratelimit_hits_total{endpoint_group=\"trigger\"}[1m]))")
-	poolRejected := query("sum(rate(orbitjob_worker_pool_rejected_total[1m]))")
 
 	if queryErrs > 0 {
 		pc.consecQueryError++
@@ -156,41 +163,24 @@ func (pc *PaceController) Update(ctx context.Context, client *PrometheusClient, 
 		return pf, pc.emaPressure, fmt.Errorf("prometheus queries failed for %d consecutive samples; pace frozen at %.2f", pc.consecQueryError, pf)
 	}
 
-	cap := float64(pc.params.EffectiveWorkerCapacityMax)
-	if cap < 1 {
-		cap = 1
-	}
-	queueRatio := (queueDepth + workerDepth) / (cap * 2)
-	if queueRatio > 1 {
-		queueRatio = 1
-	}
-
 	latencyRatio := latency / pc.cfg.LatencyThresholdSec
 	if latencyRatio > 1 {
 		latencyRatio = 1
 	}
 
-	var rateLimitRatio, rejectionRatio float64
+	var rateLimitRatio float64
 	if currentAttemptRate > 0 {
 		rateLimitRatio = rateLimitHits / currentAttemptRate
 		if rateLimitRatio > 1 {
 			rateLimitRatio = 1
 		}
-		rejectionRatio = poolRejected / currentAttemptRate
-		if rejectionRatio > 1 {
-			rejectionRatio = 1
-		}
 	}
 
-	// Adaptive capacity backoff is a pressure signal: when the controller has
-	// reduced capacity below the max, it did so because the DB is hot. A
-	// missing series (static mode) reads as full capacity, i.e. no signal.
-	capacityRatio := 0.0
-	if workerCapacity > 0 && workerCapacity < cap {
-		capacityRatio = 1.0 - workerCapacity/cap
-	}
-
-	pressure := 0.4*queueRatio + 0.3*latencyRatio + 0.15*rateLimitRatio + 0.1*rejectionRatio + 0.05*capacityRatio
+	// Two signals, renormalised to sum to one so a fully saturated pair still
+	// reads as full pressure. The ratio between them is the one the three-term
+	// version used (0.3:0.2), so the controller's behaviour on the signals that
+	// do exist is unchanged.
+	pressure := 0.6*latencyRatio + 0.4*rateLimitRatio
 	if pressure > 1 {
 		pressure = 1
 	}

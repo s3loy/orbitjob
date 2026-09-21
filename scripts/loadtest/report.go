@@ -22,7 +22,7 @@ func WriteReport(runDir string, run RunRecord, result Result, stats *RunStats) e
 
 func buildReportBody(run RunRecord, result Result, stats *RunStats) string {
 	var b strings.Builder
-	title := "v0.2.0 Load Qualification Report"
+	title := "Load Qualification Report"
 	if !run.Qualification {
 		b.WriteString("NON-STANDARD RUN - NOT A RELEASE QUALIFICATION\n\n")
 	}

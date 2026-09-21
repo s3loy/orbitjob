@@ -1,7 +1,6 @@
-schema_version: v020-load/v1
 profile: standard
 qualification: true
-seed: v020-standard-1
+seed: standard-1
 duration: 4h
 minimum_instances: 10000
 environment:
@@ -25,13 +24,20 @@ definitions:
     cron: 360
     webhook: 120
   cron_interval_minutes: 10
+# Tenant identifiers are ULIDs, matching tenants.id. Prefix digit marks the
+# profile (2=standard, 3=smoke, 4=long) so a tenant created by one profile can
+# never be confused with another's.
 tenants:
-  - load-alpha
-  - load-beta
-  - load-gamma
-  - load-adversarial
+  - 20000000000000000000000001
+  - 20000000000000000000000002
+  - 20000000000000000000000003
+  - 20000000000000000000000004
 # Dynamic tuning: phase rates and max_active are computed from Docker/Kubernetes
 # resource limits at runtime, and the trigger pace is adjusted via Prometheus.
+# prometheus_url must be reachable -- port-forward the monitoring stack first:
+#   kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090
+# Without it the pace controller freezes (with warnings) after three failed
+# samples instead of failing the run.
 dynamic:
   enabled: true
   resource:

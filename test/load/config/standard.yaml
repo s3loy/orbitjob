@@ -1,7 +1,6 @@
-schema_version: v020-load/v1
 profile: standard
 qualification: true
-seed: v020-standard-1
+seed: standard-1
 duration: 4h
 minimum_instances: 10000
 environment:
@@ -25,11 +24,14 @@ definitions:
     cron: 360
     webhook: 120
   cron_interval_minutes: 10
+# Tenant identifiers are ULIDs, matching tenants.id. Prefix digit marks the
+# profile (2=standard, 3=smoke, 4=long) so a tenant created by one profile can
+# never be confused with another's.
 tenants:
-  - load-alpha
-  - load-beta
-  - load-gamma
-  - load-adversarial
+  - 20000000000000000000000001
+  - 20000000000000000000000002
+  - 20000000000000000000000003
+  - 20000000000000000000000004
 # 4h qualification: definitions are cycled so the schedule covers the full
 # duration. Cron jobs fire every 10 minutes to provide a steady baseline;
 # manual triggers provide burst and recovery shapes.

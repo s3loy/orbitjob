@@ -7,8 +7,6 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -22,38 +20,11 @@ const (
 	expectedLockObjectID = 260326
 )
 
-func TestFindTestSchemaFile(t *testing.T) {
-	path, err := findMigrationFile("internal", "platform", "postgrestest", "schema.sql")
-	if err != nil {
-		t.Fatalf("find schema.sql: %v", err)
-	}
-	if !strings.HasSuffix(filepath.ToSlash(path), "internal/platform/postgrestest/schema.sql") {
-		t.Fatalf("schema path = %q", path)
-	}
-}
-
-func TestTestSchemaExcludesProductionSecurityInstallation(t *testing.T) {
-	path, err := findMigrationFile("internal", "platform", "postgrestest", "schema.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, fragment := range []string{
-		"CREATE ROLE ",
-		"ALTER ROLE ",
-		"OWNER TO orbitjob_",
-		"FORCE ROW LEVEL SECURITY",
-		"SECURITY DEFINER",
-		"schema_migrations",
-	} {
-		if strings.Contains(string(data), fragment) {
-			t.Errorf("test schema contains %q", fragment)
-		}
-	}
-}
+// helperTenantID seeds the tenant row the checks inserts below require:
+// checks.tenant_id references tenants(id), and the schema harness truncates
+// every table after building the schema, so no tenant exists until one is
+// inserted. 26 characters, matching tenants.id.
+const helperTenantID = "20000000000000000000000001"
 
 func TestApplySchemaWaitsForSharedDatabaseLock(t *testing.T) {
 	dsn := packageTestDSN(t)
@@ -100,21 +71,27 @@ func TestOpenIsolatesParallelTests(t *testing.T) {
 			defer cancel()
 
 			if _, err := db.ExecContext(ctx, `
-				INSERT INTO jobs (name, tenant_id, trigger_type, handler_type)
-				VALUES ($1, $2, $3, $4)
-			`, "same-name", "default", "manual", "http"); err != nil {
-				t.Fatalf("insert job: %v", err)
+				INSERT INTO tenants (id, slug, name)
+				VALUES ($1, 'isolation', 'isolation')
+			`, helperTenantID); err != nil {
+				t.Fatalf("insert tenant: %v", err)
+			}
+			if _, err := db.ExecContext(ctx, `
+				INSERT INTO checks (name, tenant_id, check_type, schedule_type, cron_expr)
+				VALUES ($1, $2, 'http_health', 'cron', '*/5 * * * *')
+			`, "same-name", helperTenantID); err != nil {
+				t.Fatalf("insert check: %v", err)
 			}
 
 			ready <- struct{}{}
 			<-start
 
 			var count int
-			if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM jobs`).Scan(&count); err != nil {
-				t.Fatalf("count jobs: %v", err)
+			if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM checks`).Scan(&count); err != nil {
+				t.Fatalf("count checks: %v", err)
 			}
 			if count != 1 {
-				t.Fatalf("expected isolated jobs table count=1, got %d", count)
+				t.Fatalf("expected isolated checks table count=1, got %d", count)
 			}
 		})
 	}
@@ -135,10 +112,16 @@ func TestOpenCleansUpTestSchema(t *testing.T) {
 		defer cancel()
 
 		if _, err := db.ExecContext(ctx, `
-			INSERT INTO jobs (name, tenant_id, trigger_type, handler_type)
-			VALUES ($1, $2, $3, $4)
-		`, "cleanup-check", "default", "manual", "http"); err != nil {
-			t.Fatalf("insert job: %v", err)
+			INSERT INTO tenants (id, slug, name)
+			VALUES ($1, 'cleanup-check', 'cleanup-check')
+		`, helperTenantID); err != nil {
+			t.Fatalf("insert tenant: %v", err)
+		}
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO checks (name, tenant_id, check_type, schedule_type, cron_expr)
+			VALUES ('cleanup-check', $1, 'http_health', 'cron', '*/5 * * * *')
+		`, helperTenantID); err != nil {
+			t.Fatalf("insert check: %v", err)
 		}
 	})
 

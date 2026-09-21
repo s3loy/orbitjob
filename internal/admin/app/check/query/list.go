@@ -12,8 +12,11 @@ type checkLister interface {
 type ListChecksInput struct {
 	TenantID string
 	Status   *string
-	Limit    int
-	Offset   int
+	// ResourceGroupID narrows the result to one resource group when the caller's
+	// key is scoped to one. Empty means unscoped: the whole tenant.
+	ResourceGroupID string
+	Limit           int
+	Offset          int
 }
 
 // ListItem represents a single check in the list response.
