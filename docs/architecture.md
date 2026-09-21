@@ -138,13 +138,13 @@ The chart takes a Secret name and a fixed set of key names for the database; it
 does not take a password per role.
 
 The chart installs the control plane into one namespace (`orbitjob-system` in
-the guides) plus a task namespace (`orbitjob-tasks`) for the Kubernetes Jobs it
-renders. The kind development flow adds two more: `orbitjob` holds PostgreSQL,
-`monitoring` holds Prometheus and Grafana.
+the guides). Kubernetes Jobs and workload custom resources live in the exact
+namespaces configured by `operator.namespaceTenants`; each namespace maps to
+one tenant and receives namespaced operator RBAC. The kind development flow
+also uses `orbitjob` for PostgreSQL and `monitoring` for Prometheus and Grafana.
 
-The chart requires `operator.namespaceTenants` — a mapping from namespace to
-tenant. It has no default on purpose: a default would bind a namespace to a
-tenant nobody chose.
+The chart requires `operator.namespaceTenants`. It has no default on purpose:
+a default would bind a namespace to a tenant nobody chose.
 
 ## Shape of the codebase
 

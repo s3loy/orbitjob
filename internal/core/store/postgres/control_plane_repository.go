@@ -36,6 +36,10 @@ var ErrAttemptConflict = errors.New("attempt already bound to a different kubern
 // ErrNoAttempt reports that no attempt row owns the given Kubernetes Job name.
 var ErrNoAttempt = errors.New("no attempt owns kubernetes job")
 
+// ErrAttemptOwnership reports that a Kubernetes Job name was reused by an
+// object whose immutable UID does not match the attempt that owns the name.
+var ErrAttemptOwnership = errors.New("kubernetes job uid does not own attempt")
+
 // sourceModeKubernetes is the source a ScheduledJob CR is projected from.
 // Check definitions materialize under the check domain's SourceModeCheck; the
 // revision-sourced listings read both (see revisionSourceModes).
@@ -845,11 +849,10 @@ INSERT INTO job_run_attempts_control_plane
    kubernetes_job_uid, observed_resource_version, started_at)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 ON CONFLICT (run_id, attempt_number) DO UPDATE
-  SET kubernetes_job_uid = COALESCE(NULLIF(EXCLUDED.kubernetes_job_uid,''),
-                                     job_run_attempts_control_plane.kubernetes_job_uid),
-      observed_resource_version = COALESCE(NULLIF(EXCLUDED.observed_resource_version,''),
+  SET observed_resource_version = COALESCE(NULLIF(EXCLUDED.observed_resource_version,''),
                                      job_run_attempts_control_plane.observed_resource_version)
   WHERE job_run_attempts_control_plane.kubernetes_job_name = EXCLUDED.kubernetes_job_name
+    AND job_run_attempts_control_plane.kubernetes_job_uid = EXCLUDED.kubernetes_job_uid
 RETURNING id`
 
 const advanceRunForAttemptSQL = `
@@ -875,7 +878,7 @@ RETURNING actor`
 func (r *ControlPlaneRepository) CreateAttemptForTenant(
 	ctx context.Context, tenantID string, runID int64, attempt jobrun.Attempt, runPhase jobrun.Phase,
 ) error {
-	if attempt.Number < 1 || attempt.KubernetesJobName == "" {
+	if attempt.Number < 1 || attempt.KubernetesJobName == "" || attempt.KubernetesJobUID == "" {
 		return fmt.Errorf("attempt identity is required")
 	}
 	return r.WithTenantTransaction(ctx, tenantID, func(ctx context.Context, tx *sql.Tx) error {
@@ -931,27 +934,40 @@ func (r *ControlPlaneRepository) CreateAttemptForTenant(
 // removes a second copy of the terminal set from this statement.
 const updateAttemptPhaseSQL = `
 WITH prior AS (
-  SELECT id, run_id, attempt_number, phase AS prior_phase
+  SELECT id, run_id, attempt_number, phase AS prior_phase, kubernetes_job_uid
   FROM job_run_attempts_control_plane
   WHERE kubernetes_job_name=$1 AND tenant_id=$2
   FOR UPDATE
+), updated AS (
+  UPDATE job_run_attempts_control_plane a
+  SET phase=$3,
+      observed_resource_version = COALESCE(NULLIF($5,''), a.observed_resource_version),
+      completed_at = CASE WHEN $6 AND a.completed_at IS NULL
+                          THEN $7::timestamptz ELSE a.completed_at END
+  FROM prior
+  WHERE a.id=prior.id
+    AND (($3='Canceled' AND $4='') OR
+         (NULLIF($4,'') IS NOT NULL AND prior.kubernetes_job_uid=$4))
+  RETURNING a.id, a.run_id, a.attempt_number, prior.prior_phase, a.phase,
+            (SELECT r.actor FROM job_run_control_plane r WHERE r.id = prior.run_id),
+            TRUE AS ownership_match
 )
-UPDATE job_run_attempts_control_plane a
-SET phase=$3,
-    kubernetes_job_uid = COALESCE(NULLIF($4,''), a.kubernetes_job_uid),
-    observed_resource_version = COALESCE(NULLIF($5,''), a.observed_resource_version),
-    completed_at = CASE WHEN $6 AND a.completed_at IS NULL
-                        THEN $7::timestamptz ELSE a.completed_at END
+SELECT * FROM updated
+UNION ALL
+SELECT prior.id, prior.run_id, prior.attempt_number, prior.prior_phase,
+       prior.prior_phase,
+       (SELECT r.actor FROM job_run_control_plane r WHERE r.id = prior.run_id),
+       FALSE AS ownership_match
 FROM prior
-WHERE a.kubernetes_job_name=$1 AND a.tenant_id=$2
-RETURNING a.id, a.run_id, a.attempt_number, prior.prior_phase, a.phase,
-          (SELECT r.actor FROM job_run_control_plane r WHERE r.id = prior.run_id)`
+WHERE NOT EXISTS (SELECT 1 FROM updated)`
 
 // UpdateAttemptPhase writes an observed Kubernetes Job phase back onto the
 // attempt and reports which run and attempt it belongs to. Terminal phases stamp
 // completed_at exactly once. ErrNoAttempt is returned when no attempt owns that
 // Job name, so a Job left over from a previous installation is not mistaken for
-// this attempt's.
+// this attempt's. ErrAttemptOwnership is returned when the name matches but the
+// observed immutable UID does not. The cancellation path is the sole exception:
+// it updates after deleting the Job and therefore has no observed UID.
 //
 // A resync that observes the phase the attempt already has fills in observed
 // identity but changes nothing the trail needs, so it records nothing: an audit
@@ -964,20 +980,24 @@ func (r *ControlPlaneRepository) UpdateAttemptPhase(
 	}
 	err = r.WithTenantTransaction(ctx, tenantID, func(ctx context.Context, tx *sql.Tx) error {
 		var (
-			attemptID  int64
-			priorPhase string
-			newPhase   string
-			runActor   string
+			attemptID   int64
+			priorPhase  string
+			newPhase    string
+			runActor    string
+			ownsAttempt bool
 		)
 		scanErr := tx.QueryRowContext(ctx, updateAttemptPhaseSQL,
 			jobName, tenantID, phase, jobUID, resourceVersion,
 			jobrun.Terminal(jobrun.Phase(phase)), r.now().UTC(),
-		).Scan(&attemptID, &runID, &attemptNumber, &priorPhase, &newPhase, &runActor)
+		).Scan(&attemptID, &runID, &attemptNumber, &priorPhase, &newPhase, &runActor, &ownsAttempt)
 		if errors.Is(scanErr, sql.ErrNoRows) {
 			return ErrNoAttempt
 		}
 		if scanErr != nil {
 			return scanErr
+		}
+		if !ownsAttempt {
+			return ErrAttemptOwnership
 		}
 		if priorPhase == newPhase {
 			return nil

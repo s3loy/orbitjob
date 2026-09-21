@@ -68,6 +68,10 @@ kubectl -n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80 &
 helm upgrade --install orbitjob charts/orbitjob \
   --namespace orbitjob-system --create-namespace \
   -f my-values.yaml
+
+# 若 values 文件使用本地开发镜像，改用已发布的正式镜像时覆盖 tag 和拉取策略：
+#   --set-string global.imageTag=v0.2.1 \
+#   --set-string global.imagePullPolicy=IfNotPresent
 ```
 
 `operator.namespaceTenants` 必填，是 namespace 到 tenant 的映射。

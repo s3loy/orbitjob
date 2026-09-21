@@ -767,6 +767,10 @@ func TestCreateAttemptForTenant(t *testing.T) {
 			jobrun.Attempt{Number: 1}, jobrun.CreatingAttempt); err == nil {
 			t.Fatal("an attempt with no Kubernetes Job name accepted")
 		}
+		if err := repo.CreateAttemptForTenant(context.Background(), "default", 77,
+			jobrun.Attempt{Number: 1, KubernetesJobName: "oj-nightly-1"}, jobrun.CreatingAttempt); err == nil {
+			t.Fatal("an attempt with no Kubernetes Job UID accepted")
+		}
 	})
 }
 
@@ -776,8 +780,8 @@ func TestUpdateAttemptPhase(t *testing.T) {
 		expectControlPlaneTx(mock, "default")
 		mock.ExpectQuery("WITH prior").
 			WithArgs("oj-nightly-1", "default", "Succeeded", "uid-1", "rv-2", true, sqlmock.AnyArg()).
-			WillReturnRows(sqlmock.NewRows([]string{"id", "run_id", "attempt_number", "prior_phase", "phase", "actor"}).
-				AddRow(5, 77, 1, "Running", "Succeeded", "scheduler"))
+			WillReturnRows(sqlmock.NewRows([]string{"id", "run_id", "attempt_number", "prior_phase", "phase", "actor", "ownership_match"}).
+				AddRow(5, 77, 1, "Running", "Succeeded", "scheduler", true))
 		expectControlPlaneAudit(mock, "scheduler")
 		mock.ExpectCommit()
 
@@ -794,15 +798,30 @@ func TestUpdateAttemptPhase(t *testing.T) {
 		repo, mock := newControlPlaneRepoMock(t)
 		expectControlPlaneTx(mock, "default")
 		mock.ExpectQuery("WITH prior").
-			WillReturnRows(sqlmock.NewRows([]string{"id", "run_id", "attempt_number", "prior_phase", "phase", "actor"}).
-				AddRow(5, 77, 1, "Running", "Running", "scheduler"))
+			WillReturnRows(sqlmock.NewRows([]string{"id", "run_id", "attempt_number", "prior_phase", "phase", "actor", "ownership_match"}).
+				AddRow(5, 77, 1, "Running", "Running", "scheduler", true))
 		mock.ExpectCommit()
 
-		if _, _, err := repo.UpdateAttemptPhase(context.Background(), "default", "oj-nightly-1", "Running", "", "rv-3"); err != nil {
+		if _, _, err := repo.UpdateAttemptPhase(context.Background(), "default", "oj-nightly-1", "Running", "uid-1", "rv-3"); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if err := mock.ExpectationsWereMet(); err != nil {
 			t.Fatalf("unmet expectations: %v", err)
+		}
+	})
+
+	t.Run("a replacement job with the same name is refused", func(t *testing.T) {
+		repo, mock := newControlPlaneRepoMock(t)
+		expectControlPlaneTx(mock, "default")
+		mock.ExpectQuery("WITH prior").
+			WithArgs("oj-nightly-1", "default", "Running", "replacement-uid", "rv-4", false, sqlmock.AnyArg()).
+			WillReturnRows(sqlmock.NewRows([]string{"id", "run_id", "attempt_number", "prior_phase", "phase", "actor", "ownership_match"}).
+				AddRow(5, 77, 1, "CreatingAttempt", "CreatingAttempt", "scheduler", false))
+		mock.ExpectRollback()
+
+		_, _, err := repo.UpdateAttemptPhase(context.Background(), "default", "oj-nightly-1", "Running", "replacement-uid", "rv-4")
+		if !errors.Is(err, ErrAttemptOwnership) {
+			t.Fatalf("got %v, want ErrAttemptOwnership", err)
 		}
 	})
 

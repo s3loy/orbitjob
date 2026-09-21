@@ -15,7 +15,7 @@ func TestValidateReleaseVersion(t *testing.T) {
 		{name: "numeric prerelease zero", value: "v1.2.3-0", valid: true},
 		{name: "alphanumeric prerelease", value: "v1.2.3-rc.1", valid: true},
 		{name: "alphanumeric leading zero", value: "v1.2.3-alpha-01", valid: true},
-		{name: "build metadata", value: "v1.2.3+build.01", valid: true},
+		{name: "build metadata", value: "v1.2.3+build.01", valid: false},
 		{name: "missing prefix", value: "1.2.3", valid: false},
 		{name: "invalid version", value: "vfoo", valid: false},
 		{name: "major leading zero", value: "v01.2.3", valid: false},

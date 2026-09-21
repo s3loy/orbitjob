@@ -281,11 +281,11 @@ func TestUpdateAttemptPhase_DBError(t *testing.T) {
 	repo, mock := newControlPlaneRepoMock(t)
 	expectControlPlaneTx(mock, "default")
 	mock.ExpectQuery("WITH prior").
-		WithArgs("oj-nightly-1", "default", "Running", "", "rv-1", false, sqlmock.AnyArg()).
+		WithArgs("oj-nightly-1", "default", "Running", "uid-1", "rv-1", false, sqlmock.AnyArg()).
 		WillReturnError(errors.New("db down"))
 	mock.ExpectRollback()
 
-	if _, _, err := repo.UpdateAttemptPhase(context.Background(), "default", "oj-nightly-1", "Running", "", "rv-1"); err == nil {
+	if _, _, err := repo.UpdateAttemptPhase(context.Background(), "default", "oj-nightly-1", "Running", "uid-1", "rv-1"); err == nil {
 		t.Fatal("expected error")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -300,8 +300,8 @@ func TestUpdateAttemptPhase_TerminalObservationStampsCompletedAtOnce(t *testing.
 	// Failed and Canceled.
 	mock.ExpectQuery("WITH prior").
 		WithArgs("oj-nightly-1", "default", "Failed", "uid-1", "", true, sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "run_id", "attempt_number", "prior_phase", "phase", "actor"}).
-			AddRow(5, 77, 1, "Running", "Failed", "scheduler"))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "run_id", "attempt_number", "prior_phase", "phase", "actor", "ownership_match"}).
+			AddRow(5, 77, 1, "Running", "Failed", "scheduler", true))
 	expectControlPlaneAudit(mock, "scheduler")
 	mock.ExpectCommit()
 
@@ -317,13 +317,13 @@ func TestUpdateAttemptPhase_NonTerminalObservationSkipsCompletedAt(t *testing.T)
 	repo, mock := newControlPlaneRepoMock(t)
 	expectControlPlaneTx(mock, "default")
 	mock.ExpectQuery("WITH prior").
-		WithArgs("oj-nightly-1", "default", "Running", "", "rv-2", false, sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "run_id", "attempt_number", "prior_phase", "phase", "actor"}).
-			AddRow(5, 77, 1, "CreatingAttempt", "Running", "scheduler"))
+		WithArgs("oj-nightly-1", "default", "Running", "uid-1", "rv-2", false, sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "run_id", "attempt_number", "prior_phase", "phase", "actor", "ownership_match"}).
+			AddRow(5, 77, 1, "CreatingAttempt", "Running", "scheduler", true))
 	expectControlPlaneAudit(mock, "scheduler")
 	mock.ExpectCommit()
 
-	runID, attemptNumber, err := repo.UpdateAttemptPhase(context.Background(), "default", "oj-nightly-1", "Running", "", "rv-2")
+	runID, attemptNumber, err := repo.UpdateAttemptPhase(context.Background(), "default", "oj-nightly-1", "Running", "uid-1", "rv-2")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

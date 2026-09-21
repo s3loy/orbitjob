@@ -16,7 +16,7 @@ they never participate in the required merge-check set.
 | Benchmark (`benchmark.yml`) | push, PR → `main` | push stores `bench.txt` per commit; PR posts a comparison comment | benchmark history (committed by the workflow) |
 | Load Test (`loadtest.yml`) | manual | advisory end-to-end evidence against a real kind installation; never a merge gate | `loadtest-<profile>-<run_id>` artifact (14 days) + run-page job summary |
 | Pre-release Images (`prerelease.yml`) | push to `dev`, manual | quality gate, then five images pushed to GHCR as `rc-<run>-<sha>` plus a full-success `rc` alias; no repository tag is created | published `rc` images |
-| Release (`release.yml`) | tag `v*`, manual | resolves and checks out the tagged commit, runs the quality gate, publishes five versioned images, packages the chart, then moves all `latest` aliases only after full success | `helm-chart` artifact (90 days), published images |
+| Release (`release.yml`) | tag `v*` | requires the tag to resolve to the current `main` commit and all five version tags to be unused, runs the quality and Helm gates, publishes those versioned images once, and packages the chart; mutable `latest` aliases are not published | `helm-chart` artifact (90 days), published images |
 
 The five image targets — `admin-api`, `scheduler`, `operator`, `migrate`, `bootstrap` — are defined once in the Makefile (`DOCKER_COMPONENTS`). CI parses that list, so the PR check and the dev loop (`make docker-build`) cannot drift.
 
@@ -35,10 +35,11 @@ by an operator and are not required CI.
 ```bash
 gh workflow run loadtest.yml -f profile=standard   # ad-hoc load profile
 gh workflow run integration.yml                    # re-run integration suites
-gh workflow run release.yml -f tag=v0.2.2          # re-release an existing tag
 ```
 
-The Actions UI offers the same under **Run workflow**.
+The Actions UI offers the same manual triggers. Formal releases are tag-push
+only: a version is consumed once any release image exists, so a failed partial
+publication must use a new version rather than overwrite an existing tag.
 
 ## Artifacts
 

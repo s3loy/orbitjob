@@ -151,7 +151,7 @@ jobs:
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          run_dir="$(ls -1dt test/load/runs/*/ 2>/dev/null | head -1)"
+          run_dir="$(find test/load/runs -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p/\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2-)"
           verdict="none (job ended before the verifier ran)"
           if [ -n "$run_dir" ] && [ -f "${run_dir}result.json" ]; then
             verdict="$(jq -r '.verdict // "unknown"' "${run_dir}result.json")"

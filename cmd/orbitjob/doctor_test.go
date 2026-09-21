@@ -12,17 +12,19 @@ import (
 // including the leader lease and can-i answers.
 func doctorTestKube(workflowCRDs bool) *fakeKube {
 	f := healthyFakeKube()
+	f.commands["get deployment orbitjob-operator -n orbitjob-system"] =
+		`{"spec":{"replicas":1,"template":{"spec":{"containers":[{"name":"operator","env":[{"name":"OPERATOR_NAMESPACE_TENANTS","value":"team-a=tenant-a"}]}]}}},"status":{"readyReplicas":1,"replicas":1}}`
 	f.commands["get lease orbitjob-operator-singleton -n orbitjob-system"] =
 		`{"spec":{"holderIdentity":"orbitjob-operator-7f4954869d-rrj4j"}}`
 	f.commands["get secret bootstrap-api-key -n orbitjob-system"] =
 		`{"data":{"api-key":"ZHVtbXk="}}` // decodes to dummy
-	f.commands["auth can-i create jobruns.workloads.orbitjob.io -n orbitjob-tasks"] = "yes\n"
-	f.commands["auth can-i list jobruns.workloads.orbitjob.io -n orbitjob-tasks"] = "yes\n"
+	f.commands["auth can-i create jobruns.workloads.orbitjob.io -n team-a"] = "yes\n"
+	f.commands["auth can-i list jobruns.workloads.orbitjob.io -n team-a"] = "yes\n"
 	if workflowCRDs {
 		f.commands["get crd workflowjobs.workloads.orbitjob.io"] = "customresourcedefinition.apiextensions.k8s.io/workflowjobs.workloads.orbitjob.io\n"
 		f.commands["get crd workflowruns.workloads.orbitjob.io"] = "customresourcedefinition.apiextensions.k8s.io/workflowruns.workloads.orbitjob.io\n"
-		f.commands["auth can-i list workflowjobs.workloads.orbitjob.io -n orbitjob-tasks"] = "yes\n"
-		f.commands["auth can-i list workflowruns.workloads.orbitjob.io -n orbitjob-tasks"] = "yes\n"
+		f.commands["auth can-i list workflowjobs.workloads.orbitjob.io -n team-a"] = "yes\n"
+		f.commands["auth can-i list workflowruns.workloads.orbitjob.io -n team-a"] = "yes\n"
 	} else {
 		f.commands["get crd workflowjobs.workloads.orbitjob.io"] = "NOTFOUND"
 		f.commands["get crd workflowruns.workloads.orbitjob.io"] = "NOTFOUND"
@@ -66,8 +68,9 @@ func TestDoctorHappyPathWithoutEnvKey(t *testing.T) {
 		"[OK] API key: resolved from cluster secret bootstrap-api-key",
 		"[OK] admin API: /api/v1/tenants 200 (1 tenants)",
 		"[OK] leader lease orbitjob-operator-singleton: held by orbitjob-operator-7f4954869d-rrj4j",
-		"[OK] RBAC orbitjob-tasks: can-i create jobruns.workloads.orbitjob.io",
-		"WARN RBAC orbitjob-tasks: workflowruns.workloads.orbitjob.io not installed, can-i skipped",
+		"[OK] tenant namespaces: discovered team-a",
+		"[OK] RBAC team-a: can-i create jobruns.workloads.orbitjob.io",
+		"WARN RBAC team-a: workflowruns.workloads.orbitjob.io not installed, can-i skipped",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("doctor output missing %q in:\n%s", want, joined)
@@ -138,7 +141,7 @@ func TestDoctorSecretUnreadableFailsClearly(t *testing.T) {
 func TestDoctorReportsDeniedCanI(t *testing.T) {
 	t.Setenv("ORBITJOB_API_KEY", "otj_k")
 	f := doctorTestKube(false)
-	f.commands["auth can-i create jobruns.workloads.orbitjob.io -n orbitjob-tasks"] = "no\n"
+	f.commands["auth can-i create jobruns.workloads.orbitjob.io -n team-a"] = "no\n"
 	withFakeKube(t, func() kubeRunner { return f })
 
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -152,7 +155,7 @@ func TestDoctorReportsDeniedCanI(t *testing.T) {
 			t.Errorf("doctor with denied can-i exit = %d, want %d", got, exitGeneral)
 		}
 	})
-	if !strings.Contains(out, "[FAIL] RBAC orbitjob-tasks: can-i create jobruns.workloads.orbitjob.io = no") {
+	if !strings.Contains(out, "[FAIL] RBAC team-a: can-i create jobruns.workloads.orbitjob.io = no") {
 		t.Fatalf("denied can-i not reported:\n%s", out)
 	}
 }

@@ -34,9 +34,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - User workload Pods no longer receive a projected Kubernetes service-account
   token, and the operator's Kubernetes permissions are limited to the tenant
   namespaces it actually watches.
-- Manual releases now resolve an existing tag to one immutable commit; all
-  artifacts use that commit, and moving-image aliases update only after every
-  versioned image and the Helm chart have succeeded.
+- Formal releases require a new tag on the current `main` commit and refuse to
+  overwrite any existing versioned image tag; mutable aliases are not
+  published.
+- Attempt observations require the immutable Kubernetes Job UID recorded when
+  the attempt was created, so a replacement Job cannot mutate another
+  workload's ledger entry.
 - Load-test manifest generation now enforces the selected profile before
   writing output.
 - The operator no longer loses its apiserver watches to silent connection

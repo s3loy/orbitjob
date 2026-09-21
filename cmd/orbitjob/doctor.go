@@ -21,7 +21,7 @@ func doctorCommand(ctx context.Context, args []string) error {
 	fs.StringVar(&namespace, "namespace", "orbitjob-system", "namespace the chart release lives in")
 	fs.StringVar(&release, "release", "orbitjob", "helm release name of the install")
 	fs.StringVar(&monitoringNS, "monitoring-namespace", "monitoring", "namespace the monitoring release lives in")
-	fs.StringVar(&tenantNamespaces, "namespaces", "orbitjob-tasks", "comma-separated tenant namespaces to check RBAC in")
+	fs.StringVar(&tenantNamespaces, "namespaces", "", "comma-separated tenant namespaces to check RBAC in (default: discover from the operator deployment)")
 	help, err := parseArgs(fs, args, usageLine)
 	if err != nil {
 		return err
@@ -70,6 +70,16 @@ func doctorCommand(ctx context.Context, args []string) error {
 	lines = append(lines, installLines...)
 	if installFailed {
 		failed = true
+	}
+
+	if strings.TrimSpace(tenantNamespaces) == "" {
+		discovered, err := discoverTenantNamespaces(ctx, kube, namespace)
+		if err != nil {
+			add("[FAIL]", fmt.Sprintf("tenant namespaces: %v", err))
+		} else {
+			tenantNamespaces = strings.Join(discovered, ",")
+			add("[OK]", fmt.Sprintf("tenant namespaces: discovered %s", tenantNamespaces))
+		}
 	}
 
 	// Leader lease: the singleton loops must have a holder.
@@ -192,6 +202,44 @@ func splitNamespaces(list string) []string {
 		}
 	}
 	return out
+}
+
+// discoverTenantNamespaces reads the exact namespace keys the running operator
+// accepts. Keeping doctor tied to the deployed mapping avoids checking a stale
+// conventional namespace that the operator does not watch.
+func discoverTenantNamespaces(ctx context.Context, kube kubeRunner, namespace string) ([]string, error) {
+	decoded, err := kubeJSON(ctx, kube, "get", "deployment", "orbitjob-operator", "-n", namespace)
+	if err != nil {
+		return nil, fmt.Errorf("read operator deployment in namespace %s: %w", namespace, err)
+	}
+	spec, _ := decoded["spec"].(map[string]any)
+	template, _ := spec["template"].(map[string]any)
+	podSpec, _ := template["spec"].(map[string]any)
+	containers, _ := podSpec["containers"].([]any)
+	for _, item := range containers {
+		container, _ := item.(map[string]any)
+		env, _ := container["env"].([]any)
+		for _, raw := range env {
+			entry, _ := raw.(map[string]any)
+			if entry["name"] != "OPERATOR_NAMESPACE_TENANTS" {
+				continue
+			}
+			value, _ := entry["value"].(string)
+			var namespaces []string
+			for _, mapping := range strings.Split(value, ",") {
+				parts := strings.SplitN(strings.TrimSpace(mapping), "=", 2)
+				if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+					return nil, fmt.Errorf("operator deployment has malformed OPERATOR_NAMESPACE_TENANTS")
+				}
+				namespaces = append(namespaces, strings.TrimSpace(parts[0]))
+			}
+			if len(namespaces) == 0 {
+				return nil, fmt.Errorf("operator deployment has empty OPERATOR_NAMESPACE_TENANTS")
+			}
+			return namespaces, nil
+		}
+	}
+	return nil, fmt.Errorf("operator deployment has no OPERATOR_NAMESPACE_TENANTS")
 }
 
 // summarizeTenants reduces the tenants body to "N tenants" style detail.

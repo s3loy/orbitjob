@@ -89,9 +89,9 @@ Everything status checks, plus the API auth path, the leader lease, and RBAC:
 - `GET /api/v1/tenants` must answer 200;
 - the leader lease `orbitjob-operator-singleton` must have a holder;
 - per-namespace `kubectl auth can-i` for the JobRun custom resources, checked
-  in the namespaces passed via `--namespaces` (comma-separated, default
-  `orbitjob-tasks`); workflow resources are checked only once their CRDs are
-  installed.
+  in the namespaces passed via `--namespaces`; when omitted, `doctor` discovers
+  the keys of `OPERATOR_NAMESPACE_TENANTS` from the deployed operator. Workflow
+  resources are checked only once their CRDs are installed.
 
 `orbitjob doctor` exits non-zero on any `[FAIL]` line; `WARN` never fails it.
 Run it first — it is the one command that answers "is this install healthy,

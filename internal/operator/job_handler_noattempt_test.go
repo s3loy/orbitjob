@@ -50,3 +50,18 @@ func TestReconcileJobStillSurfacesOtherStoreErrors(t *testing.T) {
 		t.Fatal("expected a store failure other than ErrNoAttempt to surface")
 	}
 }
+
+func TestReconcileJobSurfacesAttemptOwnershipMismatch(t *testing.T) {
+	runs := &fakeRuns{observedErr: corepostgres.ErrAttemptOwnership}
+	rt := Runtime{
+		Runs:    runs,
+		Tenants: NamespaceTenantResolver{Tenants: map[string]string{"finance": "finance"}},
+	}
+	err := rt.ReconcileJob(context.Background(), observedJob(t, "oj-x-1-1", "Running"))
+	if !errors.Is(err, corepostgres.ErrAttemptOwnership) {
+		t.Fatalf("got %v, want ErrAttemptOwnership", err)
+	}
+	if len(runs.phases) != 0 {
+		t.Fatalf("no run phase may be written for a replacement Job, got %d", len(runs.phases))
+	}
+}

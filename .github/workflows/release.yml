@@ -1,17 +1,14 @@
 name: Release
 
-# A tag push triggers a release: verify, build every image, push to GHCR and Docker Hub, package the chart.
-# workflow_dispatch re-runs a release for a tag that already exists.
+# A tag push triggers a release: verify, build every versioned image, push to GHCR and Docker Hub, package the chart.
 on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: "Tag to release (must already exist, e.g. v0.2.2)"
-        required: true
-        type: string
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -64,20 +61,16 @@ jobs:
       - name: Resolve version
         id: version
         env:
-          # Passed through env so the workflow_dispatch input never lands in the shell script.
-          EVENT_NAME: ${{ github.event_name }}
-          INPUT_TAG: ${{ inputs.tag }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            version="$INPUT_TAG"
-          else
-            version="${GITHUB_REF_NAME}"
-          fi
+          version="${GITHUB_REF_NAME}"
           bash scripts/validate-release-version.sh "$version"
           sha="$(git rev-parse --verify "refs/tags/${version}^{commit}")" || {
             echo "tag does not exist or does not resolve to a commit: $version" >&2
             exit 1
           }
+          git fetch --no-tags origin "refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}"
+          bash scripts/validate-release-commit.sh "$sha" "origin/${DEFAULT_BRANCH}"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "releasing $version at $sha"
@@ -95,9 +88,57 @@ jobs:
             echo "::notice::DOCKERHUB_USERNAME / DOCKERHUB_TOKEN not set, pushing to GHCR only"
           fi
 
+  preflight:
+    name: Refuse existing version tags
+    needs: [resolve]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        if: needs.resolve.outputs.hub_enabled == 'true'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Require unused version tags
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          HUB_ENABLED: ${{ needs.resolve.outputs.hub_enabled }}
+          HUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+          set -eu
+          check_absent() {
+            reference="$1"
+            if output="$(docker buildx imagetools inspect "$reference" 2>&1)"; then
+              echo "release tag already exists and is immutable: $reference" >&2
+              exit 1
+            fi
+            if ! grep -Eiq 'not found|manifest unknown|no such manifest' <<<"$output"; then
+              printf '%s\n' "$output" >&2
+              echo "could not prove release tag is unused: $reference" >&2
+              exit 1
+            fi
+          }
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          for component in admin-api scheduler operator migrate bootstrap; do
+            check_absent "ghcr.io/${owner}/orbitjob-${component}:${VERSION}"
+            if [ "$HUB_ENABLED" = true ]; then
+              check_absent "docker.io/${HUB_USERNAME}/orbitjob-${component}:${VERSION}"
+            fi
+          done
+
   images:
     name: ${{ matrix.component }}
-    needs: [verify, resolve]
+    needs: [verify, resolve, preflight]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -182,41 +223,3 @@ jobs:
           name: helm-chart
           path: dist/*.tgz
           retention-days: 90
-
-  publish:
-    name: Move latest aliases
-    needs: [resolve, images, chart]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
-
-      - name: Log in to GHCR
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Log in to Docker Hub
-        if: needs.resolve.outputs.hub_enabled == 'true'
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Move latest aliases after the release succeeds
-        env:
-          VERSION: ${{ needs.resolve.outputs.version }}
-          HUB_ENABLED: ${{ needs.resolve.outputs.hub_enabled }}
-          HUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-        run: |
-          set -eu
-          owner="${GITHUB_REPOSITORY_OWNER,,}"
-          for component in admin-api scheduler operator migrate bootstrap; do
-            ghcr="ghcr.io/${owner}/orbitjob-${component}"
-            docker buildx imagetools create -t "${ghcr}:latest" "${ghcr}:${VERSION}"
-            if [ "$HUB_ENABLED" = true ]; then
-              hub="docker.io/${HUB_USERNAME}/orbitjob-${component}"
-              docker buildx imagetools create -t "${hub}:latest" "${hub}:${VERSION}"
-            fi
-          done
