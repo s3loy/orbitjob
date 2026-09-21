@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790000198482,
+  "lastUpdate": 1790006142205,
   "repoUrl": "https://github.com/s3loy/orbitjob",
   "entries": {
     "Benchmark": [
@@ -1344,6 +1344,678 @@ window.BENCHMARK_DATA = {
             "value": 0,
             "unit": "allocs/op",
             "extra": "13072690 times\n4 procs"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "109007497+s3loy@users.noreply.github.com",
+            "name": "s3loy7351",
+            "username": "s3loy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ee7537f511ae7556d5383896cb305e93e598d9d5",
+          "message": "Automate repository governance (#65)\n\nOrbitJob's merge and issue-triage paths still depended on maintainer\nmemory after the first release.\n\nThis adds structured issue forms and path-based area labels, and gives\nthe existing CI chain a single required pull-request gate. Push checks\nuse separate names so a successful dev build cannot satisfy the main PR\nruleset for the same commit.\n\nThe repository now requires up-to-date pull requests into main, resolved\nconversations, linear squash history, and the existing integration,\nlint, vulnerability, and dependency checks. Auto-merge, branch updates,\nbranch cleanup, and secret push protection are enabled.",
+          "timestamp": "2026-09-21T23:53:14+08:00",
+          "tree_id": "060764bfe3d842eb7aa5cc26d0f2db224fbb4f7d",
+          "url": "https://github.com/s3loy/orbitjob/commit/ee7537f511ae7556d5383896cb305e93e598d9d5"
+        },
+        "date": 1790006141624,
+        "tool": "go",
+        "benches": [
+          {
+            "name": "BenchmarkOccurrenceKey/check-source-uid (orbitjob/internal/core/domain/coordination)",
+            "value": 1398,
+            "unit": "ns/op\t     288 B/op\t       7 allocs/op",
+            "extra": "1000000 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkOccurrenceKey/check-source-uid (orbitjob/internal/core/domain/coordination) - ns/op",
+            "value": 1398,
+            "unit": "ns/op",
+            "extra": "1000000 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkOccurrenceKey/check-source-uid (orbitjob/internal/core/domain/coordination) - B/op",
+            "value": 288,
+            "unit": "B/op",
+            "extra": "1000000 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkOccurrenceKey/check-source-uid (orbitjob/internal/core/domain/coordination) - allocs/op",
+            "value": 7,
+            "unit": "allocs/op",
+            "extra": "1000000 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkOccurrenceKey/kubernetes-cr-uid (orbitjob/internal/core/domain/coordination)",
+            "value": 1695,
+            "unit": "ns/op\t     352 B/op\t       7 allocs/op",
+            "extra": "731229 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkOccurrenceKey/kubernetes-cr-uid (orbitjob/internal/core/domain/coordination) - ns/op",
+            "value": 1695,
+            "unit": "ns/op",
+            "extra": "731229 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkOccurrenceKey/kubernetes-cr-uid (orbitjob/internal/core/domain/coordination) - B/op",
+            "value": 352,
+            "unit": "B/op",
+            "extra": "731229 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkOccurrenceKey/kubernetes-cr-uid (orbitjob/internal/core/domain/coordination) - allocs/op",
+            "value": 7,
+            "unit": "allocs/op",
+            "extra": "731229 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkOccurrenceKey/long-namespaced-name (orbitjob/internal/core/domain/coordination)",
+            "value": 1680,
+            "unit": "ns/op\t     384 B/op\t       7 allocs/op",
+            "extra": "767569 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkOccurrenceKey/long-namespaced-name (orbitjob/internal/core/domain/coordination) - ns/op",
+            "value": 1680,
+            "unit": "ns/op",
+            "extra": "767569 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkOccurrenceKey/long-namespaced-name (orbitjob/internal/core/domain/coordination) - B/op",
+            "value": 384,
+            "unit": "B/op",
+            "extra": "767569 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkOccurrenceKey/long-namespaced-name (orbitjob/internal/core/domain/coordination) - allocs/op",
+            "value": 7,
+            "unit": "allocs/op",
+            "extra": "767569 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTransition/valid/single-edge (orbitjob/internal/core/domain/jobrun)",
+            "value": 36.36,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "28472172 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTransition/valid/single-edge (orbitjob/internal/core/domain/jobrun) - ns/op",
+            "value": 36.36,
+            "unit": "ns/op",
+            "extra": "28472172 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTransition/valid/single-edge (orbitjob/internal/core/domain/jobrun) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "28472172 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTransition/valid/single-edge (orbitjob/internal/core/domain/jobrun) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "28472172 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTransition/invalid/terminal-rewrite (orbitjob/internal/core/domain/jobrun)",
+            "value": 35.38,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "29216776 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTransition/invalid/terminal-rewrite (orbitjob/internal/core/domain/jobrun) - ns/op",
+            "value": 35.38,
+            "unit": "ns/op",
+            "extra": "29216776 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTransition/invalid/terminal-rewrite (orbitjob/internal/core/domain/jobrun) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "29216776 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTransition/invalid/terminal-rewrite (orbitjob/internal/core/domain/jobrun) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "29216776 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTransition/valid/full-lifecycle (orbitjob/internal/core/domain/jobrun)",
+            "value": 242.7,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "4989544 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTransition/valid/full-lifecycle (orbitjob/internal/core/domain/jobrun) - ns/op",
+            "value": 242.7,
+            "unit": "ns/op",
+            "extra": "4989544 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTransition/valid/full-lifecycle (orbitjob/internal/core/domain/jobrun) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "4989544 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTransition/valid/full-lifecycle (orbitjob/internal/core/domain/jobrun) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "4989544 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTransition/can-transition/full-matrix (orbitjob/internal/core/domain/jobrun)",
+            "value": 203.6,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "5850978 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTransition/can-transition/full-matrix (orbitjob/internal/core/domain/jobrun) - ns/op",
+            "value": 203.6,
+            "unit": "ns/op",
+            "extra": "5850978 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTransition/can-transition/full-matrix (orbitjob/internal/core/domain/jobrun) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "5850978 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTransition/can-transition/full-matrix (orbitjob/internal/core/domain/jobrun) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "5850978 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTransition/terminal/all-phases (orbitjob/internal/core/domain/jobrun)",
+            "value": 14.18,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "84971241 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTransition/terminal/all-phases (orbitjob/internal/core/domain/jobrun) - ns/op",
+            "value": 14.18,
+            "unit": "ns/op",
+            "extra": "84971241 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTransition/terminal/all-phases (orbitjob/internal/core/domain/jobrun) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "84971241 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTransition/terminal/all-phases (orbitjob/internal/core/domain/jobrun) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "84971241 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNormalizeCreate/valid/cron-schedule (orbitjob/internal/core/domain/check)",
+            "value": 13436,
+            "unit": "ns/op\t    6466 B/op\t      63 allocs/op",
+            "extra": "89041 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNormalizeCreate/valid/cron-schedule (orbitjob/internal/core/domain/check) - ns/op",
+            "value": 13436,
+            "unit": "ns/op",
+            "extra": "89041 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNormalizeCreate/valid/cron-schedule (orbitjob/internal/core/domain/check) - B/op",
+            "value": 6466,
+            "unit": "B/op",
+            "extra": "89041 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNormalizeCreate/valid/cron-schedule (orbitjob/internal/core/domain/check) - allocs/op",
+            "value": 63,
+            "unit": "allocs/op",
+            "extra": "89041 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNormalizeCreate/valid/interval-schedule (orbitjob/internal/core/domain/check)",
+            "value": 2387,
+            "unit": "ns/op\t     472 B/op\t      17 allocs/op",
+            "extra": "467888 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNormalizeCreate/valid/interval-schedule (orbitjob/internal/core/domain/check) - ns/op",
+            "value": 2387,
+            "unit": "ns/op",
+            "extra": "467888 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNormalizeCreate/valid/interval-schedule (orbitjob/internal/core/domain/check) - B/op",
+            "value": 472,
+            "unit": "B/op",
+            "extra": "467888 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNormalizeCreate/valid/interval-schedule (orbitjob/internal/core/domain/check) - allocs/op",
+            "value": 17,
+            "unit": "allocs/op",
+            "extra": "467888 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNormalizeCreate/invalid/malformed-cron (orbitjob/internal/core/domain/check)",
+            "value": 2744,
+            "unit": "ns/op\t    1080 B/op\t      36 allocs/op",
+            "extra": "415999 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNormalizeCreate/invalid/malformed-cron (orbitjob/internal/core/domain/check) - ns/op",
+            "value": 2744,
+            "unit": "ns/op",
+            "extra": "415999 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNormalizeCreate/invalid/malformed-cron (orbitjob/internal/core/domain/check) - B/op",
+            "value": 1080,
+            "unit": "B/op",
+            "extra": "415999 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNormalizeCreate/invalid/malformed-cron (orbitjob/internal/core/domain/check) - allocs/op",
+            "value": 36,
+            "unit": "allocs/op",
+            "extra": "415999 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNormalizeProbeConfig/valid/full-config (orbitjob/internal/core/domain/check)",
+            "value": 347.1,
+            "unit": "ns/op\t     152 B/op\t       2 allocs/op",
+            "extra": "3310320 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNormalizeProbeConfig/valid/full-config (orbitjob/internal/core/domain/check) - ns/op",
+            "value": 347.1,
+            "unit": "ns/op",
+            "extra": "3310320 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNormalizeProbeConfig/valid/full-config (orbitjob/internal/core/domain/check) - B/op",
+            "value": 152,
+            "unit": "B/op",
+            "extra": "3310320 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNormalizeProbeConfig/valid/full-config (orbitjob/internal/core/domain/check) - allocs/op",
+            "value": 2,
+            "unit": "allocs/op",
+            "extra": "3310320 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNormalizeProbeConfig/valid/url-only-defaults (orbitjob/internal/core/domain/check)",
+            "value": 258.6,
+            "unit": "ns/op\t     144 B/op\t       1 allocs/op",
+            "extra": "4664484 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNormalizeProbeConfig/valid/url-only-defaults (orbitjob/internal/core/domain/check) - ns/op",
+            "value": 258.6,
+            "unit": "ns/op",
+            "extra": "4664484 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNormalizeProbeConfig/valid/url-only-defaults (orbitjob/internal/core/domain/check) - B/op",
+            "value": 144,
+            "unit": "B/op",
+            "extra": "4664484 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNormalizeProbeConfig/valid/url-only-defaults (orbitjob/internal/core/domain/check) - allocs/op",
+            "value": 1,
+            "unit": "allocs/op",
+            "extra": "4664484 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNormalizeProbeConfig/invalid/bad-scheme (orbitjob/internal/core/domain/check)",
+            "value": 238.1,
+            "unit": "ns/op\t     192 B/op\t       2 allocs/op",
+            "extra": "5041328 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNormalizeProbeConfig/invalid/bad-scheme (orbitjob/internal/core/domain/check) - ns/op",
+            "value": 238.1,
+            "unit": "ns/op",
+            "extra": "5041328 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNormalizeProbeConfig/invalid/bad-scheme (orbitjob/internal/core/domain/check) - B/op",
+            "value": 192,
+            "unit": "B/op",
+            "extra": "5041328 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNormalizeProbeConfig/invalid/bad-scheme (orbitjob/internal/core/domain/check) - allocs/op",
+            "value": 2,
+            "unit": "allocs/op",
+            "extra": "5041328 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNormalizeProbeConfig/invalid/relative-url (orbitjob/internal/core/domain/check)",
+            "value": 146.3,
+            "unit": "ns/op\t     192 B/op\t       2 allocs/op",
+            "extra": "8032761 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNormalizeProbeConfig/invalid/relative-url (orbitjob/internal/core/domain/check) - ns/op",
+            "value": 146.3,
+            "unit": "ns/op",
+            "extra": "8032761 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNormalizeProbeConfig/invalid/relative-url (orbitjob/internal/core/domain/check) - B/op",
+            "value": 192,
+            "unit": "B/op",
+            "extra": "8032761 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNormalizeProbeConfig/invalid/relative-url (orbitjob/internal/core/domain/check) - allocs/op",
+            "value": 2,
+            "unit": "allocs/op",
+            "extra": "8032761 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBuildJob/name-within-dns-limit (orbitjob/internal/core/app/execution)",
+            "value": 1201,
+            "unit": "ns/op\t    2384 B/op\t       9 allocs/op",
+            "extra": "1000000 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBuildJob/name-within-dns-limit (orbitjob/internal/core/app/execution) - ns/op",
+            "value": 1201,
+            "unit": "ns/op",
+            "extra": "1000000 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBuildJob/name-within-dns-limit (orbitjob/internal/core/app/execution) - B/op",
+            "value": 2384,
+            "unit": "B/op",
+            "extra": "1000000 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBuildJob/name-within-dns-limit (orbitjob/internal/core/app/execution) - allocs/op",
+            "value": 9,
+            "unit": "allocs/op",
+            "extra": "1000000 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBuildJob/long-name-hashed (orbitjob/internal/core/app/execution)",
+            "value": 1703,
+            "unit": "ns/op\t    2720 B/op\t      13 allocs/op",
+            "extra": "692601 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBuildJob/long-name-hashed (orbitjob/internal/core/app/execution) - ns/op",
+            "value": 1703,
+            "unit": "ns/op",
+            "extra": "692601 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBuildJob/long-name-hashed (orbitjob/internal/core/app/execution) - B/op",
+            "value": 2720,
+            "unit": "B/op",
+            "extra": "692601 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBuildJob/long-name-hashed (orbitjob/internal/core/app/execution) - allocs/op",
+            "value": 13,
+            "unit": "allocs/op",
+            "extra": "692601 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTerminalOutcomeDerivation/is-good/availability-default (orbitjob/internal/core/app/checkobserve)",
+            "value": 5.939,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "199306994 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTerminalOutcomeDerivation/is-good/availability-default (orbitjob/internal/core/app/checkobserve) - ns/op",
+            "value": 5.939,
+            "unit": "ns/op",
+            "extra": "199306994 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTerminalOutcomeDerivation/is-good/availability-default (orbitjob/internal/core/app/checkobserve) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "199306994 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTerminalOutcomeDerivation/is-good/availability-default (orbitjob/internal/core/app/checkobserve) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "199306994 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTerminalOutcomeDerivation/is-good/latency-threshold (orbitjob/internal/core/app/checkobserve)",
+            "value": 75.25,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "15848330 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTerminalOutcomeDerivation/is-good/latency-threshold (orbitjob/internal/core/app/checkobserve) - ns/op",
+            "value": 75.25,
+            "unit": "ns/op",
+            "extra": "15848330 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTerminalOutcomeDerivation/is-good/latency-threshold (orbitjob/internal/core/app/checkobserve) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "15848330 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTerminalOutcomeDerivation/is-good/latency-threshold (orbitjob/internal/core/app/checkobserve) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "15848330 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTerminalOutcomeDerivation/is-good/status-criterion (orbitjob/internal/core/app/checkobserve)",
+            "value": 52.51,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "23149080 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTerminalOutcomeDerivation/is-good/status-criterion (orbitjob/internal/core/app/checkobserve) - ns/op",
+            "value": 52.51,
+            "unit": "ns/op",
+            "extra": "23149080 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTerminalOutcomeDerivation/is-good/status-criterion (orbitjob/internal/core/app/checkobserve) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "23149080 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTerminalOutcomeDerivation/is-good/status-criterion (orbitjob/internal/core/app/checkobserve) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "23149080 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTerminalOutcomeDerivation/is-good/unknown-producer-key (orbitjob/internal/core/app/checkobserve)",
+            "value": 253.7,
+            "unit": "ns/op\t      96 B/op\t       3 allocs/op",
+            "extra": "4719223 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTerminalOutcomeDerivation/is-good/unknown-producer-key (orbitjob/internal/core/app/checkobserve) - ns/op",
+            "value": 253.7,
+            "unit": "ns/op",
+            "extra": "4719223 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTerminalOutcomeDerivation/is-good/unknown-producer-key (orbitjob/internal/core/app/checkobserve) - B/op",
+            "value": 96,
+            "unit": "B/op",
+            "extra": "4719223 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTerminalOutcomeDerivation/is-good/unknown-producer-key (orbitjob/internal/core/app/checkobserve) - allocs/op",
+            "value": 3,
+            "unit": "allocs/op",
+            "extra": "4719223 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTerminalOutcomeDerivation/occurrence-run-id (orbitjob/internal/core/app/checkobserve)",
+            "value": 69.05,
+            "unit": "ns/op\t      48 B/op\t       1 allocs/op",
+            "extra": "17053552 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTerminalOutcomeDerivation/occurrence-run-id (orbitjob/internal/core/app/checkobserve) - ns/op",
+            "value": 69.05,
+            "unit": "ns/op",
+            "extra": "17053552 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTerminalOutcomeDerivation/occurrence-run-id (orbitjob/internal/core/app/checkobserve) - B/op",
+            "value": 48,
+            "unit": "B/op",
+            "extra": "17053552 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTerminalOutcomeDerivation/occurrence-run-id (orbitjob/internal/core/app/checkobserve) - allocs/op",
+            "value": 1,
+            "unit": "allocs/op",
+            "extra": "17053552 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCampaign (orbitjob/internal/platform/election)",
+            "value": 710.7,
+            "unit": "ns/op\t     301 B/op\t       7 allocs/op",
+            "extra": "1582234 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCampaign (orbitjob/internal/platform/election) - ns/op",
+            "value": 710.7,
+            "unit": "ns/op",
+            "extra": "1582234 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCampaign (orbitjob/internal/platform/election) - B/op",
+            "value": 301,
+            "unit": "B/op",
+            "extra": "1582234 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCampaign (orbitjob/internal/platform/election) - allocs/op",
+            "value": 7,
+            "unit": "allocs/op",
+            "extra": "1582234 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTryLock (orbitjob/internal/platform/election)",
+            "value": 3039,
+            "unit": "ns/op\t     255 B/op\t       7 allocs/op",
+            "extra": "523209 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTryLock (orbitjob/internal/platform/election) - ns/op",
+            "value": 3039,
+            "unit": "ns/op",
+            "extra": "523209 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTryLock (orbitjob/internal/platform/election) - B/op",
+            "value": 255,
+            "unit": "B/op",
+            "extra": "523209 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTryLock (orbitjob/internal/platform/election) - allocs/op",
+            "value": 7,
+            "unit": "allocs/op",
+            "extra": "523209 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTryLockContention/concurrency=2 (orbitjob/internal/platform/election)",
+            "value": 75.55,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "28312162 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTryLockContention/concurrency=2 (orbitjob/internal/platform/election) - ns/op",
+            "value": 75.55,
+            "unit": "ns/op",
+            "extra": "28312162 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTryLockContention/concurrency=2 (orbitjob/internal/platform/election) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "28312162 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTryLockContention/concurrency=2 (orbitjob/internal/platform/election) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "28312162 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTryLockContention/concurrency=4 (orbitjob/internal/platform/election)",
+            "value": 75.66,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "20413966 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTryLockContention/concurrency=4 (orbitjob/internal/platform/election) - ns/op",
+            "value": 75.66,
+            "unit": "ns/op",
+            "extra": "20413966 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTryLockContention/concurrency=4 (orbitjob/internal/platform/election) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "20413966 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTryLockContention/concurrency=4 (orbitjob/internal/platform/election) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "20413966 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTryLockContention/concurrency=8 (orbitjob/internal/platform/election)",
+            "value": 105.8,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "15071872 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTryLockContention/concurrency=8 (orbitjob/internal/platform/election) - ns/op",
+            "value": 105.8,
+            "unit": "ns/op",
+            "extra": "15071872 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTryLockContention/concurrency=8 (orbitjob/internal/platform/election) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "15071872 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTryLockContention/concurrency=8 (orbitjob/internal/platform/election) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "15071872 times\n4 procs"
           }
         ]
       }
