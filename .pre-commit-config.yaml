@@ -1,6 +1,5 @@
-# Local commit gates. One-time setup: `pip3 install pre-commit`, then
-# `make hooks` (runs `pre-commit install`; default_install_hook_types below
-# wires both the pre-commit and commit-msg hooks). See CONTRIBUTING.md,
+# Local commit gates. One-time setup: install pre-commit and ggshield,
+# authenticate ggshield, then run `make hooks`. See CONTRIBUTING.md,
 # "Local hooks".
 #
 # Discipline: every gate is staged-files-only. Gates that rewrite files
@@ -26,6 +25,16 @@ repos:
         args: ['--maxkb=1024']
       - id: check-merge-conflict
       - id: mixed-line-ending
+
+  # Scan staged changes before they become part of repository history. The
+  # token lives in the developer's GitGuardian config or environment, never in
+  # this repository.
+  - repo: https://github.com/GitGuardian/ggshield
+    rev: v1.54.0
+    hooks:
+      - id: ggshield
+        language_version: python3
+        stages: [pre-commit]
 
   - repo: local
     hooks:

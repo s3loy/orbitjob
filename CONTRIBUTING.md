@@ -131,10 +131,22 @@ Commits are gated locally by [pre-commit](https://pre-commit.com) hooks that run
 
 ```bash
 pip3 install pre-commit
+brew install ggshield
+ggshield auth login
 make hooks
 ```
 
-`make hooks` runs `pre-commit install`, which wires both the pre-commit and commit-msg hooks. No gate touches unstaged or unrelated files. The gates that rewrite files — trailing-whitespace, end-of-file-fixer, mixed-line-ending, go-fmt — exit non-zero after fixing: review the changes, `git add` them, and commit again.
+On macOS, Homebrew is the supported `ggshield` installation path; other
+platforms can use an installation method from the GitGuardian documentation.
+`ggshield auth login` stores a personal access token in the developer's local
+GitGuardian configuration. Never put that token in this repository or an env
+file under version control.
+
+`make hooks` runs `pre-commit install`, which wires both the pre-commit and
+commit-msg hooks. No gate touches unstaged or unrelated files. The gates that
+rewrite files — trailing-whitespace, end-of-file-fixer, mixed-line-ending,
+go-fmt — exit non-zero after fixing: review the changes, `git add` them, and
+commit again.
 
 | Gate | Triggers on | Fails when |
 |---|---|---|
@@ -142,6 +154,7 @@ make hooks
 | check-yaml | every commit | a YAML file does not parse (multi-doc allowed; chart templates excluded) |
 | check-added-large-files | every commit | a staged file exceeds 1 MB |
 | check-merge-conflict | every commit | conflict markers are staged |
+| ggshield | staged changes | GitGuardian detects a possible secret or the scan cannot complete |
 | go-fmt | staged `*.go` | `gofmt` rewrote a staged file (fixed; re-stage) |
 | go-vet | staged `*.go` | `go vet` flags a package containing staged files |
 | no-cjk | every commit | CJK characters appear outside `README.zh.md` |
