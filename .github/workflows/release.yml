@@ -122,7 +122,10 @@ jobs:
               echo "release tag already exists and is immutable: $reference" >&2
               exit 1
             fi
-            if ! grep -Eiq 'not found|manifest unknown|no such manifest' <<<"$output"; then
+            # Docker Hub reports a repository that has never been pushed as
+            # insufficient_scope even after a successful login. The first push
+            # creates it; an existing readable manifest still succeeds above.
+            if ! grep -Eiq 'not found|manifest unknown|no such manifest|pull access denied|insufficient_scope' <<<"$output"; then
               printf '%s\n' "$output" >&2
               echo "could not prove release tag is unused: $reference" >&2
               exit 1
