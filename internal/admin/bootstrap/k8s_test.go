@@ -36,7 +36,7 @@ func TestK8sSecretWriter_CreatesSecret(t *testing.T) {
 	}
 }
 
-func TestK8sSecretWriter_AlreadyExistsReturnsNil(t *testing.T) {
+func TestK8sSecretWriter_ConflictingExistingSecretIsRefused(t *testing.T) {
 	client := fake.NewSimpleClientset(
 		&corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{
@@ -48,8 +48,8 @@ func TestK8sSecretWriter_AlreadyExistsReturnsNil(t *testing.T) {
 	)
 	w := &K8sSecretWriter{Client: client, Namespace: "orbitjob-system"}
 
-	if err := w.Write(t.Context(), "bootstrap-api-key", map[string]string{"api-key": "otj_k8skey_000"}); err != nil {
-		t.Fatalf("write: %v", err)
+	if err := w.Write(t.Context(), "bootstrap-api-key", map[string]string{"api-key": "otj_k8skey_000"}); err == nil {
+		t.Fatal("conflicting secret was accepted")
 	}
 
 	got, err := client.CoreV1().Secrets("orbitjob-system").Get(t.Context(), "bootstrap-api-key", metav1.GetOptions{})
@@ -58,6 +58,22 @@ func TestK8sSecretWriter_AlreadyExistsReturnsNil(t *testing.T) {
 	}
 	if got.StringData["api-key"] != "existing" {
 		t.Fatalf("existing secret was overwritten: %s", got.StringData["api-key"])
+	}
+}
+
+func TestK8sSecretWriter_RetriesMatchingExistingSecret(t *testing.T) {
+	client := fake.NewSimpleClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "bootstrap-api-key", Namespace: "orbitjob-system"},
+		Data:       map[string][]byte{"api-key": []byte("otj_matching")},
+	})
+	writer := &K8sSecretWriter{Client: client, Namespace: "orbitjob-system"}
+	if err := writer.Write(t.Context(), "bootstrap-api-key", map[string]string{"api-key": "otj_matching"}); err != nil {
+		t.Fatalf("matching Secret retry failed: %v", err)
+	}
+	for _, action := range client.Actions() {
+		if action.GetVerb() != "create" && action.GetVerb() != "get" {
+			t.Fatalf("retry mutated existing Secret with %s", action.GetVerb())
+		}
 	}
 }
 

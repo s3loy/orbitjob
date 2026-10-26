@@ -19,6 +19,16 @@ func TestLocalFileSecretWriter_WritesFiles(t *testing.T) {
 	if string(got) != "otj_testkey_00" {
 		t.Fatalf("unexpected content: %s", got)
 	}
+	if err := w.Write(t.Context(), "bootstrap-api-key", map[string]string{"api-key": "otj_testkey_00"}); err != nil {
+		t.Fatalf("matching retry failed: %v", err)
+	}
+	if err := w.Write(t.Context(), "bootstrap-api-key", map[string]string{"api-key": "different"}); err == nil {
+		t.Fatal("conflicting retry overwrote the secret")
+	}
+	got, err = os.ReadFile(filepath.Join(dir, "bootstrap-api-key", "api-key"))
+	if err != nil || string(got) != "otj_testkey_00" {
+		t.Fatalf("conflict changed stored secret: %q err=%v", got, err)
+	}
 }
 
 func TestLocalFileSecretWriter_MkdirAllError(t *testing.T) {

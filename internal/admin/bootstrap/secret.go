@@ -38,9 +38,33 @@ func (w *LocalFileSecretWriter) Write(ctx context.Context, name string, data map
 	}
 	for k, v := range data {
 		path := filepath.Join(dir, k)
-		if err := os.WriteFile(path, []byte(v), 0o600); err != nil {
+		if existing, err := os.ReadFile(path); err == nil {
+			if string(existing) != v {
+				return fmt.Errorf("existing secret file %s has conflicting data", path)
+			}
+			continue
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("read secret file %s: %w", path, err)
+		}
+		if err := writeSecretFile(path, v); err != nil {
 			return fmt.Errorf("write secret file %s: %w", path, err)
 		}
 	}
 	return nil
+}
+
+func writeSecretFile(path, value string) error {
+	temp, err := os.CreateTemp(filepath.Dir(path), ".bootstrap-")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(temp.Name()) }()
+	if _, err := temp.WriteString(value); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(temp.Name(), path)
 }
