@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 	"errors"
+	"golang.org/x/crypto/bcrypt"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -310,7 +311,7 @@ func TestEnsureDefault_WritesSecretWhenKeyCreated(t *testing.T) {
 	}
 }
 
-func TestEnsureDefault_SkipsSecretWhenKeyExists(t *testing.T) {
+func TestEnsureDefault_RedeliversMatchingExistingKey(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("new mock: %v", err)
@@ -322,6 +323,11 @@ func TestEnsureDefault_SkipsSecretWhenKeyExists(t *testing.T) {
 		WithArgs(DefaultTenantID, defaultTenantSlug, defaultTenantName, defaultTenantStatus, DefaultAPIKeyID, sqlmock.AnyArg(), DefaultAPIKey[:12]).
 		WillReturnRows(sqlmock.NewRows([]string{"tenant_created", "key_created"}).AddRow(true, false))
 	mock.ExpectCommit()
+	hash, err := bcrypt.GenerateFromPassword([]byte(DefaultAPIKey), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectQuery("SELECT key_hash FROM orbitjob_auth_api_key").WithArgs(DefaultAPIKey[:12], DefaultAPIKeyID).WillReturnRows(sqlmock.NewRows([]string{"key_hash"}).AddRow(string(hash)))
 
 	writer := &fakeSecretWriter{}
 	res, err := EnsureDefault(t.Context(), db, Options{Writer: writer})
@@ -331,8 +337,8 @@ func TestEnsureDefault_SkipsSecretWhenKeyExists(t *testing.T) {
 	if res.KeyCreated {
 		t.Fatal("expected key not created")
 	}
-	if len(writer.calls) != 0 {
-		t.Fatalf("expected no writer calls, got %d", len(writer.calls))
+	if len(writer.calls) != 1 {
+		t.Fatalf("expected one writer call, got %d", len(writer.calls))
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet expectations: %v", err)

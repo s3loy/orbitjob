@@ -104,7 +104,19 @@ func EnsureDefault(ctx context.Context, db *sql.DB, opts Options) (Result, error
 		return Result{}, fmt.Errorf("commit bootstrap tx: %w", err)
 	}
 
-	if res.KeyCreated && opts.Writer != nil {
+	if opts.Writer != nil {
+		if !res.KeyCreated {
+			// A committed key and failed delivery are independently retryable.
+			// Never publish a newly supplied plaintext merely because its public
+			// prefix matches the existing credential.
+			var existingHash string
+			if err := db.QueryRowContext(ctx, `SELECT key_hash FROM orbitjob_auth_api_key($1) WHERE id = $2`, prefix, DefaultAPIKeyID).Scan(&existingHash); err != nil {
+				return Result{}, fmt.Errorf("verify existing bootstrap key: %w", err)
+			}
+			if err := bcrypt.CompareHashAndPassword([]byte(existingHash), []byte(key)); err != nil {
+				return Result{}, errors.New("configured bootstrap key does not match the existing credential")
+			}
+		}
 		if err := opts.Writer.Write(ctx, defaultSecretName, map[string]string{
 			defaultSecretDataKey: key,
 		}); err != nil {
