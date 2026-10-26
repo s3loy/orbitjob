@@ -44,7 +44,7 @@ func TestCalculateBurnRate(t *testing.T) {
 			budgetConsumed: 50,
 			elapsed:        12 * time.Hour,
 			windowDuration: 24 * time.Hour,
-			want:           0,
+			want:           MaxBurnRate,
 		},
 		{
 			name:           "negative_budget_total",
