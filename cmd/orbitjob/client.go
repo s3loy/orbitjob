@@ -168,12 +168,14 @@ type runItem struct {
 }
 
 type attemptItem struct {
-	ID                int64   `json:"id"`
-	AttemptNumber     int     `json:"attempt_number"`
-	Phase             string  `json:"phase"`
-	KubernetesJobName string  `json:"kubernetes_job_name"`
-	StartedAt         *string `json:"started_at"`
-	CompletedAt       *string `json:"completed_at"`
+	ID                     int64   `json:"id"`
+	AttemptNumber          int     `json:"attempt_number"`
+	Phase                  string  `json:"phase"`
+	KubernetesJobName      string  `json:"kubernetes_job_name"`
+	StartedAt              *string `json:"started_at"`
+	CompletedAt            *string `json:"completed_at"`
+	ExecutionUnknownSince  *string `json:"execution_unknown_since"`
+	ExecutionUnknownReason *string `json:"execution_unknown_reason"`
 }
 
 type runDetail struct {

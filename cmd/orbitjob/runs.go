@@ -147,9 +147,11 @@ func runsGetBody(ctx context.Context, client *apiClient, id int64) error {
 					a.KubernetesJobName,
 					timeOrDash(a.StartedAt),
 					timeOrDash(a.CompletedAt),
+					timeOrDash(a.ExecutionUnknownReason),
+					timeOrDash(a.ExecutionUnknownSince),
 				})
 			}
-			printTable([]string{"ATTEMPT", "PHASE", "K8S_JOB", "STARTED", "COMPLETED"}, rows)
+			printTable([]string{"ATTEMPT", "PHASE", "K8S_JOB", "STARTED", "COMPLETED", "UNKNOWN_REASON", "UNKNOWN_SINCE"}, rows)
 		}
 	})
 }
