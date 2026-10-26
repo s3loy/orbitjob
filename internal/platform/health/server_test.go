@@ -6,22 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
-)
-
-// Ports are distinct from the ones cmd/scheduler/main_edge_test.go uses, since
-// package test binaries can run concurrently.
-const (
-	testPortHealthz  = "21337"
-	testPortReadyz   = "21339"
-	testPortReadyzDB = "21340"
-	testPortMetrics  = "21341"
-	testPortShutdown = "21343"
 )
 
 func sqlDBForTest(t *testing.T, pingErr error) *sql.DB {
@@ -42,26 +33,31 @@ func sqlDBForTest(t *testing.T, pingErr error) *sql.DB {
 
 // startServer runs the health server and waits until it answers /healthz, so
 // no test depends on a fixed startup sleep.
-func startServer(t *testing.T, db *sql.DB, port, component string) (<-chan struct{}, context.CancelFunc) {
+func startServer(t *testing.T, db *sql.DB, component string) (string, <-chan struct{}, context.CancelFunc) {
 	t.Helper()
 
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseURL := "http://" + listener.Addr().String()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		StartComponentHealthServer(ctx, db, port, component)
+		serveComponentHealthServer(ctx, db, listener, component)
 	}()
 
 	deadline := time.Now().Add(3 * time.Second)
 	for {
-		resp, err := http.Get("http://127.0.0.1:" + port + "/healthz")
+		resp, err := http.Get(baseURL + "/healthz")
 		if err == nil {
 			_ = resp.Body.Close()
 			break
 		}
 		if time.Now().After(deadline) {
 			cancel()
-			t.Fatalf("health server on port %s did not become responsive: %v", port, err)
+			t.Fatalf("health server at %s did not become responsive: %v", baseURL, err)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
@@ -74,7 +70,7 @@ func startServer(t *testing.T, db *sql.DB, port, component string) (<-chan struc
 			t.Error("health server did not stop after context cancel")
 		}
 	})
-	return done, cancel
+	return baseURL, done, cancel
 }
 
 func getJSON(t *testing.T, url string) (int, http.Header, map[string]string) {
@@ -104,9 +100,9 @@ func TestHealthzReportsComponentStatus(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	startServer(t, db, testPortHealthz, "operator")
+	baseURL, _, _ := startServer(t, db, "operator")
 
-	status, header, payload := getJSON(t, "http://127.0.0.1:"+testPortHealthz+"/healthz")
+	status, header, payload := getJSON(t, baseURL+"/healthz")
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want %d", status, http.StatusOK)
 	}
@@ -124,9 +120,9 @@ func TestHealthzReportsComponentStatus(t *testing.T) {
 func TestReadyzReportsReadyWhenDatabasePings(t *testing.T) {
 	db := sqlDBForTest(t, nil)
 
-	startServer(t, db, testPortReadyz, "operator")
+	baseURL, _, _ := startServer(t, db, "operator")
 
-	status, _, payload := getJSON(t, "http://127.0.0.1:"+testPortReadyz+"/readyz")
+	status, _, payload := getJSON(t, baseURL+"/readyz")
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want %d", status, http.StatusOK)
 	}
@@ -141,9 +137,9 @@ func TestReadyzReportsReadyWhenDatabasePings(t *testing.T) {
 func TestReadyzReportsNotReadyWhenDatabaseUnreachable(t *testing.T) {
 	db := sqlDBForTest(t, errors.New("db gone"))
 
-	startServer(t, db, testPortReadyzDB, "operator")
+	baseURL, _, _ := startServer(t, db, "operator")
 
-	status, _, payload := getJSON(t, "http://127.0.0.1:"+testPortReadyzDB+"/readyz")
+	status, _, payload := getJSON(t, baseURL+"/readyz")
 	if status != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want %d", status, http.StatusServiceUnavailable)
 	}
@@ -162,9 +158,9 @@ func TestMetricsServesPrometheusExposition(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	startServer(t, db, testPortMetrics, "operator")
+	baseURL, _, _ := startServer(t, db, "operator")
 
-	resp, err := http.Get("http://127.0.0.1:" + testPortMetrics + "/metrics")
+	resp, err := http.Get(baseURL + "/metrics")
 	if err != nil {
 		t.Fatalf("GET /metrics failed: %v", err)
 	}
@@ -189,7 +185,7 @@ func TestServerStopsWhenContextIsCancelled(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	done, cancel := startServer(t, db, testPortShutdown, "operator")
+	_, done, cancel := startServer(t, db, "operator")
 	cancel()
 
 	select {

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -15,6 +16,15 @@ import (
 // Both endpoints return JSON (suitable for automation).
 // It blocks until ctx is cancelled, then shuts down gracefully.
 func StartComponentHealthServer(ctx context.Context, db *sql.DB, port, component string) {
+	listener, err := net.Listen("tcp", ":"+port)
+	if err != nil {
+		slog.Error(component+" health server error", "error", err)
+		return
+	}
+	serveComponentHealthServer(ctx, db, listener, component)
+}
+
+func serveComponentHealthServer(ctx context.Context, db *sql.DB, listener net.Listener, component string) {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -35,11 +45,17 @@ func StartComponentHealthServer(ctx context.Context, db *sql.DB, port, component
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ready", "component": component})
 	})
 
-	srv := &http.Server{Addr: ":" + port, Handler: mux}
+	srv := &http.Server{Addr: listener.Addr().String(), Handler: mux}
 	slog.Info(component+" health server listening", "addr", srv.Addr)
 
+	stopped := make(chan struct{})
+	defer close(stopped)
 	go func() {
-		<-ctx.Done()
+		select {
+		case <-ctx.Done():
+		case <-stopped:
+			return
+		}
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
@@ -47,7 +63,7 @@ func StartComponentHealthServer(ctx context.Context, db *sql.DB, port, component
 		}
 	}()
 
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
 		slog.Error(component+" health server error", "error", err)
 	}
 }
