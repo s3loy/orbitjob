@@ -46,7 +46,7 @@ spec:
             - name: health
               containerPort: {{ if eq $name "admin-api" }}8080{{ else }}6060{{ end }}
           readinessProbe:
-            httpGet: {path: /healthz, port: health}
+            httpGet: {path: {{ if eq $name "scheduler" }}/readyz{{ else }}/healthz{{ end }}, port: health}
             initialDelaySeconds: 5
             periodSeconds: 5
             timeoutSeconds: 5
