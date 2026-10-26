@@ -66,5 +66,18 @@ bench-*.err
 /orbitjob
 /smoke-test-results.md
 
+# Console dependencies and generated build/test output.
+/web/node_modules/
+/web/dist/
+/web/dist-pages/
+/web/coverage/
+/web/test-results/
+/web/test-results-*/
+/web/installed-test-results/
+/web/playwright-report/
+/web/*.tsbuildinfo
+
 # Load fixture TLS secret: generated at apply time by deploy/load/make-tls-cert.sh
 /deploy/load/fixture-tls-secret.yaml
+
+/web/installed-product-results/
