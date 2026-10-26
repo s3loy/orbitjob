@@ -117,6 +117,9 @@ func (c Controller) Run(ctx context.Context) error {
 	if c.Reconcile == nil {
 		return fmt.Errorf("reconcile handler is required")
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	log := c.Log
 	if log == nil {
 		log = slog.Default()

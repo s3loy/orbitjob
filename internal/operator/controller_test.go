@@ -424,4 +424,24 @@ func TestRunReturnsPromptlyWhenContextIsAlreadyCancelled(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("Run did not return for a cancelled context")
 	}
+	if actions := client.Actions(); len(actions) != 0 {
+		t.Fatalf("cancelled startup made Kubernetes requests: %v", actions)
+	}
+}
+
+func TestRunReturnsPromptlyWhenDeadlineAlreadyExpired(t *testing.T) {
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	controller := Controller{
+		Dynamic:   client,
+		Reconcile: func(context.Context, string, unstructured.Unstructured, bool) error { return nil },
+		Log:       discardLogger(),
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	if err := controller.Run(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Run returned %v, want context.DeadlineExceeded", err)
+	}
+	if actions := client.Actions(); len(actions) != 0 {
+		t.Fatalf("expired startup made Kubernetes requests: %v", actions)
+	}
 }
