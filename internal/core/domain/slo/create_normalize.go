@@ -2,6 +2,7 @@ package slo
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -22,7 +23,7 @@ func NormalizeCreate(in CreateInput) (CreateSpec, error) {
 		return CreateSpec{}, validation.New("sli_id", "sli_id must be positive")
 	}
 
-	if in.Target < MinTarget || in.Target > MaxTarget {
+	if math.IsNaN(in.Target) || math.IsInf(in.Target, 0) || in.Target < MinTarget || in.Target > MaxTarget {
 		return CreateSpec{}, validation.New("target", fmt.Sprintf("target must be in range [%.4f, %.1f]", MinTarget, MaxTarget))
 	}
 
@@ -44,6 +45,9 @@ func NormalizeCreate(in CreateInput) (CreateSpec, error) {
 		return CreateSpec{}, validation.New("window_duration", "window_duration must be at most 1 year")
 	}
 
+	if math.IsNaN(in.AlertFastBurnRate) || math.IsInf(in.AlertFastBurnRate, 0) || math.IsNaN(in.AlertSlowBurnRate) || math.IsInf(in.AlertSlowBurnRate, 0) {
+		return CreateSpec{}, validation.New("alert_fast_burn_rate", "burn thresholds must be finite")
+	}
 	fastBurn := in.AlertFastBurnRate
 	if fastBurn <= 0 {
 		fastBurn = DefaultFastBurnRate
