@@ -247,6 +247,52 @@ count_doc() { # <kind> <namespace-or-empty> <name> <facts-file>
     '$1 == "DOC" && $3 == k && $4 == ns && $5 == n { c++ } END { print c + 0 }' "$4"
 }
 
+# Bootstrap retries verify an existing delivery Secret after a database commit.
+# The writer has a fixed name; the legacy chart value never configured it.
+# A custom value must neither break delivery nor broaden Secret read access.
+bootstrap_secret_name=$(sed -n 's/^[[:space:]]*defaultSecretName[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
+  "$repo_root/internal/admin/bootstrap/bootstrap.go")
+expected_bootstrap_rule='apiGroups=[""];resources=["secrets"];verbs=["create"]
+apiGroups=[""];resources=["secrets"];resourceNames=["bootstrap-api-key"];verbs=["get"]'
+if [[ $bootstrap_secret_name != bootstrap-api-key ]]; then
+  fail "bootstrap-secret-target: bootstrap writer target is [$bootstrap_secret_name], expected bootstrap-api-key"
+else
+  ok "bootstrap-secret-target: writer uses the expected fixed delivery name"
+fi
+
+assert_bootstrap_rbac() { # <facts-file> <case>
+  local bootstrap_facts=$1 case_name=$2 bootstrap_rule bootstrap_ref bootstrap_subj
+  bootstrap_rule=$(awk -F'\t' -v ns="$release_ns" '
+    $1 == "DOC" && $3 == "Role" && $4 == ns && $5 == "orbitjob-bootstrap-secret" { d = $2 }
+    $1 == "RULE" && $2 == d { print $3 }' "$bootstrap_facts")
+  bootstrap_ref=$(awk -F'\t' -v ns="$release_ns" '
+    $1 == "DOC" && $3 == "RoleBinding" && $4 == ns && $5 == "orbitjob-bootstrap-secret" { d = $2 }
+    $1 == "RB" && $2 == d { print $3 }' "$bootstrap_facts")
+  bootstrap_subj=$(awk -F'\t' -v ns="$release_ns" '
+    $1 == "DOC" && $3 == "RoleBinding" && $4 == ns && $5 == "orbitjob-bootstrap-secret" { d = $2 }
+    $1 == "SUBJ" && $2 == d { print $3 "/" $4 "@" $5 }' "$bootstrap_facts")
+  if [[ $(count_doc Role "$release_ns" orbitjob-bootstrap-secret "$bootstrap_facts") == 1 && \
+    $(count_doc RoleBinding "$release_ns" orbitjob-bootstrap-secret "$bootstrap_facts") == 1 && \
+    $bootstrap_rule == "$expected_bootstrap_rule" && \
+    $bootstrap_ref == Role/orbitjob-bootstrap-secret && \
+    $bootstrap_subj == "ServiceAccount/orbitjob-bootstrap@$release_ns" ]]; then
+    ok "bootstrap-secret-rbac:$case_name grants create plus get of only bootstrap-api-key"
+  else
+    fail "bootstrap-secret-rbac:$case_name unexpected rules [$bootstrap_rule], roleRef [$bootstrap_ref] or subjects [$bootstrap_subj]"
+  fi
+}
+
+assert_bootstrap_rbac "$facts" default
+bootstrap_custom_manifest=$workdir/manifest-bootstrap-custom.yaml
+if helm template chart-assert "$chart_dir" --namespace "$release_ns" \
+  -f "$values_enabled" --set-string bootstrap.secretName=unrelated-secret \
+  >"$bootstrap_custom_manifest" 2>"$workdir/render-bootstrap-custom.err"; then
+  extract_facts "$bootstrap_custom_manifest" "$workdir/facts-bootstrap-custom.tsv"
+  assert_bootstrap_rbac "$workdir/facts-bootstrap-custom.tsv" deprecated-custom-value
+else
+  fail "bootstrap-secret-rbac: render failed with the deprecated custom value"
+fi
+
 # --- rendered contract with the operator enabled ---------------------------
 
 for name in orbitjob-admin-api orbitjob-scheduler orbitjob-operator; do
@@ -256,6 +302,36 @@ for name in orbitjob-admin-api orbitjob-scheduler orbitjob-operator; do
     ok "workloads-rendered: Deployment $name"
   else
     fail "workloads-rendered: expected exactly 1 Deployment $name, found $c"
+  fi
+done
+
+# Scheduler readiness must exercise its DB-backed endpoint. Admin currently
+# exposes only /healthz; liveness/startup stay independent of the database.
+for name in orbitjob-admin-api orbitjob-scheduler; do
+  readiness=/healthz
+  [[ $name == orbitjob-scheduler ]] && readiness=/readyz
+  probes=$(awk -v deployment="$name" '
+    /^kind: / { kind = $2; name = ""; probe = "" }
+    /^  name:/ && name == "" { name = $2 }
+    /^          (readinessProbe|livenessProbe|startupProbe):/ {
+      probe = $1; sub(/:$/, "", probe)
+    }
+    kind == "Deployment" && name == deployment && probe != "" && /httpGet:.*path:/ {
+      path = $0
+      sub(/^.*path:[[:space:]]*/, "", path)
+      sub(/[,}].*$/, "", path)
+      gsub(/[[:space:]]/, "", path)
+      print probe "=" path
+      probe = ""
+    }
+  ' "$manifest")
+  expected_probes="readinessProbe=$readiness
+livenessProbe=/healthz
+startupProbe=/healthz"
+  if [[ $probes == "$expected_probes" ]]; then
+    ok "health-probes:$name readiness $readiness; liveness/startup /healthz"
+  else
+    fail "health-probes:$name probes are [$probes], want [$expected_probes]"
   fi
 done
 
