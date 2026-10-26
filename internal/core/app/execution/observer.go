@@ -20,7 +20,7 @@ func ValidateOwnership(job *batchv1.Job, identity Identity) error {
 		return fmt.Errorf("job is required")
 	}
 	switch {
-	case job.Labels[LabelRunName] != identity.RunName:
+	case job.Labels[LabelRunName] != RunLabel(identity.RunName):
 		return fmt.Errorf("%w: run name %q", ErrForeignJob, job.Labels[LabelRunName])
 	case identity.RunUID != "" && job.Labels[LabelRunUID] != identity.RunUID:
 		return fmt.Errorf("%w: run uid %q", ErrForeignJob, job.Labels[LabelRunUID])
@@ -45,8 +45,15 @@ func IdentityFromJob(job *batchv1.Job) (Identity, error) {
 	if err != nil {
 		return Identity{}, fmt.Errorf("job %s has invalid attempt label: %w", job.Name, err)
 	}
+	name := job.Annotations[AnnotationRunName]
+	if name == "" {
+		name = labels[LabelRunName]
+	}
+	if labels[LabelRunName] != RunLabel(name) {
+		return Identity{}, ErrForeignJob
+	}
 	return Identity{
-		RunName:    labels[LabelRunName],
+		RunName:    name,
 		RunUID:     labels[LabelRunUID],
 		RevisionID: labels[LabelRevisionID],
 		Attempt:    attempt,

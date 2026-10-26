@@ -2,6 +2,7 @@ package execution
 
 import (
 	"crypto/sha256"
+	"encoding/base32"
 	"encoding/hex"
 	"fmt"
 	"strconv"
@@ -49,4 +50,13 @@ func atoi(s string) (int, error) {
 		return 0, fmt.Errorf("attempt must be positive, got %d", v)
 	}
 	return v, nil
+}
+
+// RunLabel keeps the full digest when a legal CR name exceeds label bounds.
+func RunLabel(name string) string {
+	if len(name) <= 63 {
+		return name
+	}
+	sum := sha256.Sum256([]byte(name))
+	return strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(sum[:]))
 }

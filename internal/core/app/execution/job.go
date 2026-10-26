@@ -10,10 +10,11 @@ import (
 // link from an observed Kubernetes object back to platform state, so they must
 // be written on create and treated as immutable.
 const (
-	LabelRunName    = "orbitjob.io/job-run"
-	LabelRunUID     = "orbitjob.io/job-run-uid"
-	LabelRevisionID = "orbitjob.io/revision-id"
-	LabelAttempt    = "orbitjob.io/attempt"
+	AnnotationRunName = "orbitjob.io/full-job-run"
+	LabelRunName      = "orbitjob.io/job-run"
+	LabelRunUID       = "orbitjob.io/job-run-uid"
+	LabelRevisionID   = "orbitjob.io/revision-id"
+	LabelAttempt      = "orbitjob.io/attempt"
 )
 
 // Identity ties a Kubernetes Job to the platform objects it belongs to. RunUID is
