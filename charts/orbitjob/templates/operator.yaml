@@ -22,7 +22,10 @@ spec:
           imagePullPolicy: {{ include "orbitjob.imagePullPolicy" (dict "root" . "image" .Values.operator.image) }}
           env:
             - name: OPERATOR_DSN
-              valueFrom: {secretKeyRef: {name: orbitjob-database, key: runtime-dsn}}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.database.secretName }}
+                  key: {{ .Values.database.keys.runtime }}
             - name: OPERATOR_NAMESPACE_TENANTS
               value: {{ include "orbitjob.operatorNamespaceTenants" . | quote }}
             - name: OPERATOR_SCHEDULE_INTERVAL_SEC
