@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -121,8 +122,8 @@ func parseArgs(fs *flag.FlagSet, args []string, usageLine string) (help bool, er
 // positiveID parses one numeric resource id from argv. The API's ids are
 // int64s; rejecting non-numeric input here keeps the 400 round trip away.
 func positiveID(value, kind, usageLine string) (int64, error) {
-	var id int64
-	if _, err := fmt.Sscanf(value, "%d", &id); err != nil || id < 1 {
+	id, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || id < 1 {
 		return 0, usageFail(fmt.Sprintf("%s  (%s must be a positive integer, got %q)", usageLine, kind, value))
 	}
 	return id, nil

@@ -43,8 +43,11 @@ func jobsList(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
+		items, err := decodeList[jobItem](data)
+		if err != nil {
+			return err
+		}
 		return printJSONOr(client, data, func() {
-			items, _ := decodeList[jobItem](data)
 			if len(items) == 0 {
 				_, _ = fmt.Fprintln(stdoutWriter, "no jobs")
 				return
@@ -82,8 +85,11 @@ func jobsGet(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	job, err := decodeOne[jobDetail](data)
+	if err != nil {
+		return err
+	}
 	return printJSONOr(client, data, func() {
-		job, _ := decodeOne[jobDetail](data)
 		printDetail([]detailField{
 			field("id", fmt.Sprintf("%d", job.ID)),
 			field("name", job.Name),
@@ -132,8 +138,11 @@ func jobsTrigger(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	ref, err := decodeOne[runRef](data)
+	if err != nil {
+		return err
+	}
 	return printJSONOr(client, data, func() {
-		ref, _ := decodeOne[runRef](data)
 		_, _ = fmt.Fprintf(stdoutWriter,
 			"[OK] triggered job %d (jobrun %s/%s, occurrence %s, phase %s)\n",
 			parsed.id, ref.Namespace, ref.Name, ref.OccurrenceKey, ref.Phase)

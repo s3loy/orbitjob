@@ -43,8 +43,11 @@ func checksList(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
+		items, err := decodeList[checkItem](data)
+		if err != nil {
+			return err
+		}
 		return printJSONOr(client, data, func() {
-			items, _ := decodeList[checkItem](data)
 			if len(items) == 0 {
 				_, _ = fmt.Fprintln(stdoutWriter, "no checks")
 				return
@@ -84,8 +87,11 @@ func checksGet(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	check, err := decodeOne[checkDetail](data)
+	if err != nil {
+		return err
+	}
 	return printJSONOr(client, data, func() {
-		check, _ := decodeOne[checkDetail](data)
 		schedule := check.ScheduleType
 		if check.CronExpr != nil && *check.CronExpr != "" {
 			schedule = "cron: " + *check.CronExpr

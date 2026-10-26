@@ -61,8 +61,8 @@ func TestStatusMappingOverHTTP(t *testing.T) {
 
 // TestConnectionRefusedGetsTheHint pins the port-forward hint and exit 1.
 func TestConnectionRefusedGetsTheHint(t *testing.T) {
-	// Port 1 on loopback is closed by construction; no server to race with.
-	err := runsList(context.Background(), []string{"--api-url", "http://127.0.0.1:1", "--api-key", "k"})
+	refuseAPIConnections(t)
+	err := runsList(context.Background(), []string{"--api-url", "http://api.invalid", "--api-key", "k"})
 	if err == nil {
 		t.Fatal("connection refused must error")
 	}
@@ -79,7 +79,8 @@ func TestConnectionRefusedGetsTheHint(t *testing.T) {
 
 // TestConnectionRefusedForCancel pins the same mapping on the mutating path.
 func TestConnectionRefusedForCancel(t *testing.T) {
-	err := runsCancel(context.Background(), []string{"7", "--api-url", "http://127.0.0.1:1", "--api-key", "k"})
+	refuseAPIConnections(t)
+	err := runsCancel(context.Background(), []string{"7", "--api-url", "http://api.invalid", "--api-key", "k"})
 	if got := exitCodeOfErr(t, err); got != exitGeneral {
 		t.Fatalf("cancel connection refused exit = %d, want %d", got, exitGeneral)
 	}
@@ -130,9 +131,10 @@ func TestServerErrorDoesNotLeakKey(t *testing.T) {
 // TestEnvKeyLeakGuard proves the key value never appears in CLI output, even
 // when the connection fails and the error carries detail.
 func TestEnvKeyLeakGuard(t *testing.T) {
+	refuseAPIConnections(t)
 	const secretKey = "otj_env_secret_never_print"
 	t.Setenv("ORBITJOB_API_KEY", secretKey)
-	t.Setenv("ORBITJOB_API_URL", "http://127.0.0.1:1")
+	t.Setenv("ORBITJOB_API_URL", "http://api.invalid")
 	t.Setenv("ORBITJOB_API", "")
 	err := runsList(context.Background(), nil)
 	if err == nil {
@@ -145,4 +147,17 @@ func TestEnvKeyLeakGuard(t *testing.T) {
 	if !strings.Contains(out, "[FAIL]") {
 		t.Fatalf("expected the connection [FAIL] hint: %s", out)
 	}
+}
+
+type refusedTransport struct{}
+
+func (refusedTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}
+}
+
+func refuseAPIConnections(t *testing.T) {
+	t.Helper()
+	previous := http.DefaultTransport
+	http.DefaultTransport = refusedTransport{}
+	t.Cleanup(func() { http.DefaultTransport = previous })
 }

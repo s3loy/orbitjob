@@ -251,11 +251,20 @@ type checkDetail struct {
 
 // decodeList unpacks an {"items": [...]} envelope.
 func decodeList[T any](data []byte) ([]T, error) {
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(data, &object); err != nil || object == nil || object["items"] == nil {
+		return nil, fatal("parse API response: expected an object with items")
+	}
 	var envelope struct {
 		Items []T `json:"items"`
 	}
 	if err := json.Unmarshal(data, &envelope); err != nil {
 		return nil, fatal("parse API response: %v", err)
+	}
+	for _, item := range envelope.Items {
+		if err := validateAPIItem(item); err != nil {
+			return nil, err
+		}
 	}
 	return envelope.Items, nil
 }
@@ -263,10 +272,48 @@ func decodeList[T any](data []byte) ([]T, error) {
 // decodeOne unpacks a single JSON object.
 func decodeOne[T any](data []byte) (T, error) {
 	var item T
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(data, &object); err != nil || object == nil {
+		return item, fatal("parse API response: expected a resource object")
+	}
 	if err := json.Unmarshal(data, &item); err != nil {
 		return item, fatal("parse API response: %v", err)
 	}
+	if err := validateAPIItem(item); err != nil {
+		return item, err
+	}
 	return item, nil
+}
+
+func validateAPIItem(value any) error {
+	var id int64
+	switch item := value.(type) {
+	case runRef:
+		// A just-created CR may not have status.phase yet. Its address and
+		// occurrence are required before a mutation can be reported successful.
+		if item.Namespace == "" || item.Name == "" || item.OccurrenceKey == "" {
+			return fatal("parse API response: run reference lacks namespace, name or occurrence_key")
+		}
+		return nil
+	case jobItem:
+		id = item.ID
+	case jobDetail:
+		id = item.ID
+	case checkItem:
+		id = item.ID
+	case checkDetail:
+		id = item.ID
+	case runItem:
+		id = item.ID
+	case runDetail:
+		id = item.ID
+	default:
+		return nil
+	}
+	if id <= 0 {
+		return fatal("parse API response: resource lacks a positive id")
+	}
+	return nil
 }
 
 // printJSONOr emits the raw response in --json mode, else hands the decoded

@@ -46,8 +46,11 @@ func runsList(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
+		items, err := decodeList[runItem](data)
+		if err != nil {
+			return err
+		}
 		return printJSONOr(client, data, func() {
-			items, _ := decodeList[runItem](data)
 			if len(items) == 0 {
 				_, _ = fmt.Fprintln(stdoutWriter, "no runs")
 				return
@@ -119,8 +122,11 @@ func runsGetBody(ctx context.Context, client *apiClient, id int64) error {
 	if err != nil {
 		return err
 	}
+	run, err := decodeOne[runDetail](data)
+	if err != nil {
+		return err
+	}
 	return printJSONOr(client, data, func() {
-		run, _ := decodeOne[runDetail](data)
 		printDetail([]detailField{
 			field("id", fmt.Sprintf("%d", run.ID)),
 			field("phase", run.Phase),
@@ -176,8 +182,11 @@ func runsCancel(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	ref, err := decodeOne[runRef](data)
+	if err != nil {
+		return err
+	}
 	return printJSONOr(client, data, func() {
-		ref, _ := decodeOne[runRef](data)
 		_, _ = fmt.Fprintf(stdoutWriter,
 			"[OK] cancel requested for run %d (jobrun %s/%s, occurrence %s, phase at request: %s)\n",
 			parsed.id, ref.Namespace, ref.Name, ref.OccurrenceKey, ref.Phase)
