@@ -24,7 +24,7 @@ import (
 )
 
 func TestLogSnapshotOwnershipAndBoundaries(t *testing.T) {
-	for _, scenario := range []string{"ready", "long-name", "annotation-mismatch", "job-replaced", "pod-foreign", "label-mismatch", "run-replaced", "wrong-tenant", "starting", "cleaned", "unavailable", "legacy-owner", "job-owner-foreign", "pod-replaced-during-read"} {
+	for _, scenario := range []string{"ready", "long-name", "annotation-mismatch", "job-replaced", "pod-foreign", "label-mismatch", "run-replaced", "wrong-tenant", "starting", "cleaned", "unavailable", "legacy-owner", "job-owner-foreign", "pod-replaced-during-read", "failed-without-pod", "no-pod", "inactive-failure-without-pod", "pod-vanished-during-read", "pod-vanished-after-read", "log-forbidden-with-failure"} {
 		t.Run(scenario, func(t *testing.T) {
 			controller := true
 			labels := map[string]string{execution.LabelRunName: "task-key", execution.LabelRunUID: "run-uid", execution.LabelRevisionID: "9", execution.LabelAttempt: "2"}
@@ -58,6 +58,13 @@ func TestLogSnapshotOwnershipAndBoundaries(t *testing.T) {
 			if scenario == "starting" {
 				pod.Status.Phase = corev1.PodPending
 			}
+			if scenario == "failed-without-pod" || scenario == "inactive-failure-without-pod" || scenario == "job-owner-foreign" || scenario == "pod-vanished-during-read" || scenario == "pod-vanished-after-read" || scenario == "log-forbidden-with-failure" {
+				status := corev1.ConditionTrue
+				if scenario == "inactive-failure-without-pod" {
+					status = corev1.ConditionFalse
+				}
+				job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: status, Reason: "DeadlineExceeded", Message: "Job was active longer than specified deadline"}}
+			}
 			requestedLogs := false
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
@@ -73,14 +80,32 @@ func TestLogSnapshotOwnershipAndBoundaries(t *testing.T) {
 					if r.URL.Query().Get("labelSelector") != "batch.kubernetes.io/controller-uid=job-uid" {
 						t.Error("unbounded Pod selector")
 					}
-					_ = jsonWrite(w, corev1.PodList{Items: []corev1.Pod{pod}})
+					if strings.HasSuffix(scenario, "without-pod") || scenario == "no-pod" {
+						_ = jsonWrite(w, corev1.PodList{})
+					} else {
+						_ = jsonWrite(w, corev1.PodList{Items: []corev1.Pod{pod}})
+					}
 				case "/api/v1/namespaces/own/pods/pod":
+					if scenario == "pod-vanished-after-read" {
+						w.WriteHeader(404)
+						_, _ = io.WriteString(w, `{"kind":"Status","apiVersion":"v1","reason":"NotFound","code":404}`)
+						return
+					}
 					if scenario == "pod-replaced-during-read" {
 						pod.UID = "new-pod"
 					}
 					_ = jsonWrite(w, pod)
 				case "/api/v1/namespaces/own/pods/pod/log":
 					requestedLogs = true
+					if scenario == "pod-vanished-during-read" || scenario == "log-forbidden-with-failure" {
+						code, reason := 404, "NotFound"
+						if scenario == "log-forbidden-with-failure" {
+							code, reason = 403, "Forbidden"
+						}
+						w.WriteHeader(code)
+						_ = jsonWrite(w, metav1.Status{TypeMeta: metav1.TypeMeta{Kind: "Status", APIVersion: "v1"}, Reason: metav1.StatusReason(reason), Code: int32(code)})
+						return
+					}
 					if r.URL.Query().Get("container") != "task" || r.URL.Query().Get("limitBytes") != "9" || r.URL.Query().Get("tailLines") != "5" || r.URL.Query().Get("follow") == "true" {
 						t.Errorf("unexpected log query: %s", r.URL.RawQuery)
 					}
@@ -121,11 +146,19 @@ func TestLogSnapshotOwnershipAndBoundaries(t *testing.T) {
 			}
 			out, err := adapter.Read(context.Background(), loc, logs.Request{TailLines: 5, LimitBytes: 8})
 			denied := strings.Contains(scenario, "replaced") || scenario == "annotation-mismatch" || scenario == "pod-foreign" || scenario == "label-mismatch" || scenario == "wrong-tenant" || scenario == "job-owner-foreign" || scenario == "pod-replaced-during-read"
+			if scenario == "log-forbidden-with-failure" {
+				if err == nil || strings.Contains(out.Reason, "DeadlineExceeded") || out.Text != "" {
+					t.Fatalf("forbidden read released diagnostics: %+v %v", out, err)
+				}
+				return
+			}
 			if denied {
 				if err == nil || (requestedLogs && scenario != "pod-replaced-during-read") {
 					t.Fatalf("ownership denial failed: out=%+v err=%v logs=%v", out, err, requestedLogs)
 				}
-
+				if strings.Contains(out.Reason, "DeadlineExceeded") {
+					t.Fatal("foreign Job diagnostics released before ownership validation")
+				}
 				return
 			}
 			if err != nil {
@@ -143,6 +176,18 @@ func TestLogSnapshotOwnershipAndBoundaries(t *testing.T) {
 			case "cleaned":
 				if out.State != "absent" || requestedLogs {
 					t.Fatalf("absent: %+v", out)
+				}
+			case "failed-without-pod":
+				if out.State != "absent" || out.Text != "" || requestedLogs || out.Reason != "no retained Pod for this attempt. Kubernetes Job failed: DeadlineExceeded: Job was active longer than specified deadline" {
+					t.Fatalf("missing Pod hid retained Job failure: %+v", out)
+				}
+			case "pod-vanished-during-read", "pod-vanished-after-read":
+				if out.State != "absent" || out.Text != "" || !requestedLogs || out.Reason != "Pod logs are no longer retained. Kubernetes Job failed: DeadlineExceeded: Job was active longer than specified deadline" {
+					t.Fatalf("Pod deletion race hid retained Job failure: %+v", out)
+				}
+			case "no-pod", "inactive-failure-without-pod":
+				if out.State != "absent" || out.Reason != "no retained Pod for this attempt" || out.Text != "" || requestedLogs {
+					t.Fatalf("missing Pod must not imply an unobserved failure: %+v", out)
 				}
 			case "legacy-owner":
 				if out.State != "unavailable" || requestedLogs {

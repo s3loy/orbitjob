@@ -9,8 +9,10 @@ import (
 	"log/slog"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -93,9 +95,31 @@ func (l LogClient) Read(ctx context.Context, loc logs.Locator, in logs.Request) 
 		return deny()
 	}
 
+	withJobFailure := func(result logs.Result, readErr error) (logs.Result, error) {
+		if readErr != nil || result.State != "absent" {
+			return result, readErr
+		}
+		// A deadline can delete the Pod before this read. The verified Job
+		// still carries a failure fact even though its output is unavailable.
+		for _, condition := range job.Status.Conditions {
+			if condition.Type != batchv1.JobFailed || condition.Status != corev1.ConditionTrue {
+				continue
+			}
+			result.Reason += ". Kubernetes Job failed"
+			for _, detail := range []string{condition.Reason, condition.Message} {
+				if detail = strings.TrimSpace(detail); detail != "" {
+					result.Reason += ": " + detail
+				}
+			}
+			slog.InfoContext(ctx, "execution log source absent for failed Job", "tenant_id", loc.TenantID, "attempt", loc.Attempt, "job_reason", condition.Reason)
+			break
+		}
+		return result, nil
+	}
+
 	pods, err := l.Client.CoreV1().Pods(loc.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "batch.kubernetes.io/controller-uid=" + loc.JobUID, Limit: 20})
 	if err != nil {
-		return logReadFailure(out, err)
+		return withJobFailure(logReadFailure(out, err))
 	}
 	if pods.Continue != "" {
 		return finish("unavailable", "too many Pod candidates")
@@ -117,7 +141,7 @@ func (l LogClient) Read(ctx context.Context, loc logs.Locator, in logs.Request) 
 		owned = append(owned, pod)
 	}
 	if len(owned) == 0 {
-		return finish("absent", "no retained Pod for this attempt")
+		return withJobFailure(finish("absent", "no retained Pod for this attempt"))
 	}
 	sort.Slice(owned, func(i, j int) bool {
 		if owned[i].CreationTimestamp.Equal(&owned[j].CreationTimestamp) {
@@ -134,12 +158,12 @@ func (l LogClient) Read(ctx context.Context, loc logs.Locator, in logs.Request) 
 	requestBytes := in.LimitBytes + 1
 	stream, err := l.Client.CoreV1().Pods(loc.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{Container: "task", TailLines: &in.TailLines, LimitBytes: &requestBytes, Follow: false}).Stream(ctx)
 	if err != nil {
-		return logReadFailure(out, err)
+		return withJobFailure(logReadFailure(out, err))
 	}
 	defer func() { _ = stream.Close() }()
 	data, err := io.ReadAll(io.LimitReader(stream, requestBytes))
 	if err != nil {
-		return logReadFailure(out, err)
+		return withJobFailure(logReadFailure(out, err))
 	}
 
 	// pods/log has no UID precondition. A final UID check prevents a Pod name
@@ -147,7 +171,7 @@ func (l LogClient) Read(ctx context.Context, loc logs.Locator, in logs.Request) 
 	// belonging to the replacement; an old UID cannot be recreated.
 	confirmed, checkErr := l.Client.CoreV1().Pods(loc.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
 	if checkErr != nil {
-		return logReadFailure(out, checkErr)
+		return withJobFailure(logReadFailure(out, checkErr))
 	}
 	if pod.UID == "" || confirmed.UID != pod.UID {
 		return deny()
