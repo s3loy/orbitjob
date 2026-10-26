@@ -358,7 +358,8 @@ for entry in "${tenants[@]}"; do
     $1 == "RULE" && $2 == d { print $3 }' "$facts")
   expected_operator_rule='apiGroups=["workloads.orbitjob.io"];resources=["scheduledjobs"];verbs=["get","list","watch","update","patch"]
 apiGroups=["workloads.orbitjob.io"];resources=["jobruns"];verbs=["get","list","watch","create","update","patch","delete"]
-apiGroups=["workloads.orbitjob.io"];resources=["workflowjobs","workflowruns"];verbs=["get","list","watch","patch"]
+apiGroups=["workloads.orbitjob.io"];resources=["workflowjobs"];verbs=["get","list","watch","patch"]
+apiGroups=["workloads.orbitjob.io"];resources=["workflowruns"];verbs=["get","list","watch","create","patch","delete"]
 apiGroups=["workloads.orbitjob.io"];resources=["scheduledjobs/status","jobruns/status","workflowruns/status","workflowjobs/status"];verbs=["get","update","patch"]
 apiGroups=["batch"];resources=["jobs"];verbs=["get","list","watch","create","update","patch","delete"]
 apiGroups=[""];resources=["pods"];verbs=["get","list","watch"]'
