@@ -85,7 +85,8 @@ bench-etcd:
 # Integration packages share one database and some tests rebuild public, so
 # package-level parallelism can remove pgcrypto while another package uses it.
 integration:
-	go test -p=1 -count=1 -tags integration ./db/migrations ./internal/platform/postgrestest ./internal/admin/bootstrap ./internal/admin/http ./internal/admin/store/postgres ./internal/core/store/postgres
+	@test -n "$$TEST_DATABASE_DSN" || { printf 'TEST_DATABASE_DSN is required; integration tests must not be skipped\n' >&2; exit 2; }
+	go test -p=1 -count=1 -tags integration ./db/migrations ./internal/platform/postgrestest ./internal/admin/bootstrap ./internal/admin/http ./internal/admin/store/postgres ./internal/core/store/postgres ./scripts/loadtest
 
 # ---- Lint & Vet ----
 lint:

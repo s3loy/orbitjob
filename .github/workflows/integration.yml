@@ -60,14 +60,7 @@ jobs:
       - name: Provision deployment roles
         run: go run ./scripts/provision-test-roles
 
-      - name: Migration baseline suite
-        run: go test -count=1 -tags integration ./db/migrations
-
-      - name: Postgres test helpers suite
-        run: go test -count=1 -tags integration ./internal/platform/postgrestest
-
-      - name: Repository suites
-        run: go test -count=1 -tags integration ./internal/admin/store/postgres ./internal/core/store/postgres
-
-      - name: Bootstrap + admin HTTP suites
-        run: go test -count=1 -tags integration ./internal/admin/bootstrap ./internal/admin/http
+      # Keep the package set, serial execution and non-empty DSN guard in
+      # the same target used locally. Some suites rebuild shared DB state.
+      - name: Run PostgreSQL integration suites
+        run: make integration
