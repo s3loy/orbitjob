@@ -83,6 +83,9 @@ adminapi:
     triggerRPS: 10
 
 bootstrap:
+  # Deprecated and ignored: bootstrap output has always used the fixed
+  # bootstrap-api-key name. This old value selected only an incorrect RBAC
+  # resourceName; it never configured the writer's delivery target.
   secretName: orbitjob-bootstrap
 
 taskNamespace:
