@@ -77,6 +77,7 @@ jobs:
           - { component: operator,   target: operator }
           - { component: migrate,    target: migrate }
           - { component: bootstrap,  target: bootstrap }
+          - { component: log-archive, target: log-archive }
     outputs:
       version: ${{ steps.tag.outputs.version }}
     steps:
@@ -144,7 +145,7 @@ jobs:
           owner="${GITHUB_REPOSITORY_OWNER,,}"
           # shellcheck disable=SC2153 # VERSION is injected through the step env above.
           version="$VERSION"
-          for component in admin-api scheduler operator migrate bootstrap; do
+          for component in admin-api scheduler operator migrate bootstrap log-archive; do
             image="${REGISTRY}/${owner}/orbitjob-${component}"
             docker buildx imagetools create \
               -t "${image}:rc" "${image}:${version}"

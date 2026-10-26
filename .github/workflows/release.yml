@@ -132,7 +132,7 @@ jobs:
             fi
           }
           owner="${GITHUB_REPOSITORY_OWNER,,}"
-          for component in admin-api scheduler operator migrate bootstrap; do
+          for component in admin-api scheduler operator migrate bootstrap log-archive; do
             check_absent "ghcr.io/${owner}/orbitjob-${component}:${VERSION}"
             if [ "$HUB_ENABLED" = true ]; then
               check_absent "docker.io/${HUB_USERNAME}/orbitjob-${component}:${VERSION}"
@@ -152,6 +152,7 @@ jobs:
           - { component: operator,   target: operator }
           - { component: migrate,    target: migrate }
           - { component: bootstrap,  target: bootstrap }
+          - { component: log-archive, target: log-archive }
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
         with:
