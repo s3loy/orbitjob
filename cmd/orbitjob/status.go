@@ -62,10 +62,13 @@ func statusCommand(ctx context.Context, args []string) error {
 
 	lines, failed := inspectInstall(ctx, newKubeRunner(), flags)
 	if conn.json {
-		return emitJSON(lines)
-	}
-	for _, l := range lines {
-		_, _ = fmt.Fprintf(stdoutWriter, "%s %s\n", l.Status, l.Detail)
+		if err := emitJSON(lines); err != nil {
+			return err
+		}
+	} else {
+		for _, l := range lines {
+			_, _ = fmt.Fprintf(stdoutWriter, "%s %s\n", l.Status, l.Detail)
+		}
 	}
 	if failed {
 		return failf(exitGeneral, "status found failures")
@@ -95,8 +98,10 @@ func inspectInstall(ctx context.Context, kube kubeRunner, flags statusFlags) ([]
 	}
 
 	for _, component := range installComponents {
-		ready, total, restarts := deploymentState(ctx, kube, flags.namespace, component)
+		ready, total, restarts, err := deploymentState(ctx, kube, flags.namespace, component)
 		switch {
+		case err != nil:
+			add("[FAIL]", fmt.Sprintf("deployment %s: inspection failed: %v", component, err))
 		case total == 0:
 			add("[FAIL]", fmt.Sprintf("deployment %s: not found in namespace %s", component, flags.namespace))
 		case ready == total:
@@ -183,10 +188,10 @@ var releaseSecretRevision = regexp.MustCompile(`\.v(\d+)$`)
 
 // deploymentState reads desired/ready replicas and summed restart counts for
 // one component's pods.
-func deploymentState(ctx context.Context, kube kubeRunner, namespace, component string) (ready, total, restarts int) {
+func deploymentState(ctx context.Context, kube kubeRunner, namespace, component string) (ready, total, restarts int, err error) {
 	decoded, err := kubeJSON(ctx, kube, "get", "deployment", component, "-n", namespace)
 	if err != nil {
-		return 0, 0, 0
+		return 0, 0, 0, err
 	}
 	status, _ := decoded["status"].(map[string]any)
 	spec, _ := decoded["spec"].(map[string]any)
@@ -201,28 +206,39 @@ func deploymentState(ctx context.Context, kube kubeRunner, namespace, component 
 	if desired == 0 {
 		desired = 1
 	}
-	restarts = podRestarts(ctx, kube, namespace, component)
-	return readyReplicas, desired, restarts
+	restarts, err = podRestarts(ctx, kube, namespace, component)
+	return readyReplicas, desired, restarts, err
 }
 
-// podRestarts sums container restarts across the component's pods.
-func podRestarts(ctx context.Context, kube kubeRunner, namespace, component string) int {
+// podRestarts sums observed container restarts across the component's pods.
+// Unreadable or absent evidence cannot establish a zero restart count.
+func podRestarts(ctx context.Context, kube kubeRunner, namespace, component string) (int, error) {
 	decoded, err := kubeJSON(ctx, kube, "get", "pods", "-n", namespace, "-l", "app.kubernetes.io/name="+component)
 	if err != nil {
-		return 0
+		return 0, fmt.Errorf("read pod restarts: %w", err)
 	}
-	items, _ := decoded["items"].([]any)
+	items, ok := decoded["items"].([]any)
+	if !ok || len(items) == 0 {
+		return 0, fmt.Errorf("pod restart evidence missing: expected a non-empty pod list")
+	}
 	restarts := 0
 	for _, item := range items {
 		obj, _ := item.(map[string]any)
 		status, _ := obj["status"].(map[string]any)
-		containers, _ := status["containerStatuses"].([]any)
+		containers, ok := status["containerStatuses"].([]any)
+		if !ok || len(containers) == 0 {
+			return 0, fmt.Errorf("pod restart evidence missing: container statuses unavailable")
+		}
 		for _, c := range containers {
 			container, _ := c.(map[string]any)
-			restarts += jsonInt(container["restartCount"])
+			count, ok := container["restartCount"].(float64)
+			if !ok || count < 0 || count != float64(int(count)) {
+				return 0, fmt.Errorf("invalid pod restart count")
+			}
+			restarts += int(count)
 		}
 	}
-	return restarts
+	return restarts, nil
 }
 
 // shippedSchemaVersion derives the applied schema_migrations version from the

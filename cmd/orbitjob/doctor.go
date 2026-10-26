@@ -132,10 +132,13 @@ func doctorCommand(ctx context.Context, args []string) error {
 	}
 
 	if conn.json {
-		return emitJSON(lines)
-	}
-	for _, l := range lines {
-		_, _ = fmt.Fprintf(stdoutWriter, "%s %s\n", l.Status, l.Detail)
+		if err := emitJSON(lines); err != nil {
+			return err
+		}
+	} else {
+		for _, l := range lines {
+			_, _ = fmt.Fprintf(stdoutWriter, "%s %s\n", l.Status, l.Detail)
+		}
 	}
 	if failed {
 		return failf(exitGeneral, "doctor found failures; see the [FAIL] lines above")
