@@ -67,7 +67,7 @@ BENCH_PACKAGES := \
 # re-verify. bench.txt is the file the Benchmark workflow feeds to
 # github-action-benchmark, so the tee is part of the contract.
 bench:
-	go test -run='^$$' -bench=. -benchmem $(BENCH_PACKAGES) | tee bench.txt
+	bash scripts/run-benchmarks.sh $(BENCH_PACKAGES)
 
 # bench-etcd-memory runs the election benchmarks at higher count for
 # benchstat-style comparisons. Takes minutes: the contention benchmark holds
