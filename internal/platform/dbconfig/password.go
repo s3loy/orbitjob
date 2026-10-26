@@ -16,7 +16,7 @@ func NewBundled(endpointRaw string, owner Credentials, random io.Reader) (Instal
 	if err != nil || endpoint.Scheme == "" || endpoint.Host == "" {
 		return Installation{}, fmt.Errorf("parse bundled database endpoint")
 	}
-	endpoint.User = nil
+	endpoint = credentialFreeEndpoint(endpoint)
 	passwords := make([]string, 3)
 	for index := range passwords {
 		passwords[index], err = generatePassword(random)

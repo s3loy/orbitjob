@@ -27,8 +27,7 @@ func ParseBootstrapDSN(raw string) (Installation, error) {
 	if !ok || password == "" {
 		return Installation{}, fmt.Errorf("parse bootstrap DSN: password is required")
 	}
-	endpoint := cloneURL(parsed)
-	endpoint.User = nil
+	endpoint := credentialFreeEndpoint(parsed)
 	return Installation{
 		Mode:      ModeExternal,
 		Endpoint:  endpoint,
@@ -43,7 +42,7 @@ func DeriveDSN(endpoint *url.URL, credential Credentials) (string, error) {
 	if credential.Username == "" || credential.Password == "" {
 		return "", fmt.Errorf("derive DSN: username and password are required")
 	}
-	derived := cloneURL(endpoint)
+	derived := credentialFreeEndpoint(endpoint)
 	derived.User = url.UserPassword(credential.Username, credential.Password)
 	return derived.String(), nil
 }
@@ -54,7 +53,30 @@ func RedactDSN(raw string) string {
 		return "<invalid-dsn>"
 	}
 	parsed.User = url.UserPassword(parsed.User.Username(), "***")
+	query := parsed.Query()
+	for key := range query {
+		if strings.HasSuffix(strings.ToLower(key), "password") {
+			query.Set(key, "***")
+		}
+	}
+	parsed.RawQuery = query.Encode()
 	return strings.Replace(parsed.String(), "%2A%2A%2A", "***", 1)
+}
+
+// The driver also accepts credential options in the query string. They cannot
+// survive derivation, including passfile/service indirection to another login.
+func credentialFreeEndpoint(endpoint *url.URL) *url.URL {
+	clean := cloneURL(endpoint)
+	clean.User = nil
+	query := clean.Query()
+	for key := range query {
+		switch strings.ToLower(key) {
+		case "user", "password", "passfile", "service", "servicefile":
+			query.Del(key)
+		}
+	}
+	clean.RawQuery = query.Encode()
+	return clean
 }
 
 func cloneURL(source *url.URL) *url.URL {
