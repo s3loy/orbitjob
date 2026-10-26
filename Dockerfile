@@ -14,6 +14,20 @@ RUN --mount=type=cache,target=/go/pkg/mod go mod download
 # ============================================================
 # Build stages
 # ============================================================
+# Keep Go build inputs independent of Console and repository tooling changes.
+FROM base AS go-source
+COPY api/ ./api/
+COPY cmd/ ./cmd/
+COPY internal/ ./internal/
+
+FROM go-source AS build-log-archive
+ARG TARGETOS=linux
+ARG TARGETARCH
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o /out/log-archive ./cmd/log-archive/
+
 FROM base AS build-admin
 ARG TARGETOS=linux
 ARG TARGETARCH
@@ -111,3 +125,9 @@ COPY --from=build-operator /etc/passwd /etc/passwd
 COPY --from=build-operator /out/operator /operator
 USER 65534:65534
 ENTRYPOINT ["/operator"]
+
+FROM scratch AS log-archive
+COPY --from=build-log-archive /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=build-log-archive /out/log-archive /log-archive
+USER 65534:65534
+ENTRYPOINT ["/log-archive"]
