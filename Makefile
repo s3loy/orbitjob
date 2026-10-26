@@ -105,7 +105,7 @@ openapi-gen:
 	go run ./cmd/openapi-gen -out api/openapi.yaml
 
 tidy-check:
-	go mod tidy && git diff --exit-code go.sum
+	go mod tidy -diff
 
 # ---- Docker ----
 # Local builds serve development only. Published images are built and pushed
