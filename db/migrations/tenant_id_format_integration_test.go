@@ -82,16 +82,14 @@ func TestEveryTenantIdentityColumnIsChar26(t *testing.T) {
 		`SELECT count(*) FROM (`+tenantColumns+`) s`).Scan(&total); err != nil {
 		t.Fatalf("count tenant identity columns: %v", err)
 	}
-	// Seventeen base tables carry tenant_id (the baseline's fourteen, plus
-	// functions and function_runs from migration 0004 and
-	// workflow_run_control_plane from migration 0005); the audit_events_default
-	// partition carries the eighteenth occurrence as its own catalog attribute,
-	// so a partition whose column drifted from its parent's type is caught here
-	// too. tenants.id is the nineteenth. If the count drops, a table lost its
-	// tenant column entirely; if it grows, the new column is under test
-	// automatically.
-	if total != 19 {
-		t.Fatalf("tenant identity columns = %d, want 19 (17 base tables + the audit_events_default partition + tenants.id)", total)
+	// Nineteen base tables carry tenant_id: the baseline's fourteen, plus
+	// functions and function_runs (0004), workflow_run_control_plane (0005),
+	// sli_snapshot_events (0007), and execution_log_archives (0014).
+	// audit_events_default contributes its own catalog attribute so partition
+	// type drift is checked too; tenants.id brings the total to twenty-one.
+	// A changed count requires reviewing the schema's tenant identity set.
+	if total != 21 {
+		t.Fatalf("tenant identity columns = %d, want 21 (19 base tables including execution_log_archives + the audit_events_default partition + tenants.id)", total)
 	}
 
 	offenders, err := uncharTenantColumns(ctx, db)
