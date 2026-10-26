@@ -50,6 +50,8 @@ func TestMigrationFileSet(t *testing.T) {
 		"0007_platform_key_documents.up.sql",
 		"0008_function_management.down.sql",
 		"0008_function_management.up.sql",
+		"0009_workflow_scheduling.down.sql",
+		"0009_workflow_scheduling.up.sql",
 	}
 	if !reflect.DeepEqual(files, want) {
 		t.Fatalf("migration files = %v, want %v", files, want)
