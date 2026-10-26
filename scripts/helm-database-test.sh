@@ -16,8 +16,18 @@ fi
 for key in bootstrap-owner-dsn migrator-dsn admin-dsn runtime-dsn; do
   grep -q "key: $key" "$rendered"
 done
-runtime=$(grep -A80 'kind: Deployment' "$rendered")
+# A deployment can grow beyond any fixed grep context window. Inspect each
+# complete Deployment document so later env entries cannot escape the gate.
+runtime=$(awk '/^kind: / { deployment = ($0 == "kind: Deployment") } deployment' "$rendered")
+[[ -n $runtime ]] || { echo 'no runtime deployments rendered' >&2; exit 1; }
 if grep -q 'bootstrap-owner-dsn' <<<"$runtime"; then
   echo 'runtime deployment references bootstrap owner credential' >&2
   exit 1
 fi
+
+helm template orbitjob "$chart" --show-only templates/operator.yaml \
+  --set operator.namespaceTenants="default=00000000000000000000000001" \
+  --set database.secretName=custom-database \
+  --set database.keys.runtime=custom-runtime >"$rendered"
+grep -q 'name: custom-database' "$rendered"
+grep -q 'key: custom-runtime' "$rendered"
