@@ -115,6 +115,10 @@ func (o *Observer) register(ctx context.Context, run *api.JobRun) (Identity, err
 
 // ResolvePod verifies the complete live owner chain before persisting a source.
 func (o *Observer) ResolvePod(ctx context.Context, namespace, podName, podUID string, restart int32) (Identity, Source, error) {
+	return o.resolvePod(ctx, namespace, podName, podUID, restart, true)
+}
+
+func (o *Observer) resolvePod(ctx context.Context, namespace, podName, podUID string, restart int32, events bool) (Identity, Source, error) {
 	if o.Namespaces[namespace] == "" {
 		return Identity{}, Source{}, fmt.Errorf("%w: unmapped collector namespace", ErrInvalidSource)
 	}
@@ -175,13 +179,42 @@ func (o *Observer) ResolvePod(ctx context.Context, namespace, podName, podUID st
 	if len(pod.Spec.Containers) != 1 || pod.Spec.Containers[0].Name != "task" {
 		return Identity{}, Source{}, fmt.Errorf("%w: unexpected execution container", ErrInvalidSource)
 	}
-	id, err := o.register(ctx, &run)
+	source := Source{Namespace: namespace, PodName: podName, PodUID: podUID, JobUID: string(job.UID), Attempt: identity.Attempt, Container: "task", Restart: restart}
+	var id Identity
+	var finished *time.Time
+	if events {
+		id, err = o.register(ctx, &run)
+	} else {
+		// Batch verification may register metadata, but never appends evidence
+		// before all sources have been resolved. The observer records events.
+		id = Identity{TenantID: o.Namespaces[namespace], SourceUID: run.Spec.ScheduledJobRef.UID, SourceName: run.Spec.ScheduledJobRef.Name, OccurrenceKey: run.Spec.OccurrenceKey, Namespace: namespace, RevisionID: run.Spec.DefinitionRevision, RunName: run.Name, RunUID: string(run.UID), CreatedAt: run.CreationTimestamp.Time}
+		id, _, finished, err = o.Repository.Discover(ctx, id)
+		if err == nil && finished != nil && o.Store.limits.Now().Sub(*finished) > Retention {
+			if _, snapshotErr := o.Store.Snapshot(id); errors.Is(snapshotErr, ErrMissing) {
+				err = ErrSealed
+			}
+		}
+	}
 	if err != nil {
 		return id, Source{}, err
 	}
-	source := Source{Namespace: namespace, PodName: podName, PodUID: podUID, JobUID: string(job.UID), Attempt: identity.Attempt, Container: "task", Restart: restart}
 	if err = o.Repository.VerifyAttempt(ctx, id, source); err != nil {
 		return id, Source{}, err
+	}
+	if !events {
+		if err = o.Store.Register(id); err != nil {
+			if errors.Is(err, ErrCapacity) {
+				m := Manifest{Identity: id, State: "capacity", CompletedAt: finished}
+				if finished != nil {
+					until := o.Store.limits.Now().Add(Retention)
+					m.ProtectedUntil = &until
+				}
+				if syncErr := o.Repository.Sync(ctx, m); syncErr != nil {
+					return id, Source{}, syncErr
+				}
+			}
+			return id, Source{}, err
+		}
 	}
 	return id, source, o.Store.Bind(id, source)
 }

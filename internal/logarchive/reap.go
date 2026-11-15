@@ -65,6 +65,10 @@ func (o *Observer) maintainDirectory(ctx context.Context, tenant string) error {
 			if item.manual {
 				m.State = "deleted"
 			}
+		} else if errors.Is(e, ErrQuarantined) {
+			// Preserve the corrupt directory and continue healthy cleanup work.
+			observationErrors.Inc()
+			continue
 		} else if e != nil {
 			return e
 		} else if item.manual && m.SealedAt != nil && m.State != "deleted" {
@@ -87,39 +91,60 @@ func (o *Observer) maintainDirectory(ctx context.Context, tenant string) error {
 // cumulative execution counter that eventually refuses every future run.
 func (s *Store) Reap() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	var keys []string
 	for key, m := range s.items {
 		if (m.State != "expired" && m.State != "deleted") || s.limits.Now().Sub(m.UpdatedAt) < Retention {
 			continue
 		}
-		var size int64
-		e := fs.WalkDir(s.root.FS(), key, func(name string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
+		keys = append(keys, key)
+	}
+	s.mu.Unlock()
+	for _, key := range keys {
+		release, err := s.coordinate(context.Background(), "archive:"+key, 1)
+		if err != nil {
+			return err
+		}
+		err = func() error {
+			defer release()
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			m := s.items[key]
+			if m == nil || (m.State != "expired" && m.State != "deleted") || s.limits.Now().Sub(m.UpdatedAt) < Retention {
+				return nil
 			}
-			info, e := d.Info()
+			var size int64
+			e := fs.WalkDir(s.root.FS(), key, func(name string, d fs.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				info, e := d.Info()
+				if e != nil {
+					return e
+				}
+				if info.Mode()&os.ModeSymlink != 0 {
+					return fs.ErrInvalid
+				}
+				size += allocated(info)
+				return nil
+			})
 			if e != nil {
 				return e
 			}
-			if info.Mode()&os.ModeSymlink != 0 {
-				return fs.ErrInvalid
+			info, e := s.root.Stat(path.Join(key, "manifest.json"))
+			if e != nil {
+				return e
 			}
-			size += allocated(info)
+			if e = s.root.RemoveAll(key); e != nil {
+				return e
+			}
+			s.used -= size
+			s.metadata -= info.Size()
+			delete(s.items, key)
 			return nil
-		})
-		if e != nil {
-			return e
+		}()
+		if err != nil {
+			return err
 		}
-		info, e := s.root.Stat(path.Join(key, "manifest.json"))
-		if e != nil {
-			return e
-		}
-		if e = s.root.RemoveAll(key); e != nil {
-			return e
-		}
-		s.used -= size
-		s.metadata -= info.Size()
-		delete(s.items, key)
 	}
 	return nil
 }

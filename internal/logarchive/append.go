@@ -3,6 +3,7 @@ package logarchive
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,11 +16,19 @@ func (s *Store) Append(id Identity, records []Record) error {
 }
 
 func (s *Store) AppendBatch(id Identity, batchID string, records []Record) (result error) {
+	release, err := s.coordinate(context.Background(), "archive:"+id.Key(), 1)
+	if err != nil {
+		return err
+	}
+	defer release()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := id.Key()
 	old := s.items[key]
 	if old == nil {
+		if s.quarantined[key] != "" {
+			return ErrQuarantined
+		}
 		return ErrMissing
 	}
 	defer func() {
@@ -122,9 +131,12 @@ func (s *Store) AppendBatch(id Identity, batchID string, records []Record) (resu
 	if len(m.Segments) > 0 {
 		last := m.Segments[len(m.Segments)-1]
 		if last.Bytes+raw <= 256*1024 && last.Records+len(output) <= 1000 {
-			prior, e := s.segmentRecords(key, last)
+			prior, e := s.segmentRecords(context.Background(), key, last)
 			if e != nil {
-				return e
+				if markErr := s.markLossLocked(key, "new output rejected because a retained archive segment is corrupt"); markErr != nil {
+					return markErr
+				}
+				return fmt.Errorf("%w: retained segment cannot be merged", ErrQuarantined)
 			}
 			combined = append(prior, output...)
 			previous = &last

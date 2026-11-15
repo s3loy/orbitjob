@@ -21,6 +21,7 @@ var (
 	ErrMissing       = errors.New("execution archive not registered")
 	ErrSealed        = errors.New("execution archive is sealed")
 	ErrInvalidSource = errors.New("invalid execution log source")
+	ErrQuarantined   = errors.New("execution archive is quarantined")
 )
 
 // Identity is resolved by the server, never from collector-supplied labels.
@@ -96,6 +97,7 @@ type Source struct {
 }
 
 type Manifest struct {
+	Checksum       string     `json:"checksum,omitempty"`
 	Identity       Identity   `json:"identity"`
 	State          string     `json:"state"`
 	Reason         string     `json:"reason"`

@@ -1,25 +1,34 @@
 package logarchive
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
 	"path"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
 )
 
 type Store struct {
-	mu       sync.Mutex
-	root     *os.Root
-	lock     *os.File
-	limits   Limits
-	items    map[string]*Manifest
-	used     int64
-	metadata int64
+	mu           sync.Mutex
+	root         *os.Root
+	lock         *os.File
+	limits       Limits
+	items        map[string]*Manifest
+	used         int64
+	metadata     int64
+	coordinators map[string]*coordinator
+	quarantined  map[string]string
+	reads        sync.WaitGroup
+	closed       bool
 }
+
+var archiveDirectoryName = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 func Open(directory string, limits Limits) (*Store, error) {
 	if err := limits.Validate(); err != nil {
@@ -32,7 +41,14 @@ func Open(directory string, limits Limits) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{root: r, limits: limits, items: make(map[string]*Manifest)}
+	s := &Store{root: r, limits: limits, items: make(map[string]*Manifest), quarantined: make(map[string]string)}
+	if info, e := r.Lstat(".lock"); e == nil && !info.Mode().IsRegular() {
+		_ = r.Close()
+		return nil, fmt.Errorf("untrusted archive writer lock")
+	} else if e != nil && !os.IsNotExist(e) {
+		_ = r.Close()
+		return nil, e
+	}
 	s.lock, err = r.OpenFile(".lock", os.O_CREATE|os.O_RDWR, 0600)
 	if err == nil {
 		err = syscall.Flock(int(s.lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
@@ -41,6 +57,7 @@ func Open(directory string, limits Limits) (*Store, error) {
 		_ = s.Close()
 		return nil, fmt.Errorf("archive writer lock: %w", err)
 	}
+	var archiveDirectories []string
 	err = fs.WalkDir(r.FS(), ".", func(name string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -49,6 +66,12 @@ func Open(directory string, limits Limits) (*Store, error) {
 			return fmt.Errorf("symlink in archive: %s", name)
 		}
 		if d.IsDir() {
+			if name != "." && (path.Dir(name) != "." || !archiveDirectoryName.MatchString(name)) {
+				return fmt.Errorf("invalid archive directory layout")
+			}
+			if name != "." {
+				archiveDirectories = append(archiveDirectories, name)
+			}
 			info, e := d.Info()
 			if e != nil {
 				return e
@@ -60,12 +83,24 @@ func Open(directory string, limits Limits) (*Store, error) {
 		if e != nil {
 			return e
 		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("non-regular file in archive")
+		}
 		s.used += allocated(info)
+		if path.Dir(name) == "." && name != ".lock" {
+			return fmt.Errorf("unexpected file in archive root")
+		}
 		if path.Base(name) != "manifest.json" {
 			return nil
 		}
+		key := path.Dir(name)
+		if !archiveDirectoryName.MatchString(key) {
+			return fmt.Errorf("archive manifest outside an identity directory")
+		}
+		s.metadata += info.Size()
 		if info.Size() > limits.ManifestBytes {
-			return fmt.Errorf("oversized archive manifest")
+			s.quarantined[key] = "archive manifest exceeds its supported limit"
+			return nil
 		}
 		data, e := r.ReadFile(name)
 		if e != nil {
@@ -73,17 +108,41 @@ func Open(directory string, limits Limits) (*Store, error) {
 		}
 		var m Manifest
 		if e = json.Unmarshal(data, &m); e != nil {
-			return fmt.Errorf("read archive manifest: %w", e)
+			s.quarantined[key] = "archive manifest cannot be decoded"
+			return nil
 		}
 		if e = m.Identity.Validate(); e != nil {
-			return e
+			s.quarantined[key] = "archive manifest identity is incomplete"
+			return nil
 		}
 		if path.Dir(name) != m.Identity.Key() {
 			return fmt.Errorf("archive identity/path mismatch")
 		}
-		s.metadata += int64(len(data))
-		if s.metadata > limits.MetadataBytes {
-			return ErrCapacity
+		if m.Checksum != "" {
+			checksum := m.Checksum
+			m.Checksum = ""
+			encoded, marshalErr := json.Marshal(m)
+			digest := sha256.Sum256(encoded)
+			m.Checksum = checksum
+			if marshalErr != nil || checksum != hex.EncodeToString(digest[:]) {
+				s.quarantined[key] = "archive manifest checksum does not match"
+				return nil
+			}
+		}
+		if m.Next < 1 || m.RetainedBytes < 0 || m.OutputBytes < m.RetainedBytes {
+			s.quarantined[key] = "archive manifest counters are invalid"
+			return nil
+		}
+		var last int64
+		for _, segment := range m.Segments {
+			if path.Base(segment.Name) != segment.Name || !strings.HasSuffix(segment.Name, ".gz") {
+				return fmt.Errorf("invalid archive segment path")
+			}
+			if segment.First <= last || segment.Last < segment.First || segment.Last >= m.Next || segment.Bytes < 0 || segment.Records < 1 || segment.Records > 1000 {
+				s.quarantined[key] = "archive manifest segment ranges are invalid"
+				return nil
+			}
+			last = segment.Last
 		}
 		s.items[m.Identity.Key()] = &m
 		return nil
@@ -91,6 +150,14 @@ func Open(directory string, limits Limits) (*Store, error) {
 	if err != nil {
 		_ = s.Close()
 		return nil, err
+	}
+	for _, key := range archiveDirectories {
+		if s.items[key] == nil && s.quarantined[key] == "" {
+			s.quarantined[key] = "archive manifest is missing"
+		}
+	}
+	if len(s.quarantined) > 0 {
+		archiveCorruption.WithLabelValues("manifest").Add(float64(len(s.quarantined)))
 	}
 	// Remove only unreferenced segments/staging files, after all manifests are known.
 	if err = s.reconcile(); err != nil {
@@ -108,6 +175,14 @@ func allocated(info os.FileInfo) int64 {
 }
 
 func (s *Store) Close() error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil
+	}
+	s.closed = true
+	s.mu.Unlock()
+	s.reads.Wait()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.lock != nil {
@@ -140,7 +215,7 @@ func (s *Store) reconcile() error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || wanted[name] {
+		if d.IsDir() || wanted[name] || s.quarantined[path.Dir(name)] != "" {
 			return nil
 		}
 		info, e := d.Info()
@@ -215,6 +290,13 @@ func (s *Store) atomicLocked(name string, data []byte) error {
 }
 
 func (s *Store) saveLocked(key string, m *Manifest) error {
+	m.Checksum = ""
+	unsigned, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	digest := sha256.Sum256(unsigned)
+	m.Checksum = hex.EncodeToString(digest[:])
 	data, err := json.Marshal(m)
 	if err != nil {
 		return err
@@ -295,6 +377,9 @@ func (s *Store) Register(id Identity) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := id.Key()
+	if s.quarantined[key] != "" {
+		return ErrQuarantined
+	}
 	if m := s.items[key]; m != nil {
 		if m.Identity.RunUID != id.RunUID {
 			return fmt.Errorf("archive immutable run UID changed")
@@ -336,6 +421,9 @@ func (s *Store) Snapshot(id Identity) (Manifest, error) {
 	defer s.mu.Unlock()
 	m := s.items[id.Key()]
 	if m == nil {
+		if s.quarantined[id.Key()] != "" {
+			return Manifest{}, ErrQuarantined
+		}
 		return Manifest{}, ErrMissing
 	}
 	out := clone(m)
