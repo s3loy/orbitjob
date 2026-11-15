@@ -1,7 +1,7 @@
 package logger
 
 import (
-	"bytes"
+	"context"
 	"log/slog"
 	"testing"
 )
@@ -13,12 +13,8 @@ func TestNew_DebugLevel(t *testing.T) {
 		t.Fatal("expected non-nil logger")
 	}
 
-	var buf bytes.Buffer
-	h := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
-	debugLogger := slog.New(h)
-	debugLogger.Debug("test")
-	if buf.Len() == 0 {
-		t.Fatal("debug log should produce output at debug level")
+	if !logger.Enabled(context.Background(), slog.LevelDebug) {
+		t.Fatal("development logger must enable debug output")
 	}
 }
 
@@ -29,16 +25,11 @@ func TestNew_ProductionLevel(t *testing.T) {
 	}
 
 	// Verify it's at info level: debug messages should be suppressed.
-	var buf bytes.Buffer
-	h := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})
-	infoLogger := slog.New(h)
-	infoLogger.Debug("should not appear")
-	if buf.Len() != 0 {
-		t.Fatal("debug log should not appear at info level")
+	if logger.Enabled(context.Background(), slog.LevelDebug) {
+		t.Fatal("production logger must suppress debug output")
 	}
-	infoLogger.Info("should appear")
-	if buf.Len() == 0 {
-		t.Fatal("info log should appear at info level")
+	if !logger.Enabled(context.Background(), slog.LevelInfo) {
+		t.Fatal("production logger must enable info output")
 	}
 }
 
