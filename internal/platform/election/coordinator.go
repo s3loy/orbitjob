@@ -15,19 +15,24 @@ type EtcdConfig struct {
 	TTL         time.Duration // session TTL for leases
 }
 
-// Coordinator abstracts leader election and distributed locking.
-// Implementations: etcdCoordinator (production), memoryCoordinator (testing).
-type Coordinator interface {
+// Leadership owns cancelable leadership sessions. It does not promise fencing.
+type Leadership interface {
 	// Campaign blocks until this instance becomes leader for the given election.
 	// The returned leaderCtx is cancelled when leadership is lost.
 	Campaign(ctx context.Context, electionName string) (leaderCtx context.Context, err error)
 
+	Close() error
+}
+
+// Coordinator adds a mutex contract supported by the etcd and memory backends.
+// Kubernetes exposes Leadership only: an expiring mutex cannot safely report
+// loss of authority through an UnlockFunc-only API.
+type Coordinator interface {
+	Leadership
+
 	// TryLock attempts to acquire a distributed lock non-blocking.
 	// Returns an unlock function that must be called to release the lock.
 	TryLock(ctx context.Context, lockName string) (unlock UnlockFunc, err error)
-
-	// Close releases all resources (sessions, leases, connections).
-	Close() error
 }
 
 // UnlockFunc releases a held lock. It is idempotent.

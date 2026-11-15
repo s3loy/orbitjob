@@ -2,35 +2,33 @@ package election
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	coordinationv1 "k8s.io/api/coordination/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/leaderelection"
+	"k8s.io/client-go/tools/leaderelection/resourcelock"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-// KubernetesConfig holds connection parameters for Lease-based coordination.
+// KubernetesConfig configures ordinary client-go Lease election.
 type KubernetesConfig struct {
-	// Namespace holds the Lease objects. It must be the namespace the process
-	// runs in, because the Lease is namespaced and cross-namespace writes would
-	// need a broader role than leader election warrants.
-	Namespace string
-	// Identity distinguishes competing instances. It defaults to the pod name.
-	Identity string
-	// LeaseDuration is how long a holder may stay leader without renewing.
+	Namespace     string
+	Identity      string
 	LeaseDuration time.Duration
-	// RenewDeadline is how long a holder keeps trying to renew before giving up.
 	RenewDeadline time.Duration
-	// RetryPeriod is the interval between acquire and renew attempts.
-	RetryPeriod time.Duration
-	// Client performs the Lease operations. Defaults to an in-cluster client.
-	Client kubernetes.Interface
+	RetryPeriod   time.Duration
+	Client        kubernetes.Interface
 }
 
 func (c KubernetesConfig) withDefaults() (KubernetesConfig, error) {
@@ -41,11 +39,11 @@ func (c KubernetesConfig) withDefaults() (KubernetesConfig, error) {
 		c.Identity = os.Getenv("POD_NAME")
 	}
 	if c.Identity == "" {
-		host, err := os.Hostname()
+		var err error
+		c.Identity, err = os.Hostname()
 		if err != nil {
 			return c, fmt.Errorf("derive election identity: %w", err)
 		}
-		c.Identity = host
 	}
 	if c.LeaseDuration <= 0 {
 		c.LeaseDuration = 15 * time.Second
@@ -56,228 +54,220 @@ func (c KubernetesConfig) withDefaults() (KubernetesConfig, error) {
 	if c.RetryPeriod <= 0 {
 		c.RetryPeriod = 2 * time.Second
 	}
-	// A renew deadline at or above the lease duration means the holder can
-	// believe it is leader after another instance has already taken over.
-	if c.RenewDeadline >= c.LeaseDuration {
-		return c, fmt.Errorf("renew deadline %s must be shorter than lease duration %s",
-			c.RenewDeadline, c.LeaseDuration)
+	// LeaseSpec encodes duration as whole seconds. Do not silently truncate a
+	// smaller interval below the acting leader's renewal deadline.
+	if c.LeaseDuration%time.Second != 0 || c.LeaseDuration/time.Second > 1<<31-1 {
+		return c, errors.New("lease duration must fit whole int32 seconds")
 	}
-	return c, nil
+	// Keep the official validation (including retry jitter) authoritative.
+	_, err := leaderelection.NewLeaderElector(leaderelection.LeaderElectionConfig{
+		Lock: &resourcelock.LeaseLock{LockConfig: resourcelock.ResourceLockConfig{Identity: c.Identity}}, LeaseDuration: c.LeaseDuration,
+		RenewDeadline: c.RenewDeadline, RetryPeriod: c.RetryPeriod,
+		Callbacks: leaderelection.LeaderCallbacks{OnStartedLeading: func(context.Context) {}, OnStoppedLeading: func() {}},
+	})
+	return c, err
 }
 
-// kubernetesCoordinator implements Coordinator using coordination.k8s.io Leases.
-// Leases are the cluster-native primitive for this, so an installation that
-// already runs the operator needs no extra etcd dependency to be highly
-// available.
+type leadershipSession struct {
+	cancel  context.CancelFunc
+	done    chan struct{}
+	started atomic.Bool
+}
+
 type kubernetesCoordinator struct {
-	client   kubernetes.Interface
-	config   KubernetesConfig
-	mu       sync.Mutex
-	canceled map[string]context.CancelFunc
-	closed   bool
+	client    kubernetes.Interface
+	config    KubernetesConfig
+	mu        sync.Mutex
+	sessions  map[string]*leadershipSession
+	closed    bool
+	closeDone chan struct{}
 }
 
-// NewKubernetes builds a Lease-based coordinator.
-func NewKubernetes(cfg KubernetesConfig) (Coordinator, error) {
+var leaseSessions = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "orbitjob_kubernetes_leadership_sessions_total",
+	Help: "Kubernetes leadership sessions by bounded lifecycle result (acquired, lost, canceled, rejected).",
+}, []string{"result"})
+
+var leaseRequests = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "orbitjob_kubernetes_lease_request_errors_total",
+	Help: "Failed Kubernetes Lease requests by bounded operation (get, create, update).",
+}, []string{"operation"})
+
+// NewKubernetes exposes leadership, not the unsupported TTL mutex experiment.
+func NewKubernetes(cfg KubernetesConfig) (Leadership, error) {
 	resolved, err := cfg.withDefaults()
 	if err != nil {
 		return nil, err
 	}
 	client := resolved.Client
 	if client == nil {
-		inCluster, err := inClusterClient()
+		client, err = inClusterClient()
 		if err != nil {
 			return nil, err
 		}
-		client = inCluster
 	}
-	return &kubernetesCoordinator{
-		client:   client,
-		config:   resolved,
-		canceled: make(map[string]context.CancelFunc),
-	}, nil
+	return &kubernetesCoordinator{client: client, config: resolved,
+		sessions: map[string]*leadershipSession{}, closeDone: make(chan struct{})}, nil
 }
 
-const (
-	// leaseNamePrefix namespaces OrbitJob leases so a shared namespace cannot
-	// collide with unrelated controllers.
-	leaseNamePrefix = "orbitjob-"
-)
+const leaseNamePrefix = "orbitjob-"
 
-func (k *kubernetesCoordinator) Campaign(ctx context.Context, electionName string) (context.Context, error) {
-	if electionName == "" {
+func (k *kubernetesCoordinator) Campaign(ctx context.Context, name string) (context.Context, error) {
+	if name == "" {
 		return nil, errors.New("election name is required")
 	}
-	leaderCtx, cancel := context.WithCancel(ctx)
-
-	k.mu.Lock()
-	if k.closed {
-		k.mu.Unlock()
-		cancel()
-		return nil, errors.New("coordinator is closed")
-	}
-	k.canceled[electionName] = cancel
-	k.mu.Unlock()
-
-	if err := k.acquire(leaderCtx, electionName); err != nil {
-		cancel()
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-
-	go func() {
-		defer cancel()
-		k.renewLoop(leaderCtx, electionName)
-	}()
-	return leaderCtx, nil
-}
-
-// acquire polls until this instance holds the Lease or ctx ends. Losing the race
-// is expected, not an error: the caller wants leadership, not an immediate
-// verdict on whether it is available.
-func (k *kubernetesCoordinator) acquire(ctx context.Context, electionName string) error {
-	name := leaseNamePrefix + electionName
-	for {
-		acquired, err := k.tryAcquire(ctx, name)
-		if err == nil && acquired {
-			return nil
-		}
-		if err != nil && !apierrors.IsConflict(err) {
-			return fmt.Errorf("acquire lease %s: %w", name, err)
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(k.config.RetryPeriod):
-		}
+	sessionCtx, cancel := context.WithCancel(ctx)
+	session := &leadershipSession{cancel: cancel, done: make(chan struct{})}
+	started := make(chan context.Context, 1)
+	k.mu.Lock()
+	if k.closed || k.sessions[name] != nil {
+		k.mu.Unlock()
+		cancel()
+		leaseSessions.WithLabelValues("rejected").Inc()
+		return nil, errors.New("coordinator closed or election already campaigning")
 	}
-}
-
-func (k *kubernetesCoordinator) tryAcquire(ctx context.Context, name string) (bool, error) {
-	now := metav1.NewMicroTime(time.Now().UTC())
-	holder := k.config.Identity
-	leaseDuration := int32(k.config.LeaseDuration.Seconds())
-
-	existing, err := k.client.CoordinationV1().Leases(k.config.Namespace).Get(ctx, name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		_, createErr := k.client.CoordinationV1().Leases(k.config.Namespace).Create(ctx, &coordinationv1.Lease{
-			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: k.config.Namespace},
-			Spec: coordinationv1.LeaseSpec{
-				HolderIdentity:       &holder,
-				LeaseDurationSeconds: &leaseDuration,
-				AcquireTime:          &now,
-				RenewTime:            &now,
+	k.sessions[name] = session
+	k.mu.Unlock()
+	identity := k.config.Identity + "_" + rand.Text()
+	lock := &boundedLeaseLock{LeaseLock: &resourcelock.LeaseLock{
+		LeaseMeta: metav1.ObjectMeta{Name: leaseNamePrefix + name, Namespace: k.config.Namespace},
+		Client:    k.client.CoordinationV1(), LockConfig: resourcelock.ResourceLockConfig{Identity: identity},
+	}, budget: k.config.RenewDeadline}
+	elector, err := leaderelection.NewLeaderElector(leaderelection.LeaderElectionConfig{
+		Lock: lock, Name: leaseNamePrefix + name, LeaseDuration: k.config.LeaseDuration,
+		RenewDeadline: k.config.RenewDeadline, RetryPeriod: k.config.RetryPeriod,
+		// The caller drains its workers after this context is canceled. Releasing
+		// here would allow a successor before that drain has completed.
+		ReleaseOnCancel: false,
+		Callbacks: leaderelection.LeaderCallbacks{
+			OnStartedLeading: func(leader context.Context) {
+				if leader.Err() != nil || sessionCtx.Err() != nil {
+					return
+				}
+				session.started.Store(true)
+				leaseSessions.WithLabelValues("acquired").Inc()
+				slog.Info("kubernetes leadership acquired", "election", name, "holder", identity)
+				select {
+				case started <- leader:
+				case <-sessionCtx.Done():
+				}
 			},
-		}, metav1.CreateOptions{})
-		if apierrors.IsAlreadyExists(createErr) {
-			return false, nil
-		}
-		return createErr == nil, createErr
-	}
+			OnStoppedLeading: func() { cancel() },
+		},
+	})
 	if err != nil {
-		return false, err
+		k.finishSession(name, session)
+		return nil, err
 	}
-
-	if !leaseIsFree(existing, time.Now().UTC(), k.config.Identity) {
-		return false, nil
-	}
-	// Optimistic concurrency: the resource version guard means only one of
-	// several contenders can win even when they all observe a free lease.
-	existing.Spec.HolderIdentity = &holder
-	existing.Spec.LeaseDurationSeconds = &leaseDuration
-	existing.Spec.AcquireTime = &now
-	existing.Spec.RenewTime = &now
-	if _, err := k.client.CoordinationV1().Leases(k.config.Namespace).Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-// leaseIsFree reports whether the lease can be taken: it has never been held, the
-// recorded holder is this instance, or the previous holder's lease has expired.
-func leaseIsFree(lease *coordinationv1.Lease, now time.Time, identity string) bool {
-	if lease.Spec.HolderIdentity == nil || *lease.Spec.HolderIdentity == "" {
-		return true
-	}
-	if *lease.Spec.HolderIdentity == identity {
-		return true
-	}
-	if lease.Spec.RenewTime == nil {
-		return true
-	}
-	duration := kDefaultLeaseDuration
-	if lease.Spec.LeaseDurationSeconds != nil {
-		duration = time.Duration(*lease.Spec.LeaseDurationSeconds) * time.Second
-	}
-	return now.After(lease.Spec.RenewTime.Add(duration))
-}
-
-const kDefaultLeaseDuration = 15 * time.Second
-
-// renewLoop keeps the lease alive until ctx ends or renewal fails past the
-// deadline. Returning cancels the leader context, so a leader that cannot reach
-// the API server stops acting as leader rather than working from stale authority.
-func (k *kubernetesCoordinator) renewLoop(ctx context.Context, electionName string) {
-	name := leaseNamePrefix + electionName
-	deadline := time.Now().Add(k.config.RenewDeadline)
-	ticker := time.NewTicker(k.config.RetryPeriod)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			ok, err := k.tryAcquire(ctx, name)
-			if err == nil && ok {
-				deadline = time.Now().Add(k.config.RenewDeadline)
-				continue
-			}
-			if time.Now().After(deadline) {
-				return
-			}
+	go func() {
+		elector.Run(sessionCtx)
+		result := "canceled"
+		if ctx.Err() == nil && session.started.Load() && !k.isClosed() {
+			result = "lost"
 		}
+		leaseSessions.WithLabelValues(result).Inc()
+		slog.Info("kubernetes leadership session stopped", "election", name, "holder", identity)
+		k.finishSession(name, session)
+	}()
+	select {
+	case leader := <-started:
+		if err := sessionCtx.Err(); err != nil {
+			return nil, err
+		}
+		if err := leader.Err(); err != nil {
+			return nil, err
+		}
+		return leader, nil
+	case <-session.done:
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return nil, ErrSessionExpired
+	case <-ctx.Done():
+		cancel()
+		<-session.done
+		return nil, ctx.Err()
 	}
 }
 
-// TryLock converts the lease into a non-blocking mutex: it returns ErrLocked
-// immediately when another holder owns the lease.
-func (k *kubernetesCoordinator) TryLock(ctx context.Context, lockName string) (UnlockFunc, error) {
-	if lockName == "" {
-		return nil, errors.New("lock name is required")
+func (k *kubernetesCoordinator) isClosed() bool {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.closed
+}
+
+func (k *kubernetesCoordinator) finishSession(name string, s *leadershipSession) {
+	s.cancel()
+	k.mu.Lock()
+	if k.sessions[name] == s {
+		delete(k.sessions, name)
 	}
-	acquired, err := k.tryAcquire(ctx, leaseNamePrefix+lockName)
-	if err != nil {
-		return nil, fmt.Errorf("acquire lock %s: %w", lockName, err)
-	}
-	if !acquired {
-		return nil, ErrLocked
-	}
-	var once sync.Once
-	return func() error {
-		once.Do(func() {
-			_ = k.client.CoordinationV1().Leases(k.config.Namespace).Delete(
-				context.WithoutCancel(ctx), leaseNamePrefix+lockName, metav1.DeleteOptions{})
-		})
-		return nil
-	}, nil
+	close(s.done)
+	k.mu.Unlock()
 }
 
 func (k *kubernetesCoordinator) Close() error {
 	k.mu.Lock()
-	defer k.mu.Unlock()
 	if k.closed {
+		done := k.closeDone
+		k.mu.Unlock()
+		<-done
 		return nil
 	}
 	k.closed = true
-	for _, cancel := range k.canceled {
-		cancel()
+	sessions := make([]*leadershipSession, 0, len(k.sessions))
+	for _, s := range k.sessions {
+		sessions = append(sessions, s)
 	}
-	k.canceled = make(map[string]context.CancelFunc)
+	k.mu.Unlock()
+	for _, s := range sessions {
+		s.cancel()
+	}
+	for _, s := range sessions {
+		<-s.done
+	}
+	close(k.closeDone)
 	return nil
 }
 
-// inClusterClient builds a clientset from the pod's service account. It is a
-// variable so tests can substitute a fake without a cluster.
+// Bound each API operation, including initial acquisition. client-go owns all
+// record comparison and renewal logic; this adapter only bounds transport stalls.
+type boundedLeaseLock struct {
+	*resourcelock.LeaseLock
+	budget time.Duration
+}
+
+func (l *boundedLeaseLock) Get(ctx context.Context) (*resourcelock.LeaderElectionRecord, []byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, l.budget)
+	defer cancel()
+	record, raw, err := l.LeaseLock.Get(ctx)
+	if err != nil {
+		leaseRequests.WithLabelValues("get").Inc()
+	}
+	return record, raw, err
+}
+func (l *boundedLeaseLock) Create(ctx context.Context, record resourcelock.LeaderElectionRecord) error {
+	ctx, cancel := context.WithTimeout(ctx, l.budget)
+	defer cancel()
+	err := l.LeaseLock.Create(ctx, record)
+	if err != nil {
+		leaseRequests.WithLabelValues("create").Inc()
+	}
+	return err
+}
+func (l *boundedLeaseLock) Update(ctx context.Context, record resourcelock.LeaderElectionRecord) error {
+	ctx, cancel := context.WithTimeout(ctx, l.budget)
+	defer cancel()
+	err := l.LeaseLock.Update(ctx, record)
+	if err != nil {
+		leaseRequests.WithLabelValues("update").Inc()
+	}
+	return err
+}
+
 var inClusterClient = func() (kubernetes.Interface, error) {
 	cfg, err := rest.InClusterConfig()
 	if err != nil {

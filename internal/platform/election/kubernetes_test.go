@@ -16,362 +16,212 @@ import (
 	k8stesting "k8s.io/client-go/testing"
 )
 
-func micro(t time.Time) *metav1.MicroTime {
-	m := metav1.NewMicroTime(t.UTC())
-	return &m
+func leaseForTest(name, holder string, at time.Time) *coordinationv1.Lease {
+	duration := int32(1)
+	stamp := metav1.NewMicroTime(at)
+	return &coordinationv1.Lease{ObjectMeta: metav1.ObjectMeta{Name: leaseNamePrefix + name, Namespace: "test"},
+		Spec: coordinationv1.LeaseSpec{HolderIdentity: &holder, LeaseDurationSeconds: &duration, RenewTime: &stamp}}
 }
-
-func seconds(v int32) *int32 { return &v }
-
-func ptrStr(v string) *string { return &v }
-
-func leaseWith(holder string, renewAt time.Time, durationSeconds int32) *coordinationv1.Lease {
-	return namedLease("operator", holder, renewAt, durationSeconds)
+func testConfig(client *fake.Clientset) KubernetesConfig {
+	return KubernetesConfig{Namespace: "test", Identity: "pod", Client: client, LeaseDuration: time.Second,
+		RenewDeadline: 150 * time.Millisecond, RetryPeriod: 20 * time.Millisecond}
 }
-
-func namedLease(name, holder string, renewAt time.Time, durationSeconds int32) *coordinationv1.Lease {
-	return &coordinationv1.Lease{
-		ObjectMeta: metav1.ObjectMeta{Name: leaseNamePrefix + name, Namespace: "orbitjob-system"},
-		Spec: coordinationv1.LeaseSpec{
-			HolderIdentity:       &holder,
-			RenewTime:            micro(renewAt),
-			LeaseDurationSeconds: seconds(durationSeconds),
-		},
-	}
-}
-
-func TestConfigDefaultsAndValidation(t *testing.T) {
+func TestConfigDefaultsAndOfficialValidation(t *testing.T) {
 	if _, err := (KubernetesConfig{}).withDefaults(); err == nil {
-		t.Fatal("namespace is required")
+		t.Fatal("namespace required")
 	}
-	resolved, err := KubernetesConfig{Namespace: "orbitjob-system", Identity: "pod-0"}.withDefaults()
+	cfg, err := (KubernetesConfig{Namespace: "test", Identity: "pod"}).withDefaults()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved.LeaseDuration != 15*time.Second || resolved.RenewDeadline != 10*time.Second || resolved.RetryPeriod != 2*time.Second {
-		t.Fatalf("unexpected defaults: %+v", resolved)
+	if cfg.LeaseDuration != 15*time.Second || cfg.RenewDeadline != 10*time.Second || cfg.RetryPeriod != 2*time.Second {
+		t.Fatalf("defaults: %+v", cfg)
 	}
-	// A renew deadline at or beyond the lease duration lets a stale holder keep
-	// believing it is leader after another instance took over.
-	if _, err := (KubernetesConfig{
-		Namespace: "ns", Identity: "x", LeaseDuration: 5 * time.Second, RenewDeadline: 5 * time.Second,
-	}).withDefaults(); err == nil {
-		t.Fatal("renew deadline must be shorter than lease duration")
+	cfg.RenewDeadline = 2 * time.Second
+	cfg.RetryPeriod = 1900 * time.Millisecond
+	if _, err := cfg.withDefaults(); err == nil {
+		t.Fatal("official jitter constraint must be validated")
 	}
 }
-
-func TestLeaseIsFree(t *testing.T) {
-	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
-	tests := []struct {
-		name     string
-		lease    *coordinationv1.Lease
-		identity string
-		want     bool
-	}{
-		{"never held", &coordinationv1.Lease{}, "pod-0", true},
-		{"held by us", leaseWith("pod-0", now, 15), "pod-0", true},
-		{"held by another and fresh", leaseWith("pod-1", now.Add(-time.Second), 15), "pod-0", false},
-		{"held by another and expired", leaseWith("pod-1", now.Add(-time.Minute), 15), "pod-0", true},
-		{"no renew time recorded", &coordinationv1.Lease{Spec: coordinationv1.LeaseSpec{HolderIdentity: ptrStr("pod-1")}}, "pod-0", true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := leaseIsFree(tt.lease, now, tt.identity); got != tt.want {
-				t.Fatalf("free = %v, want %v", got, tt.want)
+func TestCampaignDoesNotTrustRemoteTimestamp(t *testing.T) {
+	for _, offset := range []time.Duration{-time.Hour, time.Hour} {
+		t.Run(offset.String(), func(t *testing.T) {
+			client := fake.NewSimpleClientset(leaseForTest("operator", "other", time.Now().Add(offset)))
+			var n atomic.Int64
+			client.PrependReactor("get", "leases", func(action k8stesting.Action) (bool, runtime.Object, error) {
+				// A live holder renews continually, despite arbitrary timestamp offset.
+				return true, leaseForTest("operator", "other", time.Now().Add(offset).Add(time.Duration(n.Add(1)))), nil
+			})
+			c, err := NewKubernetes(testConfig(client))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = c.Close() }()
+			ctx, cancel := context.WithTimeout(t.Context(), 180*time.Millisecond)
+			defer cancel()
+			leader, err := c.Campaign(ctx, "operator")
+			if leader != nil || !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("remote clock stole authority: %v %v", leader, err)
+			}
+			for _, a := range client.Actions() {
+				if a.GetVerb() == "update" {
+					t.Fatal("live foreign lease was updated")
+				}
 			}
 		})
 	}
 }
-
-func TestCampaignTakesExpiredLease(t *testing.T) {
-	client := fake.NewSimpleClientset(leaseWith("pod-1", time.Now().Add(-time.Hour), 15))
-	coordinator, err := NewKubernetes(KubernetesConfig{
-		Namespace: "orbitjob-system", Identity: "pod-0", Client: client,
-		RetryPeriod: time.Millisecond,
-	})
+func TestStableRecordWaitsLocalLeaseDuration(t *testing.T) {
+	client := fake.NewSimpleClientset(leaseForTest("operator", "other", time.Now().Add(-time.Hour)))
+	c, err := NewKubernetes(testConfig(client))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = coordinator.Close() }()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer func() { _ = c.Close() }()
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
-	leaderCtx, err := coordinator.Campaign(ctx, "operator")
-	if err != nil {
-		t.Fatalf("expected to take over an expired lease: %v", err)
-	}
-	if leaderCtx.Err() != nil {
-		t.Fatal("leader context must be live")
-	}
-
-	lease, err := client.CoordinationV1().Leases("orbitjob-system").Get(ctx, leaseNamePrefix+"operator", metav1.GetOptions{})
+	start := time.Now()
+	leader, err := c.Campaign(ctx, "operator")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if lease.Spec.HolderIdentity == nil || *lease.Spec.HolderIdentity != "pod-0" {
-		t.Fatalf("holder = %v", lease.Spec.HolderIdentity)
+	if time.Since(start) < time.Second || leader.Err() != nil {
+		t.Fatal("must wait locally observed lease duration")
 	}
 }
-
-func TestTryLockReportsLockedWhenAnotherHoldsTheLease(t *testing.T) {
-	client := fake.NewSimpleClientset(namedLease("dispatch", "pod-1", time.Now(), 60))
-	coordinator, err := NewKubernetes(KubernetesConfig{
-		Namespace: "orbitjob-system", Identity: "pod-0", Client: client,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = coordinator.Close() }()
-
-	if _, err := coordinator.TryLock(context.Background(), "dispatch"); !errors.Is(err, ErrLocked) {
-		t.Fatalf("error = %v, want ErrLocked", err)
-	}
-}
-
-func TestTryLockReleasesOnUnlock(t *testing.T) {
+func TestCampaignLifecycleAndNoEarlyRelease(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	coordinator, err := NewKubernetes(KubernetesConfig{
-		Namespace: "orbitjob-system", Identity: "pod-0", Client: client,
-	})
+	c, err := NewKubernetes(testConfig(client))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = coordinator.Close() }()
-
-	unlock, err := coordinator.TryLock(context.Background(), "dispatch")
+	ctx, cancel := context.WithCancel(t.Context())
+	leader, err := c.Campaign(ctx, "operator")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := coordinator.TryLock(context.Background(), "dispatch"); err != nil {
-		t.Fatalf("the same holder must be able to re-enter: %v", err)
+	if _, err := c.Campaign(ctx, "operator"); err == nil {
+		t.Fatal("overlapping campaign accepted")
 	}
-	if err := unlock(); err != nil {
-		t.Fatal(err)
-	}
-	// Idempotent: a second release must not error.
-	if err := unlock(); err != nil {
-		t.Fatalf("unlock is not idempotent: %v", err)
-	}
-	if _, err := client.CoordinationV1().Leases("orbitjob-system").Get(
-		context.Background(), leaseNamePrefix+"dispatch", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
-		t.Fatalf("lease still present: %v", err)
-	}
-}
-
-func TestCampaignStopsOnContextCancellation(t *testing.T) {
-	// Another instance holds a fresh lease, so the campaign can never win.
-	client := fake.NewSimpleClientset(leaseWith("pod-1", time.Now(), 600))
-	coordinator, err := NewKubernetes(KubernetesConfig{
-		Namespace: "orbitjob-system", Identity: "pod-0", Client: client,
-		RetryPeriod: time.Millisecond,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = coordinator.Close() }()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-	if _, err := coordinator.Campaign(ctx, "operator"); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("error = %v, want deadline exceeded", err)
-	}
-}
-
-func TestCloseIsIdempotentAndStopsCampaigns(t *testing.T) {
-	client := fake.NewSimpleClientset()
-	coordinator, err := NewKubernetes(KubernetesConfig{
-		Namespace: "orbitjob-system", Identity: "pod-0", Client: client,
-		RetryPeriod: time.Millisecond,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	leaderCtx, err := coordinator.Campaign(context.Background(), "operator")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := coordinator.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := coordinator.Close(); err != nil {
-		t.Fatalf("close is not idempotent: %v", err)
-	}
+	cancel()
 	select {
-	case <-leaderCtx.Done():
+	case <-leader.Done():
 	case <-time.After(time.Second):
-		t.Fatal("closing the coordinator must release leadership")
+		t.Fatal("leadership not canceled")
 	}
-	if _, err := coordinator.Campaign(context.Background(), "operator"); err == nil {
-		t.Fatal("a closed coordinator must refuse new campaigns")
-	}
-}
-
-func TestNewKubernetesRequiresNamespaceAndElectionName(t *testing.T) {
-	if _, err := NewKubernetes(KubernetesConfig{}); err == nil {
-		t.Fatal("expected namespace validation")
-	}
-	coordinator, err := NewKubernetes(KubernetesConfig{
-		Namespace: "orbitjob-system", Identity: "pod-0", Client: fake.NewSimpleClientset(),
-	})
-	if err != nil {
+	if err := c.Close(); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = coordinator.Close() }()
-	if _, err := coordinator.Campaign(context.Background(), ""); err == nil {
-		t.Fatal("expected election name validation")
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := coordinator.TryLock(context.Background(), ""); err == nil {
-		t.Fatal("expected lock name validation")
+	if _, err := c.Campaign(t.Context(), "operator"); err == nil {
+		t.Fatal("closed coordinator accepted campaign")
+	}
+	lease, err := client.CoordinationV1().Leases("test").Get(t.Context(), leaseNamePrefix+"operator", metav1.GetOptions{})
+	if err != nil || lease.Spec.HolderIdentity == nil || *lease.Spec.HolderIdentity == "" {
+		t.Fatalf("lease released before workers drain: %v %v", lease, err)
+	}
+	if len(c.(*kubernetesCoordinator).sessions) != 0 {
+		t.Fatal("session leaked")
 	}
 }
-
-func TestTryAcquireSurfacesApiErrors(t *testing.T) {
+func TestRenewalFailureCancelsAndCampaignCanRestart(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	client.PrependReactor("get", "leases", func(k8stesting.Action) (bool, runtime.Object, error) {
-		return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "leases"}, "x", errors.New("denied"))
-	})
-	coordinator, err := NewKubernetes(KubernetesConfig{
-		Namespace: "orbitjob-system", Identity: "pod-0", Client: client,
-		RetryPeriod: time.Millisecond,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = coordinator.Close() }()
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	// A permission error will never resolve by retrying, so it must fail fast
-	// rather than spinning until the caller's deadline.
-	if _, err := coordinator.Campaign(ctx, "operator"); err == nil {
-		t.Fatal("expected the API error to surface")
-	}
-}
-
-func TestAcquireCreatesLeaseWhenAbsent(t *testing.T) {
-	client := fake.NewSimpleClientset()
-	coordinator, err := NewKubernetes(KubernetesConfig{
-		Namespace: "orbitjob-system", Identity: "pod-0", Client: client,
-		RetryPeriod: time.Millisecond,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = coordinator.Close() }()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if _, err := coordinator.Campaign(ctx, "operator"); err != nil {
-		t.Fatal(err)
-	}
-	lease, err := client.CoordinationV1().Leases("orbitjob-system").Get(ctx, leaseNamePrefix+"operator", metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if lease.Spec.LeaseDurationSeconds == nil || *lease.Spec.LeaseDurationSeconds != 15 {
-		t.Fatalf("lease duration = %v", lease.Spec.LeaseDurationSeconds)
-	}
-}
-
-func TestRenewLoopKeepsLeadershipWhileTheLeaseIsHeld(t *testing.T) {
-	client := fake.NewSimpleClientset()
-	coordinator, err := NewKubernetes(KubernetesConfig{
-		Namespace: "orbitjob-system", Identity: "pod-0", Client: client,
-		RetryPeriod: 5 * time.Millisecond, RenewDeadline: time.Second, LeaseDuration: 2 * time.Second,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = coordinator.Close() }()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	leaderCtx, err := coordinator.Campaign(ctx, "operator")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Several renew intervals pass; leadership must survive them.
-	time.Sleep(40 * time.Millisecond)
-	if leaderCtx.Err() != nil {
-		t.Fatal("leadership was lost while the lease was renewable")
-	}
-	lease, err := client.CoordinationV1().Leases("orbitjob-system").Get(ctx, leaseNamePrefix+"operator", metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if lease.Spec.RenewTime == nil {
-		t.Fatal("renew time was never refreshed")
-	}
-}
-
-func TestRenewLoopSurvivesTransientApiErrorsWithinDeadline(t *testing.T) {
-	client := fake.NewSimpleClientset()
-	// The reactor is installed before the coordinator starts: the fake
-	// clientset is not safe to reconfigure while a renew loop is running.
-	var failing atomic.Bool
-	failing.Store(true)
+	var fail atomic.Bool
 	client.PrependReactor("update", "leases", func(k8stesting.Action) (bool, runtime.Object, error) {
-		if failing.Load() {
-			return true, nil, errors.New("apiserver unavailable")
+		if fail.Load() {
+			return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "leases"}, "operator", errors.New("partition"))
 		}
 		return false, nil, nil
 	})
-
-	coordinator, err := NewKubernetes(KubernetesConfig{
-		Namespace: "orbitjob-system", Identity: "pod-0", Client: client,
-		RetryPeriod: 5 * time.Millisecond, RenewDeadline: time.Second, LeaseDuration: 2 * time.Second,
-	})
+	c, err := NewKubernetes(testConfig(client))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = coordinator.Close() }()
-
-	ctx, cancel := context.WithCancel(context.Background())
+	defer func() { _ = c.Close() }()
+	leader, err := c.Campaign(t.Context(), "operator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := client.CoordinationV1().Leases("test").Get(t.Context(), leaseNamePrefix+"operator", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := *lease.Spec.HolderIdentity
+	fail.Store(true)
+	select {
+	case <-leader.Done():
+	case <-time.After(700 * time.Millisecond):
+		t.Fatal("failed renewal kept authority")
+	}
+	k := c.(*kubernetesCoordinator)
+	deadline := time.Now().Add(time.Second)
+	for {
+		k.mu.Lock()
+		remaining := len(k.sessions)
+		k.mu.Unlock()
+		if remaining == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("session not reclaimed")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	fail.Store(false)
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
-	leaderCtx, err := coordinator.Campaign(ctx, "operator")
+	if _, err := c.Campaign(ctx, "operator"); err != nil {
+		t.Fatal(err)
+	}
+	lease, err = client.CoordinationV1().Leases("test").Get(t.Context(), lease.Name, metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	// Renewals fail for a while, then recover. An outage shorter than the renew
-	// deadline must not cost leadership.
-	time.Sleep(30 * time.Millisecond)
-	failing.Store(false)
-	time.Sleep(30 * time.Millisecond)
-
-	if leaderCtx.Err() != nil {
-		t.Fatal("leadership must survive an outage shorter than the renew deadline")
+	if first == *lease.Spec.HolderIdentity {
+		t.Fatal("new term reused holder token")
 	}
 }
-
-func TestRenewLoopGivesUpAuthorityAfterRepeatedFailures(t *testing.T) {
-	client := fake.NewSimpleClientset()
-	// Every renewal fails from the outset, so leadership cannot be sustained.
-	client.PrependReactor("update", "leases", func(k8stesting.Action) (bool, runtime.Object, error) {
-		return true, nil, errors.New("apiserver unavailable")
-	})
-	coordinator, err := NewKubernetes(KubernetesConfig{
-		Namespace: "orbitjob-system", Identity: "pod-0", Client: client,
-		RetryPeriod: 2 * time.Millisecond, RenewDeadline: 10 * time.Millisecond, LeaseDuration: 5 * time.Second,
-	})
+func TestCloseWhileNeverElectedJoinsWaiter(t *testing.T) {
+	client := fake.NewSimpleClientset(leaseForTest("operator", "other", time.Now()))
+	c, err := NewKubernetes(testConfig(client))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = coordinator.Close() }()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	leaderCtx, err := coordinator.Campaign(ctx, "operator")
-	if err != nil {
+	result := make(chan error, 1)
+	go func() { _, err := c.Campaign(context.Background(), "operator"); result <- err }()
+	deadline := time.Now().Add(time.Second)
+	for len(client.Actions()) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("campaign did not start")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err := c.Close(); err != nil {
 		t.Fatal(err)
 	}
-
-	// A leader that cannot renew must stop acting rather than keep working from
-	// stale authority.
 	select {
-	case <-leaderCtx.Done():
-	case <-time.After(2 * time.Second):
-		t.Fatal("leadership was not surrendered after the renew deadline passed")
+	case err := <-result:
+		if err == nil {
+			t.Fatal("never-elected session returned authority")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("campaign leaked")
+	}
+}
+func TestCampaignRequiresNameAndRespectsCanceledContext(t *testing.T) {
+	c, err := NewKubernetes(testConfig(fake.NewSimpleClientset()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+	if _, err := c.Campaign(t.Context(), ""); err == nil {
+		t.Fatal("empty name accepted")
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := c.Campaign(ctx, "operator"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled context: %v", err)
 	}
 }
