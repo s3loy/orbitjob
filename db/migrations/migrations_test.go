@@ -70,6 +70,7 @@ func TestMigrationFileSet(t *testing.T) {
 		"0023_execution_control_permissions.up.sql",
 		"0024_slo_evaluation_reason.up.sql",
 		"0025_check_execution_policy.up.sql",
+		"0026_private_authoring_drafts.up.sql",
 	}
 	if !reflect.DeepEqual(files, want) {
 		t.Fatalf("migration files = %v, want %v", files, want)

@@ -40,6 +40,7 @@ var KnownActions = []string{
 	"job:Apply",
 	"job:Get",
 	"job:ManageExecution",
+	"job:RecoverDraft",
 	"job:List",
 	"job:Trigger",
 
@@ -95,6 +96,7 @@ var KnownActions = []string{
 	"workflow:Apply",
 	"workflow:Get",
 	"workflow:ManageExecution",
+	"workflow:RecoverDraft",
 	"workflow:List",
 	"workflow:Trigger",
 }

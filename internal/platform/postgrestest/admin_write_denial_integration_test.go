@@ -286,7 +286,7 @@ func TestNoTableBeyondTheConfigurationSetGrantsAdminWrites(t *testing.T) {
 	expected := []string{"audit_events.INSERT", "audit_events_default.INSERT"}
 	for _, table := range []string{
 		"api_keys", "budget_alerts", "budgets", "check_runs", "checks",
-		"functions", "key_policies", "policies", "resource_groups",
+		"functions", "key_policies", "policies", "private_authoring_drafts", "resource_groups",
 		"sli_snapshots", "slis", "slos", "tenants",
 	} {
 		for _, privilege := range []string{"INSERT", "UPDATE", "DELETE"} {
