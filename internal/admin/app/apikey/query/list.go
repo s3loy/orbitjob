@@ -15,6 +15,7 @@ type ListInput struct {
 // APIKeyListItem is the control-plane read model used by GET /api/v1/tenants/:id/api_keys.
 type APIKeyListItem struct {
 	ID        string     `json:"id"`
+	Name      string     `json:"name"`
 	KeyPrefix string     `json:"key_prefix"`
 	CreatedAt time.Time  `json:"created_at"`
 	RevokedAt *time.Time `json:"revoked_at,omitempty"`
@@ -45,6 +46,7 @@ func (uc *Lister) List(ctx context.Context, in ListInput) ([]APIKeyListItem, err
 	for i, item := range items {
 		out[i] = APIKeyListItem{
 			ID:        item.ID,
+			Name:      item.Name,
 			KeyPrefix: item.KeyPrefix,
 			CreatedAt: item.CreatedAt,
 			RevokedAt: item.RevokedAt,

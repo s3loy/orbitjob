@@ -32,6 +32,7 @@ build:
 build-all:
 	@mkdir -p bin
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/admin-api   ./cmd/admin-api/
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/orbitjob-identity ./cmd/orbitjob-identity/
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/scheduler   ./cmd/scheduler/
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/operator    ./cmd/operator/
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/configure   ./cmd/configure/

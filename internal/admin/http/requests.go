@@ -429,6 +429,8 @@ type TenantURI struct {
 // All fields are optional: a bare request mints an unnamed key with no grants,
 // which can authenticate but reach no guarded route.
 type CreateAPIKeyRequest struct {
+	// Name is an optional human-readable label, never part of authentication.
+	Name string `json:"name" binding:"omitempty,max=128"`
 	// Policies names the policy documents the new key carries.
 	Policies []string `json:"policies"`
 	// BoundaryPolicyID caps what those policies can ever grant.
@@ -443,6 +445,7 @@ type CreateAPIKeyRequest struct {
 func (r CreateAPIKeyRequest) ToCreateInput(tenantID string, caller apikeycommand.Caller) apikeycommand.CreateInput {
 	return apikeycommand.CreateInput{
 		TenantID:         tenantID,
+		Name:             r.Name,
 		PolicyIDs:        r.Policies,
 		BoundaryPolicyID: r.BoundaryPolicyID,
 		ResourceGroupID:  r.ResourceGroupID,
@@ -457,6 +460,9 @@ type APIKeyURI struct {
 
 // RenameAPIKeyRequest changes only the human-readable label. A pointer
 // distinguishes an omitted label from an explicit empty string to clear it.
+type RenameAPIKeyRequest struct {
+	Name *string `json:"name" binding:"required,max=128"`
+}
 
 // ==================== Policies ====================
 

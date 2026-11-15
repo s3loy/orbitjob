@@ -7,6 +7,8 @@ import (
 
 	"orbitjob/internal/core/domain/apikey"
 	"orbitjob/internal/core/domain/policy"
+
+	"orbitjob/internal/platform/scan"
 )
 
 // policyStub serves canned documents by id.
@@ -28,20 +30,20 @@ func (s policyStub) Get(_ context.Context, _, id string) (policy.Record, error) 
 
 func allow(actions ...string) policy.Document {
 	return policy.Document{Statement: []policy.Statement{
-		{Effect: policy.EffectAllow, Action: actions, Resource: []string{"orbitjob:T1:*:job/*"}},
+		{Effect: policy.EffectAllow, Action: actions, Resource: []string{"orbitjob:" + guardFixtureTenantID + ":*:job/*"}},
 	}}
 }
 
 func TestCreateRejectsEscalation(t *testing.T) {
 	repo := &stubAPIKeyCreator{}
 	c := NewCreator(repo).WithPolicies(policyStub{docs: map[string]policy.Document{
-		"p-admin": allow("job:Delete"),
+		guardFixtureAdminPolicyID: allow("job:Delete"),
 	}})
 
 	_, err := c.Create(context.Background(), CreateInput{
-		TenantID:  "T1",
-		PolicyIDs: []string{"p-admin"},
-		Caller:    Caller{TenantID: "T1", Documents: []policy.Document{allow("job:Get")}},
+		TenantID:  guardFixtureTenantID,
+		PolicyIDs: []string{guardFixtureAdminPolicyID},
+		Caller:    Caller{TenantID: guardFixtureTenantID, Documents: []policy.Document{allow("job:Get")}},
 	})
 	if !errors.Is(err, policy.ErrPrivilegeEscalation) {
 		t.Fatalf("expected ErrPrivilegeEscalation, got %v", err)
@@ -54,13 +56,13 @@ func TestCreateRejectsEscalation(t *testing.T) {
 func TestCreateAllowsSubsetGrant(t *testing.T) {
 	repo := &stubAPIKeyCreator{}
 	c := NewCreator(repo).WithPolicies(policyStub{docs: map[string]policy.Document{
-		"p-read": allow("job:Get"),
+		guardFixtureReadPolicyID: allow("job:Get"),
 	}})
 
 	if _, err := c.Create(context.Background(), CreateInput{
-		TenantID:  "T1",
-		PolicyIDs: []string{"p-read"},
-		Caller:    Caller{TenantID: "T1", Documents: []policy.Document{allow("job:Get", "job:List")}},
+		TenantID:  guardFixtureTenantID,
+		PolicyIDs: []string{guardFixtureReadPolicyID},
+		Caller:    Caller{TenantID: guardFixtureTenantID, Documents: []policy.Document{allow("job:Get", "job:List")}},
 	}); err != nil {
 		t.Fatalf("a subset grant must succeed, got %v", err)
 	}
@@ -72,22 +74,22 @@ func TestCreateAllowsSubsetGrant(t *testing.T) {
 func TestCreateInheritsCallerBoundary(t *testing.T) {
 	repo := &stubAPIKeyCreator{}
 	c := NewCreator(repo).WithPolicies(policyStub{docs: map[string]policy.Document{
-		"p-read":     allow("job:Get"),
-		"p-boundary": allow("job:Get"),
+		guardFixtureReadPolicyID: allow("job:Get"),
+		guardFixtureBoundaryID:   allow("job:Get"),
 	}})
 
 	if _, err := c.Create(context.Background(), CreateInput{
-		TenantID:  "T1",
-		PolicyIDs: []string{"p-read"},
+		TenantID:  guardFixtureTenantID,
+		PolicyIDs: []string{guardFixtureReadPolicyID},
 		Caller: Caller{
-			TenantID:         "T1",
+			TenantID:         guardFixtureTenantID,
 			Documents:        []policy.Document{allow("job:Get")},
-			BoundaryPolicyID: "p-boundary",
+			BoundaryPolicyID: guardFixtureBoundaryID,
 		},
 	}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if repo.last.BoundaryPolicyID != "p-boundary" {
+	if repo.last.BoundaryPolicyID != guardFixtureBoundaryID {
 		t.Fatalf("the new key must inherit the caller's boundary, got %q", repo.last.BoundaryPolicyID)
 	}
 }
@@ -95,21 +97,21 @@ func TestCreateInheritsCallerBoundary(t *testing.T) {
 func TestCreateRejectsWiderBoundary(t *testing.T) {
 	repo := &stubAPIKeyCreator{}
 	c := NewCreator(repo).WithPolicies(policyStub{docs: map[string]policy.Document{
-		"p-read":       allow("job:Get"),
-		"p-caller-cap": allow("job:Get"),
-		"p-wider-cap": {Statement: []policy.Statement{
-			{Effect: policy.EffectAllow, Action: []string{"job:Get", "job:Delete"}, Resource: []string{"orbitjob:T1:*:job/*"}},
+		guardFixtureReadPolicyID:     allow("job:Get"),
+		guardFixtureCallerBoundaryID: allow("job:Get"),
+		guardFixtureWideBoundaryID: {Statement: []policy.Statement{
+			{Effect: policy.EffectAllow, Action: []string{"job:Get", "job:Delete"}, Resource: []string{"orbitjob:" + guardFixtureTenantID + ":*:job/*"}},
 		}},
 	}})
 
 	_, err := c.Create(context.Background(), CreateInput{
-		TenantID:         "T1",
-		PolicyIDs:        []string{"p-read"},
-		BoundaryPolicyID: "p-wider-cap",
+		TenantID:         guardFixtureTenantID,
+		PolicyIDs:        []string{guardFixtureReadPolicyID},
+		BoundaryPolicyID: guardFixtureWideBoundaryID,
 		Caller: Caller{
-			TenantID:         "T1",
+			TenantID:         guardFixtureTenantID,
 			Documents:        []policy.Document{allow("job:Get")},
-			BoundaryPolicyID: "p-caller-cap",
+			BoundaryPolicyID: guardFixtureCallerBoundaryID,
 		},
 	})
 	if !errors.Is(err, policy.ErrPrivilegeEscalation) {
@@ -120,8 +122,8 @@ func TestCreateRejectsWiderBoundary(t *testing.T) {
 func TestCreateWithoutPolicyReaderRejectsPolicies(t *testing.T) {
 	c := NewCreator(&stubAPIKeyCreator{})
 	_, err := c.Create(context.Background(), CreateInput{
-		TenantID:  "T1",
-		PolicyIDs: []string{"p-read"},
+		TenantID:  guardFixtureTenantID,
+		PolicyIDs: []string{guardFixtureReadPolicyID},
 	})
 	if err == nil {
 		t.Fatal("requesting policies without a reader must fail, not silently drop them")
@@ -131,7 +133,7 @@ func TestCreateWithoutPolicyReaderRejectsPolicies(t *testing.T) {
 func TestCreateWithNoPoliciesSucceeds(t *testing.T) {
 	repo := &stubAPIKeyCreator{}
 	c := NewCreator(repo)
-	if _, err := c.Create(context.Background(), CreateInput{TenantID: "T1"}); err != nil {
+	if _, err := c.Create(context.Background(), CreateInput{TenantID: guardFixtureTenantID}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	if len(repo.last.PolicyIDs) != 0 {
@@ -142,8 +144,8 @@ func TestCreateWithNoPoliciesSucceeds(t *testing.T) {
 func TestCreateSurfacesPolicyLoadFailure(t *testing.T) {
 	c := NewCreator(&stubAPIKeyCreator{}).WithPolicies(policyStub{err: errors.New("db down")})
 	_, err := c.Create(context.Background(), CreateInput{
-		TenantID:  "T1",
-		PolicyIDs: []string{"p-read"},
+		TenantID:  guardFixtureTenantID,
+		PolicyIDs: []string{guardFixtureReadPolicyID},
 	})
 	if err == nil {
 		t.Fatal("a policy that cannot be loaded must fail the create")
@@ -153,21 +155,21 @@ func TestCreateSurfacesPolicyLoadFailure(t *testing.T) {
 func TestCreateRecordsBinding(t *testing.T) {
 	repo := &stubAPIKeyCreator{}
 	c := NewCreator(repo).
-		WithPolicies(policyStub{docs: map[string]policy.Document{"p-read": allow("job:Get")}}).
-		WithGroups(groupStub{owned: map[string]bool{"g1": true}})
+		WithPolicies(policyStub{docs: map[string]policy.Document{guardFixtureReadPolicyID: allow("job:Get")}}).
+		WithGroups(groupStub{owned: map[string]bool{guardFixtureGroupID: true}})
 	if _, err := c.Create(context.Background(), CreateInput{
-		TenantID:        "T1",
-		ResourceGroupID: "g1",
-		PolicyIDs:       []string{"p-read"},
-		Caller:          Caller{TenantID: "T1", Documents: []policy.Document{allow("job:Get")}},
+		TenantID:        guardFixtureTenantID,
+		ResourceGroupID: guardFixtureGroupID,
+		PolicyIDs:       []string{guardFixtureReadPolicyID},
+		Caller:          Caller{TenantID: guardFixtureTenantID, Documents: []policy.Document{allow("job:Get")}},
 	}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	in := repo.last
-	if in.TenantID != "T1" || in.ResourceGroupID != "g1" || len(in.PolicyIDs) != 1 {
+	if in.TenantID != guardFixtureTenantID || in.ResourceGroupID != guardFixtureGroupID || len(in.PolicyIDs) != 1 {
 		t.Fatalf("unexpected persist input %+v", in)
 	}
-	if in.BoundBy != "T1" {
+	if in.BoundBy != guardFixtureTenantID {
 		t.Fatalf("who bound the policy must be recorded, got %q", in.BoundBy)
 	}
 }
@@ -196,8 +198,8 @@ func TestCreateRejectsAForeignResourceGroup(t *testing.T) {
 	c := NewCreator(repo).WithGroups(groupStub{})
 
 	_, err := c.Create(context.Background(), CreateInput{
-		TenantID:        "T1",
-		ResourceGroupID: "someone-elses",
+		TenantID:        guardFixtureTenantID,
+		ResourceGroupID: guardFixtureForeignGroupID,
 	})
 	if err == nil {
 		t.Fatal("a key was scoped to a group the tenant does not own")
@@ -211,8 +213,8 @@ func TestCreateRejectsAForeignResourceGroup(t *testing.T) {
 // unchecked id that would then filter every query the key makes.
 func TestCreateRejectsAGroupWhenTheReaderIsMissing(t *testing.T) {
 	_, err := NewCreator(&stubAPIKeyCreator{}).Create(context.Background(), CreateInput{
-		TenantID:        "T1",
-		ResourceGroupID: "g1",
+		TenantID:        guardFixtureTenantID,
+		ResourceGroupID: guardFixtureGroupID,
 	})
 	if err == nil {
 		t.Fatal("an unchecked group id was accepted")
@@ -223,8 +225,8 @@ func TestCreateSurfacesAGroupLookupFailure(t *testing.T) {
 	_, err := NewCreator(&stubAPIKeyCreator{}).
 		WithGroups(groupStub{err: errors.New("db down")}).
 		Create(context.Background(), CreateInput{
-			TenantID:        "T1",
-			ResourceGroupID: "g1",
+			TenantID:        guardFixtureTenantID,
+			ResourceGroupID: guardFixtureGroupID,
 		})
 	if err == nil {
 		t.Fatal("a failed group lookup must fail the create")
@@ -235,7 +237,7 @@ func TestCreateSurfacesAGroupLookupFailure(t *testing.T) {
 func TestCreateSkipsTheGroupCheckWhenNoGroupIsNamed(t *testing.T) {
 	repo := &stubAPIKeyCreator{}
 	if _, err := NewCreator(repo).Create(context.Background(), CreateInput{
-		TenantID: "T1",
+		TenantID: guardFixtureTenantID,
 	}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -257,12 +259,12 @@ func TestCreateRefusesToLeaveTheCallersResourceGroup(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			repo := &stubAPIKeyCreator{}
 			c := NewCreator(repo).
-				WithGroups(groupStub{owned: map[string]bool{"ci": true, "prod": true}})
+				WithGroups(groupStub{owned: map[string]bool{guardFixtureScopedGroupID: true, "prod": true}})
 
 			_, err := c.Create(context.Background(), CreateInput{
-				TenantID:        "T1",
+				TenantID:        guardFixtureTenantID,
 				ResourceGroupID: requested,
-				Caller:          Caller{TenantID: "T1", ResourceGroupID: "ci"},
+				Caller:          Caller{TenantID: guardFixtureTenantID, ResourceGroupID: guardFixtureScopedGroupID},
 			})
 			if err == nil {
 				t.Fatal("a scoped caller minted a key outside its scope")
@@ -281,12 +283,12 @@ func TestCreateRefusesToLeaveTheCallersResourceGroup(t *testing.T) {
 // not a prohibition.
 func TestCreateAllowsTheCallersOwnResourceGroup(t *testing.T) {
 	repo := &stubAPIKeyCreator{}
-	c := NewCreator(repo).WithGroups(groupStub{owned: map[string]bool{"ci": true}})
+	c := NewCreator(repo).WithGroups(groupStub{owned: map[string]bool{guardFixtureScopedGroupID: true}})
 
 	if _, err := c.Create(context.Background(), CreateInput{
-		TenantID:        "T1",
-		ResourceGroupID: "ci",
-		Caller:          Caller{TenantID: "T1", ResourceGroupID: "ci"},
+		TenantID:        guardFixtureTenantID,
+		ResourceGroupID: guardFixtureScopedGroupID,
+		Caller:          Caller{TenantID: guardFixtureTenantID, ResourceGroupID: guardFixtureScopedGroupID},
 	}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -299,12 +301,12 @@ func TestCreateAllowsTheCallersOwnResourceGroup(t *testing.T) {
 // of the group dimension and is bounded by its policies instead.
 func TestCreateLetsAnUnscopedCallerChooseAGroup(t *testing.T) {
 	repo := &stubAPIKeyCreator{}
-	c := NewCreator(repo).WithGroups(groupStub{owned: map[string]bool{"ci": true}})
+	c := NewCreator(repo).WithGroups(groupStub{owned: map[string]bool{guardFixtureScopedGroupID: true}})
 
 	if _, err := c.Create(context.Background(), CreateInput{
-		TenantID:        "T1",
-		ResourceGroupID: "ci",
-		Caller:          Caller{TenantID: "T1"},
+		TenantID:        guardFixtureTenantID,
+		ResourceGroupID: guardFixtureScopedGroupID,
+		Caller:          Caller{TenantID: guardFixtureTenantID},
 	}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -312,3 +314,21 @@ func TestCreateLetsAnUnscopedCallerChooseAGroup(t *testing.T) {
 		t.Fatal("the key should have been written")
 	}
 }
+
+var guardFixtureTenantID = scan.GenerateID()
+
+var guardFixtureScopedGroupID = scan.GenerateID()
+
+var guardFixtureGroupID = scan.GenerateID()
+
+var guardFixtureAdminPolicyID = scan.GenerateID()
+
+var guardFixtureBoundaryID = scan.GenerateID()
+
+var guardFixtureCallerBoundaryID = scan.GenerateID()
+
+var guardFixtureReadPolicyID = scan.GenerateID()
+
+var guardFixtureWideBoundaryID = scan.GenerateID()
+
+var guardFixtureForeignGroupID = scan.GenerateID()

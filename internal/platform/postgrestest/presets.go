@@ -40,6 +40,50 @@ func SeedPresetPolicies(ctx context.Context, db *sql.DB) error {
 	if end < 0 {
 		return fmt.Errorf("preset seed terminator not found in %s: the baseline moved", baselineName)
 	}
-	_, err = db.ExecContext(ctx, script[start:start+end+len(conflictMarker)])
+	if _, err = db.ExecContext(ctx, script[start:start+end+len(conflictMarker)]); err != nil {
+		return err
+	}
+	return seedAccountState(ctx, db)
+}
+
+// seedAccountState restores migration-owned identity rows after fixture truncation.
+// Account policies remain sourced from their migration, including their exact
+// action lists. Older schema fixtures without account tables keep their scope.
+func seedAccountState(ctx context.Context, db *sql.DB) error {
+	var present bool
+	if err := db.QueryRowContext(ctx, "SELECT to_regclass('account_installation') IS NOT NULL").Scan(&present); err != nil || !present {
+		return err
+	}
+	path, err := findMigrationFile("db", "migrations", "0027_personal_accounts.up.sql")
+	if err != nil {
+		return fmt.Errorf("locate personal-account seed: %w", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	script := string(raw)
+	const marker = "INSERT INTO policies("
+	count := 0
+	for {
+		start := strings.Index(script, marker)
+		if start < 0 {
+			break
+		}
+		end := strings.Index(script[start:], ");")
+		if end < 0 {
+			return fmt.Errorf("personal-account preset terminator missing")
+		}
+		statement := script[start : start+end+1]
+		if _, err := db.ExecContext(ctx, statement+" ON CONFLICT (id) DO NOTHING;"); err != nil {
+			return fmt.Errorf("seed personal-account preset: %w", err)
+		}
+		count++
+		script = script[start+end+2:]
+	}
+	if count != 2 {
+		return fmt.Errorf("expected two migration-owned personal-account presets, got %d", count)
+	}
+	_, err = db.ExecContext(ctx, "INSERT INTO account_installation(singleton) VALUES(true) ON CONFLICT DO NOTHING")
 	return err
 }

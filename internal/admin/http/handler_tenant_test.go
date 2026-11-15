@@ -15,6 +15,7 @@ import (
 	tenantquery "orbitjob/internal/admin/app/tenant/query"
 	"orbitjob/internal/core/domain/tenant"
 	"orbitjob/internal/domain/validation"
+	"orbitjob/internal/platform/scan"
 )
 
 type stubCreateTenantUseCase struct {
@@ -61,7 +62,7 @@ func TestHandler_CreateTenant(t *testing.T) {
 
 	uc := &stubCreateTenantUseCase{
 		out: tenantcommand.TenantCreateResult{
-			ID:     "01HZX",
+			ID:     handlerTenantSubjectID,
 			Slug:   "acme",
 			Name:   "Acme Corp",
 			Status: tenant.StatusActive,
@@ -96,8 +97,8 @@ func TestHandler_CreateTenant(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if out.ID != "01HZX" {
-		t.Fatalf("expected id=%q, got %q", "01HZX", out.ID)
+	if out.ID != handlerTenantSubjectID {
+		t.Fatalf("expected id=%q, got %q", handlerTenantSubjectID, out.ID)
 	}
 }
 
@@ -152,7 +153,7 @@ func TestHandler_ListTenants(t *testing.T) {
 
 	uc := &stubListTenantsUseCase{
 		out: []tenantquery.TenantListItem{
-			{ID: "01HZX", Slug: "acme", Name: "Acme Corp", Status: tenant.StatusActive},
+			{ID: handlerTenantSubjectID, Slug: "acme", Name: "Acme Corp", Status: tenant.StatusActive},
 		},
 	}
 	handler := NewHandler(nil, nil, nil)
@@ -214,7 +215,7 @@ func TestHandler_GetTenant(t *testing.T) {
 
 	uc := &stubGetTenantUseCase{
 		out: tenantquery.TenantGetResult{
-			ID:     "01HZX",
+			ID:     handlerTenantSubjectID,
 			Slug:   "acme",
 			Name:   "Acme Corp",
 			Status: tenant.StatusActive,
@@ -225,7 +226,7 @@ func TestHandler_GetTenant(t *testing.T) {
 
 	router := testRouter(handler)
 
-	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/tenants/01HZX", nil)
+	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/tenants/"+handlerTenantSubjectID, nil)
 	resp := httptest.NewRecorder()
 
 	router.ServeHTTP(resp, req)
@@ -236,8 +237,8 @@ func TestHandler_GetTenant(t *testing.T) {
 	if !uc.called {
 		t.Fatal("expected use case to be called")
 	}
-	if uc.in.ID != "01HZX" {
-		t.Fatalf("expected id=%q, got %q", "01HZX", uc.in.ID)
+	if uc.in.ID != handlerTenantSubjectID {
+		t.Fatalf("expected id=%q, got %q", handlerTenantSubjectID, uc.in.ID)
 	}
 }
 
@@ -269,7 +270,7 @@ func TestHandler_GetTenant_UseCaseError(t *testing.T) {
 
 	router := testRouter(handler)
 
-	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/tenants/01HZX", nil)
+	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/tenants/"+handlerTenantSubjectID, nil)
 	resp := httptest.NewRecorder()
 
 	router.ServeHTTP(resp, req)
@@ -278,3 +279,5 @@ func TestHandler_GetTenant_UseCaseError(t *testing.T) {
 		t.Fatalf("expected status=%d, got %d", stdhttp.StatusInternalServerError, resp.Code)
 	}
 }
+
+var handlerTenantSubjectID = scan.GenerateID()

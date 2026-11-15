@@ -20,6 +20,7 @@ import (
 	k8stesting "k8s.io/client-go/testing"
 
 	v1alpha1 "orbitjob/api/kubernetes/workloads/v1alpha1"
+	"orbitjob/internal/admin/app/account"
 	apikeycommand "orbitjob/internal/admin/app/apikey/command"
 	apikeyquery "orbitjob/internal/admin/app/apikey/query"
 	checkcommand "orbitjob/internal/admin/app/check/command"
@@ -41,6 +42,7 @@ import (
 	slobudgetquery "orbitjob/internal/admin/app/slobudget/query"
 	tenantcommand "orbitjob/internal/admin/app/tenant/command"
 	tenantquery "orbitjob/internal/admin/app/tenant/query"
+	workspacequery "orbitjob/internal/admin/app/workspace/query"
 	"orbitjob/internal/admin/bootstrap"
 	"orbitjob/internal/admin/http/middleware"
 	"orbitjob/internal/admin/kube"
@@ -75,6 +77,7 @@ const itestAdminPassword = "itest-admin"
 // policies, tenants, keys, the dynamic Kubernetes client -- is the production
 // wiring.
 type workloadsTestStores struct {
+	accounts     *account.Service
 	functions    *fakeFunctionStore
 	functionRuns *fakeFunctionRuns
 	revisions    *fakeFunctionRevisions
@@ -109,6 +112,10 @@ func newIntegrationServer(t *testing.T) (*httptest.Server, *sql.DB, string) {
 }
 
 func newIntegrationServerWithWorkloads(t *testing.T) (*httptest.Server, *sql.DB, string, *workloadsTestStores) {
+	return newIntegrationServerWithIdentity(t, false)
+}
+
+func newIntegrationServerWithIdentity(t *testing.T, humanIdentity bool) (*httptest.Server, *sql.DB, string, *workloadsTestStores) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
@@ -188,6 +195,7 @@ func newIntegrationServerWithWorkloads(t *testing.T) (*httptest.Server, *sql.DB,
 	handler.SetListAttemptsUseCase(runquery.NewListAttemptsUseCase(runRepo))
 
 	tenantRepo := adminpostgres.NewTenantRepository(adminDB)
+	handler.SetWorkspaceDirectoryLister(workspacequery.NewLister(tenantRepo))
 	handler.SetCreateTenantUseCase(tenantcommand.NewCreator(tenantRepo))
 	handler.SetListTenantsUseCase(tenantquery.NewLister(tenantRepo))
 	handler.SetGetTenantUseCase(tenantquery.NewGetter(tenantRepo))
@@ -200,6 +208,9 @@ func newIntegrationServerWithWorkloads(t *testing.T) (*httptest.Server, *sql.DB,
 	handler.SetCreateAPIKeyUseCase(createAPIKeyUC)
 	handler.SetListAPIKeysUseCase(apikeyquery.NewLister(apiKeyRepo))
 	handler.SetRevokeAPIKeyUseCase(apikeycommand.NewRevoker(apiKeyRepo))
+	handler.SetAPIKeyOwnerReader(apiKeyRepo)
+	handler.SetAPIKeyMetadataReader(apiKeyRepo)
+	handler.SetRenameAPIKeyUseCase(apikeycommand.NewRenamer(apiKeyRepo))
 
 	handler.SetCreatePolicyUseCase(policycommand.NewCreator(policyRepo))
 	handler.SetListPoliciesUseCase(policyquery.NewLister(policyRepo))
@@ -278,6 +289,13 @@ func newIntegrationServerWithWorkloads(t *testing.T) (*httptest.Server, *sql.DB,
 		definitions: stores.workflowDefs, runs: stores.workflowRuns, publisher: workflowPublisher,
 	})
 
+	if humanIdentity {
+		stores.accounts = account.NewService(adminpostgres.NewAccountRepository(adminDB))
+		security := middleware.ConsoleSecurity{AllowInsecureLocalhost: true}
+		handler.SetAccountHTTP(NewAccountHTTP(stores.accounts, security))
+		auth.Accounts = stores.accounts
+		auth.ConsoleSecurity = security
+	}
 	r := gin.Default()
 	r.Use(auth.Middleware())
 	handler.Register(r)

@@ -45,6 +45,14 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w" -o /out/admin-api ./cmd/admin-api/
 
+FROM go-source AS build-identity
+ARG TARGETOS=linux
+ARG TARGETARCH
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o /out/orbitjob-identity ./cmd/orbitjob-identity/
+
 FROM base AS build-scheduler
 ARG TARGETOS=linux
 ARG TARGETARCH
@@ -106,6 +114,7 @@ COPY --from=build-admin /usr/share/zoneinfo /usr/share/zoneinfo
 COPY --from=build-admin /etc/passwd /etc/passwd
 COPY --from=build-healthcheck /out/healthcheck /healthcheck
 COPY --from=build-admin /out/admin-api /admin-api
+COPY --from=build-identity /out/orbitjob-identity /orbitjob-identity
 USER 65534:65534
 ENTRYPOINT ["/admin-api"]
 

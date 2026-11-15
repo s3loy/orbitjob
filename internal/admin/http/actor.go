@@ -7,7 +7,7 @@ import (
 )
 
 // actorID identifies who performed an action, for the audit trail and the run
-// ledger's actor column. It is always the authenticated key's id: a
+// ledger's actor column. It is always the authenticated subject ID: a
 // client-supplied actor header is unverified, and a trail naming whoever the
 // caller claimed to be answers the wrong question.
 func actorID(c *gin.Context) string {
@@ -15,5 +15,5 @@ func actorID(c *gin.Context) string {
 	if !ok {
 		return ""
 	}
-	return p.KeyID
+	return p.ActorID()
 }

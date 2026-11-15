@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -156,5 +157,21 @@ func TestBuildHandlerRegistersFunctionAndWorkflowRoutes(t *testing.T) {
 		if _, ok := paths[path]; !ok {
 			t.Errorf("route %s is not registered; its use case wiring is broken", path)
 		}
+	}
+}
+
+func TestConsoleAccessLogsDoNotExposeCapabilityQueries(t *testing.T) {
+	previous := gin.DefaultWriter
+	var logs bytes.Buffer
+	gin.DefaultWriter = &logs
+	defer func() { gin.DefaultWriter = previous }()
+	router := newRouter(nil, nil, nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/healthz?token=sensitive-capability", nil))
+	if strings.Contains(logs.String(), "sensitive-capability") || strings.Contains(logs.String(), "token=") {
+		t.Fatal("capability query appeared in access log")
+	}
+	if !strings.Contains(logs.String(), "/healthz") {
+		t.Fatal("access log did not retain path")
 	}
 }

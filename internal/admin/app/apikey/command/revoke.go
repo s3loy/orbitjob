@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"orbitjob/internal/core/domain/apikey"
 	"orbitjob/internal/core/domain/audit"
 	"orbitjob/internal/domain/resource"
 )
@@ -18,7 +19,7 @@ type RevokeInput struct {
 
 type apiKeyRevoker interface {
 	Revoke(ctx context.Context, tenantID, id string, ev audit.Event) error
-	RevokeCrossTenant(ctx context.Context, id string) error
+	Scope(ctx context.Context, id string) (apikey.APIKey, error)
 }
 
 // Revoker revokes API keys.
@@ -44,14 +45,9 @@ func (r *Revoker) Revoke(ctx context.Context, in RevokeInput) error {
 	})
 }
 
-// RevokeAsAdmin revokes an API key globally without tenant filtering.
-// Only for use by platform administrators (bootstrap tenant).
-//
-// It still produces an audit row: the repository resolves the key's own tenant
-// before revoking, so the event is recorded against the tenant it belongs to
-// rather than left with no scope at all.
-func (r *Revoker) RevokeAsAdmin(ctx context.Context, id string) error {
-	return r.repo.RevokeCrossTenant(ctx, id)
+// Target resolves the immutable owner/group identity the route guard authorizes.
+func (r *Revoker) Target(ctx context.Context, id string) (apikey.APIKey, error) {
+	return r.repo.Scope(ctx, id)
 }
 
 // APIKeyRevokeResult is the control-plane response model for a revoked API key.

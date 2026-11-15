@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"k8s.io/apimachinery/pkg/util/uuid"
 	"orbitjob/internal/admin/bootstrap"
 )
 
@@ -112,7 +113,10 @@ func TestAPIKey_TenantKeyCannotAccessOtherTenant(t *testing.T) {
 
 	// A definition owned by the default/bootstrap tenant. It exists: the 404
 	// below is isolation, not absence.
-	seedDefinition(t, db, bootstrap.DefaultTenantID, "01JDEF00000000000000000000", "default-tenant-job")
+	jobID := seedDefinition(t, db, bootstrap.DefaultTenantID, string(uuid.NewUUID()), "default-tenant-job")
+	owner := get(t, client, fmt.Sprintf("%s/api/v1/jobs/%d", server.URL, jobID), bootstrapKey)
+	requireStatus(t, owner, http.StatusOK)
+	_ = owner.Body.Close()
 
 	// Create tenant A and its key.
 	resp := postJSON(t, client, server.URL+"/api/v1/tenants", bootstrapKey, map[string]any{
@@ -136,7 +140,7 @@ func TestAPIKey_TenantKeyCannotAccessOtherTenant(t *testing.T) {
 	decodeJSON(t, resp, &keyA)
 
 	// Tenant A's key cannot see the default tenant's job.
-	resp = get(t, client, fmt.Sprintf("%s/api/v1/jobs/%d", server.URL, 1), keyA.Key)
+	resp = get(t, client, fmt.Sprintf("%s/api/v1/jobs/%d", server.URL, jobID), keyA.Key)
 	requireStatus(t, resp, http.StatusNotFound)
 }
 
@@ -159,7 +163,7 @@ func TestAPIKey_BootstrapKeyCannotAccessTenantAJob(t *testing.T) {
 
 	// A definition owned by tenant A, so the 404 below is isolation, not
 	// absence.
-	jobID := seedDefinition(t, db, tenantA.ID, "01JTNT00000000000000000001", "tenant-a-job")
+	jobID := seedDefinition(t, db, tenantA.ID, string(uuid.NewUUID()), "tenant-a-job")
 
 	// Bootstrap key (default tenant) cannot see tenant A's job.
 	resp = get(t, client, fmt.Sprintf("%s/api/v1/jobs/%d", server.URL, jobID), bootstrapKey)

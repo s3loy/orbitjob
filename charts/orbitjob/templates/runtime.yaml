@@ -32,6 +32,10 @@ spec:
                   name: {{ $.Values.database.secretName }}
                   key: {{ if eq $name "admin-api" }}{{ $.Values.database.keys.admin }}{{ else }}{{ $.Values.database.keys.runtime }}{{ end }}
           {{- if eq $name "admin-api" }}
+            - name: CONSOLE_PUBLIC_ORIGIN
+              value: {{ $.Values.adminapi.console.publicOrigin | quote }}
+            - name: CONSOLE_ALLOW_INSECURE_LOCALHOST
+              value: {{ $.Values.adminapi.console.allowInsecureLocalhost | quote }}
             {{- if $.Values.operator.enabled }}
             - name: OPERATOR_NAMESPACE_TENANTS
               value: {{ include "orbitjob.operatorNamespaceTenants" $ | quote }}

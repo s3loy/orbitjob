@@ -13,6 +13,7 @@ import (
 	_ "github.com/lib/pq"
 
 	"orbitjob/internal/platform/config"
+	"orbitjob/internal/platform/scan"
 )
 
 const (
@@ -23,8 +24,8 @@ const (
 // helperTenantID seeds the tenant row the checks inserts below require:
 // checks.tenant_id references tenants(id), and the schema harness truncates
 // every table after building the schema, so no tenant exists until one is
-// inserted. 26 characters, matching tenants.id.
-const helperTenantID = "20000000000000000000000001"
+// inserted. The same generated identity deliberately exercises both schemas.
+var helperTenantID = scan.GenerateID()
 
 func TestApplySchemaWaitsForSharedDatabaseLock(t *testing.T) {
 	dsn := packageTestDSN(t)
@@ -150,12 +151,17 @@ func TestOpenCleansUpTestSchema(t *testing.T) {
 }
 
 func waitForWaitingLock(parent context.Context, db *sql.DB, classID, objectID int) (bool, error) {
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		ctx, cancel := context.WithTimeout(parent, 500*time.Millisecond)
-
+	// This observes locking semantics, not database query latency. Connection
+	// setup and polling share the caller's bounded context so a slow observer
+	// cannot abort before the lock acquisition under test has been observed.
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if err := parent.Err(); err != nil {
+			return false, err
+		}
 		var waiting bool
-		err := db.QueryRowContext(ctx, `
+		err := db.QueryRowContext(parent, `
 			SELECT EXISTS (
 				SELECT 1
 				FROM pg_locks
@@ -165,18 +171,19 @@ func waitForWaitingLock(parent context.Context, db *sql.DB, classID, objectID in
 				  AND granted = false
 			)
 		`, classID, objectID).Scan(&waiting)
-		cancel()
 		if err != nil {
-			return false, err
+			return false, fmt.Errorf("query advisory lock wait state: %w", err)
 		}
 		if waiting {
 			return true, nil
 		}
 
-		time.Sleep(50 * time.Millisecond)
+		select {
+		case <-parent.Done():
+			return false, parent.Err()
+		case <-ticker.C:
+		}
 	}
-
-	return false, nil
 }
 
 func packageTestDSN(t *testing.T) string {

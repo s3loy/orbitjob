@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"orbitjob/internal/core/domain/audit"
 )
@@ -28,12 +29,16 @@ func insertAuditEvent(ctx context.Context, tx *sql.Tx, e audit.Event) error {
 	if err != nil {
 		return fmt.Errorf("encode audit diff: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `
+	actorType := audit.ActorType(ctx, e.ActorID)
+	query := `
 		INSERT INTO audit_events
 			(tenant_id, actor_type, actor_id, event_type, resource_type, resource_id, diff)
 		VALUES ($1, 'api_key', $2, $3, $4, $5, $6)
-	`, e.TenantID, nullIfEmpty(e.ActorID), e.EventType, e.ResourceType, e.ResourceID, diff,
-	); err != nil {
+	`
+	if actorType == "user" {
+		query = strings.Replace(query, "'api_key'", "'user'", 1)
+	}
+	if _, err := tx.ExecContext(ctx, query, e.TenantID, nullIfEmpty(e.ActorID), e.EventType, e.ResourceType, e.ResourceID, diff); err != nil {
 		return fmt.Errorf("insert audit event: %w", err)
 	}
 	return nil

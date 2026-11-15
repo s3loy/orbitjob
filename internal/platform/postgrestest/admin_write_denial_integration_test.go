@@ -280,7 +280,7 @@ func TestNoTableBeyondTheConfigurationSetGrantsAdminWrites(t *testing.T) {
 	}
 
 	// Pin each write privilege, including the control/configuration tables from
-	// 0016 and 0022. Adding one must not silently permit DELETE/TRUNCATE
+	// 0016, 0022 and 0026. Adding one must not silently permit DELETE/TRUNCATE
 	// where the owning migration only grants INSERT/UPDATE. Operator-owned
 	// ledger tables remain excluded and the audit trail stays INSERT-only.
 	expected := []string{"audit_events.INSERT", "audit_events_default.INSERT"}

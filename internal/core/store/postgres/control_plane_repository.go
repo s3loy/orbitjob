@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"orbitjob/internal/core/domain/audit"
 	"strconv"
 	"strings"
 	"time"
@@ -144,6 +145,9 @@ func insertControlPlaneAudit(
 			(tenant_id, actor_type, actor_id, event_type, resource_type, resource_id, diff)
 		VALUES ($1, 'system', NULLIF($2, ''), $3, $4, $5, $6::jsonb)
 	`
+	if audit.ActorType(ctx, actor) == "user" {
+		query = strings.Replace(query, "'system'", "'user'", 1)
+	}
 	if _, err := tx.ExecContext(ctx, query, tenantID, actor, eventType, resourceType, resourceID, string(encoded)); err != nil {
 		return fmt.Errorf("insert audit event: %w", err)
 	}

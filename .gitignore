@@ -81,3 +81,6 @@ bench-*.err
 /deploy/load/fixture-tls-secret.yaml
 
 /web/installed-product-results/
+
+# Added by ggshield
+.cache_ggshield

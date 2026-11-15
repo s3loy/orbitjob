@@ -136,7 +136,7 @@ func TestEveryTenantTableFiltersCrossTenantReads(t *testing.T) {
 	}{
 		{"tenants", "id = '" + visAlphaID + "'", 1, 1},
 		{"resource_groups", "tenant_id = '" + visAlphaID + "'", 1, 1},
-		{"policies", "tenant_id = '" + visAlphaID + "'", 1, 4},
+		{"policies", "tenant_id = '" + visAlphaID + "'", 1, 6},
 		{"api_keys", "tenant_id = '" + visAlphaID + "'", 1, 1},
 		{"key_policies", "", 0, 1},
 		{"audit_events", "tenant_id = '" + visAlphaID + "'", 2, 2},
@@ -181,7 +181,7 @@ func TestEveryTenantTableFiltersCrossTenantReads(t *testing.T) {
 		for _, r := range rows {
 			want := 0
 			if r.table == "policies" {
-				want = 3
+				want = 5
 			}
 			if n := countAs(t, ctx, conn, `SELECT count(*) FROM `+r.table); n != want {
 				t.Errorf("no tenant context sees %d row(s) in %s, want %d; RLS did not fail closed", n, r.table, want)

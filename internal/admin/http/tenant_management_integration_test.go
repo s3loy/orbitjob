@@ -121,7 +121,13 @@ func TestPlatformManagementUsesExplicitTargetWithoutBusinessSelector(t *testing.
 	resp := get(t, s.Client(), s.URL+"/api/v1/tenants/"+target+"/policies", admin)
 	requireStatus(t, resp, http.StatusOK)
 	_ = resp.Body.Close()
-
+	resp = get(t, s.Client(), s.URL+"/api/v1/identity?action=policy:Create&resource=orbitjob:"+target+":*:policy/*", admin)
+	requireStatus(t, resp, http.StatusOK)
+	var out IdentityResponse
+	decodeJSON(t, resp, &out)
+	if out.Kind != "platform" || out.TargetTenantID != "" || out.TenantName != "" || len(out.Capabilities) != 1 || !out.Capabilities[0].Allowed {
+		t.Fatalf("unexpected platform probe %+v", out)
+	}
 }
 
 func TestGroupBoundWildcardCannotManageForeignTenant(t *testing.T) {
@@ -155,6 +161,13 @@ func TestGroupBoundWildcardCannotManageForeignTenant(t *testing.T) {
 	resp = postJSON(t, s.Client(), s.URL+"/api/v1/tenants/"+foreign+"/resource_groups", credential.Key, map[string]any{"name": "Forbidden group", "slug": "forbidden"})
 	requireStatus(t, resp, http.StatusForbidden)
 	_ = resp.Body.Close()
+	resp = get(t, s.Client(), s.URL+"/api/v1/identity?action=policy:Create&resource=orbitjob:"+foreign+":*:policy/*&action=policy:Create&resource=orbitjob:"+home+":*:policy/*", credential.Key)
+	requireStatus(t, resp, http.StatusOK)
+	var identity IdentityResponse
+	decodeJSON(t, resp, &identity)
+	if len(identity.Capabilities) != 2 || identity.Capabilities[0].Allowed || !identity.Capabilities[1].Allowed {
+		t.Fatalf("group-bound probe mismatch %+v", identity.Capabilities)
+	}
 	var count int
 	if err := db.QueryRow(`SELECT count(*) FROM policies WHERE tenant_id=$1`, foreign).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("foreign write count=%d err=%v", count, err)

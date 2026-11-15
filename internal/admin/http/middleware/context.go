@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -21,6 +22,7 @@ const (
 
 const (
 	TenantSourceAPIKey  = "api_key"
+	TenantSourceSession = "session"
 	TenantSourceHeader  = "x-tenant-id"
 	TenantSourceDefault = "default"
 )
@@ -37,18 +39,37 @@ const (
 // Principal is the authenticated identity behind a request. It carries the
 // credential's own scope so handlers never have to re-read the key row.
 type Principal struct {
-	KeyID            string
-	TenantID         string // empty for a platform principal
-	Kind             string
-	ResourceGroupID  string
-	BoundaryPolicyID string
+	SubjectType       string
+	UserID            string
+	Username          string
+	DisplayName       string
+	InstallationAdmin bool
+	MembershipRole    string
+	SessionID         string
+	RecentAuthAt      time.Time
+	KeyID             string
+	TenantID          string // empty for a platform principal
+	Kind              string
+	ResourceGroupID   string
+	BoundaryPolicyID  string
 }
 
-func (p Principal) ActorID() string   { return p.KeyID }
-func (p Principal) ActorType() string { return "api_key" }
+func (p Principal) IsHuman() bool { return p.SubjectType == "user" && p.UserID != "" }
+func (p Principal) ActorID() string {
+	if p.IsHuman() {
+		return p.UserID
+	}
+	return p.KeyID
+}
+func (p Principal) ActorType() string {
+	if p.IsHuman() {
+		return "user"
+	}
+	return "api_key"
+}
 
 // IsPlatform reports whether this identity acts outside any tenant.
-func (p Principal) IsPlatform() bool { return p.Kind == KindPlatform }
+func (p Principal) IsPlatform() bool { return !p.IsHuman() && p.Kind == KindPlatform }
 
 // SetPrincipal records the authenticated identity on the request. The auth
 // middleware is the only caller; everything else reads it via PrincipalFrom.

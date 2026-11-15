@@ -7,6 +7,8 @@ import (
 
 	"orbitjob/internal/core/domain/apikey"
 	"orbitjob/internal/core/domain/audit"
+
+	"orbitjob/internal/platform/scan"
 )
 
 // fakeRepo serves both the create and revoke paths, since this file exercises
@@ -36,8 +38,8 @@ func (f *fakeRepo) Revoke(_ context.Context, _, id string, ev audit.Event) error
 	return f.revokeErr
 }
 
-func (f *fakeRepo) RevokeCrossTenant(_ context.Context, _ string) error {
-	return f.revokeErr
+func (f *fakeRepo) Scope(_ context.Context, id string) (apikey.APIKey, error) {
+	return apikey.APIKey{ID: id}, f.revokeErr
 }
 
 // The audit diff must record the grant as applied, not as requested. A key that
@@ -47,10 +49,10 @@ func TestCreateRecordsTheAppliedGrant(t *testing.T) {
 	repo := newFakeKeyRepo()
 
 	_, err := NewCreator(repo).Create(context.Background(), CreateInput{
-		TenantID: "tenant-a",
+		TenantID: auditFixtureTenantID,
 		Caller: Caller{
-			TenantID: "tenant-a",
-			KeyID:    "caller-key",
+			TenantID: auditFixtureTenantID,
+			KeyID:    auditFixtureActorID,
 		},
 	})
 	if err != nil {
@@ -58,7 +60,7 @@ func TestCreateRecordsTheAppliedGrant(t *testing.T) {
 	}
 
 	e := repo.createEv
-	if e.ActorID != "caller-key" {
+	if e.ActorID != auditFixtureActorID {
 		t.Fatalf("expected the caller's key id as actor, got %q", e.ActorID)
 	}
 	if e.EventType != audit.EventCreate || e.ResourceType != audit.ResourceAPIKey {
@@ -84,8 +86,8 @@ func TestCreateAuditRecordsTheBoundaryField(t *testing.T) {
 	repo := newFakeKeyRepo()
 
 	if _, err := NewCreator(repo).Create(context.Background(), CreateInput{
-		TenantID: "tenant-a",
-		Caller:   Caller{TenantID: "tenant-a", KeyID: "caller-key"},
+		TenantID: auditFixtureTenantID,
+		Caller:   Caller{TenantID: auditFixtureTenantID, KeyID: auditFixtureActorID},
 	}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -101,8 +103,8 @@ func TestCreateSurfacesAWriteFailure(t *testing.T) {
 	repo.createErr = errors.New("transaction aborted")
 
 	_, err := NewCreator(repo).Create(context.Background(), CreateInput{
-		TenantID: "tenant-a",
-		Caller:   Caller{TenantID: "tenant-a", KeyID: "caller-key"},
+		TenantID: auditFixtureTenantID,
+		Caller:   Caller{TenantID: auditFixtureTenantID, KeyID: auditFixtureActorID},
 	})
 	if err == nil {
 		t.Fatal("a grant that could not be recorded must not report success")
@@ -113,8 +115,8 @@ func TestCreateSurfacesAWriteFailure(t *testing.T) {
 func TestCreateAlwaysRecordsAnEvent(t *testing.T) {
 	repo := newFakeKeyRepo()
 	if _, err := NewCreator(repo).Create(context.Background(), CreateInput{
-		TenantID: "tenant-a",
-		Caller:   Caller{TenantID: "tenant-a"},
+		TenantID: auditFixtureTenantID,
+		Caller:   Caller{TenantID: auditFixtureTenantID},
 	}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -127,17 +129,17 @@ func TestRevokeRecordsAnAuditEvent(t *testing.T) {
 	repo := newFakeKeyRepo()
 
 	if err := NewRevoker(repo).Revoke(context.Background(), RevokeInput{
-		ID:       "key-1",
-		TenantID: "tenant-a",
-		ActorID:  "caller-key",
+		ID:       auditFixtureSubjectID,
+		TenantID: auditFixtureTenantID,
+		ActorID:  auditFixtureActorID,
 	}); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
 	e := repo.revokedEv
-	if e.EventType != audit.EventRevoke || e.ResourceID != "key-1" || e.ActorID != "caller-key" {
+	if e.EventType != audit.EventRevoke || e.ResourceID != auditFixtureSubjectID || e.ActorID != auditFixtureActorID {
 		t.Fatalf("unexpected audit event: %+v", e)
 	}
-	if e.TenantID != "tenant-a" {
+	if e.TenantID != auditFixtureTenantID {
 		t.Fatalf("audit event is not scoped to the tenant: %+v", e)
 	}
 }
@@ -147,8 +149,8 @@ func TestRevokeSurfacesAWriteFailure(t *testing.T) {
 	repo.revokeErr = errors.New("transaction aborted")
 
 	if err := NewRevoker(repo).Revoke(context.Background(), RevokeInput{
-		ID:       "key-1",
-		TenantID: "tenant-a",
+		ID:       auditFixtureSubjectID,
+		TenantID: auditFixtureTenantID,
 	}); err == nil {
 		t.Fatal("expected the write failure to propagate")
 	}
@@ -161,8 +163,8 @@ func TestRevokePropagatesANotFoundError(t *testing.T) {
 	repo.revokeErr = errors.New("not found")
 
 	if err := NewRevoker(repo).Revoke(context.Background(), RevokeInput{
-		ID:       "key-1",
-		TenantID: "tenant-a",
+		ID:       auditFixtureSubjectID,
+		TenantID: auditFixtureTenantID,
 	}); err == nil {
 		t.Fatal("expected the revoke error to propagate")
 	}
@@ -184,3 +186,9 @@ func TestPolicyIDsOrEmpty(t *testing.T) {
 		t.Fatalf("unexpected result: %v", got)
 	}
 }
+
+var auditFixtureActorID = scan.GenerateID()
+
+var auditFixtureSubjectID = scan.GenerateID()
+
+var auditFixtureTenantID = scan.GenerateID()

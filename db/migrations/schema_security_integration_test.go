@@ -169,8 +169,8 @@ func TestPlatformPresetsAreReadOnlyAcrossTenants(t *testing.T) {
 			t.Fatalf("set tenant context: %v", err)
 		}
 
-		if n := countAs(t, ctx, conn, `SELECT count(*) FROM policies WHERE tenant_id IS NULL`); n != 3 {
-			t.Fatalf("alpha reads %d platform presets, want 3", n)
+		if n := countAs(t, ctx, conn, `SELECT count(*) FROM policies WHERE tenant_id IS NULL`); n != 5 {
+			t.Fatalf("alpha reads %d platform presets, want 5", n)
 		}
 
 		res, err := conn.ExecContext(ctx, `UPDATE policies SET name = 'HACKED' WHERE tenant_id IS NULL`)

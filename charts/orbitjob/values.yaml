@@ -100,6 +100,12 @@ database:
     bootstrapAPIKey: bootstrap-api-key
 
 adminapi:
+  console:
+    # External HTTPS origin for browser authentication, without a path.
+    # Empty uses the request host with HTTPS; forwarding headers are not trusted.
+    publicOrigin: ""
+    # Permit HTTP sessions only on loopback origins for local development.
+    allowInsecureLocalhost: false
   rateLimits:
     readRPS: 100
     writeRPS: 100

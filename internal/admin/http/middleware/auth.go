@@ -1,9 +1,12 @@
 package middleware
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -12,7 +15,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
 
+	"errors"
+	"orbitjob/internal/admin/app/account"
 	"orbitjob/internal/admin/http/apperror"
+	"orbitjob/internal/core/domain/audit"
 	"orbitjob/internal/core/domain/policy"
 )
 
@@ -29,7 +35,9 @@ type apiKeyRow struct {
 
 // Auth extracts tenant_id from a Bearer token validated against api_keys.
 type Auth struct {
-	DB *sql.DB
+	DB              *sql.DB
+	Accounts        HumanAuthenticator
+	ConsoleSecurity ConsoleSecurity
 	// Documents resolves a key's effective policies. Wiring it is optional but
 	// a deployment without it grants nothing, since Require evaluates whatever
 	// this produces.
@@ -44,6 +52,11 @@ type Auth struct {
 // DocumentLoader resolves the effective policy documents for a key. The store
 // layer implements it; it is injected rather than imported so this package
 // keeps its position above the store in the dependency order.
+type HumanAuthenticator interface {
+	Authenticate(context.Context, string) (*account.Session, error)
+	Membership(context.Context, string, string) (account.Membership, error)
+	EffectiveDocuments(context.Context, string, string) ([]policy.Document, error)
+}
 
 type DocumentLoader interface {
 	EffectiveDocuments(ctx context.Context, tenantID, keyID string) ([]policy.Document, error)
@@ -91,6 +104,7 @@ func (a *Auth) Middleware() gin.HandlerFunc {
 		}
 		if ok {
 			ctx := WithTenantID(c.Request.Context(), principal.TenantID, src)
+			ctx = audit.WithActor(ctx, principal.ActorID(), principal.ActorType())
 			c.Request = c.Request.WithContext(ctx)
 			SetPrincipal(c, principal)
 			if err := a.loadDocuments(authCtx, c, principal); err != nil {
@@ -122,6 +136,9 @@ func (a *Auth) Middleware() gin.HandlerFunc {
 }
 
 func isPublicPath(path string) bool {
+	if strings.HasPrefix(path, "/api/v1/auth/") {
+		return true
+	}
 	switch path {
 	case "/healthz", "/openapi.json", "/metrics":
 		return true
@@ -149,7 +166,73 @@ func (a *Auth) resolveTenant(ctx context.Context, c *gin.Context) (Principal, st
 			return principalFromRow(row), TenantSourceAPIKey, true, nil
 		}
 	}
-	return Principal{}, "", false, nil
+	if len(authValues) > 0 || a.Accounts == nil {
+		return Principal{}, "", false, nil
+	}
+	secret, ok := a.ConsoleSecurity.SessionSecret(c.Request)
+	if !ok {
+		return Principal{}, "", false, nil
+	}
+	session, err := a.Accounts.Authenticate(ctx, secret)
+	if errors.Is(err, account.ErrUnauthenticated) {
+		return Principal{}, "", false, nil
+	}
+	if err != nil {
+		return Principal{}, "", false, err
+	}
+	if !SafeMethod(c.Request.Method) && !a.ConsoleSecurity.CheckCSRF(c.Request, session.CSRFToken) {
+		apperror.Write(c, http.StatusForbidden, apperror.APIError{Code: apperror.CodeForbidden, Message: "same-origin session and CSRF token required"})
+		return Principal{}, "", false, nil
+	}
+	p := Principal{SubjectType: "user", UserID: session.User.ID, Username: session.User.Username, DisplayName: session.User.DisplayName, InstallationAdmin: session.User.InstallationAdmin, SessionID: session.ID, RecentAuthAt: session.RecentAuthAt, Kind: KindTenant}
+	target := strings.TrimSpace(c.Query("tenant_id"))
+	if strings.HasPrefix(c.GetHeader("Content-Type"), "application/json") && c.Request.Body != nil {
+		body, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20))
+		if err != nil {
+			apperror.Write(c, http.StatusRequestEntityTooLarge, apperror.APIError{Code: apperror.CodeValidation, Message: "request body too large"})
+			return Principal{}, "", false, nil
+		}
+		c.Request.Body = io.NopCloser(bytes.NewReader(body))
+		var selector struct {
+			TenantID string `json:"tenant_id"`
+		}
+		if json.Unmarshal(body, &selector) == nil && selector.TenantID != "" {
+			if target != "" && target != selector.TenantID {
+				apperror.Write(c, http.StatusForbidden, apperror.APIError{Code: apperror.CodeForbidden, Message: "conflicting workspace selectors"})
+				return Principal{}, "", false, nil
+			}
+			target = selector.TenantID
+		}
+	}
+	// Explicit management routes name their target before their resource guard runs.
+	path := strings.TrimPrefix(c.Request.URL.Path, "/api/v1/tenants/")
+	if path != c.Request.URL.Path {
+		if id, _, _ := strings.Cut(path, "/"); id != "" {
+			if target != "" && target != id {
+				apperror.Write(c, http.StatusForbidden, apperror.APIError{Code: apperror.CodeForbidden, Message: "conflicting workspace selectors"})
+				return Principal{}, "", false, nil
+			}
+			target = id
+		}
+	}
+	metadataOnly := p.InstallationAdmin && c.Request.Method == http.MethodGet && strings.HasPrefix(c.Request.URL.Path, "/api/v1/tenants/") && !strings.Contains(strings.TrimPrefix(c.Request.URL.Path, "/api/v1/tenants/"), "/")
+	if target != "" {
+		member, err := a.Accounts.Membership(ctx, p.UserID, target)
+		if metadataOnly && errors.Is(err, account.ErrForbidden) {
+			return p, TenantSourceSession, true, nil
+		}
+		if errors.Is(err, account.ErrForbidden) || errors.Is(err, account.ErrUnauthenticated) {
+			apperror.Write(c, http.StatusForbidden, apperror.APIError{Code: apperror.CodeForbidden, Message: "workspace membership required"})
+			return Principal{}, "", false, nil
+		}
+		if err != nil {
+			return Principal{}, "", false, err
+		}
+		p.TenantID = target
+		p.MembershipRole = member.Role
+		p.BoundaryPolicyID = member.BoundaryPolicyID
+	}
+	return p, TenantSourceSession, true, nil
 }
 
 // loadDocuments resolves the credential's grants once, so every authorization
@@ -158,6 +241,18 @@ func (a *Auth) resolveTenant(ctx context.Context, c *gin.Context) (Principal, st
 // A deployment that wires no loader authenticates requests but grants nothing,
 // which fails closed: handlers still deny rather than fall open.
 func (a *Auth) loadDocuments(ctx context.Context, c *gin.Context, p Principal) error {
+	if p.IsHuman() {
+		if p.TenantID == "" {
+			SetDocuments(c, nil)
+			return nil
+		}
+		docs, err := a.Accounts.EffectiveDocuments(ctx, p.UserID, p.TenantID)
+		if err != nil {
+			return err
+		}
+		SetDocuments(c, docs)
+		return nil
+	}
 	if a.Documents == nil {
 		SetDocuments(c, nil)
 		return nil
@@ -226,7 +321,7 @@ func (a *Auth) lookupAPIKey(ctx context.Context, key string) (apiKeyRow, bool, e
 
 // principalFromRow turns a validated key row into the request principal.
 func principalFromRow(r apiKeyRow) Principal {
-	p := Principal{KeyID: r.ID, Kind: r.Kind}
+	p := Principal{SubjectType: "api_key", KeyID: r.ID, Kind: r.Kind}
 	if r.TenantID != nil {
 		p.TenantID = *r.TenantID
 	}

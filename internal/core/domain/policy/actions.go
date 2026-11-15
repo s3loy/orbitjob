@@ -27,6 +27,7 @@ var KnownActions = []string{
 	"apikey:Create",
 	"apikey:List",
 	"apikey:Revoke",
+	"apikey:Update",
 
 	// Authorization documents and resource groups.
 	"policy:Create",

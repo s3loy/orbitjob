@@ -12,5 +12,8 @@ images:
   migrate: {repository: orbitjob-migrate}
 operator:
   image: {repository: orbitjob-operator}
+adminapi:
+  console:
+    allowInsecureLocalhost: true
 taskNamespace:
   serviceAccountName: orbitjob-task

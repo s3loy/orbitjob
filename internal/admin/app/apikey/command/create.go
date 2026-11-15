@@ -27,8 +27,10 @@ const (
 // guards need both: what may be granted depends on what the granter has.
 type Caller struct {
 	TenantID string
-	// KeyID identifies the caller in the audit trail.
+	// KeyID identifies an automation credential and is empty for a human.
 	KeyID string
+	// ActorID is the stable authenticated subject recorded in the audit trail.
+	ActorID string
 	// ResourceGroupID is the scope the caller's own key is limited to, empty
 	// when it is not scoped to a group.
 	ResourceGroupID string
@@ -43,6 +45,7 @@ type Caller struct {
 // CreateInput is the control-plane command model for creating an API key.
 type CreateInput struct {
 	TenantID         string
+	Name             string
 	ResourceGroupID  string
 	PolicyIDs        []string
 	BoundaryPolicyID string
@@ -53,6 +56,7 @@ type CreateInput struct {
 // The full key is returned only once.
 type APIKeyCreateResult struct {
 	ID        string `json:"id"`
+	Name      string `json:"name"`
 	Key       string `json:"key"`
 	KeyPrefix string `json:"key_prefix"`
 	CreatedAt string `json:"created_at"`
@@ -124,6 +128,9 @@ func (c *Creator) WithGroups(reader groupReader) *Creator {
 //
 // Omitting either turns self-service into a privilege-escalation path.
 func (c *Creator) Create(ctx context.Context, in CreateInput) (APIKeyCreateResult, error) {
+	if err := apikey.ValidateName(in.Name); err != nil {
+		return APIKeyCreateResult{}, err
+	}
 	if err := c.checkGroup(ctx, in); err != nil {
 		return APIKeyCreateResult{}, err
 	}
@@ -167,6 +174,9 @@ func (c *Creator) Create(ctx context.Context, in CreateInput) (APIKeyCreateResul
 		return APIKeyCreateResult{}, fmt.Errorf("hash api key: %w", err)
 	}
 
+	if in.Caller.ActorID == "" {
+		in.Caller.ActorID = in.Caller.KeyID
+	}
 	id := scan.GenerateID()
 	prefix := keyPrefix(key)
 	createdAt := time.Now().UTC()
@@ -176,11 +186,12 @@ func (c *Creator) Create(ctx context.Context, in CreateInput) (APIKeyCreateResul
 	// trail would suggest the new key was unconstrained.
 	event := audit.Event{
 		TenantID:     in.TenantID,
-		ActorID:      in.Caller.KeyID,
+		ActorID:      in.Caller.ActorID,
 		EventType:    audit.EventCreate,
 		ResourceType: audit.ResourceAPIKey,
 		ResourceID:   id,
 		Diff: map[string]any{
+			"name":               in.Name,
 			"policies":           policyIDsOrEmpty(in.PolicyIDs),
 			"boundary_policy_id": boundaryID,
 			"resource_group_id":  in.ResourceGroupID,
@@ -189,6 +200,7 @@ func (c *Creator) Create(ctx context.Context, in CreateInput) (APIKeyCreateResul
 	}
 	if err := c.repo.Create(ctx, apikey.PersistInput{
 		TenantID:         in.TenantID,
+		Name:             in.Name,
 		ResourceGroupID:  in.ResourceGroupID,
 		ID:               id,
 		KeyHash:          string(hash),
@@ -202,6 +214,7 @@ func (c *Creator) Create(ctx context.Context, in CreateInput) (APIKeyCreateResul
 
 	return APIKeyCreateResult{
 		ID:        id,
+		Name:      in.Name,
 		Key:       key,
 		KeyPrefix: prefix,
 		CreatedAt: createdAt.Format(time.RFC3339),

@@ -9,6 +9,9 @@
 global:
   imageTag: dev
   imagePullPolicy: Never
+adminapi:
+  console:
+    allowInsecureLocalhost: true
 operator:
   # The bootstrap tenant owns the default namespace. Captured verbatim from the
   # pre-upgrade release state (helm get values orbitjob -n orbitjob-system and

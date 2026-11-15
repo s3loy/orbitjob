@@ -86,12 +86,13 @@ func TestEveryTenantIdentityColumnIsChar26(t *testing.T) {
 	// sli_snapshot_events (0012), and execution_log_archives (0014).
 	// Migrations 0016, 0020, 0021, 0022 and 0026 add eight more tenant-owned
 	// tables: definition_operations, workflow_task_snapshots, the four SLI
-	// event/configuration tables execution_source_controls and private_authoring_drafts.
-	// audit_events_default contributes its own catalog attribute
-	// so partition type drift is checked too; tenants.id brings the total to 29.
+	// event/configuration tables, execution_source_controls and private drafts.
+	// Migration 0027 adds account memberships, membership policies and
+	// capabilities. audit_events_default contributes its own catalog attribute
+	// so partition type drift is checked too; tenants.id brings the total to 32.
 	// A changed count requires reviewing the schema's tenant identity set.
-	if total != 29 {
-		t.Fatalf("tenant identity columns = %d, want 29 (27 base tables + the audit_events_default partition + tenants.id)", total)
+	if total != 32 {
+		t.Fatalf("tenant identity columns = %d, want 32 (30 base tables including account memberships, member policies and capabilities + the audit_events_default partition + tenants.id)", total)
 	}
 
 	offenders, err := uncharTenantColumns(ctx, db)

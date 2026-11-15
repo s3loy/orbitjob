@@ -2,12 +2,14 @@ package http
 
 import (
 	"context"
+	"errors"
 	stdhttp "net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"orbitjob/internal/core/app/functioninvoke"
 
+	"orbitjob/internal/admin/app/account"
 	apikeycommand "orbitjob/internal/admin/app/apikey/command"
 	apikeyquery "orbitjob/internal/admin/app/apikey/query"
 	checkcommand "orbitjob/internal/admin/app/check/command"
@@ -29,10 +31,10 @@ import (
 	slobudgetquery "orbitjob/internal/admin/app/slobudget/query"
 	tenantcommand "orbitjob/internal/admin/app/tenant/command"
 	tenantquery "orbitjob/internal/admin/app/tenant/query"
-	"orbitjob/internal/admin/bootstrap"
 	"orbitjob/internal/admin/http/apperror"
 	"orbitjob/internal/admin/http/middleware"
 	"orbitjob/internal/admin/logs"
+	"orbitjob/internal/core/domain/apikey"
 	domaincheck "orbitjob/internal/core/domain/check"
 	"orbitjob/internal/core/domain/policy"
 	"orbitjob/internal/domain/validation"
@@ -185,7 +187,11 @@ type listAPIKeysUseCase interface {
 
 type revokeAPIKeyUseCase interface {
 	Revoke(ctx context.Context, in apikeycommand.RevokeInput) error
-	RevokeAsAdmin(ctx context.Context, id string) error
+	Target(ctx context.Context, id string) (apikey.APIKey, error)
+}
+
+type renameAPIKeyUseCase interface {
+	Rename(context.Context, apikeycommand.RenameInput) (apikeycommand.APIKeyRenameResult, error)
 }
 
 type createPolicyUseCase interface {
@@ -266,8 +272,10 @@ type resourceGroupListResponse struct {
 
 // Handler wires HTTP endpoints to application use cases.
 type Handler struct {
+	accounts                    *AccountHTTP
 	sourceControls              sourceControlService
 	evidenceScopes              evidenceScopeReader
+	workspaceDirectory          workspaceDirectoryLister
 	definitions                 definitionBackend
 	logLocators                 logs.Reader
 	workloadLogs                logBackend
@@ -307,6 +315,10 @@ type Handler struct {
 	createAPIKeyUC              createAPIKeyUseCase
 	listAPIKeysUC               listAPIKeysUseCase
 	revokeAPIKeyUC              revokeAPIKeyUseCase
+	apiKeyOwnerReader           apiKeyOwnerReader
+	apiKeyMetadataReader        apiKeyMetadataReader
+	renameAPIKeyUC              renameAPIKeyUseCase
+	workloadNamespaceTenants    map[string]string
 	createPolicyUC              createPolicyUseCase
 	listPoliciesUC              listPoliciesUseCase
 	getPolicyUC                 getPolicyUseCase
@@ -395,6 +407,9 @@ func (h *Handler) Register(r gin.IRouter) {
 		}
 		// Routes that declare a permission are registered behind the
 		// authorization guard; the three public endpoints are not.
+		if route.path == "/api_keys/:id" && route.method == stdhttp.MethodPatch {
+			route.resource = h.updateKeyResource
+		}
 		if route.path == "/functions/:id/runs/:run_id/attempts/:attempt/logs" {
 			route.resource = h.functionLogResource
 		}
@@ -562,6 +577,7 @@ func callerFrom(c *gin.Context) apikeycommand.Caller {
 	return apikeycommand.Caller{
 		TenantID:         p.TenantID,
 		KeyID:            p.KeyID,
+		ActorID:          p.ActorID(),
 		ResourceGroupID:  p.ResourceGroupID,
 		Documents:        docs,
 		IsPlatform:       p.IsPlatform(),
@@ -1308,6 +1324,28 @@ func (h *Handler) ListSLOAlerts(c *gin.Context) {
 
 // CreateTenant handles tenant creation requests.
 func (h *Handler) CreateTenant(c *gin.Context) {
+	if p, ok := middleware.PrincipalFrom(c); ok && p.IsHuman() {
+		if h.accounts == nil || !p.InstallationAdmin {
+			writeForbidden(c, "installation administrator required")
+			return
+		}
+		var req CreateTenantRequest
+		if !decodeAccount(c, &req) {
+			return
+		}
+		if req.Status != "" && req.Status != "active" {
+			accountError(c, account.ErrInvalid)
+			return
+		}
+		out, err := h.accounts.Service.CreateWorkspace(c.Request.Context(), p.SessionID, req.Name, req.Slug)
+		if err != nil {
+			accountError(c, err)
+			return
+		}
+		c.JSON(stdhttp.StatusCreated, tenantcommand.TenantCreateResult{ID: out.ID, Name: out.Name, Slug: out.Slug, Status: "active"})
+		return
+	}
+
 	_, ok := requireTenantID(c, "")
 	if !ok {
 		return
@@ -1330,6 +1368,11 @@ func (h *Handler) CreateTenant(c *gin.Context) {
 
 // ListTenants handles tenant list queries.
 func (h *Handler) ListTenants(c *gin.Context) {
+	if p, ok := middleware.PrincipalFrom(c); ok && p.IsHuman() {
+		h.listHumanTenants(c, p)
+		return
+	}
+
 	var req ListTenantsRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
 		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
@@ -1353,6 +1396,11 @@ func (h *Handler) ListTenants(c *gin.Context) {
 
 // GetTenant handles one tenant detail query.
 func (h *Handler) GetTenant(c *gin.Context) {
+	if p, ok := middleware.PrincipalFrom(c); ok && p.IsHuman() && p.InstallationAdmin {
+		h.getHumanTenant(c, p)
+		return
+	}
+
 	var req TenantURI
 	if err := c.ShouldBindUri(&req); err != nil {
 		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
@@ -1435,21 +1483,15 @@ func (h *Handler) RevokeAPIKey(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := requireTenantID(c, "")
-	if !ok {
+	target, ok := resolvedAPIKeyTarget(c)
+	if !ok || target.ID != pathReq.ID {
+		writeAPIError(c, errors.New("resolved API key scope missing"))
 		return
 	}
-
-	var err error
-	if tenantID == bootstrap.DefaultTenantID {
-		err = h.revokeAPIKeyUC.RevokeAsAdmin(c.Request.Context(), pathReq.ID)
-	} else {
-		err = h.revokeAPIKeyUC.Revoke(c.Request.Context(), apikeycommand.RevokeInput{
-			ID:       pathReq.ID,
-			TenantID: tenantID,
-			ActorID:  actorID(c),
-		})
-	}
+	tenantID := target.TenantID
+	err := h.revokeAPIKeyUC.Revoke(c.Request.Context(), apikeycommand.RevokeInput{
+		ID: pathReq.ID, TenantID: tenantID, ActorID: actorID(c),
+	})
 	if err != nil {
 		writeAPIError(c, err)
 		return

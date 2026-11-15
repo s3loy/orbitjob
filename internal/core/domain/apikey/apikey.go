@@ -5,11 +5,13 @@ import "time"
 
 // APIKey is the read-only domain representation of an API key record.
 type APIKey struct {
-	ID        string
-	TenantID  string
-	KeyPrefix string
-	CreatedAt time.Time
-	RevokedAt *time.Time
+	ID              string
+	Name            string
+	TenantID        string
+	ResourceGroupID string
+	KeyPrefix       string
+	CreatedAt       time.Time
+	RevokedAt       *time.Time
 }
 
 // PersistInput is everything needed to write one key together with its grants.
@@ -19,6 +21,7 @@ type APIKey struct {
 // that was never written is a dangling grant.
 type PersistInput struct {
 	ID               string
+	Name             string
 	TenantID         string
 	ResourceGroupID  string
 	KeyHash          string
@@ -29,4 +32,10 @@ type PersistInput struct {
 	// bindings" is itself a privilege-escalation vector, so the answer has to
 	// survive in the data rather than only in a log line.
 	BoundBy string
+}
+
+// Metadata contains display and scope fields only, never a secret or hash.
+type Metadata struct {
+	Name            string
+	ResourceGroupID string
 }

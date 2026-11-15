@@ -8,6 +8,7 @@ import (
 
 	"orbitjob/internal/core/domain/apikey"
 	"orbitjob/internal/core/domain/audit"
+	"orbitjob/internal/platform/scan"
 )
 
 type stubAPIKeyCreator struct {
@@ -34,15 +35,15 @@ func TestCreator_Create_Success(t *testing.T) {
 	repo := &stubAPIKeyCreator{}
 	uc := NewCreator(repo)
 
-	out, err := uc.Create(context.Background(), CreateInput{TenantID: "tenant1"})
+	out, err := uc.Create(context.Background(), CreateInput{TenantID: createFixtureTenantID})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !repo.called {
 		t.Fatal("expected repo.Create to be called")
 	}
-	if repo.tenantID != "tenant1" {
-		t.Fatalf("expected tenantID=%q, got %q", "tenant1", repo.tenantID)
+	if repo.tenantID != createFixtureTenantID {
+		t.Fatalf("expected tenantID=%q, got %q", createFixtureTenantID, repo.tenantID)
 	}
 	if repo.id == "" {
 		t.Fatal("expected generated id")
@@ -78,7 +79,7 @@ func TestCreator_Create_GenerateError(t *testing.T) {
 	uc := NewCreator(repo)
 	uc.generateKey = func() (string, error) { return "", errors.New("rand failed") }
 
-	_, err := uc.Create(context.Background(), CreateInput{TenantID: "tenant1"})
+	_, err := uc.Create(context.Background(), CreateInput{TenantID: createFixtureTenantID})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -91,7 +92,7 @@ func TestCreator_Create_RepoError(t *testing.T) {
 	repo := &stubAPIKeyCreator{err: errors.New("db down")}
 	uc := NewCreator(repo)
 
-	_, err := uc.Create(context.Background(), CreateInput{TenantID: "tenant1"})
+	_, err := uc.Create(context.Background(), CreateInput{TenantID: createFixtureTenantID})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -102,7 +103,7 @@ func TestCreator_Create_HashError(t *testing.T) {
 	uc := NewCreator(repo)
 	uc.hashKey = func(key []byte) ([]byte, error) { return nil, errors.New("hash failed") }
 
-	_, err := uc.Create(context.Background(), CreateInput{TenantID: "tenant1"})
+	_, err := uc.Create(context.Background(), CreateInput{TenantID: createFixtureTenantID})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -116,7 +117,7 @@ func TestCreator_Create_KeyPrefixShort(t *testing.T) {
 	uc := NewCreator(repo)
 	uc.generateKey = func() (string, error) { return "otj_abc", nil }
 
-	out, err := uc.Create(context.Background(), CreateInput{TenantID: "tenant1"})
+	out, err := uc.Create(context.Background(), CreateInput{TenantID: createFixtureTenantID})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -140,3 +141,5 @@ func TestGenerateAPIKey_Error(t *testing.T) {
 		t.Fatal("expected error, got nil")
 	}
 }
+
+var createFixtureTenantID = scan.GenerateID()

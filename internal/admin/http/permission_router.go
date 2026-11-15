@@ -2,6 +2,10 @@ package http
 
 import (
 	"github.com/gin-gonic/gin"
+	"net/http"
+	"orbitjob/internal/admin/app/account"
+	"orbitjob/internal/core/domain/policy"
+	"strings"
 
 	"orbitjob/internal/admin/http/middleware"
 )
@@ -64,5 +68,34 @@ func guardFor(route routeDefinition, h *Handler) gin.HandlerFunc {
 	if route.resourceForHandler != nil {
 		resolve = route.resourceForHandler(h)
 	}
-	return middleware.Require(route.permission, resolve)
+	guard := middleware.Require(route.permission, resolve)
+	return func(c *gin.Context) {
+		p, ok := middleware.PrincipalFrom(c)
+		if ok && p.IsHuman() && route.method != http.MethodGet && (strings.HasPrefix(route.permission, "apikey:") || strings.HasPrefix(route.permission, "policy:") || strings.HasPrefix(route.permission, "group:")) {
+			if h.accounts == nil {
+				accountError(c, account.ErrForbidden)
+				return
+			}
+			if !h.accounts.recent(c, &account.Session{RecentAuthAt: p.RecentAuthAt}) {
+				return
+			}
+		}
+		management := ok && p.IsHuman() && p.InstallationAdmin && (route.permission == "tenant:Create" || route.permission == "tenant:List" || route.permission == "tenant:Get")
+		if management {
+			if route.method != http.MethodGet && (h.accounts == nil || !h.accounts.recent(c, &account.Session{RecentAuthAt: p.RecentAuthAt})) {
+				return
+			}
+			docs, loaded := middleware.Documents(c)
+			if loaded {
+				middleware.SetDocuments(c, installationManagementDocuments(docs))
+				defer middleware.SetDocuments(c, docs)
+			}
+		}
+		guard(c)
+	}
+}
+
+func installationManagementDocuments(docs []policy.Document) []policy.Document {
+	out := append([]policy.Document{}, docs...)
+	return append(out, policy.Document{Statement: []policy.Statement{{Effect: policy.EffectAllow, Action: []string{"tenant:Create", "tenant:List", "tenant:Get"}, Resource: []string{"orbitjob:*:*:tenant/*"}}}})
 }

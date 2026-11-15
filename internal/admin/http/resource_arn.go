@@ -2,6 +2,7 @@ package http
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -9,7 +10,9 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"orbitjob/internal/admin/http/middleware"
+	"orbitjob/internal/core/domain/apikey"
 	"orbitjob/internal/core/domain/policy"
+	"orbitjob/internal/domain/resource"
 	"orbitjob/internal/domain/validation"
 )
 
@@ -44,8 +47,43 @@ func tenantScoped(resourceType string) middleware.ResourceResolver {
 	}
 }
 
+type apiKeyTargetContextKey struct{}
+
 // Resolve ownership before the guard evaluates the target ARN. The exact same
 // resolved identity travels to the handler; no tenant identity grants authority.
+func apiKeyRevokeResource(h *Handler) middleware.ResourceResolver {
+	return func(c *gin.Context) (policy.ARN, error) {
+		p, ok := middleware.PrincipalFrom(c)
+		if !ok {
+			return policy.ARN{}, errNoPrincipal
+		}
+		var path APIKeyURI
+		if err := c.ShouldBindUri(&path); err != nil {
+			return policy.ARN{}, validation.New("id", "must identify an API key")
+		}
+		target, err := h.revokeAPIKeyUC.Target(c.Request.Context(), path.ID)
+		if err != nil {
+			return policy.ARN{}, err
+		}
+		if target.ID != path.ID || target.TenantID == "" {
+			return policy.ARN{}, errors.New("invalid resolved key scope")
+		}
+		if p.ResourceGroupID != "" && p.ResourceGroupID != target.ResourceGroupID {
+			return policy.ARN{}, &resource.NotFoundError{Resource: "api_key", ID: path.ID}
+		}
+		group := target.ResourceGroupID
+		if group == "" {
+			group = "*"
+		}
+		c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), apiKeyTargetContextKey{}, target))
+		return policy.ARN{Tenant: target.TenantID, Group: group, Type: "apikey", ID: path.ID}, nil
+	}
+}
+
+func resolvedAPIKeyTarget(c *gin.Context) (apikey.APIKey, bool) {
+	target, ok := c.Request.Context().Value(apiKeyTargetContextKey{}).(apikey.APIKey)
+	return target, ok
+}
 
 // tenantResource resolves an ARN for the tenant object itself. The tenant
 // segment is the tenant named in the path, so reading another tenant requires a

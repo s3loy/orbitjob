@@ -157,6 +157,28 @@
           }
         }
       }
+    },
+    "adminapi": {
+      "type": "object",
+      "properties": {
+        "console": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "publicOrigin",
+            "allowInsecureLocalhost"
+          ],
+          "properties": {
+            "publicOrigin": {
+              "type": "string",
+              "description": "External browser origin without a path. Production sessions require HTTPS; HTTP is limited to explicitly enabled loopback development."
+            },
+            "allowInsecureLocalhost": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
     }
   }
 }

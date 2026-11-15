@@ -154,3 +154,26 @@ var eventStoreFixtureActorID = scan.GenerateID()
 var eventStoreFixtureSubjectID = scan.GenerateID()
 
 var eventStoreFixtureTenantID = scan.GenerateID()
+
+func TestInsertAuditEventPreservesVerifiedHumanActor(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	mock.ExpectBegin()
+	mock.ExpectExec(`VALUES \(\$1, 'user', \$2, \$3, \$4, \$5, \$6\)`).WithArgs("tenant", "human", audit.EventCreate, audit.ResourcePolicy, "policy", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectRollback()
+	ctx := audit.WithActor(context.Background(), "human", "user")
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := insertAuditEvent(ctx, tx, audit.Event{TenantID: "tenant", ActorID: "human", EventType: audit.EventCreate, ResourceType: audit.ResourcePolicy, ResourceID: "policy"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = tx.Rollback()
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

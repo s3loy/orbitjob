@@ -40,6 +40,7 @@ func wireDefinitionLogs(h *adminhttp.Handler, db *sql.DB, publisher kube.JobRunP
 		Images:               imagepin.New(strings.Split(os.Getenv("IMAGE_APPROVED_REGISTRIES"), ","), strings.Split(os.Getenv("IMAGE_PRIVATE_REGISTRIES"), ",")),
 		AllowLegacyAuthoring: os.Getenv("ALLOW_LEGACY_AUTHORING") == "true",
 	})
+	h.SetWorkloadNamespaceTenants(mapping)
 	h.SetLogBackend(adminpostgres.LogLocatorRepository{DB: db}, kube.LogClient{Client: client, Dynamic: publisher.Client, NamespaceTenants: mapping})
 	return nil
 }

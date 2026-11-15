@@ -270,6 +270,7 @@ func adminAPIRoutes() []routeDefinition {
 	}
 
 	routes := []routeDefinition{
+		{method: stdhttp.MethodGet, path: "/identity", register: func(r gin.IRouter, h *Handler) { r.GET("/identity", h.GetIdentity) }, spec: operationDefinition{id: "getIdentity", summary: "Read authenticated identity and exact target capabilities", tags: []string{"Identity"}, parameterModels: []any{IdentityRequest{}}, responses: []responseDefinition{{statusCode: stdhttp.StatusOK, description: "Authenticated identity", model: IdentityResponse{}}}}},
 		{
 			method:     stdhttp.MethodGet,
 			path:       "/jobs",
@@ -1033,16 +1034,16 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method:     stdhttp.MethodPost,
-			path:       "/api_keys/:id/revoke",
-			permission: "apikey:Revoke",
-			resource:   apiKeyResource,
-			enabled:    func(h *Handler) bool { return h != nil && h.revokeAPIKeyUC != nil },
-			register:   func(r gin.IRouter, h *Handler) { r.POST("/api_keys/:id/revoke", h.RevokeAPIKey) },
+			method:             stdhttp.MethodPost,
+			path:               "/api_keys/:id/revoke",
+			permission:         "apikey:Revoke",
+			resourceForHandler: apiKeyRevokeResource,
+			enabled:            func(h *Handler) bool { return h != nil && h.revokeAPIKeyUC != nil },
+			register:           func(r gin.IRouter, h *Handler) { r.POST("/api_keys/:id/revoke", h.RevokeAPIKey) },
 			spec: operationDefinition{
 				id:              "revokeAPIKey",
 				summary:         "Revoke one API key",
-				description:     "Revoke an API key. The key must belong to the caller's tenant and not already be revoked.",
+				description:     "Revoke an API key within its resolved owner and resource-group scope. Requires an explicit apikey:Revoke grant for that target; tenant identity alone does not grant cross-tenant authority. The key must not already be revoked.",
 				tags:            []string{"API Keys"},
 				parameterModels: []any{APIKeyURI{}},
 				responses: []responseDefinition{
@@ -1054,7 +1055,25 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		// ==================== Policies ====================
-
+		{
+			method: stdhttp.MethodPatch, path: "/api_keys/:id", permission: "apikey:Update",
+			resource: apiKeyResource,
+			enabled:  func(h *Handler) bool { return h != nil && h.renameAPIKeyUC != nil },
+			register: func(r gin.IRouter, h *Handler) { r.PATCH("/api_keys/:id", h.RenameAPIKey) },
+			spec: operationDefinition{
+				id: "renameAPIKey", summary: "Rename an API key",
+				description: "Update only an API key's optional display name. Requires apikey:Update for the exact owner and key scope. An empty name clears the label; grants, credentials and revocation are unchanged.",
+				tags:        []string{"API Keys"}, parameterModels: []any{APIKeyURI{}},
+				requestBodyModel: RenameAPIKeyRequest{}, requestBodyRequired: true,
+				responses: []responseDefinition{
+					{statusCode: stdhttp.StatusOK, description: "Renamed API key", model: apikeycommand.APIKeyRenameResult{}},
+					{statusCode: stdhttp.StatusBadRequest, description: "Invalid name", model: errorModel},
+					{statusCode: stdhttp.StatusForbidden, description: "Key unavailable or permission denied", model: errorModel},
+					{statusCode: stdhttp.StatusNotFound, description: "API key not found", model: errorModel},
+					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
+				},
+			},
+		},
 		{
 			method:     stdhttp.MethodPost,
 			path:       "/policies",
@@ -1426,6 +1445,8 @@ func adminAPIRoutes() []routeDefinition {
 		},
 	}
 
+	routes = append(routes, accountRoutes()...)
+	routes = append(routes, workspaceDirectoryRoutes()...)
 	routes = append(routes, tenantManagementRoutes()...)
 	routes = append(routes, definitionLogRoutes()...)
 	routes = append(routes, archiveLogRoutes()...)
@@ -1472,7 +1493,13 @@ func buildOpenAPIDocument(h *Handler, includeAllAdminRoutes bool) OpenAPIDocumen
 
 		path := toOpenAPIPath(adminAPIPrefix + route.path)
 		op := route.spec.build(registry)
-		op.Security = []map[string][]string{{"APIKey": {}}}
+		if strings.HasPrefix(route.path, "/auth/") {
+			if route.path != "/auth/session" && route.path != "/auth/login" && route.path != "/auth/setup" && route.path != "/auth/invitations/accept" && route.path != "/auth/password/reset" {
+				op.Security = []map[string][]string{{"ConsoleSession": {}}}
+			}
+		} else {
+			op.Security = []map[string][]string{{"APIKey": {}}, {"ConsoleSession": {}}}
+		}
 		op.Permission = route.permission
 		applyAdminOperationMetadata(route, &op, registry)
 		setPathItemOperation(doc.Paths, path, route.method, op)
@@ -1482,7 +1509,8 @@ func buildOpenAPIDocument(h *Handler, includeAllAdminRoutes bool) OpenAPIDocumen
 		doc.Components = &OpenAPIComponents{
 			Schemas: registry.components,
 			SecuritySchemes: map[string]SecurityScheme{
-				"APIKey": {Type: "http", Scheme: "bearer", Description: "OrbitJob API key. Send Authorization: Bearer <key>. Each operation also requires its declared policy grant; successful authentication does not imply permission."},
+				"ConsoleSession": {Type: "apiKey", In: "cookie", Name: middleware.SessionCookieName, Description: "HttpOnly human session. Unsafe requests also require the same-origin session X-CSRF-Token. Explicit Authorization takes precedence and never falls back to cookies."},
+				"APIKey":         {Type: "http", Scheme: "bearer", Description: "OrbitJob API key. Send Authorization: Bearer <key>. Each operation also requires its declared policy grant; successful authentication does not imply permission."},
 			},
 		}
 	}

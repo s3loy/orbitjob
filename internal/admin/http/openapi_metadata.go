@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"orbitjob/internal/admin/http/apperror"
+	"orbitjob/internal/admin/http/middleware"
 )
 
 type deletedResponse struct {
@@ -14,10 +15,13 @@ type deletedResponse struct {
 // Shared metadata describes the middleware mounted in main, Handler.Register
 // and requestTenant. It never changes registration or authorization behavior.
 func applyAdminOperationMetadata(route routeDefinition, op *Operation, registry *schemaRegistry) {
+	if !middleware.SafeMethod(route.method) {
+		op.Parameters = append(op.Parameters, Parameter{Name: "X-CSRF-Token", In: "header", Schema: Schema{Type: "string", Description: "Required on cookie-authenticated unsafe requests. Obtain this session binding from GET /api/v1/auth/session; never persist it with API keys. Bearer automation requests do not require it."}}, Parameter{Name: "Origin", In: "header", Schema: Schema{Type: "string", Description: "Exact configured public origin. Required for browser credential/capability submissions and cookie-authenticated unsafe requests; browser clients set this header automatically."}})
+	}
 	errorSchema := registry.schemaForModel(apperror.ErrorResponse{}, schemaModeResponse)
 	failures := map[int]string{
 		400: "Malformed request or invalid input; inspect error.code, error.message and optional error.field",
-		401: "Missing, invalid, expired or revoked API key",
+		401: "Missing, invalid, expired or revoked API key or human session",
 		413: "Request body exceeds the shared 1 MiB limit",
 		500: "Internal error, including unavailable authorization context or permission loading",
 	}
@@ -60,7 +64,7 @@ func applyAdminOperationMetadata(route routeDefinition, op *Operation, registry 
 		}
 		switch parameter.Name {
 		case "tenant_id":
-			parameter.Schema.Description = "Explicit target tenant for platform credentials; required for tenant-scoped operations with a platform key. Tenant credentials may omit it or repeat their own tenant; selecting another tenant is forbidden. Explicit /tenants/{id}/... management routes use the path target instead. Conflicting body/query selectors are refused."
+			parameter.Schema.Description = "Explicit target tenant for human members and platform credentials; required for tenant-scoped operations with a platform key. Tenant credentials may omit it or repeat their own tenant; selecting another tenant is forbidden. Explicit /tenants/{id}/... management routes use the path target instead. Conflicting body/query selectors are refused."
 		case "action":
 			parameter.Schema.Description = "Repeat action once per exact capability probe, paired by position with resource; at most 64 pairs. Known concrete actions only, without action wildcards."
 		case "resource":
@@ -126,7 +130,7 @@ func operationRequestExample(id string) any {
 	case "createResourceGroup", "createTenantResourceGroup":
 		return map[string]any{"name": "Reporting", "slug": "reporting"}
 	case "createAPIKey":
-		return map[string]any{"policies": []string{"REPLACE_WITH_POLICY_ID"}}
+		return map[string]any{"name": "Job reader", "policies": []string{"REPLACE_WITH_POLICY_ID"}}
 	case "renameAPIKey":
 		return map[string]any{"name": "Production operator"}
 	case "pauseCheck", "resumeCheck", "deleteCheck", "deleteSLI", "pauseSLO", "resumeSLO", "deleteSLO":

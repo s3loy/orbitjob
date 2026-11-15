@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"orbitjob/internal/core/domain/audit"
 	"strconv"
 	"strings"
 	"time"
@@ -189,7 +190,11 @@ func (r Repository) RequestCleanup(ctx context.Context, id Identity, actor strin
 	if n == 0 {
 		return fmt.Errorf("log cleanup requires a terminal archive without a prior request")
 	}
-	_, e = tx.ExecContext(ctx, `INSERT INTO audit_events(tenant_id,actor_type,actor_id,event_type,resource_type,resource_id,diff) VALUES($1,'api_key',$2,'delete','execution_logs',$3,$4)`, id.TenantID, actor, id.Key(), `{"state":"requested"}`)
+	query := `INSERT INTO audit_events(tenant_id,actor_type,actor_id,event_type,resource_type,resource_id,diff) VALUES($1,'api_key',$2,'delete','execution_logs',$3,$4)`
+	if audit.ActorType(ctx, actor) == "user" {
+		query = strings.Replace(query, "'api_key'", "'user'", 1)
+	}
+	_, e = tx.ExecContext(ctx, query, id.TenantID, actor, id.Key(), `{"state":"requested"}`)
 	if e != nil {
 		return e
 	}

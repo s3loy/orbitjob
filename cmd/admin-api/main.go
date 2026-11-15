@@ -17,6 +17,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 
+	"orbitjob/internal/admin/app/account"
 	apikeycommand "orbitjob/internal/admin/app/apikey/command"
 	apikeyquery "orbitjob/internal/admin/app/apikey/query"
 	checkcommand "orbitjob/internal/admin/app/check/command"
@@ -40,6 +41,7 @@ import (
 	appsourcecontrol "orbitjob/internal/admin/app/sourcecontrol"
 	tenantcommand "orbitjob/internal/admin/app/tenant/command"
 	tenantquery "orbitjob/internal/admin/app/tenant/query"
+	workspacequery "orbitjob/internal/admin/app/workspace/query"
 	adminhttp "orbitjob/internal/admin/http"
 	"orbitjob/internal/admin/http/middleware"
 	"orbitjob/internal/admin/kube"
@@ -48,6 +50,7 @@ import (
 	corepostgres "orbitjob/internal/core/store/postgres"
 	"orbitjob/internal/platform/config"
 	platformlogger "orbitjob/internal/platform/logger"
+	"strconv"
 )
 
 // Seams for the Kubernetes client the manual trigger path needs.
@@ -77,7 +80,8 @@ func newJobRunPublisher() (kube.JobRunPublisher, kube.WorkflowRunPublisher, erro
 }
 
 func newRouter(handler *adminhttp.Handler, auth *middleware.Auth, rl *middleware.RateLimiter) *gin.Engine {
-	r := gin.Default()
+	r := gin.New()
+	r.Use(gin.LoggerWithConfig(gin.LoggerConfig{SkipQueryString: true}), gin.Recovery())
 	r.Use(func(c *gin.Context) {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), adminRequestTimeout)
 		defer cancel()
@@ -88,12 +92,6 @@ func newRouter(handler *adminhttp.Handler, auth *middleware.Auth, rl *middleware
 	// still counted with the status the client received.
 	r.Use(middleware.RequestMetrics())
 	r.Use(middleware.TraceMiddleware())
-	if auth != nil {
-		r.Use(auth.Middleware())
-	}
-	if rl != nil {
-		r.Use(rl.Middleware())
-	}
 
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -106,7 +104,14 @@ func newRouter(handler *adminhttp.Handler, auth *middleware.Auth, rl *middleware
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	if handler != nil {
-		handler.Register(r)
+		protected := r.Group("")
+		if auth != nil {
+			protected.Use(auth.Middleware())
+		}
+		if rl != nil {
+			protected.Use(rl.Middleware())
+		}
+		handler.Register(protected)
 	}
 
 	return r
@@ -154,7 +159,22 @@ func main() {
 		log.Fatal(err)
 	}
 
+	security := middleware.ConsoleSecurity{PublicOrigin: os.Getenv("CONSOLE_PUBLIC_ORIGIN")}
+	if raw := os.Getenv("CONSOLE_ALLOW_INSECURE_LOCALHOST"); raw != "" {
+		security.AllowInsecureLocalhost, err = strconv.ParseBool(raw)
+		if err != nil {
+			log.Fatal("CONSOLE_ALLOW_INSECURE_LOCALHOST must be a boolean")
+		}
+	}
+	if err := security.Validate(); err != nil {
+		log.Fatal(err)
+	}
+	accounts := account.NewService(adminpostgres.NewAccountRepository(db))
+	handler.SetAccountHTTP(adminhttp.NewAccountHTTP(accounts, security))
+	go cleanupAccountSessions(ctx, accounts)
 	auth := middleware.NewAuth(db)
+	auth.Accounts = accounts
+	auth.ConsoleSecurity = security
 	// Wire the policy loader: without it, requests authenticate but carry no
 	// grants, so every guarded route denies. It wraps the same pool and reads
 	// the same documents table the policy endpoints use.
@@ -293,6 +313,7 @@ func buildHandler(
 
 	// Tenant use cases.
 	tenantRepo := adminpostgres.NewTenantRepository(db)
+	handler.SetWorkspaceDirectoryLister(workspacequery.NewLister(tenantRepo))
 	createTenantUC := tenantcommand.NewCreator(tenantRepo)
 	listTenantsUC := tenantquery.NewLister(tenantRepo)
 	getTenantUC := tenantquery.NewGetter(tenantRepo)
@@ -326,6 +347,9 @@ func buildHandler(
 	handler.SetCreateAPIKeyUseCase(createAPIKeyUC)
 	handler.SetListAPIKeysUseCase(listAPIKeysUC)
 	handler.SetRevokeAPIKeyUseCase(revokeAPIKeyUC)
+	handler.SetAPIKeyOwnerReader(apiKeyRepo)
+	handler.SetAPIKeyMetadataReader(apiKeyRepo)
+	handler.SetRenameAPIKeyUseCase(apikeycommand.NewRenamer(apiKeyRepo))
 	handler.SetCreatePolicyUseCase(createPolicyUC)
 	handler.SetListPoliciesUseCase(listPoliciesUC)
 	handler.SetGetPolicyUseCase(getPolicyUC)
@@ -366,4 +390,22 @@ func buildHandler(
 	handler.SetCancelWorkflowRunUseCase(adminhttp.NewCancelWorkflowRunUseCase(workflowDefinitions, workflowRunRepo, workflowPublisher))
 
 	return handler
+}
+
+func cleanupAccountSessions(ctx context.Context, accounts *account.Service) {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			cleanupCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			_, err := accounts.Cleanup(cleanupCtx, 500)
+			cancel()
+			if err != nil && ctx.Err() == nil {
+				slog.Warn("expired account credential cleanup failed")
+			}
+		}
+	}
 }
