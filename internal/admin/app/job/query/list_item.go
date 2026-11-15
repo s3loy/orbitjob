@@ -12,6 +12,7 @@ type ListItem struct {
 	Name       string `json:"name"`
 	Namespace  string `json:"namespace"`
 	SourceUID  string `json:"source_uid"`
+	SourceKind string `json:"source_kind,omitempty"`
 	Generation int64  `json:"generation"`
 	Actor      string `json:"actor"`
 

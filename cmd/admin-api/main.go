@@ -22,6 +22,7 @@ import (
 	checkcommand "orbitjob/internal/admin/app/check/command"
 	checkquery "orbitjob/internal/admin/app/check/query"
 	checkrunquery "orbitjob/internal/admin/app/checkrun/query"
+	functioncommand "orbitjob/internal/admin/app/function/command"
 	jobcommand "orbitjob/internal/admin/app/job/command"
 	jobquery "orbitjob/internal/admin/app/job/query"
 	policycommand "orbitjob/internal/admin/app/policy/command"
@@ -36,6 +37,7 @@ import (
 	sloquery "orbitjob/internal/admin/app/slo/query"
 	sloalertquery "orbitjob/internal/admin/app/sloalert/query"
 	slobudgetquery "orbitjob/internal/admin/app/slobudget/query"
+	appsourcecontrol "orbitjob/internal/admin/app/sourcecontrol"
 	tenantcommand "orbitjob/internal/admin/app/tenant/command"
 	tenantquery "orbitjob/internal/admin/app/tenant/query"
 	adminhttp "orbitjob/internal/admin/http"
@@ -145,6 +147,12 @@ func main() {
 		log.Fatal(err)
 	}
 	handler := buildHandler(db, publisher, workflowPublisher)
+	if err := wireDefinitionLogs(handler, db, publisher); err != nil {
+		log.Fatal(err)
+	}
+	if err := wireArchiveLogs(handler, db); err != nil {
+		log.Fatal(err)
+	}
 
 	auth := middleware.NewAuth(db)
 	// Wire the policy loader: without it, requests authenticate but carry no
@@ -193,9 +201,8 @@ func buildHandler(
 	jobPublisher kube.JobRunPublisher,
 	workflowPublisher kube.WorkflowRunPublisher,
 ) *adminhttp.Handler {
-	// Job definitions are read here; they are declared in Kubernetes. There is
-	// no create, update or delete use case any more: the declaration is the
-	// CR, and the API only reads the revisions projected from it.
+	// These use cases read immutable projected definitions. Live typed CR
+	// authoring is wired separately by wireDefinitionLogs under Apply grants.
 	jobRepo := adminpostgres.NewJobRepository(db)
 	listJobsUC := jobquery.NewListJobsUseCase(jobRepo)
 	getJobUC := jobquery.NewGetJobUseCase(jobRepo)
@@ -231,6 +238,8 @@ func buildHandler(
 	getCheckRunUC := checkrunquery.NewGetCheckRunUseCase(checkRunReadRepo)
 
 	handler := adminhttp.NewHandler(listJobsUC, getJobUC, triggerJobUC)
+	handler.SetSourceControlService(appsourcecontrol.NewService(adminpostgres.NewSourceControlRepository(db)))
+	handler.SetEvidenceScopeReader(adminpostgres.NewEvidenceScopeRepository(db))
 	handler.SetListInstancesUseCase(listInstancesUC)
 	handler.SetGetInstanceUseCase(getInstanceUC)
 	handler.SetCancelRunUseCase(cancelRunUC)
@@ -324,9 +333,8 @@ func buildHandler(
 	handler.SetCreateGroupUseCase(createGroupUC)
 	handler.SetListGroupsUseCase(listGroupsUC)
 
-	// Function use cases. The definitions are rows this API serves read-only
-	// plus invoke; the revisions the invoke path pins are the ones the
-	// operator's sync loop materializes from those rows.
+	// Function configuration writes are audited; execution revisions remain
+	// asynchronously materialized by the Operator.
 	functionRepo := corepostgres.NewFunctionRepository(db)
 	functionRunRepo := corepostgres.NewFunctionRunRepository(db)
 	revisions := corepostgres.NewControlPlaneRepository(db)
@@ -335,8 +343,10 @@ func buildHandler(
 		definitions: corepostgres.NewWorkflowDefinitionRepository(db),
 	}
 
-	handler.SetListFunctionsUseCase(adminhttp.NewListFunctionsUseCase(functionRepo))
-	handler.SetGetFunctionUseCase(adminhttp.NewGetFunctionUseCase(functionRepo))
+	functionRevisions := controlPlaneRevisions{revisions}
+	handler.SetFunctionManagementUseCase(functioncommand.NewManager(functionRepo), functionRepo, functionRevisions)
+	handler.SetListFunctionsUseCase(adminhttp.NewListFunctionsUseCase(functionRepo).WithReadiness(functionRevisions))
+	handler.SetGetFunctionUseCase(adminhttp.NewGetFunctionUseCase(functionRepo).WithReadiness(functionRevisions))
 	handler.SetInvokeFunctionUseCase(functioninvoke.New(
 		functionRepo,
 		controlPlaneRevisions{revisions},

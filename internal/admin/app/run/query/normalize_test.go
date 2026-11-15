@@ -8,6 +8,8 @@ import (
 	"orbitjob/internal/core/domain/jobrun"
 	"orbitjob/internal/domain/resource"
 	"orbitjob/internal/domain/validation"
+
+	"orbitjob/internal/platform/scan"
 )
 
 // NormalizeGetInput is the read gate for one run's detail and for the cancel
@@ -16,7 +18,7 @@ import (
 
 // ulidTenant matches tenants.id: a CHAR(26) ULID. The gate refuses anything
 // else so a bad id surfaces as a 400 instead of a database rejection.
-const ulidTenant = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+var ulidTenant = runNormalizeIdentityTenantID
 
 func TestNormalizeGetInputBounds(t *testing.T) {
 	tests := []struct {
@@ -105,13 +107,13 @@ func TestNormalizeGetInputBounds(t *testing.T) {
 func TestNormalizeGetInputRefusesScopedCaller(t *testing.T) {
 	// A run has no resource group, so a scoped caller is refused rather than
 	// served the whole tenant's ledger under a narrower promise.
-	_, err := NormalizeGetInput(GetInput{TenantID: ulidTenant, ID: 7, ResourceGroupID: "rg-7"})
+	_, err := NormalizeGetInput(GetInput{TenantID: ulidTenant, ID: 7, ResourceGroupID: runNormalizeIdentityGroupID})
 	var serr *resource.ScopeError
 	if !errors.As(err, &serr) {
 		t.Fatalf("got %v (%T), want *resource.ScopeError", err, err)
 	}
-	if serr.Resource != "run" || serr.Scope != "rg-7" {
-		t.Fatalf("scope refusal = %+v, want resource %q scope %q", serr, "run", "rg-7")
+	if serr.Resource != "run" || serr.Scope != runNormalizeIdentityGroupID {
+		t.Fatalf("scope refusal = %+v, want resource %q scope %q", serr, "run", runNormalizeIdentityGroupID)
 	}
 }
 
@@ -227,12 +229,16 @@ func TestNormalizeListInputBounds(t *testing.T) {
 }
 
 func TestNormalizeListInputRefusesScopedCaller(t *testing.T) {
-	_, err := NormalizeListInput(ListInput{TenantID: ulidTenant, ResourceGroupID: "rg-7"})
+	_, err := NormalizeListInput(ListInput{TenantID: ulidTenant, ResourceGroupID: runNormalizeIdentityGroupID})
 	var serr *resource.ScopeError
 	if !errors.As(err, &serr) {
 		t.Fatalf("got %v (%T), want *resource.ScopeError", err, err)
 	}
-	if serr.Resource != "run" || serr.Scope != "rg-7" {
-		t.Fatalf("scope refusal = %+v, want resource %q scope %q", serr, "run", "rg-7")
+	if serr.Resource != "run" || serr.Scope != runNormalizeIdentityGroupID {
+		t.Fatalf("scope refusal = %+v, want resource %q scope %q", serr, "run", runNormalizeIdentityGroupID)
 	}
 }
+
+var runNormalizeIdentityTenantID = scan.GenerateID()
+
+var runNormalizeIdentityGroupID = scan.GenerateID()

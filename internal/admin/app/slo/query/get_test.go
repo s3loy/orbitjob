@@ -2,11 +2,15 @@ package query
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"orbitjob/internal/core/domain/slo"
+
+	"orbitjob/internal/platform/scan"
 )
 
 type stubSLOReader struct {
@@ -19,11 +23,13 @@ func (s *stubSLOReader) Get(_ context.Context, _, _ string, _ int64) (slo.Snapsh
 }
 
 type stubBudgetReader struct {
-	out slo.Budget
-	err error
+	out   slo.Budget
+	err   error
+	calls int
 }
 
-func (s *stubBudgetReader) GetCurrent(_ context.Context, _ string, _ int64) (slo.Budget, error) {
+func (s *stubBudgetReader) GetCurrent(_ context.Context, _, _ string, _ int64) (slo.Budget, error) {
+	s.calls++
 	return s.out, s.err
 }
 
@@ -50,7 +56,7 @@ func TestGetSLO_WithBudget(t *testing.T) {
 	}}
 	uc := NewGetSLOUseCase(sloRepo, budgetRepo)
 
-	result, err := uc.Get(context.Background(), "t1", "", 1)
+	result, err := uc.Get(context.Background(), sloGetFixtureTenantID, "", 1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -73,7 +79,7 @@ func TestGetSLO_NoBudgetOnBudgetError(t *testing.T) {
 	budgetRepo := &stubBudgetReader{err: errors.New("no budget yet")}
 	uc := NewGetSLOUseCase(sloRepo, budgetRepo)
 
-	result, err := uc.Get(context.Background(), "t1", "", 1)
+	result, err := uc.Get(context.Background(), sloGetFixtureTenantID, "", 1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -82,11 +88,44 @@ func TestGetSLO_NoBudgetOnBudgetError(t *testing.T) {
 	}
 }
 
+func TestGetSLO_GroupScopeDoesNotReadOrExposeBudget(t *testing.T) {
+	now := time.Now()
+	sloRepo := &stubSLOReader{out: slo.Snapshot{
+		ID: 1, Name: "scoped-objective", SLIID: 2, Version: 3,
+		WindowDuration: time.Hour, CreatedAt: now, UpdatedAt: now,
+	}}
+	budgetRepo := &stubBudgetReader{out: slo.Budget{
+		BudgetTotal: 100, BudgetConsumed: 10, BudgetRemaining: 90,
+	}}
+	uc := NewGetSLOUseCase(sloRepo, budgetRepo)
+
+	result, err := uc.Get(context.Background(), "t1", "group-a", 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ID != 1 || result.Name != "scoped-objective" || result.SLIID != 2 || result.Version != 3 {
+		t.Fatalf("permitted definition was not retained: %+v", result)
+	}
+	if budgetRepo.calls != 0 {
+		t.Fatalf("group-scoped retrieval read budget evidence %d times", budgetRepo.calls)
+	}
+	if result.CurrentBudget != nil {
+		t.Fatal("group-scoped definition exposed a current budget")
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), `"current_budget"`) {
+		t.Fatalf("group-scoped response contains budget evidence: %s", encoded)
+	}
+}
+
 func TestGetSLO_SLOError(t *testing.T) {
 	sloRepo := &stubSLOReader{err: errors.New("not found")}
 	uc := NewGetSLOUseCase(sloRepo, &stubBudgetReader{})
 
-	_, err := uc.Get(context.Background(), "t1", "", 1)
+	_, err := uc.Get(context.Background(), sloGetFixtureTenantID, "", 1)
 	if err == nil {
 		t.Fatal("expected error from SLO repo")
 	}
@@ -99,7 +138,7 @@ func TestListSLOs_Success(t *testing.T) {
 	}
 	uc := NewListSLOsUseCase(repo)
 
-	result, err := uc.List(context.Background(), ListInput{TenantID: "t1", Limit: 10})
+	result, err := uc.List(context.Background(), ListInput{TenantID: sloGetFixtureTenantID, Limit: 10})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -115,7 +154,7 @@ func TestListSLOs_Error(t *testing.T) {
 	repo := &stubSLOLister{err: errors.New("db down")}
 	uc := NewListSLOsUseCase(repo)
 
-	_, err := uc.List(context.Background(), ListInput{TenantID: "t1"})
+	_, err := uc.List(context.Background(), ListInput{TenantID: sloGetFixtureTenantID})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -125,7 +164,7 @@ func TestListSLOs_DefaultLimitWhenZeroOrNegative(t *testing.T) {
 	repo := &stubSLOLister{}
 	uc := NewListSLOsUseCase(repo)
 
-	if _, err := uc.List(context.Background(), ListInput{TenantID: "t1", Limit: 0}); err != nil {
+	if _, err := uc.List(context.Background(), ListInput{TenantID: sloGetFixtureTenantID, Limit: 0}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if repo.lastLimit != 50 {
@@ -137,10 +176,12 @@ func TestListSLOs_ClampsLimitToMax(t *testing.T) {
 	repo := &stubSLOLister{}
 	uc := NewListSLOsUseCase(repo)
 
-	if _, err := uc.List(context.Background(), ListInput{TenantID: "t1", Limit: 500}); err != nil {
+	if _, err := uc.List(context.Background(), ListInput{TenantID: sloGetFixtureTenantID, Limit: 500}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if repo.lastLimit != 100 {
 		t.Fatalf("expected limit clamped to 100, got %d", repo.lastLimit)
 	}
 }
+
+var sloGetFixtureTenantID = scan.GenerateID()

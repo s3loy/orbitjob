@@ -10,18 +10,21 @@ import (
 // attempts it has taken, and who triggered it. The attempt trail itself is a
 // detail concern and is not fetched here, so the list stays one round trip.
 type ListItem struct {
-	ID            int64     `json:"id"`
-	TenantID      string    `json:"tenant_id"`
-	SourceUID     string    `json:"source_uid"`
-	RevisionID    int64     `json:"revision_id"`
-	OccurrenceKey string    `json:"occurrence_key"`
-	Trigger       string    `json:"trigger"`
-	Actor         string    `json:"actor"`
-	Phase         string    `json:"phase"`
-	Attempt       int       `json:"attempt"`
-	MaxAttempts   int       `json:"max_attempts"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID              int64     `json:"id"`
+	TenantID        string    `json:"tenant_id"`
+	SourceUID       string    `json:"source_uid"`
+	SourceName      *string   `json:"source_name"`
+	SourceNamespace *string   `json:"source_namespace"`
+	SourceKind      *string   `json:"source_kind"`
+	RevisionID      int64     `json:"revision_id"`
+	OccurrenceKey   string    `json:"occurrence_key"`
+	Trigger         string    `json:"trigger"`
+	Actor           string    `json:"actor"`
+	Phase           string    `json:"phase"`
+	Attempt         int       `json:"attempt"`
+	MaxAttempts     int       `json:"max_attempts"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 type runLister interface {

@@ -2,8 +2,10 @@ package query
 
 import (
 	"strings"
+	"unicode"
 
 	"orbitjob/internal/core/domain/jobrun"
+	"orbitjob/internal/domain/queryfilter"
 	"orbitjob/internal/domain/resource"
 	"orbitjob/internal/domain/validation"
 )
@@ -12,29 +14,38 @@ const (
 	// DefaultListLimit is the page size used when the caller names none.
 	DefaultListLimit = 50
 	// MaxListLimit caps a page so one request cannot stream the whole ledger.
-	MaxListLimit = 100
+	MaxListLimit           = 100
+	maxSourceUIDLength     = 128
+	maxOccurrenceKeyLength = 64
 )
 
 // listablePhases is the set a caller may filter on. A phase that is not in this
 // set is a typo, not an empty result, so it is rejected rather than passed to
 // the query where it would silently match nothing.
 var listablePhases = map[string]struct{}{
-	string(jobrun.Pending):         {},
-	string(jobrun.CreatingAttempt): {},
-	string(jobrun.Running):         {},
-	string(jobrun.RetryWaiting):    {},
-	string(jobrun.Succeeded):       {},
-	string(jobrun.Failed):          {},
-	string(jobrun.CancelRequested): {},
-	string(jobrun.Canceled):        {},
-	string(jobrun.CancelUnknown):   {},
+	string(jobrun.Pending):          {},
+	string(jobrun.CreatingAttempt):  {},
+	string(jobrun.Running):          {},
+	string(jobrun.RetryWaiting):     {},
+	string(jobrun.Succeeded):        {},
+	string(jobrun.Failed):           {},
+	string(jobrun.CancelRequested):  {},
+	string(jobrun.Canceled):         {},
+	string(jobrun.CancelUnknown):    {},
+	string(jobrun.ExecutionUnknown): {},
 }
 
 // ListInput is the control-plane query model for listing runs.
 type ListInput struct {
-	TenantID string
+	CreatedFrom   string
+	CreatedBefore string
+	TenantID      string
 	// Phase narrows the list to one run lifecycle phase. Empty lists every phase.
 	Phase string
+	// SourceUID and OccurrenceKey are independent exact filters. Together
+	// they identify the occurrence published by an accepted manual trigger.
+	SourceUID     string
+	OccurrenceKey string
 	// ResourceGroupID is the scope the caller's key is limited to; empty for an
 	// unscoped caller. A run has no group, so a scoped caller is refused rather
 	// than shown the whole tenant's ledger.
@@ -67,6 +78,19 @@ func NormalizeListInput(in ListInput) (ListInput, error) {
 		}
 	}
 
+	for _, filter := range []struct {
+		field, value string
+		max          int
+	}{
+		{"source_uid", in.SourceUID, maxSourceUIDLength},
+		{"occurrence_key", in.OccurrenceKey, maxOccurrenceKeyLength},
+	} {
+		if len(filter.value) > filter.max || strings.TrimSpace(filter.value) != filter.value ||
+			strings.ContainsFunc(filter.value, unicode.IsControl) {
+			return ListInput{}, validation.Errorf(filter.field, "must be an exact value of at most %d bytes without surrounding whitespace or control characters", filter.max)
+		}
+	}
+
 	limit := in.Limit
 	if limit == 0 {
 		limit = DefaultListLimit
@@ -80,9 +104,16 @@ func NormalizeListInput(in ListInput) (ListInput, error) {
 		return ListInput{}, validation.New("offset", "must be >= 0")
 	}
 
+	from, before, err := queryfilter.Range(in.CreatedFrom, in.CreatedBefore)
+	if err != nil {
+		return ListInput{}, err
+	}
 	return ListInput{
+		CreatedFrom: from, CreatedBefore: before,
 		TenantID:        tenantID,
 		Phase:           phase,
+		SourceUID:       in.SourceUID,
+		OccurrenceKey:   in.OccurrenceKey,
 		ResourceGroupID: in.ResourceGroupID,
 		Limit:           limit,
 		Offset:          offset,

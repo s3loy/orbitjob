@@ -21,12 +21,15 @@ func (r *JobRepository) List(ctx context.Context, in query.ListInput) ([]query.L
 
 	rows, err := tx.QueryContext(ctx, `
 		SELECT id, tenant_id, source_namespace, source_name, source_uid,
-		       generation, actor, normalized_spec::text, created_at
+		       generation, actor, normalized_spec::text, created_at, source_mode
 		FROM job_definition_revisions
-		WHERE tenant_id = $1 AND is_active
+		WHERE tenant_id = $1 AND source_mode = 'kubernetes' AND is_active
+ AND ($4 = '' OR strpos(lower(source_name),lower($4)) > 0 OR strpos(lower(source_namespace),lower($4)) > 0)
+ AND ($5 = '' OR source_namespace=$5)
+ AND ($6 = '' OR source_uid=$6)
 		ORDER BY created_at DESC, id DESC
 		LIMIT $2 OFFSET $3
-	`, in.TenantID, in.Limit, in.Offset)
+	`, in.TenantID, in.Limit, in.Offset, in.Search, in.Namespace, in.SourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("query job definitions: %w", err)
 	}
@@ -69,6 +72,7 @@ func scanDefinitionListItem(scanner rowScanner) (query.ListItem, error) {
 		&out.Actor,
 		&raw,
 		&out.CreatedAt,
+		&out.SourceKind,
 	); err != nil {
 		return query.ListItem{}, fmt.Errorf("scan job definition: %w", err)
 	}

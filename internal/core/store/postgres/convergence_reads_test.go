@@ -48,7 +48,7 @@ func TestFunctionRunRepository_RunByRunIDReturnsTheRow(t *testing.T) {
 	mock.ExpectQuery(`FROM function_runs`).
 		WithArgs(tenantFixture(), int64(9), "uuid-2").
 		WillReturnRows(sqlmock.NewRows(functionRunRowColumns()).
-			AddRow(2, "uuid-2", tenantFixture(), 9, "failed", triggered, triggered.Add(5*time.Second), finished, 35000, 1, finished))
+			AddRow(2, "uuid-2", tenantFixture(), 9, "failed", triggered, triggered.Add(5*time.Second), finished, 35000, 1, finished, "actual-occurrence"))
 	mock.ExpectCommit()
 
 	run, found, err := fnRuns.RunByRunID(context.Background(), tenantFixture(), 9, "uuid-2")
@@ -118,7 +118,7 @@ func TestWorkflowRunRepository_RunsForDefinitionListsNewestFirst(t *testing.T) {
 
 	expectWorkflowTx(mock, coreFixtureConvergenceReadsTenantID)
 	mock.ExpectQuery(`FROM workflow_run_control_plane WHERE tenant_id=\$1 AND source_uid=\$2`).
-		WithArgs(coreFixtureConvergenceReadsTenantID, "wf-nightly", 25, 10).
+		WithArgs(coreFixtureConvergenceReadsTenantID, "wf-nightly", 25, 10, "", "").
 		WillReturnRows(workflowRunRow(31, "Failed", "{}").
 			AddRow(22, "wf-nightly", int64(5), "occ-2", "Manual", "walker", "Succeeded", "{}", workflowRowTime, workflowRowTime, nil, "", "", 0, "{}"))
 	mock.ExpectCommit()
@@ -148,7 +148,7 @@ func TestWorkflowRunRepository_RunsForDefinitionDefaultsThePage(t *testing.T) {
 
 	expectWorkflowTx(mock, coreFixtureConvergenceReadsTenantID)
 	mock.ExpectQuery(`FROM workflow_run_control_plane WHERE tenant_id=\$1 AND source_uid=\$2`).
-		WithArgs(coreFixtureConvergenceReadsTenantID, "wf-nightly", defaultRunPage, 0).
+		WithArgs(coreFixtureConvergenceReadsTenantID, "wf-nightly", defaultRunPage, 0, "", "").
 		WillReturnRows(workflowRunRow(31, "Failed", "{}"))
 	mock.ExpectCommit()
 

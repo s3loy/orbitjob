@@ -11,6 +11,8 @@ import (
 
 	runquery "orbitjob/internal/admin/app/run/query"
 	"orbitjob/internal/domain/resource"
+
+	"orbitjob/internal/platform/scan"
 )
 
 // The admin side of the run ledger is read-only by construction: orbitjob_admin
@@ -41,23 +43,26 @@ func expectRunTenantTx(mock sqlmock.Sqlmock, tenantID string) {
 var runListColumns = []string{"id", "tenant_id", "source_uid", "revision_id", "occurrence_key",
 	"trigger", "actor", "phase", "attempt", "max_attempts", "created_at", "updated_at"}
 
+var runListSourceColumns = append(append([]string{}, runListColumns...), "source_name", "source_namespace", "source_kind")
+
 var runAttemptColumns = []string{"id", "run_id", "attempt_number", "phase", "kubernetes_job_name",
-	"kubernetes_job_uid", "observed_resource_version", "started_at", "completed_at", "created_at"}
+	"kubernetes_job_uid", "observed_resource_version", "started_at", "completed_at", "created_at",
+	"owner_run_uid", "execution_unknown_since", "execution_unknown_reason"}
 
 func TestRunRepository_List(t *testing.T) {
 	now := time.Date(2026, 9, 1, 8, 0, 0, 0, time.UTC)
 	repo, mock := newRunRepoMock(t)
-	expectRunTenantTx(mock, "tenant-a")
-	rows := sqlmock.NewRows(runListColumns)
-	rows.AddRow(7, "tenant-a", "nightly", 11, "occ-1", "Schedule", "key-9", "Running", 2, 3, now, now)
-	rows.AddRow(6, "tenant-a", "nightly", 11, "occ-2", "Manual", "key-1", "Succeeded", 1, 3, now, now)
+	expectRunTenantTx(mock, runStoreFixtureTenantID)
+	rows := sqlmock.NewRows(runListSourceColumns)
+	rows.AddRow(7, runStoreFixtureTenantID, "nightly", 11, "occ-1", "Schedule", "key-9", "Running", 2, 3, now, now, "nightly", "prod", "kubernetes")
+	rows.AddRow(6, runStoreFixtureTenantID, "nightly", 11, "occ-2", "Manual", "key-1", "Succeeded", 1, 3, now, now, nil, nil, nil)
 	mock.ExpectQuery("FROM job_run_control_plane r").
-		WithArgs("tenant-a", "Running", 50, 0).
+		WithArgs(runStoreFixtureTenantID, "Running", "", "", "", "", 50, 0).
 		WillReturnRows(rows)
 	mock.ExpectCommit()
 
 	got, err := repo.List(context.Background(), runquery.ListInput{
-		TenantID: "tenant-a", Phase: "Running", Limit: 50, Offset: 0,
+		TenantID: runStoreFixtureTenantID, Phase: "Running", Limit: 50, Offset: 0,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -72,6 +77,9 @@ func TestRunRepository_List(t *testing.T) {
 	if got[1].Trigger != "Manual" || got[1].Actor != "key-1" {
 		t.Fatalf("second row did not survive the scan: %+v", got[1])
 	}
+	if got[0].SourceName == nil || *got[0].SourceName != "nightly" || got[0].SourceKind == nil || *got[0].SourceKind != "kubernetes" || got[1].SourceName != nil || got[1].SourceNamespace != nil || got[1].SourceKind != nil {
+		t.Fatalf("source metadata was fabricated or lost: %+v", got)
+	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet expectations: %v", err)
 	}
@@ -79,12 +87,12 @@ func TestRunRepository_List(t *testing.T) {
 
 func TestRunRepository_ListEmptyPageIsNotAnError(t *testing.T) {
 	repo, mock := newRunRepoMock(t)
-	expectRunTenantTx(mock, "tenant-a")
+	expectRunTenantTx(mock, runStoreFixtureTenantID)
 	mock.ExpectQuery("FROM job_run_control_plane r").
-		WillReturnRows(sqlmock.NewRows(runListColumns))
+		WillReturnRows(sqlmock.NewRows(runListSourceColumns))
 	mock.ExpectCommit()
 
-	got, err := repo.List(context.Background(), runquery.ListInput{TenantID: "tenant-a", Limit: 50})
+	got, err := repo.List(context.Background(), runquery.ListInput{TenantID: runStoreFixtureTenantID, Limit: 50})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -96,21 +104,21 @@ func TestRunRepository_ListEmptyPageIsNotAnError(t *testing.T) {
 func TestRunRepository_GetRunWithAttemptTrail(t *testing.T) {
 	now := time.Date(2026, 9, 1, 8, 0, 0, 0, time.UTC)
 	repo, mock := newRunRepoMock(t)
-	expectRunTenantTx(mock, "tenant-a")
+	expectRunTenantTx(mock, runStoreFixtureTenantID)
 
 	// The LEFT JOIN returns one row per attempt; the run columns repeat.
 	runCols := append([]string{}, runListColumns...)
 	detailRows := sqlmock.NewRows(append(runCols, runAttemptColumns...))
-	detailRows.AddRow(7, "tenant-a", "nightly", 11, "occ-1", "Schedule", "key-9", "Running", 2, 3, now, now,
-		1, 7, 1, "Failed", "oj-nightly-00000001", "uid-1", "rv-1", now, now, now)
-	detailRows.AddRow(7, "tenant-a", "nightly", 11, "occ-1", "Schedule", "key-9", "Running", 2, 3, now, now,
-		2, 7, 2, "Running", "oj-nightly-00000002", nil, nil, nil, nil, now)
+	detailRows.AddRow(7, runStoreFixtureTenantID, "nightly", 11, "occ-1", "Schedule", "key-9", "Running", 2, 3, now, now,
+		1, 7, 1, "Failed", "oj-nightly-00000001", "uid-1", "rv-1", now, now, now, nil, nil, nil)
+	detailRows.AddRow(7, runStoreFixtureTenantID, "nightly", 11, "occ-1", "Schedule", "key-9", "Running", 2, 3, now, now,
+		2, 7, 2, "Running", "oj-nightly-00000002", nil, nil, nil, nil, now, nil, nil, nil)
 	mock.ExpectQuery("LEFT JOIN job_run_attempts_control_plane").
-		WithArgs("tenant-a", int64(7)).
+		WithArgs(runStoreFixtureTenantID, int64(7)).
 		WillReturnRows(detailRows)
 	mock.ExpectCommit()
 
-	got, err := repo.Get(context.Background(), runquery.GetInput{TenantID: "tenant-a", ID: 7})
+	got, err := repo.Get(context.Background(), runquery.GetInput{TenantID: runStoreFixtureTenantID, ID: 7})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -132,19 +140,19 @@ func TestRunRepository_GetRunWithAttemptTrail(t *testing.T) {
 func TestRunRepository_GetRunWithoutAttempts(t *testing.T) {
 	now := time.Now()
 	repo, mock := newRunRepoMock(t)
-	expectRunTenantTx(mock, "tenant-a")
+	expectRunTenantTx(mock, runStoreFixtureTenantID)
 
 	// A run with no attempt yet returns one row with NULL attempt columns, so
 	// "has not started" stays distinguishable from "does not exist".
 	detailRows := sqlmock.NewRows(append(append([]string{}, runListColumns...), runAttemptColumns...))
-	detailRows.AddRow(9, "tenant-a", "hourly", 12, "occ-9", "Schedule", "", "Pending", 0, 1, now, now,
-		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	detailRows.AddRow(9, runStoreFixtureTenantID, "hourly", 12, "occ-9", "Schedule", "", "Pending", 0, 1, now, now,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	mock.ExpectQuery("LEFT JOIN job_run_attempts_control_plane").
-		WithArgs("tenant-a", int64(9)).
+		WithArgs(runStoreFixtureTenantID, int64(9)).
 		WillReturnRows(detailRows)
 	mock.ExpectCommit()
 
-	got, err := repo.Get(context.Background(), runquery.GetInput{TenantID: "tenant-a", ID: 9})
+	got, err := repo.Get(context.Background(), runquery.GetInput{TenantID: runStoreFixtureTenantID, ID: 9})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -158,15 +166,15 @@ func TestRunRepository_GetRunWithoutAttempts(t *testing.T) {
 
 func TestRunRepository_GetMissingRunIsNotFound(t *testing.T) {
 	repo, mock := newRunRepoMock(t)
-	expectRunTenantTx(mock, "tenant-a")
+	expectRunTenantTx(mock, runStoreFixtureTenantID)
 	// No rows: the join found nothing for this tenant, which must read as
 	// NotFoundError rather than an empty run.
 	mock.ExpectQuery("LEFT JOIN job_run_attempts_control_plane").
-		WithArgs("tenant-a", int64(99)).
+		WithArgs(runStoreFixtureTenantID, int64(99)).
 		WillReturnRows(sqlmock.NewRows(append(append([]string{}, runListColumns...), runAttemptColumns...)))
 	mock.ExpectRollback()
 
-	_, err := repo.Get(context.Background(), runquery.GetInput{TenantID: "tenant-a", ID: 99})
+	_, err := repo.Get(context.Background(), runquery.GetInput{TenantID: runStoreFixtureTenantID, ID: 99})
 	var nf *resource.NotFoundError
 	if !errors.As(err, &nf) {
 		t.Fatalf("got %v, want *resource.NotFoundError", err)
@@ -179,16 +187,16 @@ func TestRunRepository_GetMissingRunIsNotFound(t *testing.T) {
 func TestRunRepository_ListAttempts(t *testing.T) {
 	now := time.Now()
 	repo, mock := newRunRepoMock(t)
-	expectRunTenantTx(mock, "tenant-a")
+	expectRunTenantTx(mock, runStoreFixtureTenantID)
 	rows := sqlmock.NewRows(runAttemptColumns)
-	rows.AddRow(2, 7, 2, "Running", "oj-nightly-00000002", nil, "rv-2", nil, nil, now)
-	rows.AddRow(1, 7, 1, "Failed", "oj-nightly-00000001", "uid-1", "rv-1", now, now, now)
+	rows.AddRow(2, 7, 2, "Running", "oj-nightly-00000002", nil, "rv-2", nil, nil, now, nil, nil, nil)
+	rows.AddRow(1, 7, 1, "Failed", "oj-nightly-00000001", "uid-1", "rv-1", now, now, now, nil, nil, nil)
 	mock.ExpectQuery("JOIN job_run_control_plane r").
-		WithArgs("tenant-a", int64(7)).
+		WithArgs(runStoreFixtureTenantID, int64(7)).
 		WillReturnRows(rows)
 	mock.ExpectCommit()
 
-	got, err := repo.ListAttempts(context.Background(), runquery.GetInput{TenantID: "tenant-a", ID: 7})
+	got, err := repo.ListAttempts(context.Background(), runquery.GetInput{TenantID: runStoreFixtureTenantID, ID: 7})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -203,14 +211,14 @@ func TestRunRepository_ListAttempts(t *testing.T) {
 func TestRunRepository_GetCancelTarget(t *testing.T) {
 	t.Run("found", func(t *testing.T) {
 		repo, mock := newRunRepoMock(t)
-		expectRunTenantTx(mock, "tenant-a")
+		expectRunTenantTx(mock, runStoreFixtureTenantID)
 		mock.ExpectQuery("JOIN job_definition_revisions d").
-			WithArgs("tenant-a", int64(7)).
+			WithArgs(runStoreFixtureTenantID, int64(7)).
 			WillReturnRows(sqlmock.NewRows([]string{"phase", "occurrence_key", "source_name", "source_namespace", "source_uid", "revision_id", "trigger"}).
 				AddRow("Running", "occ-1", "nightly", "jobs", "def-1", 11, "Manual"))
 		mock.ExpectCommit()
 
-		got, err := repo.GetCancelTarget(context.Background(), runquery.GetInput{TenantID: "tenant-a", ID: 7})
+		got, err := repo.GetCancelTarget(context.Background(), runquery.GetInput{TenantID: runStoreFixtureTenantID, ID: 7})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -222,15 +230,17 @@ func TestRunRepository_GetCancelTarget(t *testing.T) {
 
 	t.Run("a run outside the tenant reads as not found", func(t *testing.T) {
 		repo, mock := newRunRepoMock(t)
-		expectRunTenantTx(mock, "tenant-a")
+		expectRunTenantTx(mock, runStoreFixtureTenantID)
 		mock.ExpectQuery("JOIN job_definition_revisions d").
 			WillReturnError(sql.ErrNoRows)
 		mock.ExpectRollback()
 
-		_, err := repo.GetCancelTarget(context.Background(), runquery.GetInput{TenantID: "tenant-a", ID: 99})
+		_, err := repo.GetCancelTarget(context.Background(), runquery.GetInput{TenantID: runStoreFixtureTenantID, ID: 99})
 		var nf *resource.NotFoundError
 		if !errors.As(err, &nf) {
 			t.Fatalf("got %v, want *resource.NotFoundError", err)
 		}
 	})
 }
+
+var runStoreFixtureTenantID = scan.GenerateID()

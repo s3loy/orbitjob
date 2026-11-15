@@ -151,6 +151,7 @@ func TestOpenAPIDocument_AdminRoutesHaveUnauthorizedAndRateLimited(t *testing.T)
 			"GET":    item.Get,
 			"POST":   item.Post,
 			"PUT":    item.Put,
+			"PATCH":  item.Patch,
 			"DELETE": item.Delete,
 		} {
 			if op == nil {

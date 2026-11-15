@@ -1,6 +1,7 @@
 package http
 
 import (
+	"encoding/json"
 	"fmt"
 	stdhttp "net/http"
 	"reflect"
@@ -29,6 +30,7 @@ import (
 	tenantcommand "orbitjob/internal/admin/app/tenant/command"
 	tenantquery "orbitjob/internal/admin/app/tenant/query"
 	"orbitjob/internal/admin/http/apperror"
+	"orbitjob/internal/admin/http/middleware"
 	"orbitjob/internal/core/domain/policy"
 )
 
@@ -45,10 +47,11 @@ type routeDefinition struct {
 	permission string
 	// resource resolves the ARN the request targets. Required whenever
 	// permission is set.
-	resource func(*gin.Context) (policy.ARN, error)
-	enabled  func(*Handler) bool
-	register func(gin.IRouter, *Handler)
-	spec     operationDefinition
+	resource           func(*gin.Context) (policy.ARN, error)
+	resourceForHandler func(*Handler) middleware.ResourceResolver
+	enabled            func(*Handler) bool
+	register           func(gin.IRouter, *Handler)
+	spec               operationDefinition
 }
 
 type operationDefinition struct {
@@ -84,24 +87,36 @@ type OpenAPIInfo struct {
 }
 
 type OpenAPIComponents struct {
-	Schemas map[string]Schema `json:"schemas,omitempty"`
+	Schemas         map[string]Schema         `json:"schemas,omitempty"`
+	SecuritySchemes map[string]SecurityScheme `json:"securitySchemes,omitempty"`
+}
+
+type SecurityScheme struct {
+	In          string `json:"in,omitempty"`
+	Name        string `json:"name,omitempty"`
+	Type        string `json:"type"`
+	Scheme      string `json:"scheme,omitempty"`
+	Description string `json:"description"`
 }
 
 type PathItem struct {
 	Get    *Operation `json:"get,omitempty"`
 	Post   *Operation `json:"post,omitempty"`
+	Patch  *Operation `json:"patch,omitempty"`
 	Put    *Operation `json:"put,omitempty"`
 	Delete *Operation `json:"delete,omitempty"`
 }
 
 type Operation struct {
-	OperationID string              `json:"operationId,omitempty"`
-	Summary     string              `json:"summary,omitempty"`
-	Description string              `json:"description,omitempty"`
-	Tags        []string            `json:"tags,omitempty"`
-	Parameters  []Parameter         `json:"parameters,omitempty"`
-	RequestBody *RequestBody        `json:"requestBody,omitempty"`
-	Responses   map[string]Response `json:"responses"`
+	OperationID string                `json:"operationId,omitempty"`
+	Summary     string                `json:"summary,omitempty"`
+	Description string                `json:"description,omitempty"`
+	Tags        []string              `json:"tags,omitempty"`
+	Parameters  []Parameter           `json:"parameters,omitempty"`
+	RequestBody *RequestBody          `json:"requestBody,omitempty"`
+	Responses   map[string]Response   `json:"responses"`
+	Security    []map[string][]string `json:"security,omitempty"`
+	Permission  string                `json:"x-orbitjob-permission,omitempty"`
 }
 
 type Parameter struct {
@@ -128,7 +143,8 @@ type Header struct {
 }
 
 type MediaType struct {
-	Schema Schema `json:"schema"`
+	Schema  Schema `json:"schema"`
+	Example any    `json:"example,omitempty"`
 }
 
 type Schema struct {
@@ -147,6 +163,8 @@ type Schema struct {
 	Maximum              *float64          `json:"maximum,omitempty"`
 	MinLength            *int              `json:"minLength,omitempty"`
 	MaxLength            *int              `json:"maxLength,omitempty"`
+	MinItems             *int              `json:"minItems,omitempty"`
+	MaxItems             *int              `json:"maxItems,omitempty"`
 }
 
 type schemaMode string
@@ -158,13 +176,21 @@ const (
 
 type schemaRegistry struct {
 	components map[string]Schema
-	seen       map[reflect.Type]string
+	seen       map[schemaIdentity]string
 	// owners maps a component name to the Go type that claimed it. Distinct
 	// types routinely share a bare name -- job/query.GetItem, run/query.GetItem
 	// and sloalert/query.GetItem are three different shapes all called GetItem --
 	// and without this the second one silently overwrites the first, leaving
 	// every $ref pointing at a schema that is not the one the handler returns.
 	owners map[string]reflect.Type
+}
+
+// One Go DTO can occur in both directions: omitted request values may acquire
+// defaults, while response fields without omitempty always appear on the wire.
+// Request validation must never become a constraint on stored response data.
+type schemaIdentity struct {
+	typeOf reflect.Type
+	mode   schemaMode
 }
 
 type traceIDHeaderRequest struct {
@@ -258,7 +284,7 @@ func adminAPIRoutes() []routeDefinition {
 			spec: operationDefinition{
 				id:              "listJobs",
 				summary:         "List job definitions",
-				description:     "List the active revision of every job definition in the tenant. A definition is a ScheduledJob custom resource, declared outside this API; there is no create route. limit defaults to 50 when omitted.",
+				description:     "List active ScheduledJob projections in the tenant (source_kind=kubernetes). Function, Workflow and Check projections use their dedicated APIs. Search is a case-insensitive literal substring of name or namespace; namespace and source_uid are exact predicates. Kind isolation and all filters apply before pagination. ScheduledJob authoring uses the separate typed definition apply routes. limit defaults to 50 when omitted.",
 				tags:            []string{"Jobs"},
 				parameterModels: []any{ListJobsRequest{}},
 				responses: []responseDefinition{
@@ -282,7 +308,7 @@ func adminAPIRoutes() []routeDefinition {
 			spec: operationDefinition{
 				id:              "getJob",
 				summary:         "Get one job definition",
-				description:     "Get the active revision of one definition by revision id. The revision is immutable: a later edit makes a new revision active.",
+				description:     "Get the active ScheduledJob revision by revision id. Function, Workflow, Check and inactive revisions return not found. The revision is immutable: a later edit makes a new revision active.",
 				tags:            []string{"Jobs"},
 				parameterModels: []any{GetJobRequest{}},
 				responses: []responseDefinition{
@@ -326,7 +352,7 @@ func adminAPIRoutes() []routeDefinition {
 			spec: operationDefinition{
 				id:              "listInstances",
 				summary:         "List runs",
-				description:     "List runs from the control-plane ledger, newest first. Each entry carries the run's phase, its attempt count against max_attempts, and the actor that triggered it. Optionally filter by phase.",
+				description:     "List runs from the control-plane ledger, newest first. Each entry carries the run's phase, its attempt count against max_attempts, and the actor that triggered it. Optionally filter by phase, exact source_uid, exact occurrence_key, inclusive created_from or exclusive created_before (RFC3339, ledger created_at). Both identity filters together identify one accepted trigger; an empty list can mean the operator has not projected its run yet. source_name, source_namespace and source_kind come from the exact pinned revision joined on revision ID, tenant and source UID, including inactive revisions. They are null when that mapping is unavailable or inconsistent; current definitions never substitute for historical metadata.",
 				tags:            []string{"Instances"},
 				parameterModels: []any{ListInstancesRequest{}},
 				responses: []responseDefinition{
@@ -334,6 +360,26 @@ func adminAPIRoutes() []routeDefinition {
 					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
 					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
 				},
+			},
+		},
+		{
+			method:     stdhttp.MethodGet,
+			path:       "/instances/summary",
+			permission: "instance:List",
+			resource:   tenantScoped("instance"),
+			enabled: func(h *Handler) bool {
+				if h == nil {
+					return false
+				}
+				_, ok := h.listInstancesUC.(summarizeInstancesUseCase)
+				return ok
+			},
+			register: func(r gin.IRouter, h *Handler) { r.GET("/instances/summary", h.SummarizeInstances) },
+			spec: operationDefinition{
+				id: "summarizeInstances", summary: "Summarize matching runs",
+				description: "Count the entire matching ledger, with the same tenant, phase, source_uid, occurrence_key and inclusive created_from/exclusive created_before filters as listInstances. Requires an ungrouped key. Returns total and counts by actual stored phase; no fixed time window or pagination applies.",
+				tags:        []string{"Instances"}, parameterModels: []any{SummarizeInstancesRequest{}},
+				responses: []responseDefinition{{statusCode: stdhttp.StatusOK, description: "Matching run counts", model: runquery.Summary{}}, {statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel}, {statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel}},
 			},
 		},
 		{
@@ -432,7 +478,7 @@ func adminAPIRoutes() []routeDefinition {
 			spec: operationDefinition{
 				id:              "listChecks",
 				summary:         "List checks",
-				description:     "List inspection checks for one tenant.",
+				description:     "List inspection checks within the authenticated tenant and resource group. Optional search is a case-insensitive literal substring of name or description, trimmed and bounded to 128 characters, applied before pagination. Percent and underscore are literal characters, not wildcards.",
 				tags:            []string{"Checks"},
 				parameterModels: []any{ListChecksRequest{}},
 				responses: []responseDefinition{
@@ -539,13 +585,13 @@ func adminAPIRoutes() []routeDefinition {
 			method:     stdhttp.MethodGet,
 			path:       "/check-runs",
 			permission: "checkrun:List",
-			resource:   tenantScoped("checkrun"),
+			resource:   evidenceCollection("checkrun", "checkrun:List"),
 			enabled:    func(h *Handler) bool { return h != nil && h.listCheckRunsUC != nil },
 			register:   func(r gin.IRouter, h *Handler) { r.GET("/check-runs", h.ListCheckRuns) },
 			spec: operationDefinition{
 				id:              "listCheckRuns",
 				summary:         "List check runs",
-				description:     "List check execution runs for one tenant.",
+				description:     "List check execution runs for one tenant, filtered through each parent Check's resource group. Authorization must cover the whole tenant/group query domain, including explicit Deny and boundaries. If that proof fails or exceeds its budget, the entire request returns 403 without reading items or counts; filters and pagination do not bypass this check.",
 				tags:            []string{"Check Runs"},
 				parameterModels: []any{ListCheckRunsRequest{}},
 				responses: []responseDefinition{
@@ -556,16 +602,16 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method:     stdhttp.MethodGet,
-			path:       "/check-runs/:id",
-			permission: "checkrun:Get",
-			resource:   tenantScoped("checkrun"),
-			enabled:    func(h *Handler) bool { return h != nil && h.getCheckRunUC != nil },
-			register:   func(r gin.IRouter, h *Handler) { r.GET("/check-runs/:id", h.GetCheckRun) },
+			method:             stdhttp.MethodGet,
+			path:               "/check-runs/:id",
+			permission:         "checkrun:Get",
+			resourceForHandler: evidenceResource("checkrun"),
+			enabled:            func(h *Handler) bool { return h != nil && h.getCheckRunUC != nil },
+			register:           func(r gin.IRouter, h *Handler) { r.GET("/check-runs/:id", h.GetCheckRun) },
 			spec: operationDefinition{
 				id:              "getCheckRun",
 				summary:         "Get one check run",
-				description:     "Get one check run by id.",
+				description:     "Get one check run by id. Authorization resolves its stored parent Check's actual resource group, including for ungrouped credentials, so group-specific Deny remains effective. A credential scoped to another group reads this target as not found.",
 				tags:            []string{"Check Runs"},
 				parameterModels: []any{GetCheckRunRequest{}},
 				responses: []responseDefinition{
@@ -587,7 +633,7 @@ func adminAPIRoutes() []routeDefinition {
 			spec: operationDefinition{
 				id:                  "createSLI",
 				summary:             "Create one SLI",
-				description:         "Create a service level indicator definition.",
+				description:         "Create a service level indicator definition. For a resource-group-scoped caller, source_config.source_uid must identify an active source visible in the caller's tenant and resource group. good_event_criteria accepts status (success or failed) and duration_ms (a finite nonnegative threshold or an object with op and value). Latency indicators require duration_ms; availability and quality indicators require nonempty criteria.",
 				tags:                []string{"SLIs"},
 				requestBodyModel:    CreateSLIRequest{},
 				requestBodyRequired: true,
@@ -608,7 +654,7 @@ func adminAPIRoutes() []routeDefinition {
 			spec: operationDefinition{
 				id:              "listSLIs",
 				summary:         "List SLIs",
-				description:     "List service level indicators for one tenant.",
+				description:     "List service level indicators within the authenticated tenant and resource group. Optional search is a case-insensitive literal substring of name or description, trimmed and bounded to 128 characters, applied before pagination. Percent and underscore are literal characters, not wildcards.",
 				tags:            []string{"SLIs"},
 				parameterModels: []any{ListSLIsRequest{}},
 				responses: []responseDefinition{
@@ -694,7 +740,7 @@ func adminAPIRoutes() []routeDefinition {
 			spec: operationDefinition{
 				id:              "listSLOs",
 				summary:         "List SLOs",
-				description:     "List service level objectives for one tenant.",
+				description:     "List service level objectives within the authenticated tenant and resource group. Optional search is a case-insensitive literal substring of name or description, trimmed and bounded to 128 characters, applied before pagination. Percent and underscore are literal characters, not wildcards.",
 				tags:            []string{"SLOs"},
 				parameterModels: []any{ListSLOsRequest{}},
 				responses: []responseDefinition{
@@ -714,7 +760,7 @@ func adminAPIRoutes() []routeDefinition {
 			spec: operationDefinition{
 				id:              "getSLO",
 				summary:         "Get one SLO",
-				description:     "Get one service level objective by id.",
+				description:     "Get one service level objective by id. The optional current_budget is included only for ungrouped callers independently authorized for slo:GetBudget on this SLO's actual resource group and ID. A group-specific Deny also removes this optional evidence.",
 				tags:            []string{"SLOs"},
 				parameterModels: []any{GetSLORequest{}},
 				responses: []responseDefinition{
@@ -797,16 +843,16 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method:     stdhttp.MethodGet,
-			path:       "/slos/:id/budget",
-			permission: "slo:GetBudget",
-			resource:   tenantScoped("slo"),
-			enabled:    func(h *Handler) bool { return h != nil && h.getBudgetUC != nil },
-			register:   func(r gin.IRouter, h *Handler) { r.GET("/slos/:id/budget", h.GetSLOBudget) },
+			method:             stdhttp.MethodGet,
+			path:               "/slos/:id/budget",
+			permission:         "slo:GetBudget",
+			resourceForHandler: evidenceResource("slo"),
+			enabled:            func(h *Handler) bool { return h != nil && h.getBudgetUC != nil },
+			register:           func(r gin.IRouter, h *Handler) { r.GET("/slos/:id/budget", h.GetSLOBudget) },
 			spec: operationDefinition{
 				id:              "getSLOBudget",
 				summary:         "Get SLO budget",
-				description:     "Get the current error budget for one SLO.",
+				description:     "Get the current error budget for one SLO. Authorization uses that SLO's actual resource group and ID, including for ungrouped credentials. Group-specific Deny remains effective; another credential group reads the parent as not found.",
 				tags:            []string{"SLO Budgets"},
 				parameterModels: []any{GetSLOBudgetRequest{}},
 				responses: []responseDefinition{
@@ -818,21 +864,22 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method:     stdhttp.MethodGet,
-			path:       "/slos/:id/budgets",
-			permission: "slo:ListBudgets",
-			resource:   tenantScoped("slo"),
-			enabled:    func(h *Handler) bool { return h != nil && h.listBudgetHistoryUC != nil },
-			register:   func(r gin.IRouter, h *Handler) { r.GET("/slos/:id/budgets", h.ListSLOBudgets) },
+			method:             stdhttp.MethodGet,
+			path:               "/slos/:id/budgets",
+			permission:         "slo:ListBudgets",
+			resourceForHandler: evidenceResource("slo"),
+			enabled:            func(h *Handler) bool { return h != nil && h.listBudgetHistoryUC != nil },
+			register:           func(r gin.IRouter, h *Handler) { r.GET("/slos/:id/budgets", h.ListSLOBudgets) },
 			spec: operationDefinition{
 				id:              "listSLOBudgets",
 				summary:         "List SLO budget history",
-				description:     "List error budget history entries for one SLO.",
+				description:     "List error budget history entries for one SLO. Authorization uses that SLO's actual resource group and ID before reading the history or count. Group-specific Deny remains effective; another credential group reads the parent as not found.",
 				tags:            []string{"SLO Budgets"},
 				parameterModels: []any{ListSLOBudgetsRequest{}},
 				responses: []responseDefinition{
 					{statusCode: stdhttp.StatusOK, description: "SLO budget history list", model: budgetListResponse{}},
 					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
+					{statusCode: stdhttp.StatusNotFound, description: "SLO not found in the credential scope", model: errorModel},
 					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
 				},
 			},
@@ -842,13 +889,13 @@ func adminAPIRoutes() []routeDefinition {
 			method:     stdhttp.MethodGet,
 			path:       "/slo-alerts",
 			permission: "sloalert:List",
-			resource:   tenantScoped("sloalert"),
+			resource:   evidenceCollection("sloalert", "sloalert:List"),
 			enabled:    func(h *Handler) bool { return h != nil && h.listAlertsUC != nil },
 			register:   func(r gin.IRouter, h *Handler) { r.GET("/slo-alerts", h.ListSLOAlerts) },
 			spec: operationDefinition{
 				id:              "listSLOAlerts",
 				summary:         "List SLO alerts",
-				description:     "List SLO alert entries for one tenant.",
+				description:     "List SLO alert entries for one tenant, filtered through each parent SLO's resource group. Authorization must cover the whole tenant/group query domain, including explicit Deny and boundaries. If that proof fails or exceeds its budget, the entire request returns 403 without reading items or counts; filters and pagination do not bypass this check.",
 				tags:            []string{"SLO Alerts"},
 				parameterModels: []any{ListSLOAlertsRequest{}},
 				responses: []responseDefinition{
@@ -859,16 +906,16 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		{
-			method:     stdhttp.MethodGet,
-			path:       "/slo-alerts/:id",
-			permission: "sloalert:Get",
-			resource:   tenantScoped("sloalert"),
-			enabled:    func(h *Handler) bool { return h != nil && h.getAlertUC != nil },
-			register:   func(r gin.IRouter, h *Handler) { r.GET("/slo-alerts/:id", h.GetSLOAlert) },
+			method:             stdhttp.MethodGet,
+			path:               "/slo-alerts/:id",
+			permission:         "sloalert:Get",
+			resourceForHandler: evidenceResource("sloalert"),
+			enabled:            func(h *Handler) bool { return h != nil && h.getAlertUC != nil },
+			register:           func(r gin.IRouter, h *Handler) { r.GET("/slo-alerts/:id", h.GetSLOAlert) },
 			spec: operationDefinition{
 				id:              "getSLOAlert",
 				summary:         "Get one SLO alert",
-				description:     "Get one SLO alert by id.",
+				description:     "Get one SLO alert by id. Authorization resolves its stored parent SLO's actual resource group, including for ungrouped credentials, so group-specific Deny remains effective. A credential scoped to another group reads this target as not found.",
 				tags:            []string{"SLO Alerts"},
 				parameterModels: []any{GetSLOAlertRequest{}},
 				responses: []responseDefinition{
@@ -1007,6 +1054,7 @@ func adminAPIRoutes() []routeDefinition {
 			},
 		},
 		// ==================== Policies ====================
+
 		{
 			method:     stdhttp.MethodPost,
 			path:       "/policies",
@@ -1145,7 +1193,7 @@ func adminAPIRoutes() []routeDefinition {
 			spec: operationDefinition{
 				id:              "listFunctions",
 				summary:         "List function definitions",
-				description:     "List the function definitions in the tenant, newest first. A function is a tenant-owned definition row; a key scoped to a resource group sees only that group's functions. limit defaults to 50 when omitted.",
+				description:     "List the function definitions in the tenant, newest first. Search is a case-insensitive literal substring of name or description, applied before pagination. A function is a tenant-owned definition row; a key scoped to a resource group sees only that group's functions. limit defaults to 50 when omitted.",
 				tags:            []string{"Functions"},
 				parameterModels: []any{ListFunctionsRequest{}},
 				responses: []responseDefinition{
@@ -1165,7 +1213,7 @@ func adminAPIRoutes() []routeDefinition {
 			spec: operationDefinition{
 				id:              "getFunction",
 				summary:         "Get one function definition",
-				description:     "Get one function definition by id. A function has no schedule: it is invoke-only, and every execution-shaping field is pinned into the revision each invocation runs.",
+				description:     "Get one function definition by id. A function has no schedule: it is invoke-only, and every execution-shaping field is pinned into the revision each invocation runs. version is the saved definition version; active_revision_id and active_revision_version describe the actual active projection independently. ready is true only for an active definition whose version matches that projection.",
 				tags:            []string{"Functions"},
 				parameterModels: []any{GetFunctionRequest{}},
 				responses: []responseDefinition{
@@ -1186,7 +1234,7 @@ func adminAPIRoutes() []routeDefinition {
 			spec: operationDefinition{
 				id:              "invokeFunction",
 				summary:         "Invoke a function",
-				description:     "Invoke a function by publishing a JobRun custom resource, exactly as a manual job trigger does; the operator materializes the ledger run from the pinned revision. The request carries no body: v1 functions are parameterless, and parameters are baked into the definition. With wait_seconds (capped at 60) the call polls the custom resource until a terminal phase or the budget expires, then answers with the phase observed. Every invocation is a cold pod, so latency is honest seconds, not milliseconds -- and the only result channel is the exit outcome: the platform returns a phase and a duration, never logs or a response body. Invoking a paused function is a conflict. Use the X-OrbitJob-Idempotency-Key header to prevent duplicate invocations.",
+				description:     "Invoke a function by publishing a JobRun custom resource, exactly as a manual job trigger does; the operator materializes the ledger run from the pinned revision. The request carries no body: v1 functions are parameterless, and parameters are baked into the definition. With wait_seconds (capped at 60) the call polls the custom resource until a terminal phase or the budget expires, then answers with the phase observed. Every invocation is a cold pod, so latency is honest seconds, not milliseconds -- and the only result channel is the exit outcome: the receipt returns the observed phase; run observations carry timestamps. This invoke response contains no log text or function response body; bounded retained diagnostic logs use the separate function:ReadLogs route. Invoking a paused function is a conflict. Optional expected_version must match both the saved definition and the active executable revision; a stale review or pending projection returns 409 without publishing an older version. Omitting it preserves legacy active-revision invocation. Use the X-OrbitJob-Idempotency-Key header to prevent duplicate invocations; version-pinned calls scope that identity to the reviewed version.",
 				tags:            []string{"Functions"},
 				parameterModels: []any{InvokeFunctionRequest{}, idempotencyKeyHeaderRequest{}},
 				responses: []responseDefinition{
@@ -1194,7 +1242,7 @@ func adminAPIRoutes() []routeDefinition {
 					{statusCode: stdhttp.StatusOK, description: "Existing invocation returned for idempotent replay, or the wait expired and the async reference is repeated", model: FunctionInvokeResult{}},
 					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
 					{statusCode: stdhttp.StatusNotFound, description: "Function not found", model: errorModel},
-					{statusCode: stdhttp.StatusConflict, description: "The function is paused, or has no active revision yet", model: errorModel},
+					{statusCode: stdhttp.StatusConflict, description: "The function is paused, the reviewed definition changed, or the required revision is not ready", model: errorModel},
 					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
 				},
 			},
@@ -1209,7 +1257,7 @@ func adminAPIRoutes() []routeDefinition {
 			spec: operationDefinition{
 				id:              "listFunctionRuns",
 				summary:         "List function invocations",
-				description:     "List a function's terminal invocations from the function_runs read model, newest first. The model records outcomes only -- success, failed, canceled -- because live progress lives on the run's JobRun custom resource and the ledger row.",
+				description:     "List a function's terminal invocations from the function_runs read model, ordered by triggered_at DESC then id DESC. Supports offset/limit and inclusive created_from/exclusive created_before RFC3339 bounds applied to triggered_at (the invocation time), not projection created_at. The model records outcomes only -- success, failed, canceled -- because live progress lives on the run's JobRun custom resource and the ledger row. occurrence_key is the actual key from a unique same-tenant, same-Function ledger mapping, or null when the retained mapping is missing or ambiguous; clients must never derive it from run_id. attempts and last_attempt are null on list rows; read the invocation detail to load retained attempt facts.",
 				tags:            []string{"Functions"},
 				parameterModels: []any{ListFunctionRunsRequest{}},
 				responses: []responseDefinition{
@@ -1230,7 +1278,7 @@ func adminAPIRoutes() []routeDefinition {
 			spec: operationDefinition{
 				id:              "getFunctionRun",
 				summary:         "Get one function invocation",
-				description:     "Get one terminal invocation by its deterministic run id, which is derived from the ledger occurrence key so a replayed recording addresses the same row.",
+				description:     "Get one terminal invocation by its deterministic run id. attempts lists actual retained execution attempts in ascending attempt_number order through a unique same-tenant, same-Function ledger mapping; last_attempt is the largest retained number. An empty array confirms no attempt exists. A missing or ambiguous mapping returns attempts=null and last_attempt=null; clients must never guess attempt 1. Log access retains its separate function:ReadLogs permission.",
 				tags:            []string{"Functions"},
 				parameterModels: []any{GetFunctionRunRequest{}},
 				responses: []responseDefinition{
@@ -1252,7 +1300,7 @@ func adminAPIRoutes() []routeDefinition {
 			spec: operationDefinition{
 				id:              "listWorkflows",
 				summary:         "List workflow definitions",
-				description:     "List the active revision of every WorkflowJob definition in the tenant. A workflow definition is a WorkflowJob custom resource, declared outside this API and read here through its projection; there is no create route. limit defaults to 50 when omitted.",
+				description:     "List the active revision of every WorkflowJob definition in the tenant. Search is a case-insensitive literal substring of name or namespace, applied before pagination. A workflow definition is a WorkflowJob custom resource, declared outside this API and read here through its projection; there is no create route. limit defaults to 50 when omitted.",
 				tags:            []string{"Workflows"},
 				parameterModels: []any{ListWorkflowsRequest{}},
 				responses: []responseDefinition{
@@ -1295,7 +1343,7 @@ func adminAPIRoutes() []routeDefinition {
 			spec: operationDefinition{
 				id:              "triggerWorkflow",
 				summary:         "Trigger a manual workflow run",
-				description:     "Publish a WorkflowRun custom resource for a manual workflow execution. The operator materializes the workflow run row from it, row-first, and then walks the DAG: each task is an ordinary run of the ScheduledJob definition the task names. The calling credential is recorded as the run's actor, so \"who triggered it\" is answerable after the fact. Triggering a suspended workflow is a conflict. Use the X-OrbitJob-Idempotency-Key header to prevent duplicate triggers.",
+				description:     "Publish a WorkflowRun custom resource for a manual workflow execution. The operator admits the run atomically before creating its ledger row and walking the DAG. Each task is an ordinary run of the ScheduledJob definition it names. The calling credential is recorded as the actor. Pausing a schedule stops automatic starts only; manual starts remain available. Under Forbid concurrency, an accepted resource waits in Pending with a ConcurrencyBlocked condition until admission succeeds. A missing history row does not prove rejection or execution failure. Use the X-OrbitJob-Idempotency-Key header to prevent duplicate triggers.",
 				tags:            []string{"Workflows"},
 				parameterModels: []any{jobIDURI{}, idempotencyKeyHeaderRequest{}},
 				responses: []responseDefinition{
@@ -1304,7 +1352,7 @@ func adminAPIRoutes() []routeDefinition {
 					{statusCode: stdhttp.StatusBadRequest, description: "Invalid request", model: errorModel},
 					{statusCode: stdhttp.StatusForbidden, description: "A group-scoped key cannot trigger workflows", model: errorModel},
 					{statusCode: stdhttp.StatusNotFound, description: "Workflow not found", model: errorModel},
-					{statusCode: stdhttp.StatusConflict, description: "Workflow is suspended", model: errorModel},
+					{statusCode: stdhttp.StatusConflict, description: "The Workflow definition cannot currently be triggered", model: errorModel},
 					{statusCode: stdhttp.StatusInternalServerError, description: "Internal error", model: errorModel},
 				},
 			},
@@ -1319,7 +1367,7 @@ func adminAPIRoutes() []routeDefinition {
 			spec: operationDefinition{
 				id:              "listWorkflowRuns",
 				summary:         "List workflow runs",
-				description:     "List one workflow's runs from the workflow ledger, newest first. Each entry carries the workflow-level phase -- the DAG's lifecycle, not any single step's -- its trigger, and the actor that asked for it.",
+				description:     "List one workflow's runs from the workflow ledger, ordered by created_at DESC then id DESC. The parent revision may be inactive; tenant and original source UID still define the authorized history. Supports inclusive created_from/exclusive created_before RFC3339 bounds before offset/limit pagination. Each entry carries the workflow-level phase -- the DAG's lifecycle, not any single step's -- its trigger, and the actor that asked for it.",
 				tags:            []string{"Workflows"},
 				parameterModels: []any{ListWorkflowRunsRequest{}},
 				responses: []responseDefinition{
@@ -1341,7 +1389,7 @@ func adminAPIRoutes() []routeDefinition {
 			spec: operationDefinition{
 				id:              "getWorkflowRun",
 				summary:         "Get one workflow run",
-				description:     "Get one workflow run by ledger id, with its step runs in the same response. Each step is an ordinary run of the ScheduledJob definition its task names, grouped under the workflow run; a task the walker decided not to create has no step -- its skip reason lives on the run's task decisions, visible in the phase trail.",
+				description:     "Read one tenant-scoped workflow run and its ledger step runs. Tasks come from the exact pinned immutable revision, including inactive revisions, when available; task_decisions preserves recorded skips and reasons. Step task names are mapped by deterministic occurrence keys, never guessed from source UID. pinned_revision_available=false and tasks=null explicitly signal unavailable pinned history. A historical parent route may name an inactive Workflow revision when its original source UID matches the run; mutating routes retain active-version requirements. deadline and missing_job_reference task decisions are execution failures, while legitimate condition skips retain success semantics. Existing run and definition identifiers retain their original meanings.",
 				tags:            []string{"Workflows"},
 				parameterModels: []any{workflowRunIDURI{}},
 				responses: []responseDefinition{
@@ -1378,8 +1426,14 @@ func adminAPIRoutes() []routeDefinition {
 		},
 	}
 
+	routes = append(routes, tenantManagementRoutes()...)
+	routes = append(routes, definitionLogRoutes()...)
+	routes = append(routes, archiveLogRoutes()...)
+	routes = append(routes, functionManagementRoutes()...)
+	routes = append(routes, workflowScheduleRoutes()...)
+	routes = append(routes, sourceControlRoutes()...)
 	for i := range routes {
-		routes[i].spec.responses = append(routes[i].spec.responses, unauthorizedResponse, rateLimitedResponse)
+		routes[i].spec.responses = append(routes[i].spec.responses, unauthorizedResponse, rateLimitedResponse, responseDefinition{statusCode: stdhttp.StatusServiceUnavailable, description: "Authentication, authorization or operation dependency unavailable; retain the original write identity", model: errorModel})
 	}
 
 	return routes
@@ -1417,12 +1471,19 @@ func buildOpenAPIDocument(h *Handler, includeAllAdminRoutes bool) OpenAPIDocumen
 		}
 
 		path := toOpenAPIPath(adminAPIPrefix + route.path)
-		setPathItemOperation(doc.Paths, path, route.method, route.spec.build(registry))
+		op := route.spec.build(registry)
+		op.Security = []map[string][]string{{"APIKey": {}}}
+		op.Permission = route.permission
+		applyAdminOperationMetadata(route, &op, registry)
+		setPathItemOperation(doc.Paths, path, route.method, op)
 	}
 
 	if len(registry.components) > 0 {
 		doc.Components = &OpenAPIComponents{
 			Schemas: registry.components,
+			SecuritySchemes: map[string]SecurityScheme{
+				"APIKey": {Type: "http", Scheme: "bearer", Description: "OrbitJob API key. Send Authorization: Bearer <key>. Each operation also requires its declared policy grant; successful authentication does not imply permission."},
+			},
 		}
 	}
 
@@ -1439,6 +1500,8 @@ func setPathItemOperation(paths map[string]PathItem, path string, method string,
 		pathItem.Post = &operation
 	case stdhttp.MethodPut:
 		pathItem.Put = &operation
+	case stdhttp.MethodPatch:
+		pathItem.Patch = &operation
 	case stdhttp.MethodDelete:
 		pathItem.Delete = &operation
 	}
@@ -1542,6 +1605,16 @@ func parametersFromModel(model any) []Parameter {
 		}
 		applyBindingRules(&parameter.Schema, field.Tag.Get("binding"))
 		applyParameterDefaults(&parameter)
+		// Gin's explicit form default takes precedence over legacy name-based
+		// defaults (workspace discovery has a smaller default page).
+		for _, option := range strings.Split(field.Tag.Get("form"), ",")[1:] {
+			if value, ok := strings.CutPrefix(option, "default="); ok {
+				var decoded any
+				if json.Unmarshal([]byte(value), &decoded) == nil {
+					parameter.Schema.Default = decoded
+				}
+			}
+		}
 		parameters = append(parameters, parameter)
 	}
 
@@ -1579,13 +1652,16 @@ func applyParameterDefaults(parameter *Parameter) {
 		parameter.Schema.Default = jobquery.DefaultListLimit
 	case "offset":
 		parameter.Schema.Default = 0
+	case "created_from", "created_before":
+		parameter.Schema.Format = "date-time"
+		parameter.Schema.Description = "RFC3339 timestamp with timezone and at most nine fractional digits. created_from is inclusive; created_before is exclusive."
 	}
 }
 
 func newSchemaRegistry() *schemaRegistry {
 	return &schemaRegistry{
 		components: map[string]Schema{},
-		seen:       map[reflect.Type]string{},
+		seen:       map[schemaIdentity]string{},
 		owners:     map[string]reflect.Type{},
 	}
 }
@@ -1647,6 +1723,11 @@ func (r *schemaRegistry) schemaForType(t reflect.Type, mode schemaMode) Schema {
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
+	// RawMessage serializes its contained JSON, not its underlying byte slice.
+	// The only raw body in this API is the validated policy document.
+	if t == reflect.TypeFor[json.RawMessage]() {
+		return r.schemaForType(reflect.TypeFor[policy.Document](), mode)
+	}
 
 	if isTimeType(t) {
 		return Schema{
@@ -1657,15 +1738,17 @@ func (r *schemaRegistry) schemaForType(t reflect.Type, mode schemaMode) Schema {
 
 	switch t.Kind() {
 	case reflect.Struct:
-		if name, ok := r.seen[t]; ok {
+		identity := schemaIdentity{typeOf: t, mode: mode}
+		if name, ok := r.seen[identity]; ok {
 			return Schema{Ref: "#/components/schemas/" + name}
 		}
 
 		name := r.uniqueComponentName(t)
-		r.seen[t] = name
+		r.seen[identity] = name
 		r.components[name] = Schema{}
 		schema := r.structSchema(t, mode)
 		r.applySchemaDefaults(name, &schema)
+		applyInputSchemaMetadata(t, mode, &schema)
 		r.components[name] = schema
 		return Schema{Ref: "#/components/schemas/" + name}
 	case reflect.Slice, reflect.Array:
@@ -1729,17 +1812,36 @@ func (r *schemaRegistry) structSchema(t reflect.Type, mode schemaMode) Schema {
 		}
 
 		jsonTag := field.Tag.Get("json")
-		if jsonTag == "" || jsonTag == "-" {
+		if jsonTag == "-" {
 			continue
+		}
+		if field.Anonymous && jsonTag == "" {
+			embeddedType := field.Type
+			for embeddedType.Kind() == reflect.Pointer {
+				embeddedType = embeddedType.Elem()
+			}
+			if embeddedType.Kind() == reflect.Struct {
+				embedded := r.structSchema(embeddedType, mode)
+				for name, property := range embedded.Properties {
+					schema.Properties[name] = property
+				}
+				required = append(required, embedded.Required...)
+				continue
+			}
 		}
 
 		name, options, _ := strings.Cut(jsonTag, ",")
 		if name == "" {
-			continue
+			name = field.Name
 		}
 
 		property := r.schemaForType(field.Type, mode)
 		if field.Type.Kind() == reflect.Pointer {
+			// A required request pointer distinguishes absence from a zero
+			// value. Gin rejects null, so the contract must reject it too.
+			property.Nullable = mode != schemaModeRequest || !hasBindingRule(field.Tag.Get("binding"), "required")
+		}
+		if mode == schemaModeResponse && field.Tag.Get("nullable") == "true" {
 			property.Nullable = true
 		}
 		applyBindingRules(&property, field.Tag.Get("binding"))
@@ -1817,21 +1919,37 @@ func applyBindingRules(schema *Schema, binding string) {
 	}
 
 	for _, rule := range strings.Split(binding, ",") {
+		if schema.Type == "number" && (strings.HasPrefix(rule, "min=") || strings.HasPrefix(rule, "max=")) {
+			kind, raw, _ := strings.Cut(rule, "=")
+			if bound, err := strconv.ParseFloat(raw, 64); err == nil {
+				if kind == "min" {
+					schema.Minimum = &bound
+				} else {
+					schema.Maximum = &bound
+				}
+			}
+			continue
+		}
 		switch {
+		case rule == "uuid":
+			schema.Format = "uuid"
 		case strings.HasPrefix(rule, "oneof="):
 			schema.Enum = strings.Fields(strings.TrimPrefix(rule, "oneof="))
 		case strings.HasPrefix(rule, "min="):
-			value, err := strconv.Atoi(strings.TrimPrefix(rule, "min="))
+			value, err := strconv.ParseFloat(strings.TrimPrefix(rule, "min="), 64)
 			if err != nil {
 				continue
 			}
 			switch schema.Type {
 			case "integer", "number":
-				minimum := float64(value)
+				minimum := value
 				schema.Minimum = &minimum
 			case "string":
-				minLength := value
+				minLength := int(value)
 				schema.MinLength = &minLength
+			case "array":
+				minItems := int(value)
+				schema.MinItems = &minItems
 			}
 		case strings.HasPrefix(rule, "len="):
 			value, err := strconv.Atoi(strings.TrimPrefix(rule, "len="))
@@ -1844,17 +1962,20 @@ func applyBindingRules(schema *Schema, binding string) {
 				schema.MaxLength = &length
 			}
 		case strings.HasPrefix(rule, "max="):
-			value, err := strconv.Atoi(strings.TrimPrefix(rule, "max="))
+			value, err := strconv.ParseFloat(strings.TrimPrefix(rule, "max="), 64)
 			if err != nil {
 				continue
 			}
 			switch schema.Type {
 			case "integer", "number":
-				maximum := float64(value)
+				maximum := value
 				schema.Maximum = &maximum
 			case "string":
-				maxLength := value
+				maxLength := int(value)
 				schema.MaxLength = &maxLength
+			case "array":
+				maxItems := int(value)
+				schema.MaxItems = &maxItems
 			}
 		}
 	}

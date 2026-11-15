@@ -7,7 +7,10 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 
+	"orbitjob/internal/core/domain/audit"
 	"orbitjob/internal/core/domain/policy"
+
+	"orbitjob/internal/platform/scan"
 )
 
 const policyDoc = `{"version":"1","statement":[{"effect":"Allow","action":["job:Create"],"resource":["orbitjob:self:*:job/*"]}]}`
@@ -20,16 +23,16 @@ func TestPolicyRepository_Create(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	mock.ExpectBegin()
-	mock.ExpectExec(`SELECT set_config`).WithArgs("tenant-a").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`SELECT set_config`).WithArgs(policyStoreFixtureTenantID).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`INSERT INTO policies`).
-		WithArgs("p1", "tenant-a", "JobOperator", "runs jobs", jsonBytes{want: policyDoc}).
+		WithArgs(policyStoreFixtureSubjectID, policyStoreFixtureTenantID, "JobOperator", "runs jobs", jsonBytes{want: policyDoc}).
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec(`INSERT INTO audit_events`).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`INSERT INTO audit_events`).WithArgs(policyStoreFixtureTenantID, policyStoreFixtureActorID, audit.EventCreate, audit.ResourcePolicy, policyStoreFixtureSubjectID, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
 	err = NewPolicyRepository(db).Create(context.Background(), policy.Record{
-		ID: "p1", TenantID: "tenant-a", Name: "JobOperator", Description: "runs jobs",
-	}, []byte(policyDoc), testAuditEvent())
+		ID: policyStoreFixtureSubjectID, TenantID: policyStoreFixtureTenantID, Name: "JobOperator", Description: "runs jobs",
+	}, []byte(policyDoc), testAuditEvent(policyStoreFixtureTenantID, policyStoreFixtureActorID, audit.EventCreate, audit.ResourcePolicy, policyStoreFixtureSubjectID))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -53,8 +56,8 @@ func TestPolicyRepository_CreateReportsANameConflict(t *testing.T) {
 	mock.ExpectRollback()
 
 	err = NewPolicyRepository(db).Create(context.Background(), policy.Record{
-		ID: "p1", TenantID: "tenant-a", Name: "JobOperator",
-	}, []byte(policyDoc), testAuditEvent())
+		ID: policyStoreFixtureSubjectID, TenantID: policyStoreFixtureTenantID, Name: "JobOperator",
+	}, []byte(policyDoc), testAuditEvent(policyStoreFixtureTenantID, policyStoreFixtureActorID, audit.EventCreate, audit.ResourcePolicy, policyStoreFixtureSubjectID))
 	assertConflict(t, err, "policy", "name")
 }
 
@@ -71,11 +74,11 @@ func TestPolicyRepository_DeleteRefusesAPlatformPreset(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT tenant_id FROM policies`).
-		WithArgs("preset-1", "tenant-a").
+		WithArgs(policyStoreFixturePresetID, policyStoreFixtureTenantID).
 		WillReturnRows(sqlmock.NewRows([]string{"tenant_id"}).AddRow(nil))
 	mock.ExpectRollback()
 
-	err = NewPolicyRepository(db).Delete(context.Background(), "tenant-a", "preset-1", testAuditEvent())
+	err = NewPolicyRepository(db).Delete(context.Background(), policyStoreFixtureTenantID, policyStoreFixturePresetID, testAuditEvent(policyStoreFixtureTenantID, policyStoreFixtureActorID, audit.EventDelete, audit.ResourcePolicy, policyStoreFixturePresetID))
 	if !errors.Is(err, policy.ErrPlatformPolicyImmutable) {
 		t.Fatalf("expected the platform-preset refusal, got %v", err)
 	}
@@ -94,7 +97,7 @@ func TestPolicyRepository_DeleteReportsNotFound(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"tenant_id"}))
 	mock.ExpectRollback()
 
-	err = NewPolicyRepository(db).Delete(context.Background(), "tenant-a", "missing", testAuditEvent())
+	err = NewPolicyRepository(db).Delete(context.Background(), policyStoreFixtureTenantID, policyStoreFixtureMissingID, testAuditEvent(policyStoreFixtureTenantID, policyStoreFixtureActorID, audit.EventDelete, audit.ResourcePolicy, policyStoreFixtureMissingID))
 	assertNotFound(t, err, "policy")
 }
 
@@ -108,21 +111,23 @@ func TestPolicyRepository_DeleteRemovesTheTenantsOwnPolicy(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT tenant_id FROM policies`).
-		WillReturnRows(sqlmock.NewRows([]string{"tenant_id"}).AddRow("tenant-a"))
+		WillReturnRows(sqlmock.NewRows([]string{"tenant_id"}).AddRow(policyStoreFixtureTenantID))
+	mock.ExpectQuery(`SELECT tenant_id FROM policies.*FOR UPDATE`).WithArgs(policyStoreFixtureSubjectID, policyStoreFixtureTenantID).WillReturnRows(sqlmock.NewRows([]string{"tenant_id"}).AddRow(policyStoreFixtureTenantID))
+	mock.ExpectQuery(`SELECT EXISTS .*FROM key_policies`).WithArgs(policyStoreFixtureSubjectID).WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectExec(`DELETE FROM policies`).
-		WithArgs("p1", "tenant-a").
+		WithArgs(policyStoreFixtureSubjectID, policyStoreFixtureTenantID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`INSERT INTO audit_events`).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`INSERT INTO audit_events`).WithArgs(policyStoreFixtureTenantID, policyStoreFixtureActorID, audit.EventDelete, audit.ResourcePolicy, policyStoreFixtureSubjectID, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
-	if err := NewPolicyRepository(db).Delete(context.Background(), "tenant-a", "p1", testAuditEvent()); err != nil {
+	if err := NewPolicyRepository(db).Delete(context.Background(), policyStoreFixtureTenantID, policyStoreFixtureSubjectID, testAuditEvent(policyStoreFixtureTenantID, policyStoreFixtureActorID, audit.EventDelete, audit.ResourcePolicy, policyStoreFixtureSubjectID)); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-// A policy still bound to a key is refused rather than cascaded: removing the
-// binding silently would shrink what live keys can do.
-func TestPolicyRepository_DeleteRefusesABoundPolicy(t *testing.T) {
+// Boundary references remain a foreign-key conflict even with no ordinary
+// key_policies binding; they do not use the schema's cascading FK.
+func TestPolicyRepository_DeleteRefusesABoundaryReference(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("open mock: %v", err)
@@ -132,11 +137,13 @@ func TestPolicyRepository_DeleteRefusesABoundPolicy(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT tenant_id FROM policies`).
-		WillReturnRows(sqlmock.NewRows([]string{"tenant_id"}).AddRow("tenant-a"))
+		WillReturnRows(sqlmock.NewRows([]string{"tenant_id"}).AddRow(policyStoreFixtureTenantID))
+	mock.ExpectQuery(`SELECT tenant_id FROM policies.*FOR UPDATE`).WithArgs(policyStoreFixtureSubjectID, policyStoreFixtureTenantID).WillReturnRows(sqlmock.NewRows([]string{"tenant_id"}).AddRow(policyStoreFixtureTenantID))
+	mock.ExpectQuery(`SELECT EXISTS .*FROM key_policies`).WithArgs(policyStoreFixtureSubjectID).WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectExec(`DELETE FROM policies`).WillReturnError(foreignKeyViolation())
 	mock.ExpectRollback()
 
-	err = NewPolicyRepository(db).Delete(context.Background(), "tenant-a", "p1", testAuditEvent())
+	err = NewPolicyRepository(db).Delete(context.Background(), policyStoreFixtureTenantID, policyStoreFixtureSubjectID, testAuditEvent(policyStoreFixtureTenantID, policyStoreFixtureActorID, audit.EventDelete, audit.ResourcePolicy, policyStoreFixtureSubjectID))
 	assertConflict(t, err, "policy", "id")
 }
 
@@ -150,13 +157,13 @@ func TestPolicyRepository_ListReturnsOwnAndPlatformPolicies(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`FROM policies`).
-		WithArgs("tenant-a").
+		WithArgs(policyStoreFixtureTenantID).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "name", "description", "document"}).
 			AddRow("preset", nil, "ReadOnlyAccess", "", []byte(policyDoc)).
-			AddRow("own", "tenant-a", "JobOperator", "", []byte(policyDoc)))
+			AddRow("own", policyStoreFixtureTenantID, "JobOperator", "", []byte(policyDoc)))
 	mock.ExpectRollback()
 
-	records, err := NewPolicyRepository(db).List(context.Background(), "tenant-a")
+	records, err := NewPolicyRepository(db).List(context.Background(), policyStoreFixtureTenantID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -184,10 +191,10 @@ func TestPolicyRepository_ListRejectsACorruptDocument(t *testing.T) {
 	mock.ExpectExec(`SELECT set_config`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`FROM policies`).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "name", "description", "document"}).
-			AddRow("broken", "tenant-a", "Broken", "", []byte(`not json`)))
+			AddRow("broken", policyStoreFixtureTenantID, "Broken", "", []byte(`not json`)))
 	mock.ExpectRollback()
 
-	if _, err := NewPolicyRepository(db).List(context.Background(), "tenant-a"); err == nil {
+	if _, err := NewPolicyRepository(db).List(context.Background(), policyStoreFixtureTenantID); err == nil {
 		t.Fatal("expected an unparsable stored document to be reported")
 	}
 }
@@ -207,11 +214,11 @@ func TestPolicyRepository_GetReportsNotFound(t *testing.T) {
 	// The scoped predicate makes a cross-tenant read empty; the store cannot
 	// tell "missing" from "another tenant's" and must not try.
 	mock.ExpectQuery(`WHERE id = \$1 AND \(tenant_id = \$2 OR tenant_id IS NULL\)`).
-		WithArgs("p1", "tenant-a").
+		WithArgs(policyStoreFixtureSubjectID, policyStoreFixtureTenantID).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "name", "description", "document"}))
 	mock.ExpectRollback()
 
-	_, err = NewPolicyRepository(db).Get(context.Background(), "tenant-a", "p1")
+	_, err = NewPolicyRepository(db).Get(context.Background(), policyStoreFixtureTenantID, policyStoreFixtureSubjectID)
 	assertNotFound(t, err, "policy")
 }
 
@@ -227,16 +234,84 @@ func TestPolicyRepository_GetScopesToTheTenantOrAPreset(t *testing.T) {
 	// The application-level predicate is the point: RLS is a second line of
 	// defence, absent in the test schema and bypassed by a superuser.
 	mock.ExpectQuery(`WHERE id = \$1 AND \(tenant_id = \$2 OR tenant_id IS NULL\)`).
-		WithArgs("p1", "tenant-a").
+		WithArgs(policyStoreFixtureSubjectID, policyStoreFixtureTenantID).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "name", "description", "document"}).
-			AddRow("p1", "tenant-a", "JobOperator", "", []byte(policyDoc)))
+			AddRow(policyStoreFixtureSubjectID, policyStoreFixtureTenantID, "JobOperator", "", []byte(policyDoc)))
 	mock.ExpectRollback()
 
-	rec, err := NewPolicyRepository(db).Get(context.Background(), "tenant-a", "p1")
+	rec, err := NewPolicyRepository(db).Get(context.Background(), policyStoreFixtureTenantID, policyStoreFixtureSubjectID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if rec.Name != "JobOperator" {
 		t.Fatalf("unexpected record: %+v", rec)
+	}
+}
+
+var policyStoreFixtureActorID = scan.GenerateID()
+
+var policyStoreFixtureMissingID = scan.GenerateID()
+
+var policyStoreFixtureSubjectID = scan.GenerateID()
+
+var policyStoreFixturePresetID = scan.GenerateID()
+
+var policyStoreFixtureTenantID = scan.GenerateID()
+
+func TestPolicyRepository_DeleteRefusesAnOrdinaryBindingBeforeCascade(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT tenant_id FROM policies`).WithArgs(policyStoreFixtureSubjectID, policyStoreFixtureTenantID).WillReturnRows(sqlmock.NewRows([]string{"tenant_id"}).AddRow(policyStoreFixtureTenantID))
+	mock.ExpectQuery(`SELECT tenant_id FROM policies.*FOR UPDATE`).WithArgs(policyStoreFixtureSubjectID, policyStoreFixtureTenantID).WillReturnRows(sqlmock.NewRows([]string{"tenant_id"}).AddRow(policyStoreFixtureTenantID))
+	mock.ExpectQuery(`SELECT EXISTS .*FROM key_policies`).WithArgs(policyStoreFixtureSubjectID).WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectRollback()
+	err = NewPolicyRepository(db).Delete(context.Background(), policyStoreFixtureTenantID, policyStoreFixtureSubjectID, testAuditEvent(policyStoreFixtureTenantID, policyStoreFixtureActorID, audit.EventDelete, audit.ResourcePolicy, policyStoreFixtureSubjectID))
+	assertConflict(t, err, "policy", "id")
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPolicyRepository_DeleteBindingLookupErrorCannotCascade(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT tenant_id FROM policies`).WillReturnRows(sqlmock.NewRows([]string{"tenant_id"}).AddRow(policyStoreFixtureTenantID))
+	mock.ExpectQuery(`SELECT tenant_id FROM policies.*FOR UPDATE`).WillReturnRows(sqlmock.NewRows([]string{"tenant_id"}).AddRow(policyStoreFixtureTenantID))
+	mock.ExpectQuery(`SELECT EXISTS .*FROM key_policies`).WillReturnError(errors.New("binding read failed"))
+	mock.ExpectRollback()
+	err = NewPolicyRepository(db).Delete(context.Background(), policyStoreFixtureTenantID, policyStoreFixtureSubjectID, testAuditEvent(policyStoreFixtureTenantID, policyStoreFixtureActorID, audit.EventDelete, audit.ResourcePolicy, policyStoreFixtureSubjectID))
+	if err == nil {
+		t.Fatal("binding lookup failure allowed deletion")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPolicyRepository_DeleteRechecksOwnerUnderLock(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT tenant_id FROM policies`).WillReturnRows(sqlmock.NewRows([]string{"tenant_id"}).AddRow(policyStoreFixtureTenantID))
+	mock.ExpectQuery(`SELECT tenant_id FROM policies.*FOR UPDATE`).WillReturnRows(sqlmock.NewRows([]string{"tenant_id"}))
+	mock.ExpectRollback()
+	err = NewPolicyRepository(db).Delete(context.Background(), policyStoreFixtureTenantID, policyStoreFixtureSubjectID, testAuditEvent(policyStoreFixtureTenantID, policyStoreFixtureActorID, audit.EventDelete, audit.ResourcePolicy, policyStoreFixtureSubjectID))
+	assertNotFound(t, err, "policy")
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -56,6 +56,12 @@ func (r *SLOReadRepository) Get(ctx context.Context, tenantID, resourceGroupID s
 
 // List retrieves a paginated list of SLOs.
 func (r *SLOReadRepository) List(ctx context.Context, tenantID, resourceGroupID string, limit, offset int) ([]slo.Snapshot, int64, error) {
+	return r.ListSearch(ctx, tenantID, resourceGroupID, "", limit, offset)
+}
+
+// ListSearch applies literal search within the authorized scope before count
+// and pagination, preserving the unfiltered List contract for existing callers.
+func (r *SLOReadRepository) ListSearch(ctx context.Context, tenantID, resourceGroupID, search string, limit, offset int) ([]slo.Snapshot, int64, error) {
 	tx, err := WithTenant(ctx, r.db, tenantID)
 	if err != nil {
 		return nil, 0, fmt.Errorf("begin slo list tx: %w", err)
@@ -70,7 +76,8 @@ func (r *SLOReadRepository) List(ctx context.Context, tenantID, resourceGroupID 
 			SELECT COUNT(*) FROM slos
 			WHERE tenant_id = $1 AND deleted_at IS NULL
 			  AND ($2::text IS NULL OR resource_group_id = $2)
-		`, tenantID, nullableGroup(resourceGroupID)).Scan(&total); err != nil {
+			  AND ($3 = '' OR strpos(lower(name),lower($3)) > 0 OR strpos(lower(COALESCE(description,'')),lower($3)) > 0)
+		`, tenantID, nullableGroup(resourceGroupID), search).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count slos: %w", err)
 	}
 
@@ -80,9 +87,10 @@ func (r *SLOReadRepository) List(ctx context.Context, tenantID, resourceGroupID 
 			FROM slos
 			WHERE tenant_id = $1 AND deleted_at IS NULL
 			  AND ($2::text IS NULL OR resource_group_id = $2)
+			  AND ($5 = '' OR strpos(lower(name),lower($5)) > 0 OR strpos(lower(COALESCE(description,'')),lower($5)) > 0)
 			ORDER BY id DESC
 			LIMIT $3 OFFSET $4
-		`, tenantID, nullableGroup(resourceGroupID), limit, offset)
+		`, tenantID, nullableGroup(resourceGroupID), limit, offset, search)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list slos: %w", err)
 	}

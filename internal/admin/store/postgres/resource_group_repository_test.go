@@ -9,6 +9,8 @@ import (
 
 	"orbitjob/internal/core/domain/audit"
 	"orbitjob/internal/core/domain/resourcegroup"
+
+	"orbitjob/internal/platform/scan"
 )
 
 func TestResourceGroupRepository_Create(t *testing.T) {
@@ -18,20 +20,20 @@ func TestResourceGroupRepository_Create(t *testing.T) {
 	}
 	defer func() { _ = db.Close() }()
 
-	group := resourcegroup.Group{ID: "rg-1", TenantID: "tenant-a", Slug: "ci", Name: "CI"}
+	group := resourcegroup.Group{ID: groupStoreFixtureFirstGroupID, TenantID: groupStoreFixtureTenantID, Slug: "ci", Name: "CI"}
 	ev := audit.Event{
-		TenantID: "tenant-a", ActorID: "caller-key", EventType: audit.EventCreate,
-		ResourceType: "resource_group", ResourceID: "rg-1",
+		TenantID: groupStoreFixtureTenantID, ActorID: groupStoreFixtureActorID, EventType: audit.EventCreate,
+		ResourceType: "resource_group", ResourceID: groupStoreFixtureFirstGroupID,
 	}
 
-	expectTenantTx(t, mock, "tenant-a")
+	expectTenantTx(t, mock, groupStoreFixtureTenantID)
 	// Slug uniqueness is per tenant, so the pair is stored unchecked here and
 	// a duplicate surfaces as a database conflict.
 	mock.ExpectExec(`INSERT INTO resource_groups`).
-		WithArgs("rg-1", "tenant-a", "ci", "CI").
+		WithArgs(groupStoreFixtureFirstGroupID, groupStoreFixtureTenantID, "ci", "CI").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`INSERT INTO audit_events`).
-		WithArgs("tenant-a", "caller-key", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs(groupStoreFixtureTenantID, groupStoreFixtureActorID, audit.EventCreate, "resource_group", groupStoreFixtureFirstGroupID, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
@@ -50,14 +52,14 @@ func TestResourceGroupRepository_CreateReportsADuplicateSlug(t *testing.T) {
 	}
 	defer func() { _ = db.Close() }()
 
-	expectTenantTx(t, mock, "tenant-a")
+	expectTenantTx(t, mock, groupStoreFixtureTenantID)
 	mock.ExpectExec(`INSERT INTO resource_groups`).
-		WithArgs("rg-2", "tenant-a", "ci", "CI").
+		WithArgs(groupStoreFixtureSecondGroupID, groupStoreFixtureTenantID, "ci", "CI").
 		WillReturnError(uniqueViolation())
 	mock.ExpectRollback()
 
-	group := resourcegroup.Group{ID: "rg-2", TenantID: "tenant-a", Slug: "ci", Name: "CI"}
-	err = NewResourceGroupRepository(db).Create(context.Background(), group, testAuditEvent())
+	group := resourcegroup.Group{ID: groupStoreFixtureSecondGroupID, TenantID: groupStoreFixtureTenantID, Slug: "ci", Name: "CI"}
+	err = NewResourceGroupRepository(db).Create(context.Background(), group, testAuditEvent(group.TenantID, groupStoreFixtureActorID, audit.EventCreate, "resource_group", group.ID))
 	assertConflict(t, err, "resource_group", "slug")
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unmet expectations: %v", err)
@@ -71,14 +73,14 @@ func TestResourceGroupRepository_Create_DBError(t *testing.T) {
 	}
 	defer func() { _ = db.Close() }()
 
-	expectTenantTx(t, mock, "tenant-a")
+	expectTenantTx(t, mock, groupStoreFixtureTenantID)
 	mock.ExpectExec(`INSERT INTO resource_groups`).
-		WithArgs("rg-1", "tenant-a", "ci", "CI").
+		WithArgs(groupStoreFixtureFirstGroupID, groupStoreFixtureTenantID, "ci", "CI").
 		WillReturnError(errors.New("db down"))
 	mock.ExpectRollback()
 
-	group := resourcegroup.Group{ID: "rg-1", TenantID: "tenant-a", Slug: "ci", Name: "CI"}
-	if err := NewResourceGroupRepository(db).Create(context.Background(), group, testAuditEvent()); err == nil {
+	group := resourcegroup.Group{ID: groupStoreFixtureFirstGroupID, TenantID: groupStoreFixtureTenantID, Slug: "ci", Name: "CI"}
+	if err := NewResourceGroupRepository(db).Create(context.Background(), group, testAuditEvent(group.TenantID, groupStoreFixtureActorID, audit.EventCreate, "resource_group", group.ID)); err == nil {
 		t.Fatal("expected error, got nil")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -93,17 +95,17 @@ func TestResourceGroupRepository_List(t *testing.T) {
 	}
 	defer func() { _ = db.Close() }()
 
-	expectTenantTx(t, mock, "tenant-a")
+	expectTenantTx(t, mock, groupStoreFixtureTenantID)
 	mock.ExpectQuery(`SELECT (.+) FROM resource_groups WHERE tenant_id = \$1 ORDER BY slug`).
-		WithArgs("tenant-a").
+		WithArgs(groupStoreFixtureTenantID).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "slug", "name"}).
-			AddRow("rg-1", "tenant-a", "ci", "CI").
-			AddRow("rg-2", "tenant-a", "web", "Web"))
+			AddRow(groupStoreFixtureFirstGroupID, groupStoreFixtureTenantID, "ci", "CI").
+			AddRow(groupStoreFixtureSecondGroupID, groupStoreFixtureTenantID, "web", "Web"))
 	// The read runs in the caller's transaction and releases it; there is no
 	// commit to expect on a read.
 	mock.ExpectRollback()
 
-	groups, err := NewResourceGroupRepository(db).List(context.Background(), "tenant-a")
+	groups, err := NewResourceGroupRepository(db).List(context.Background(), groupStoreFixtureTenantID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -125,13 +127,13 @@ func TestResourceGroupRepository_Exists(t *testing.T) {
 	}
 	defer func() { _ = db.Close() }()
 
-	expectTenantTx(t, mock, "tenant-a")
+	expectTenantTx(t, mock, groupStoreFixtureTenantID)
 	mock.ExpectQuery(`SELECT EXISTS \(SELECT 1 FROM resource_groups WHERE id = \$1 AND tenant_id = \$2\)`).
-		WithArgs("rg-1", "tenant-a").
+		WithArgs(groupStoreFixtureFirstGroupID, groupStoreFixtureTenantID).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 	mock.ExpectRollback()
 
-	exists, err := NewResourceGroupRepository(db).Exists(context.Background(), "tenant-a", "rg-1")
+	exists, err := NewResourceGroupRepository(db).Exists(context.Background(), groupStoreFixtureTenantID, groupStoreFixtureFirstGroupID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -152,13 +154,13 @@ func TestResourceGroupRepository_Exists_ForeignGroup(t *testing.T) {
 
 	// A group id from another tenant must read as absent, so a key cannot be
 	// scoped to a group the caller never had.
-	expectTenantTx(t, mock, "tenant-a")
+	expectTenantTx(t, mock, groupStoreFixtureTenantID)
 	mock.ExpectQuery(`SELECT EXISTS \(SELECT 1 FROM resource_groups`).
-		WithArgs("rg-other", "tenant-a").
+		WithArgs("rg-other", groupStoreFixtureTenantID).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectRollback()
 
-	exists, err := NewResourceGroupRepository(db).Exists(context.Background(), "tenant-a", "rg-other")
+	exists, err := NewResourceGroupRepository(db).Exists(context.Background(), groupStoreFixtureTenantID, "rg-other")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -169,3 +171,11 @@ func TestResourceGroupRepository_Exists_ForeignGroup(t *testing.T) {
 		t.Errorf("unmet expectations: %v", err)
 	}
 }
+
+var groupStoreFixtureActorID = scan.GenerateID()
+
+var groupStoreFixtureFirstGroupID = scan.GenerateID()
+
+var groupStoreFixtureSecondGroupID = scan.GenerateID()
+
+var groupStoreFixtureTenantID = scan.GenerateID()

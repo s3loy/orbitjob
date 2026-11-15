@@ -3,18 +3,19 @@ package http
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
+	"orbitjob/internal/core/app/functioninvoke"
 	domainfunction "orbitjob/internal/core/domain/function"
+	"orbitjob/internal/domain/executionpolicy"
+	"orbitjob/internal/domain/queryfilter"
 	"orbitjob/internal/domain/resource"
 	"orbitjob/internal/domain/validation"
 )
-
-// The function use cases live beside the handlers that call them until the
-// storage workstream lands its repositories; they consume the store contracts
-// through the narrow consumer-side interfaces below, so the implementations
-// slot in without touching this file.
 
 // functionReader reads one live function definition tenant-scoped. It is the
 // FunctionStore contract's GetForTenant.
@@ -50,11 +51,17 @@ type functionRunGetter interface {
 
 // ListFunctionsUseCase lists the caller's tenant's function definitions.
 type ListFunctionsUseCase struct {
-	lister functionLister
+	lister    functionLister
+	revisions functioninvoke.RevisionSource
 }
 
 func NewListFunctionsUseCase(lister functionLister) *ListFunctionsUseCase {
 	return &ListFunctionsUseCase{lister: lister}
+}
+
+func (uc *ListFunctionsUseCase) WithReadiness(revisions functioninvoke.RevisionSource) *ListFunctionsUseCase {
+	uc.revisions = revisions
+	return uc
 }
 
 // FunctionListInput is the normalized list input. ResourceGroupID is the
@@ -62,6 +69,7 @@ func NewListFunctionsUseCase(lister functionLister) *ListFunctionsUseCase {
 // caller sees only its group's functions instead of being refused outright --
 // the checks read model's exact semantics.
 type FunctionListInput struct {
+	Search          string
 	TenantID        string
 	ResourceGroupID string
 	Limit           int
@@ -70,28 +78,35 @@ type FunctionListInput struct {
 
 // FunctionItem is the API's function definition shape.
 type FunctionItem struct {
-	ID              int64          `json:"id"`
-	TenantID        string         `json:"tenant_id"`
-	ResourceGroupID string         `json:"resource_group_id"`
-	Name            string         `json:"name"`
-	Description     string         `json:"description"`
-	Status          string         `json:"status"`
-	Image           string         `json:"image"`
-	Command         []string       `json:"command"`
-	Args            []string       `json:"args"`
-	TimeoutSeconds  int            `json:"timeout_seconds"`
-	RetryLimit      int            `json:"retry_limit"`
-	HistorySuccess  int            `json:"history_success"`
-	HistoryFailed   int            `json:"history_failed"`
-	Labels          map[string]any `json:"labels"`
-	Version         int            `json:"version"`
-	CreatedAt       time.Time      `json:"created_at"`
-	UpdatedAt       time.Time      `json:"updated_at"`
+	ExecutionPolicyVersion int32                      `json:"execution_policy_version,omitempty"`
+	RetrySafe              bool                       `json:"retry_safe,omitempty"`
+	Resources              *executionpolicy.Resources `json:"resources,omitempty"`
+	ID                     int64                      `json:"id"`
+	TenantID               string                     `json:"tenant_id"`
+	ResourceGroupID        string                     `json:"resource_group_id"`
+	Name                   string                     `json:"name"`
+	Description            string                     `json:"description"`
+	Status                 string                     `json:"status"`
+	Image                  string                     `json:"image"`
+	Command                []string                   `json:"command"`
+	Args                   []string                   `json:"args"`
+	TimeoutSeconds         int                        `json:"timeout_seconds"`
+	RetryLimit             int                        `json:"retry_limit"`
+	HistorySuccess         int                        `json:"history_success"`
+	HistoryFailed          int                        `json:"history_failed"`
+	Labels                 map[string]any             `json:"labels"`
+	Version                int                        `json:"version"`
+	ActiveRevisionID       *int64                     `json:"active_revision_id"`
+	ActiveRevisionVersion  *int                       `json:"active_revision_version"`
+	Ready                  bool                       `json:"ready"`
+	CreatedAt              time.Time                  `json:"created_at"`
+	UpdatedAt              time.Time                  `json:"updated_at"`
 }
 
 func newFunctionItem(def domainfunction.Definition) FunctionItem {
 	return FunctionItem{
-		ID:              def.ID,
+		ID:                     def.ID,
+		ExecutionPolicyVersion: def.ExecutionPolicyVersion, RetrySafe: def.RetrySafe, Resources: def.Resources,
 		TenantID:        def.TenantID,
 		ResourceGroupID: def.ResourceGroupID,
 		Name:            def.Name,
@@ -118,6 +133,13 @@ func (uc *ListFunctionsUseCase) List(ctx context.Context, in FunctionListInput) 
 	if err != nil {
 		return nil, err
 	}
+	search, err := queryfilter.Search(in.Search)
+	if err != nil {
+		return nil, err
+	}
+	if in.Offset < 0 {
+		return nil, validation.New("offset", "must be >= 0")
+	}
 	if uc.lister == nil {
 		return nil, fmt.Errorf("function lister is required")
 	}
@@ -127,11 +149,18 @@ func (uc *ListFunctionsUseCase) List(ctx context.Context, in FunctionListInput) 
 		return nil, err
 	}
 
+	search = strings.ToLower(search)
+	sort.SliceStable(defs, func(i, j int) bool {
+		if defs[i].CreatedAt.Equal(defs[j].CreatedAt) {
+			return defs[i].ID > defs[j].ID
+		}
+		return defs[i].CreatedAt.After(defs[j].CreatedAt)
+	})
 	limit := normalizeListLimit(in.Limit)
 	out := make([]FunctionItem, 0, len(defs))
 	skipped := 0
 	for _, def := range defs {
-		if !visibleToGroup(def.ResourceGroupID, in.ResourceGroupID) {
+		if !visibleToGroup(def.ResourceGroupID, in.ResourceGroupID) || (search != "" && !strings.Contains(strings.ToLower(def.Name), search) && !strings.Contains(strings.ToLower(def.Description), search)) {
 			continue
 		}
 		if skipped < in.Offset {
@@ -141,7 +170,11 @@ func (uc *ListFunctionsUseCase) List(ctx context.Context, in FunctionListInput) 
 		if len(out) == limit {
 			break
 		}
-		out = append(out, newFunctionItem(def))
+		item, err := functionItemWithReadiness(ctx, def, uc.revisions)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, item)
 	}
 	return out, nil
 }
@@ -150,11 +183,17 @@ func (uc *ListFunctionsUseCase) List(ctx context.Context, in FunctionListInput) 
 
 // GetFunctionUseCase reads one function definition.
 type GetFunctionUseCase struct {
-	reader functionReader
+	reader    functionReader
+	revisions functioninvoke.RevisionSource
 }
 
 func NewGetFunctionUseCase(reader functionReader) *GetFunctionUseCase {
 	return &GetFunctionUseCase{reader: reader}
+}
+
+func (uc *GetFunctionUseCase) WithReadiness(revisions functioninvoke.RevisionSource) *GetFunctionUseCase {
+	uc.revisions = revisions
+	return uc
 }
 
 type FunctionGetInput struct {
@@ -171,7 +210,23 @@ func (uc *GetFunctionUseCase) Get(ctx context.Context, in FunctionGetInput) (Fun
 	if err != nil {
 		return FunctionItem{}, err
 	}
-	return newFunctionItem(def), nil
+	return functionItemWithReadiness(ctx, def, uc.revisions)
+}
+
+func functionItemWithReadiness(ctx context.Context, def domainfunction.Definition, revisions functioninvoke.RevisionSource) (FunctionItem, error) {
+	item := newFunctionItem(def)
+	if revisions == nil {
+		return item, nil
+	}
+	rev, found, err := revisions.ActiveRevision(ctx, def.TenantID, domainfunction.SourceUID(def.ID))
+	if err != nil {
+		return FunctionItem{}, fmt.Errorf("read function readiness: %w", err)
+	}
+	if found {
+		item.ActiveRevisionID, item.ActiveRevisionVersion = &rev.ID, &rev.DefinitionVersion
+		item.Ready = rev.DefinitionVersion == def.Version && def.Status == domainfunction.StatusActive
+	}
+	return item, nil
 }
 
 func (uc *GetFunctionUseCase) get(ctx context.Context, in FunctionGetInput) (domainfunction.Definition, error) {
@@ -212,6 +267,9 @@ func NewListFunctionRunsUseCase(runs functionRunLister, reader functionReader) *
 }
 
 type FunctionRunListInput struct {
+	Offset          int
+	CreatedFrom     string
+	CreatedBefore   string
 	FunctionID      int64
 	TenantID        string
 	ResourceGroupID string
@@ -222,30 +280,34 @@ type FunctionRunListInput struct {
 // are nullable at the boundary: a canceled invocation may have been stopped
 // before its first attempt began.
 type FunctionRunItem struct {
-	ID          int64      `json:"id"`
-	RunID       string     `json:"run_id"`
-	FunctionID  int64      `json:"function_id"`
-	Status      string     `json:"status"`
-	TriggeredAt time.Time  `json:"triggered_at"`
-	StartedAt   *time.Time `json:"started_at"`
-	FinishedAt  *time.Time `json:"finished_at"`
-	DurationMs  *int       `json:"duration_ms"`
-	Version     int        `json:"version"`
-	CreatedAt   time.Time  `json:"created_at"`
+	ID            int64                    `json:"id"`
+	RunID         string                   `json:"run_id"`
+	OccurrenceKey *string                  `json:"occurrence_key"`
+	FunctionID    int64                    `json:"function_id"`
+	Status        string                   `json:"status"`
+	TriggeredAt   time.Time                `json:"triggered_at"`
+	StartedAt     *time.Time               `json:"started_at"`
+	FinishedAt    *time.Time               `json:"finished_at"`
+	DurationMs    *int                     `json:"duration_ms"`
+	Version       int                      `json:"version"`
+	CreatedAt     time.Time                `json:"created_at"`
+	Attempts      []domainfunction.Attempt `json:"attempts" nullable:"true"`
+	LastAttempt   *int                     `json:"last_attempt"`
 }
 
 func newFunctionRunItem(row domainfunction.FunctionRun) FunctionRunItem {
 	return FunctionRunItem{
-		ID:          row.ID,
-		RunID:       row.RunID,
-		FunctionID:  row.FunctionID,
-		Status:      row.Status,
-		TriggeredAt: row.TriggeredAt,
-		StartedAt:   row.StartedAt,
-		FinishedAt:  row.FinishedAt,
-		DurationMs:  row.DurationMs,
-		Version:     row.Version,
-		CreatedAt:   row.CreatedAt,
+		ID:            row.ID,
+		RunID:         row.RunID,
+		OccurrenceKey: row.OccurrenceKey,
+		FunctionID:    row.FunctionID,
+		Status:        row.Status,
+		TriggeredAt:   row.TriggeredAt,
+		StartedAt:     row.StartedAt,
+		FinishedAt:    row.FinishedAt,
+		DurationMs:    row.DurationMs,
+		Version:       row.Version,
+		CreatedAt:     row.CreatedAt,
 	}
 }
 
@@ -267,7 +329,23 @@ func (uc *ListFunctionRunsUseCase) List(ctx context.Context, in FunctionRunListI
 	if err != nil {
 		return nil, err
 	}
-	rows, err := uc.runs.RunsByFunction(ctx, tenantID, in.FunctionID, normalizeListLimit(in.Limit))
+	from, before, err := queryfilter.Range(in.CreatedFrom, in.CreatedBefore)
+	if err != nil {
+		return nil, err
+	}
+	if in.Offset < 0 {
+		return nil, validation.New("offset", "must be >= 0")
+	}
+	var rows []domainfunction.FunctionRun
+	if reader, ok := uc.runs.(interface {
+		RunsByFunctionPage(context.Context, string, int64, int, int, string, string) ([]domainfunction.FunctionRun, error)
+	}); ok {
+		rows, err = reader.RunsByFunctionPage(ctx, tenantID, in.FunctionID, normalizeListLimit(in.Limit), in.Offset, from, before)
+	} else if in.Offset != 0 || from != "" || before != "" {
+		return nil, fmt.Errorf("paged function history reader is required")
+	} else {
+		rows, err = uc.runs.RunsByFunction(ctx, tenantID, in.FunctionID, normalizeListLimit(in.Limit))
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -307,20 +385,42 @@ func (uc *GetFunctionRunUseCase) Get(ctx context.Context, in FunctionRunGetInput
 	if uc.runs == nil {
 		return FunctionRunItem{}, fmt.Errorf("function run getter is required")
 	}
-	if strings.TrimSpace(in.RunID) == "" {
-		return FunctionRunItem{}, validation.New("run_id", "is required")
+	runID, err := uuid.Parse(in.RunID)
+	if err != nil || len(in.RunID) != 36 {
+		return FunctionRunItem{}, validation.New("run_id", "must be a UUID")
 	}
 
 	tenantID, err := normalizeTenantID(in.TenantID)
 	if err != nil {
 		return FunctionRunItem{}, err
 	}
-	row, found, err := uc.runs.RunByRunID(ctx, tenantID, in.FunctionID, in.RunID)
+	row, found, err := uc.runs.RunByRunID(ctx, tenantID, in.FunctionID, runID.String())
 	if err != nil {
 		return FunctionRunItem{}, err
 	}
 	if !found {
 		return FunctionRunItem{}, &resource.NotFoundError{Resource: "function run", ID: in.RunID}
 	}
-	return newFunctionRunItem(row), nil
+	out := newFunctionRunItem(row)
+	if reader, ok := uc.runs.(interface {
+		AttemptsByRunID(context.Context, string, int64, string) ([]domainfunction.Attempt, bool, error)
+	}); ok {
+		attempts, known, readErr := reader.AttemptsByRunID(ctx, tenantID, in.FunctionID, runID.String())
+		if readErr != nil {
+			return FunctionRunItem{}, readErr
+		}
+		if known {
+			out.Attempts = attempts
+			if out.Attempts == nil {
+				out.Attempts = []domainfunction.Attempt{}
+			}
+			for _, attempt := range attempts {
+				if out.LastAttempt == nil || attempt.AttemptNumber > *out.LastAttempt {
+					number := attempt.AttemptNumber
+					out.LastAttempt = &number
+				}
+			}
+		}
+	}
+	return out, nil
 }

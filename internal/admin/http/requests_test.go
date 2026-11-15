@@ -2,11 +2,13 @@ package http
 
 import (
 	"testing"
+
+	"orbitjob/internal/platform/scan"
 )
 
 func TestListJobsRequest_ToListInput(t *testing.T) {
 	req := ListJobsRequest{
-		TenantID: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+		TenantID: requestFixtureIdentityTenantID,
 		Limit:    20,
 		Offset:   40,
 	}
@@ -27,7 +29,7 @@ func TestListJobsRequest_ToListInput(t *testing.T) {
 func TestGetJobRequest_ToGetInput(t *testing.T) {
 	req := GetJobRequest{
 		ID:       42,
-		TenantID: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+		TenantID: requestFixtureIdentityTenantID,
 	}
 
 	got := req.ToGetInput()
@@ -39,3 +41,5 @@ func TestGetJobRequest_ToGetInput(t *testing.T) {
 		t.Fatalf("expected tenant_id=%q, got %q", req.TenantID, got.TenantID)
 	}
 }
+
+var requestFixtureIdentityTenantID = scan.GenerateID()

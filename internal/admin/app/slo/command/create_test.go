@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"orbitjob/internal/core/domain/slo"
+
+	"orbitjob/internal/platform/scan"
 )
 
 type stubSLOWriter struct {
@@ -43,7 +45,7 @@ func (s *stubSLOStatusChanger) ChangeStatus(_ context.Context, _, _ string, _ in
 
 func validSLOInput() CreateInput {
 	return CreateInput{
-		Name: "slo-1", TenantID: "t1", SLIID: 1, Target: 0.99,
+		Name: "slo-1", TenantID: sloCreateFixtureTenantID, SLIID: 1, Target: 0.99,
 		WindowType:        slo.WindowTypeRolling,
 		WindowDuration:    30 * 24 * time.Hour,
 		AlertFastBurnRate: 0.1,
@@ -96,7 +98,7 @@ func TestDeleteSLO_Success(t *testing.T) {
 	repo := &stubSLODeleter{}
 	uc := NewDeleteSLOUseCase(repo)
 
-	if err := uc.Delete(context.Background(), DeleteInput{TenantID: "t1", ID: 5, Version: 2}); err != nil {
+	if err := uc.Delete(context.Background(), DeleteInput{TenantID: sloCreateFixtureTenantID, ID: 5, Version: 2}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if repo.lastID != 5 {
@@ -108,7 +110,7 @@ func TestDeleteSLO_RepoError(t *testing.T) {
 	repo := &stubSLODeleter{err: errors.New("not found")}
 	uc := NewDeleteSLOUseCase(repo)
 
-	if err := uc.Delete(context.Background(), DeleteInput{TenantID: "t1", ID: 5, Version: 2}); err == nil {
+	if err := uc.Delete(context.Background(), DeleteInput{TenantID: sloCreateFixtureTenantID, ID: 5, Version: 2}); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -117,7 +119,7 @@ func TestDeleteSLO_InvalidID(t *testing.T) {
 	repo := &stubSLODeleter{}
 	uc := NewDeleteSLOUseCase(repo)
 
-	if err := uc.Delete(context.Background(), DeleteInput{TenantID: "t1", ID: 0, Version: 2}); err == nil {
+	if err := uc.Delete(context.Background(), DeleteInput{TenantID: sloCreateFixtureTenantID, ID: 0, Version: 2}); err == nil {
 		t.Fatal("expected validation error for id<=0")
 	}
 	if repo.lastID != 0 {
@@ -129,7 +131,7 @@ func TestChangeSLOStatus_Success(t *testing.T) {
 	repo := &stubSLOStatusChanger{out: slo.Snapshot{ID: 5, Status: slo.StatusPaused}}
 	uc := NewChangeSLOStatusUseCase(repo)
 
-	result, err := uc.ChangeStatus(context.Background(), "t1", ChangeStatusInput{ID: 5, Version: 2, Status: slo.StatusPaused})
+	result, err := uc.ChangeStatus(context.Background(), sloCreateFixtureTenantID, ChangeStatusInput{ID: 5, Version: 2, Status: slo.StatusPaused})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -142,7 +144,7 @@ func TestChangeSLOStatus_InvalidID(t *testing.T) {
 	repo := &stubSLOStatusChanger{}
 	uc := NewChangeSLOStatusUseCase(repo)
 
-	_, err := uc.ChangeStatus(context.Background(), "t1", ChangeStatusInput{ID: 0, Status: slo.StatusPaused})
+	_, err := uc.ChangeStatus(context.Background(), sloCreateFixtureTenantID, ChangeStatusInput{ID: 0, Status: slo.StatusPaused})
 	if err == nil {
 		t.Fatal("expected validation error for id<=0")
 	}
@@ -152,7 +154,7 @@ func TestChangeSLOStatus_InvalidStatus(t *testing.T) {
 	repo := &stubSLOStatusChanger{}
 	uc := NewChangeSLOStatusUseCase(repo)
 
-	_, err := uc.ChangeStatus(context.Background(), "t1", ChangeStatusInput{ID: 5, Status: "bogus"})
+	_, err := uc.ChangeStatus(context.Background(), sloCreateFixtureTenantID, ChangeStatusInput{ID: 5, Status: "bogus"})
 	if err == nil {
 		t.Fatal("expected validation error for invalid status")
 	}
@@ -162,7 +164,7 @@ func TestChangeSLOStatus_RepoError(t *testing.T) {
 	repo := &stubSLOStatusChanger{err: errors.New("stale version")}
 	uc := NewChangeSLOStatusUseCase(repo)
 
-	_, err := uc.ChangeStatus(context.Background(), "t1", ChangeStatusInput{ID: 5, Status: slo.StatusPaused})
+	_, err := uc.ChangeStatus(context.Background(), sloCreateFixtureTenantID, ChangeStatusInput{ID: 5, Status: slo.StatusPaused})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -172,7 +174,7 @@ func TestPauseSLO_SetsPausedStatus(t *testing.T) {
 	repo := &stubSLOStatusChanger{out: slo.Snapshot{ID: 5, Status: slo.StatusPaused}}
 	uc := NewChangeSLOStatusUseCase(repo)
 
-	_, err := uc.Pause(context.Background(), "t1", ChangeStatusInput{ID: 5, Version: 2})
+	_, err := uc.Pause(context.Background(), sloCreateFixtureTenantID, ChangeStatusInput{ID: 5, Version: 2})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -185,7 +187,7 @@ func TestResumeSLO_SetsActiveStatus(t *testing.T) {
 	repo := &stubSLOStatusChanger{out: slo.Snapshot{ID: 5, Status: slo.StatusActive}}
 	uc := NewChangeSLOStatusUseCase(repo)
 
-	_, err := uc.Resume(context.Background(), "t1", ChangeStatusInput{ID: 5, Version: 3})
+	_, err := uc.Resume(context.Background(), sloCreateFixtureTenantID, ChangeStatusInput{ID: 5, Version: 3})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -193,3 +195,5 @@ func TestResumeSLO_SetsActiveStatus(t *testing.T) {
 		t.Fatalf("expected status active, got %q", repo.lastStatus)
 	}
 }
+
+var sloCreateFixtureTenantID = scan.GenerateID()

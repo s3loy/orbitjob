@@ -2,8 +2,10 @@ package query
 
 import (
 	"context"
+	"fmt"
 
 	"orbitjob/internal/core/domain/slo"
+	"orbitjob/internal/domain/queryfilter"
 )
 
 // sloLister lists SLOs.
@@ -23,6 +25,7 @@ func NewListSLOsUseCase(repo sloLister) *ListSLOsUseCase {
 
 // ListInput contains the parameters for listing.
 type ListInput struct {
+	Search   string
 	TenantID string
 	// ResourceGroupID narrows the result to one resource group when the caller's
 	// key is scoped to one. Empty means unscoped: the whole tenant.
@@ -56,6 +59,10 @@ type ListResult struct {
 
 // List retrieves a paginated list of SLOs.
 func (uc *ListSLOsUseCase) List(ctx context.Context, in ListInput) (ListResult, error) {
+	search, err := queryfilter.Search(in.Search)
+	if err != nil {
+		return ListResult{}, err
+	}
 	if in.Limit <= 0 {
 		in.Limit = 50
 	}
@@ -63,7 +70,19 @@ func (uc *ListSLOsUseCase) List(ctx context.Context, in ListInput) (ListResult, 
 		in.Limit = 100
 	}
 
-	slos, total, err := uc.repo.List(ctx, in.TenantID, in.ResourceGroupID, in.Limit, in.Offset)
+	var slos []slo.Snapshot
+	var total int64
+	if search != "" {
+		reader, ok := uc.repo.(interface {
+			ListSearch(context.Context, string, string, string, int, int) ([]slo.Snapshot, int64, error)
+		})
+		if !ok {
+			return ListResult{}, fmt.Errorf("searchable SLO reader is required")
+		}
+		slos, total, err = reader.ListSearch(ctx, in.TenantID, in.ResourceGroupID, search, in.Limit, in.Offset)
+	} else {
+		slos, total, err = uc.repo.List(ctx, in.TenantID, in.ResourceGroupID, in.Limit, in.Offset)
+	}
 	if err != nil {
 		return ListResult{}, err
 	}

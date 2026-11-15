@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"orbitjob/internal/domain/queryfilter"
 	"time"
 )
 
@@ -10,6 +11,7 @@ type checkLister interface {
 }
 
 type ListChecksInput struct {
+	Search   string
 	TenantID string
 	Status   *string
 	// ResourceGroupID narrows the result to one resource group when the caller's
@@ -21,16 +23,17 @@ type ListChecksInput struct {
 
 // ListItem represents a single check in the list response.
 type ListItem struct {
-	ID           int64      `json:"id"`
-	Name         string     `json:"name"`
-	Description  *string    `json:"description,omitempty"`
-	TenantID     string     `json:"tenant_id"`
-	Status       string     `json:"status"`
-	CheckType    string     `json:"check_type"`
-	ScheduleType string     `json:"schedule_type"`
-	NextRunAt    *time.Time `json:"next_run_at,omitempty"`
-	Version      int        `json:"version"`
-	CreatedAt    time.Time  `json:"created_at"`
+	ExecutionPolicyVersion int32      `json:"execution_policy_version"`
+	ID                     int64      `json:"id"`
+	Name                   string     `json:"name"`
+	Description            *string    `json:"description,omitempty"`
+	TenantID               string     `json:"tenant_id"`
+	Status                 string     `json:"status"`
+	CheckType              string     `json:"check_type"`
+	ScheduleType           string     `json:"schedule_type"`
+	NextRunAt              *time.Time `json:"next_run_at,omitempty"`
+	Version                int        `json:"version"`
+	CreatedAt              time.Time  `json:"created_at"`
 }
 
 type ListChecksResult struct {
@@ -47,6 +50,11 @@ func NewListChecksUseCase(repo checkLister) *ListChecksUseCase {
 }
 
 func (uc *ListChecksUseCase) List(ctx context.Context, in ListChecksInput) (ListChecksResult, error) {
+	search, err := queryfilter.Search(in.Search)
+	if err != nil {
+		return ListChecksResult{}, err
+	}
+	in.Search = search
 	items, total, err := uc.repo.List(ctx, in)
 	if err != nil {
 		return ListChecksResult{}, err

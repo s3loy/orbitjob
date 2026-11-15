@@ -7,6 +7,8 @@ import (
 
 	"orbitjob/internal/domain/resource"
 	"orbitjob/internal/domain/validation"
+
+	"orbitjob/internal/platform/scan"
 )
 
 // The two run gates refuse a scoped caller because a run has no group column:
@@ -22,9 +24,9 @@ import (
 // Fixtures inserted by this file. Tenant ids are tenants.id values, CHAR(26)
 // ULIDs; slugs like "default" are never tenant identifiers. t3ScopedGroup is a
 // resource group id, a different kind of identifier and never used as a tenant.
-const (
-	t3Tenant      = "01J9Z7V2M4QK7P3XWQ5R8TNBCE"
-	t3ScopedGroup = "01JBB0W9YRXG4SZV2QKM78N3PD"
+var (
+	t3Tenant      = runQueryScopeIdentityTenantID
+	t3ScopedGroup = runQueryScopeIdentityOtherTenantID
 )
 
 // t3NormalizeRunGetWithoutScopeGuard is NormalizeGetInput with the
@@ -191,3 +193,7 @@ func TestRunQueryTenantContract(t *testing.T) {
 		t3AssertTenantIdRefusal(t, err)
 	})
 }
+
+var runQueryScopeIdentityTenantID = scan.GenerateID()
+
+var runQueryScopeIdentityOtherTenantID = scan.GenerateID()

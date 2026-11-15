@@ -8,7 +8,7 @@ import (
 
 // budgetLister lists historical budgets.
 type budgetLister interface {
-	ListHistory(ctx context.Context, tenantID string, sloID int64, limit, offset int) ([]slo.Budget, int64, error)
+	ListHistory(ctx context.Context, tenantID, resourceGroupID string, sloID int64, limit, offset int) ([]slo.Budget, int64, error)
 }
 
 // ListBudgetHistoryUseCase handles budget history listing.
@@ -23,10 +23,11 @@ func NewListBudgetHistoryUseCase(repo budgetLister) *ListBudgetHistoryUseCase {
 
 // ListInput contains the parameters for listing.
 type ListInput struct {
-	TenantID string
-	SLOID    int64
-	Limit    int
-	Offset   int
+	TenantID        string
+	ResourceGroupID string
+	SLOID           int64
+	Limit           int
+	Offset          int
 }
 
 // ListItem is a single item in the list.
@@ -57,7 +58,7 @@ func (uc *ListBudgetHistoryUseCase) List(ctx context.Context, in ListInput) (Lis
 		in.Limit = 100
 	}
 
-	budgets, total, err := uc.repo.ListHistory(ctx, in.TenantID, in.SLOID, in.Limit, in.Offset)
+	budgets, total, err := uc.repo.ListHistory(ctx, in.TenantID, in.ResourceGroupID, in.SLOID, in.Limit, in.Offset)
 	if err != nil {
 		return ListResult{}, err
 	}

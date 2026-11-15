@@ -7,6 +7,8 @@ import (
 
 	"orbitjob/internal/core/domain/audit"
 	"orbitjob/internal/core/domain/policy"
+
+	"orbitjob/internal/platform/scan"
 )
 
 // stubPolicyDeleter captures the event it was handed: the repository writes the
@@ -31,20 +33,20 @@ func TestDeletePassesTheTenantAndID(t *testing.T) {
 	repo := &stubPolicyDeleter{}
 
 	if err := NewDeleter(repo).Delete(context.Background(), DeleteInput{
-		TenantID: "tenant-a",
+		TenantID: policyDeleteFixtureTenantID,
 		ID:       "policy-1",
-		ActorID:  "key-1",
+		ActorID:  policyDeleteFixtureActorID,
 	}); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	if repo.gotTenantID != "tenant-a" || repo.gotID != "policy-1" {
+	if repo.gotTenantID != policyDeleteFixtureTenantID || repo.gotID != "policy-1" {
 		t.Fatalf("unexpected arguments: %s / %s", repo.gotTenantID, repo.gotID)
 	}
 	e := repo.gotEvent
-	if e.EventType != audit.EventDelete || e.ResourceID != "policy-1" || e.ActorID != "key-1" {
+	if e.EventType != audit.EventDelete || e.ResourceID != "policy-1" || e.ActorID != policyDeleteFixtureActorID {
 		t.Fatalf("unexpected audit event: %+v", e)
 	}
-	if e.TenantID != "tenant-a" {
+	if e.TenantID != policyDeleteFixtureTenantID {
 		t.Fatalf("audit event is not scoped to the tenant: %+v", e)
 	}
 }
@@ -55,7 +57,7 @@ func TestDeletePropagatesThePlatformPresetRefusal(t *testing.T) {
 	repo := &stubPolicyDeleter{err: policy.ErrPlatformPolicyImmutable}
 
 	err := NewDeleter(repo).Delete(context.Background(), DeleteInput{
-		TenantID: "tenant-a",
+		TenantID: policyDeleteFixtureTenantID,
 		ID:       "preset-1",
 	})
 	if !errors.Is(err, policy.ErrPlatformPolicyImmutable) {
@@ -66,9 +68,13 @@ func TestDeletePropagatesThePlatformPresetRefusal(t *testing.T) {
 func TestDeletePropagatesAWriteFailure(t *testing.T) {
 	repo := &stubPolicyDeleter{err: errors.New("transaction aborted")}
 	if err := NewDeleter(repo).Delete(context.Background(), DeleteInput{
-		TenantID: "tenant-a",
+		TenantID: policyDeleteFixtureTenantID,
 		ID:       "policy-1",
 	}); err == nil {
 		t.Fatal("expected the write failure to propagate")
 	}
 }
+
+var policyDeleteFixtureActorID = scan.GenerateID()
+
+var policyDeleteFixtureTenantID = scan.GenerateID()

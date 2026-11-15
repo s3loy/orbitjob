@@ -13,7 +13,7 @@ type sloReader interface {
 
 // budgetReader retrieves current budgets.
 type budgetReader interface {
-	GetCurrent(ctx context.Context, tenantID string, sloID int64) (slo.Budget, error)
+	GetCurrent(ctx context.Context, tenantID, resourceGroupID string, sloID int64) (slo.Budget, error)
 }
 
 // GetSLOUseCase handles SLO retrieval with current budget.
@@ -86,8 +86,14 @@ func (uc *GetSLOUseCase) Get(ctx context.Context, tenantID, resourceGroupID stri
 		UpdatedAt:         snap.UpdatedAt.Format("2006-01-02T15:04:05Z"),
 	}
 
+	// Definition responses keep this optional evidence limited to ungrouped
+	// credentials; dedicated budget routes enforce parent scope separately.
+	if resourceGroupID != "" {
+		return item, nil
+	}
+
 	// Try to get current budget (may not exist yet).
-	budget, err := uc.budgetRepo.GetCurrent(ctx, tenantID, snap.ID)
+	budget, err := uc.budgetRepo.GetCurrent(ctx, tenantID, resourceGroupID, snap.ID)
 	if err == nil {
 		item.CurrentBudget = &BudgetItem{
 			WindowStart:     budget.WindowStart.Format("2006-01-02T15:04:05Z"),

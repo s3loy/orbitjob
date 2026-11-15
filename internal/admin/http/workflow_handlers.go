@@ -78,6 +78,7 @@ func (h *Handler) ListWorkflows(c *gin.Context) {
 		return
 	}
 	out, err := h.listWorkflowsUC.List(c.Request.Context(), WorkflowListInput{
+		Search:          req.Search,
 		TenantID:        tenantID,
 		ResourceGroupID: groupFrom(c),
 		Limit:           req.Limit,
@@ -183,6 +184,7 @@ func (h *Handler) ListWorkflowRuns(c *gin.Context) {
 		return
 	}
 	out, err := h.listWorkflowRunsUC.List(c.Request.Context(), WorkflowRunListInput{
+		CreatedFrom: req.CreatedFrom, CreatedBefore: req.CreatedBefore,
 		WorkflowID:      req.ID,
 		TenantID:        tenantID,
 		ResourceGroupID: groupFrom(c),

@@ -91,6 +91,9 @@ func (uc *TriggerJobUseCase) Trigger(ctx context.Context, in TriggerInput) (Trig
 	if err != nil {
 		return TriggerResult{}, fmt.Errorf("read definition for trigger: %w", err)
 	}
+	if def.SourceMode != "kubernetes" {
+		return TriggerResult{}, &resource.NotFoundError{Resource: "job", ID: normalized.JobID}
+	}
 	if def.Suspend {
 		return TriggerResult{}, &resource.ConflictError{
 			Resource: "job",
@@ -149,8 +152,8 @@ func normalizeTriggerInput(in TriggerInput) (TriggerInput, error) {
 	if actorID == "" {
 		return TriggerInput{}, validation.New("actor_id", "is required")
 	}
-	if len(actorID) > 255 {
-		return TriggerInput{}, validation.New("actor_id", "must be <= 255 characters")
+	if len(actorID) > v1alpha1.RunActorMaxLength {
+		return TriggerInput{}, validation.New("actor_id", fmt.Sprintf("must be <= %d characters", v1alpha1.RunActorMaxLength))
 	}
 
 	return TriggerInput{

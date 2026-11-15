@@ -120,10 +120,36 @@ func (r *PolicyRepository) Delete(ctx context.Context, tenantID, id string, ev a
 		return policy.ErrPlatformPolicyImmutable
 	}
 
+	// SELECT FOR UPDATE also applies UPDATE RLS. Read platform ownership above
+	// without locking so immutable presets keep their existing refusal instead
+	// of becoming hidden by the tenant-only UPDATE policy. Lock only an owned
+	// row, then recheck ownership in case it changed after the first read.
+	err = tx.QueryRowContext(ctx, `SELECT tenant_id FROM policies WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, id, tenantID).Scan(&owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return &resource.NotFoundError{Resource: "policy", ID: id}
+	}
+	if err != nil {
+		return fmt.Errorf("lock policy %s: %w", id, err)
+	}
+	if !owner.Valid || owner.String != tenantID {
+		return &resource.NotFoundError{Resource: "policy", ID: id}
+	}
+
+	// The schema cascades ordinary key_policies bindings, so its FK cannot
+	// enforce the public refusal contract. Hold the policy row lock before the
+	// separate READ COMMITTED check: new FK bindings need KEY SHARE on this row
+	// and cannot appear between this check and the committed deletion.
+	var bound bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM key_policies WHERE policy_id = $1)`, id).Scan(&bound); err != nil {
+		return fmt.Errorf("check policy %s bindings: %w", id, err)
+	}
+	if bound {
+		return &resource.ConflictError{Resource: "policy", Field: "id", Message: "policy is still bound to one or more keys"}
+	}
+
 	if _, err := tx.ExecContext(ctx, `DELETE FROM policies WHERE id = $1 AND tenant_id = $2`, id, tenantID); err != nil {
-		// A policy still bound to a key is referenced by key_policies. ON DELETE
-		// CASCADE would remove those bindings silently, quietly shrinking what
-		// live keys can do; refusing makes the caller unbind first.
+		// Boundary references in api_keys do not cascade. Keep their FK refusal
+		// mapped to the same conflict as an ordinary key binding.
 		var pqErr *pq.Error
 		if errors.As(err, &pqErr) && pqErr.Code == "23503" {
 			return &resource.ConflictError{

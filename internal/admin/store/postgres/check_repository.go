@@ -32,7 +32,7 @@ func (r *CheckRepository) Get(ctx context.Context, tenantID, resourceGroupID str
 	err = tx.QueryRowContext(ctx, `
 			SELECT id, name, description, tenant_id, status, check_type, check_config, assertion_rules,
 			       schedule_type, cron_expr, interval_sec, timezone, timeout_sec, retry_limit,
-			       priority, labels, next_run_at, version, created_at, updated_at
+			       priority, labels, next_run_at, version, created_at, updated_at, execution_policy_version
 			FROM checks
 			WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
 			  AND ($3::text IS NULL OR resource_group_id = $3)
@@ -40,7 +40,7 @@ func (r *CheckRepository) Get(ctx context.Context, tenantID, resourceGroupID str
 		&snap.ID, &snap.Name, &snap.Description, &snap.TenantID, &snap.Status, &snap.CheckType,
 		&checkConfigBytes, &assertionBytes, &snap.ScheduleType, &snap.CronExpr, &snap.IntervalSec,
 		&snap.Timezone, &snap.TimeoutSec, &snap.RetryLimit, &snap.Priority, &labelsBytes,
-		&snap.NextRunAt, &snap.Version, &snap.CreatedAt, &snap.UpdatedAt,
+		&snap.NextRunAt, &snap.Version, &snap.CreatedAt, &snap.UpdatedAt, &snap.ExecutionPolicyVersion,
 	)
 	if err == sql.ErrNoRows {
 		return domaincheck.Snapshot{}, &resource.NotFoundError{
@@ -96,33 +96,35 @@ func (r *CheckRepository) List(ctx context.Context, in checkquery.ListChecksInpu
 			WHERE tenant_id = $1 AND deleted_at IS NULL
 			  AND ($2::text IS NULL OR status = $2)
 			  AND ($3::text IS NULL OR resource_group_id = $3)
-		`, in.TenantID, in.Status, nullableGroup(in.ResourceGroupID)).Scan(&total)
+			  AND ($4 = '' OR strpos(lower(name),lower($4)) > 0 OR strpos(lower(COALESCE(description,'')),lower($4)) > 0)
+		`, in.TenantID, in.Status, nullableGroup(in.ResourceGroupID), in.Search).Scan(&total)
 	if err != nil {
 		return nil, 0, fmt.Errorf("count checks: %w", err)
 	}
 
 	rows, err := tx.QueryContext(ctx, `
-			SELECT id, name, description, tenant_id, status, check_type, schedule_type, next_run_at, version, created_at
+			SELECT id, name, description, tenant_id, status, check_type, schedule_type, next_run_at, version, created_at, execution_policy_version
 			FROM checks
 			WHERE tenant_id = $1 AND deleted_at IS NULL
 			  AND ($2::text IS NULL OR status = $2)
 			  AND ($3::text IS NULL OR resource_group_id = $3)
+			  AND ($6 = '' OR strpos(lower(name),lower($6)) > 0 OR strpos(lower(COALESCE(description,'')),lower($6)) > 0)
 			ORDER BY id DESC
 			LIMIT $4 OFFSET $5
-		`, in.TenantID, in.Status, nullableGroup(in.ResourceGroupID), limit, in.Offset)
+		`, in.TenantID, in.Status, nullableGroup(in.ResourceGroupID), limit, in.Offset, in.Search)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list checks: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	var items []checkquery.ListItem
+	items := make([]checkquery.ListItem, 0)
 	for rows.Next() {
 		var item checkquery.ListItem
 		var description sql.NullString
 		var nextRunAt sql.NullTime
 		err := rows.Scan(
 			&item.ID, &item.Name, &description, &item.TenantID, &item.Status,
-			&item.CheckType, &item.ScheduleType, &nextRunAt, &item.Version, &item.CreatedAt,
+			&item.CheckType, &item.ScheduleType, &nextRunAt, &item.Version, &item.CreatedAt, &item.ExecutionPolicyVersion,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("scan check: %w", err)

@@ -41,26 +41,27 @@ type CreateInput struct {
 
 // CreateResult is the application-layer result for creating a check.
 type CreateResult struct {
-	ID             int64                       `json:"id"`
-	Name           string                      `json:"name"`
-	Description    *string                     `json:"description,omitempty"`
-	TenantID       string                      `json:"tenant_id"`
-	Status         string                      `json:"status"`
-	CheckType      string                      `json:"check_type"`
-	CheckConfig    map[string]any              `json:"check_config"`
-	AssertionRules []domaincheck.AssertionRule `json:"assertion_rules"`
-	ScheduleType   string                      `json:"schedule_type"`
-	CronExpr       *string                     `json:"cron_expr,omitempty"`
-	IntervalSec    *int                        `json:"interval_sec,omitempty"`
-	Timezone       string                      `json:"timezone"`
-	TimeoutSec     int                         `json:"timeout_sec"`
-	RetryLimit     int                         `json:"retry_limit"`
-	Priority       int                         `json:"priority"`
-	Labels         map[string]any              `json:"labels"`
-	NextRunAt      *time.Time                  `json:"next_run_at,omitempty"`
-	Version        int                         `json:"version"`
-	CreatedAt      time.Time                   `json:"created_at"`
-	UpdatedAt      time.Time                   `json:"updated_at"`
+	ExecutionPolicyVersion int32                       `json:"execution_policy_version"`
+	ID                     int64                       `json:"id"`
+	Name                   string                      `json:"name"`
+	Description            *string                     `json:"description,omitempty"`
+	TenantID               string                      `json:"tenant_id"`
+	Status                 string                      `json:"status"`
+	CheckType              string                      `json:"check_type"`
+	CheckConfig            map[string]any              `json:"check_config"`
+	AssertionRules         []domaincheck.AssertionRule `json:"assertion_rules"`
+	ScheduleType           string                      `json:"schedule_type"`
+	CronExpr               *string                     `json:"cron_expr,omitempty"`
+	IntervalSec            *int                        `json:"interval_sec,omitempty"`
+	Timezone               string                      `json:"timezone"`
+	TimeoutSec             int                         `json:"timeout_sec"`
+	RetryLimit             int                         `json:"retry_limit"`
+	Priority               int                         `json:"priority"`
+	Labels                 map[string]any              `json:"labels"`
+	NextRunAt              *time.Time                  `json:"next_run_at,omitempty"`
+	Version                int                         `json:"version"`
+	CreatedAt              time.Time                   `json:"created_at"`
+	UpdatedAt              time.Time                   `json:"updated_at"`
 }
 
 type CreateCheckUseCase struct {
@@ -100,25 +101,26 @@ func (uc *CreateCheckUseCase) Create(ctx context.Context, in CreateInput) (Creat
 	}
 
 	return CreateResult{
-		ID:             out.ID,
-		Name:           out.Name,
-		Description:    out.Description,
-		TenantID:       out.TenantID,
-		Status:         out.Status,
-		CheckType:      out.CheckType,
-		CheckConfig:    out.CheckConfig,
-		AssertionRules: out.AssertionRules,
-		ScheduleType:   out.ScheduleType,
-		CronExpr:       out.CronExpr,
-		IntervalSec:    out.IntervalSec,
-		Timezone:       out.Timezone,
-		TimeoutSec:     out.TimeoutSec,
-		RetryLimit:     out.RetryLimit,
-		Priority:       out.Priority,
-		Labels:         out.Labels,
-		NextRunAt:      out.NextRunAt,
-		Version:        out.Version,
-		CreatedAt:      out.CreatedAt,
-		UpdatedAt:      out.UpdatedAt,
+		ExecutionPolicyVersion: out.ExecutionPolicyVersion,
+		ID:                     out.ID,
+		Name:                   out.Name,
+		Description:            out.Description,
+		TenantID:               out.TenantID,
+		Status:                 out.Status,
+		CheckType:              out.CheckType,
+		CheckConfig:            out.CheckConfig,
+		AssertionRules:         out.AssertionRules,
+		ScheduleType:           out.ScheduleType,
+		CronExpr:               out.CronExpr,
+		IntervalSec:            out.IntervalSec,
+		Timezone:               out.Timezone,
+		TimeoutSec:             out.TimeoutSec,
+		RetryLimit:             out.RetryLimit,
+		Priority:               out.Priority,
+		Labels:                 out.Labels,
+		NextRunAt:              out.NextRunAt,
+		Version:                out.Version,
+		CreatedAt:              out.CreatedAt,
+		UpdatedAt:              out.UpdatedAt,
 	}, nil
 }

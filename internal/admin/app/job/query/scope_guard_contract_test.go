@@ -7,6 +7,8 @@ import (
 
 	"orbitjob/internal/domain/resource"
 	"orbitjob/internal/domain/validation"
+
+	"orbitjob/internal/platform/scan"
 )
 
 // The two job definition gates refuse a scoped caller because a definition has
@@ -21,9 +23,9 @@ import (
 // Fixtures inserted by this file. Tenant ids are tenants.id values, CHAR(26)
 // ULIDs; slugs like "default" are never tenant identifiers. t3ScopedGroup is a
 // resource group id, a different kind of identifier and never used as a tenant.
-const (
-	t3Tenant      = "01J9Z7V2M4QK7P3XWQ5R8TNBCE"
-	t3ScopedGroup = "01JBB0W9YRXG4SZV2QKM78N3PD"
+var (
+	t3Tenant      = jobQueryScopeIdentityTenantID
+	t3ScopedGroup = jobQueryScopeIdentityOtherTenantID
 )
 
 // t3NormalizeJobGetWithoutScopeGuard is NormalizeGetInput with the
@@ -177,3 +179,7 @@ func TestJobQueryTenantContract(t *testing.T) {
 		t3AssertTenantIdRefusal(t, err)
 	})
 }
+
+var jobQueryScopeIdentityTenantID = scan.GenerateID()
+
+var jobQueryScopeIdentityOtherTenantID = scan.GenerateID()

@@ -11,6 +11,7 @@ import (
 
 	"orbitjob/internal/core/domain/tenant"
 	"orbitjob/internal/domain/resource"
+	"orbitjob/internal/platform/scan"
 )
 
 func TestTenantRepository_Create(t *testing.T) {
@@ -23,15 +24,15 @@ func TestTenantRepository_Create(t *testing.T) {
 	repo := NewTenantRepository(db)
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
-		WithArgs("01HZX").
+		WithArgs(tenantRepoSubjectID).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`INSERT INTO tenants`).
-		WithArgs("01HZX", "acme", "Acme Corp", "active").
+		WithArgs(tenantRepoSubjectID, "acme", "Acme Corp", "active").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
 	if err := repo.Create(context.Background(), &tenant.Tenant{
-		ID:     "01HZX",
+		ID:     tenantRepoSubjectID,
 		Slug:   "acme",
 		Name:   "Acme Corp",
 		Status: "active",
@@ -53,15 +54,15 @@ func TestTenantRepository_Create_DBError(t *testing.T) {
 	repo := NewTenantRepository(db)
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
-		WithArgs("01HZX").
+		WithArgs(tenantRepoSubjectID).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`INSERT INTO tenants`).
-		WithArgs("01HZX", "acme", "Acme Corp", "active").
+		WithArgs(tenantRepoSubjectID, "acme", "Acme Corp", "active").
 		WillReturnError(errors.New("db down"))
 	mock.ExpectRollback()
 
 	if err := repo.Create(context.Background(), &tenant.Tenant{
-		ID:     "01HZX",
+		ID:     tenantRepoSubjectID,
 		Slug:   "acme",
 		Name:   "Acme Corp",
 		Status: "active",
@@ -80,15 +81,15 @@ func TestTenantRepository_Create_DuplicateSlug(t *testing.T) {
 	repo := NewTenantRepository(db)
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
-		WithArgs("01HZX").
+		WithArgs(tenantRepoSubjectID).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`INSERT INTO tenants`).
-		WithArgs("01HZX", "acme", "Acme Corp", "active").
+		WithArgs(tenantRepoSubjectID, "acme", "Acme Corp", "active").
 		WillReturnError(&pq.Error{Code: "23505", Message: `duplicate key value violates unique constraint "uniq_tenants_slug"`})
 	mock.ExpectRollback()
 
 	err = repo.Create(context.Background(), &tenant.Tenant{
-		ID:     "01HZX",
+		ID:     tenantRepoSubjectID,
 		Slug:   "acme",
 		Name:   "Acme Corp",
 		Status: "active",
@@ -121,15 +122,15 @@ func TestTenantRepository_List(t *testing.T) {
 	repo := NewTenantRepository(db)
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
-		WithArgs("tenant1").
+		WithArgs(tenantRepoCallerID).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT id, slug, name, status FROM tenants`).
 		WithArgs(10, 0).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "slug", "name", "status"}).
-			AddRow("01HZX", "acme", "Acme Corp", "active"))
+			AddRow(tenantRepoSubjectID, "acme", "Acme Corp", "active"))
 	mock.ExpectCommit()
 
-	out, err := repo.List(context.Background(), "tenant1", 10, 0)
+	out, err := repo.List(context.Background(), tenantRepoCallerID, 10, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -154,13 +155,13 @@ func TestTenantRepository_List_DBError(t *testing.T) {
 	repo := NewTenantRepository(db)
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
-		WithArgs("tenant1").
+		WithArgs(tenantRepoCallerID).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT id, slug, name, status FROM tenants`).
 		WillReturnError(errors.New("db down"))
 	mock.ExpectRollback()
 
-	if _, err := repo.List(context.Background(), "tenant1", 10, 0); err == nil {
+	if _, err := repo.List(context.Background(), tenantRepoCallerID, 10, 0); err == nil {
 		t.Fatal("expected error, got nil")
 	}
 }
@@ -175,20 +176,20 @@ func TestTenantRepository_Get(t *testing.T) {
 	repo := NewTenantRepository(db)
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
-		WithArgs("tenant1").
+		WithArgs(tenantRepoCallerID).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT id, slug, name, status FROM tenants WHERE id = \$1`).
-		WithArgs("01HZX").
+		WithArgs(tenantRepoSubjectID).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "slug", "name", "status"}).
-			AddRow("01HZX", "acme", "Acme Corp", "active"))
+			AddRow(tenantRepoSubjectID, "acme", "Acme Corp", "active"))
 	mock.ExpectCommit()
 
-	out, err := repo.Get(context.Background(), "tenant1", "01HZX")
+	out, err := repo.Get(context.Background(), tenantRepoCallerID, tenantRepoSubjectID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if out.ID != "01HZX" {
-		t.Fatalf("expected id=%q, got %q", "01HZX", out.ID)
+	if out.ID != tenantRepoSubjectID {
+		t.Fatalf("expected id=%q, got %q", tenantRepoSubjectID, out.ID)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet expectations: %v", err)
@@ -205,14 +206,14 @@ func TestTenantRepository_Get_NotFound(t *testing.T) {
 	repo := NewTenantRepository(db)
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
-		WithArgs("tenant1").
+		WithArgs(tenantRepoCallerID).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT id, slug, name, status FROM tenants WHERE id = \$1`).
-		WithArgs("01HZX").
+		WithArgs(tenantRepoSubjectID).
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectRollback()
 
-	_, err = repo.Get(context.Background(), "tenant1", "01HZX")
+	_, err = repo.Get(context.Background(), tenantRepoCallerID, tenantRepoSubjectID)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -223,8 +224,8 @@ func TestTenantRepository_Get_NotFound(t *testing.T) {
 	if notFound.Resource != "tenant" {
 		t.Fatalf("expected resource=%q, got %q", "tenant", notFound.Resource)
 	}
-	if notFound.ID != "01HZX" {
-		t.Fatalf("expected id=%q, got %q", "01HZX", notFound.ID)
+	if notFound.ID != tenantRepoSubjectID {
+		t.Fatalf("expected id=%q, got %q", tenantRepoSubjectID, notFound.ID)
 	}
 }
 
@@ -238,14 +239,14 @@ func TestTenantRepository_Get_DBError(t *testing.T) {
 	repo := NewTenantRepository(db)
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
-		WithArgs("tenant1").
+		WithArgs(tenantRepoCallerID).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT id, slug, name, status FROM tenants WHERE id = \$1`).
-		WithArgs("01HZX").
+		WithArgs(tenantRepoSubjectID).
 		WillReturnError(errors.New("db down"))
 	mock.ExpectRollback()
 
-	if _, err := repo.Get(context.Background(), "tenant1", "01HZX"); err == nil {
+	if _, err := repo.Get(context.Background(), tenantRepoCallerID, tenantRepoSubjectID); err == nil {
 		t.Fatal("expected error, got nil")
 	}
 }
@@ -260,14 +261,14 @@ func TestTenantRepository_List_EmptyResult(t *testing.T) {
 	repo := NewTenantRepository(db)
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
-		WithArgs("tenant1").
+		WithArgs(tenantRepoCallerID).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT id, slug, name, status FROM tenants`).
 		WithArgs(10, 0).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "slug", "name", "status"}))
 	mock.ExpectCommit()
 
-	out, err := repo.List(context.Background(), "tenant1", 10, 0)
+	out, err := repo.List(context.Background(), tenantRepoCallerID, 10, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -288,18 +289,22 @@ func TestTenantRepository_List_RowsError(t *testing.T) {
 
 	repo := NewTenantRepository(db)
 	rows := sqlmock.NewRows([]string{"id", "slug", "name", "status"}).
-		AddRow("01HZX", "acme", "Acme Corp", "active").
+		AddRow(tenantRepoSubjectID, "acme", "Acme Corp", "active").
 		RowError(0, errors.New("iteration failure"))
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\('app\.tenant_id', \$1, true\)`).
-		WithArgs("tenant1").
+		WithArgs(tenantRepoCallerID).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT id, slug, name, status FROM tenants`).
 		WithArgs(10, 0).
 		WillReturnRows(rows)
 	mock.ExpectRollback()
 
-	if _, err := repo.List(context.Background(), "tenant1", 10, 0); err == nil {
+	if _, err := repo.List(context.Background(), tenantRepoCallerID, 10, 0); err == nil {
 		t.Fatal("expected rows iteration error")
 	}
 }
+
+var tenantRepoSubjectID = scan.GenerateID()
+
+var tenantRepoCallerID = scan.GenerateID()

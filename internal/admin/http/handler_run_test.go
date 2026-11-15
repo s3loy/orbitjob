@@ -11,6 +11,8 @@ import (
 
 	runquery "orbitjob/internal/admin/app/run/query"
 	"orbitjob/internal/domain/resource"
+
+	"orbitjob/internal/platform/scan"
 )
 
 // Unit coverage for the run-list handler, restored after the deleted
@@ -38,7 +40,7 @@ func newRunListHandler(listUC *stubListRunsUseCase, groupID string) (*Handler, *
 	h := NewHandler(nil, nil, nil)
 	h.SetListInstancesUseCase(listUC)
 	r := gin.New()
-	r.Use(testPrincipalMiddleware("tenant-a", "key-123", groupID))
+	r.Use(testPrincipalMiddleware(runHandlerFixtureTenantID, "key-123", groupID))
 	h.Register(r)
 	return h, r
 }
@@ -46,7 +48,7 @@ func newRunListHandler(listUC *stubListRunsUseCase, groupID string) (*Handler, *
 func TestHandler_ListInstances_DelegatesToPrincipalTenantAndScope(t *testing.T) {
 	listUC := &stubListRunsUseCase{
 		out: []runquery.ListItem{
-			{ID: 1, TenantID: "tenant-a", Phase: "Running", Actor: "key-123", Attempt: 1, MaxAttempts: 3},
+			{ID: 1, TenantID: runHandlerFixtureTenantID, Phase: "Running", Actor: "key-123", Attempt: 1, MaxAttempts: 3},
 		},
 	}
 	_, router := newRunListHandler(listUC, "rg-7")
@@ -62,7 +64,7 @@ func TestHandler_ListInstances_DelegatesToPrincipalTenantAndScope(t *testing.T) 
 	if !listUC.called {
 		t.Fatal("expected use case to be called")
 	}
-	if listUC.in.TenantID != "tenant-a" {
+	if listUC.in.TenantID != runHandlerFixtureTenantID {
 		t.Errorf("tenant = %q, want the authenticated principal's tenant", listUC.in.TenantID)
 	}
 	if listUC.in.ResourceGroupID != "rg-7" {
@@ -167,3 +169,5 @@ func TestHandler_ListInstances_StatusMapping(t *testing.T) {
 		})
 	}
 }
+
+var runHandlerFixtureTenantID = scan.GenerateID()

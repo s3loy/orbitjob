@@ -20,6 +20,9 @@ type AttemptItem struct {
 	StartedAt               *time.Time `json:"started_at"`
 	CompletedAt             *time.Time `json:"completed_at"`
 	CreatedAt               time.Time  `json:"created_at"`
+	OwnerRunUID             *string    `json:"owner_run_uid"`
+	ExecutionUnknownSince   *time.Time `json:"execution_unknown_since"`
+	ExecutionUnknownReason  *string    `json:"execution_unknown_reason"`
 }
 
 type attemptLister interface {

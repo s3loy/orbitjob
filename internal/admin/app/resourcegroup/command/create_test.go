@@ -8,6 +8,8 @@ import (
 	"orbitjob/internal/core/domain/audit"
 	"orbitjob/internal/core/domain/resourcegroup"
 	"orbitjob/internal/domain/validation"
+
+	"orbitjob/internal/platform/scan"
 )
 
 // stubGroupWriter captures the event it was handed: the repository writes the
@@ -30,7 +32,7 @@ func TestCreateNormalizesAndStores(t *testing.T) {
 	writer := &stubGroupWriter{}
 
 	out, err := NewCreator(writer).Create(context.Background(), CreateInput{
-		TenantID: "tenant-a",
+		TenantID: resourcegroupCreateFixtureTenantID,
 		Slug:     "  CI  ",
 		Name:     "Continuous Integration",
 	})
@@ -40,7 +42,7 @@ func TestCreateNormalizesAndStores(t *testing.T) {
 	if writer.got.Slug != "ci" {
 		t.Fatalf("expected a normalized slug, got %q", writer.got.Slug)
 	}
-	if writer.got.TenantID != "tenant-a" {
+	if writer.got.TenantID != resourcegroupCreateFixtureTenantID {
 		t.Fatalf("expected the caller's tenant, got %q", writer.got.TenantID)
 	}
 	if out.ID == "" || out.ID != writer.got.ID {
@@ -52,7 +54,7 @@ func TestCreateRejectsAnInvalidSlugBeforeWriting(t *testing.T) {
 	writer := &stubGroupWriter{}
 
 	_, err := NewCreator(writer).Create(context.Background(), CreateInput{
-		TenantID: "tenant-a",
+		TenantID: resourcegroupCreateFixtureTenantID,
 		Slug:     "not a slug",
 		Name:     "Name",
 	})
@@ -69,16 +71,16 @@ func TestCreateRecordsAnAuditEvent(t *testing.T) {
 	writer := &stubGroupWriter{}
 
 	out, err := NewCreator(writer).Create(context.Background(), CreateInput{
-		TenantID: "tenant-a",
+		TenantID: resourcegroupCreateFixtureTenantID,
 		Slug:     "ci",
 		Name:     "Continuous Integration",
-		ActorID:  "key-1",
+		ActorID:  resourcegroupCreateFixtureActorID,
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	e := writer.gotEvent
-	if e.ResourceType != audit.ResourceGroup || e.ResourceID != out.ID || e.ActorID != "key-1" {
+	if e.ResourceType != audit.ResourceGroup || e.ResourceID != out.ID || e.ActorID != resourcegroupCreateFixtureActorID {
 		t.Fatalf("unexpected audit event: %+v", e)
 	}
 	if e.Diff["slug"] != "ci" {
@@ -92,7 +94,7 @@ func TestCreateSurfacesAWriteFailure(t *testing.T) {
 	writer := &stubGroupWriter{err: errors.New("transaction aborted")}
 
 	if _, err := NewCreator(writer).Create(context.Background(), CreateInput{
-		TenantID: "tenant-a",
+		TenantID: resourcegroupCreateFixtureTenantID,
 		Slug:     "ci",
 		Name:     "CI",
 	}); err == nil {
@@ -103,7 +105,7 @@ func TestCreateSurfacesAWriteFailure(t *testing.T) {
 func TestCreatePropagatesAStoreConflict(t *testing.T) {
 	writer := &stubGroupWriter{err: errors.New("duplicate key")}
 	if _, err := NewCreator(writer).Create(context.Background(), CreateInput{
-		TenantID: "tenant-a",
+		TenantID: resourcegroupCreateFixtureTenantID,
 		Slug:     "ci",
 		Name:     "CI",
 	}); err == nil {
@@ -116,7 +118,7 @@ func TestCreatePropagatesAStoreConflict(t *testing.T) {
 func TestCreateAlwaysRecordsAnEvent(t *testing.T) {
 	writer := &stubGroupWriter{}
 	if _, err := NewCreator(writer).Create(context.Background(), CreateInput{
-		TenantID: "tenant-a",
+		TenantID: resourcegroupCreateFixtureTenantID,
 		Slug:     "ci",
 		Name:     "CI",
 	}); err != nil {
@@ -126,3 +128,7 @@ func TestCreateAlwaysRecordsAnEvent(t *testing.T) {
 		t.Fatalf("no audit event reached the repository: %+v", writer.gotEvent)
 	}
 }
+
+var resourcegroupCreateFixtureActorID = scan.GenerateID()
+
+var resourcegroupCreateFixtureTenantID = scan.GenerateID()

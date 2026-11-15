@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -13,8 +14,10 @@ import (
 
 	v1alpha1 "orbitjob/api/kubernetes/workloads/v1alpha1"
 	domainworkflow "orbitjob/internal/core/domain/workflow"
+	"orbitjob/internal/domain/queryfilter"
 	"orbitjob/internal/domain/resource"
 	"orbitjob/internal/domain/validation"
+	"orbitjob/internal/domain/workflowschedule"
 )
 
 // The workflow use cases consume the storage through the narrow interfaces
@@ -48,7 +51,14 @@ type workflowDefinitionReader interface {
 	GetActive(ctx context.Context, tenantID string, id int64) (WorkflowDefinition, error)
 }
 
+// workflowRevisionReader is deliberately separate from active definition reads:
+// historical task graphs must never be synthesized from the current revision.
+type workflowRevisionReader interface {
+	GetRevision(context.Context, string, int64) (WorkflowDefinition, error)
+}
+
 type WorkflowDefinitionListInput struct {
+	Search   string
 	TenantID string
 	Limit    int
 	Offset   int
@@ -86,6 +96,7 @@ func NewListWorkflowsUseCase(definitions workflowDefinitionReader) *ListWorkflow
 }
 
 type WorkflowListInput struct {
+	Search          string
 	TenantID        string
 	ResourceGroupID string
 	Limit           int
@@ -93,17 +104,19 @@ type WorkflowListInput struct {
 }
 
 type WorkflowListItem struct {
-	ID             int64     `json:"id"`
-	Name           string    `json:"name"`
-	Namespace      string    `json:"namespace"`
-	SourceUID      string    `json:"source_uid"`
-	Generation     int64     `json:"generation"`
-	Schedule       string    `json:"schedule"`
-	Suspend        bool      `json:"suspend"`
-	FailPolicy     string    `json:"fail_policy"`
-	TimeoutSeconds int32     `json:"timeout_seconds"`
-	TaskCount      int       `json:"task_count"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID                int64     `json:"id"`
+	Name              string    `json:"name"`
+	Namespace         string    `json:"namespace"`
+	SourceUID         string    `json:"source_uid"`
+	Generation        int64     `json:"generation"`
+	Schedule          string    `json:"schedule"`
+	TimeZone          string    `json:"time_zone"`
+	ConcurrencyPolicy string    `json:"concurrency_policy"`
+	Suspend           bool      `json:"suspend"`
+	FailPolicy        string    `json:"fail_policy"`
+	TimeoutSeconds    int32     `json:"timeout_seconds"`
+	TaskCount         int       `json:"task_count"`
+	CreatedAt         time.Time `json:"created_at"`
 }
 
 // List resolves the caller's scope first: a workflow revision has no resource
@@ -121,7 +134,15 @@ func (uc *ListWorkflowsUseCase) List(ctx context.Context, in WorkflowListInput) 
 		return nil, fmt.Errorf("workflow definition reader is required")
 	}
 
+	search, err := queryfilter.Search(in.Search)
+	if err != nil {
+		return nil, err
+	}
+	if in.Offset < 0 {
+		return nil, validation.New("offset", "must be >= 0")
+	}
 	defs, err := uc.definitions.ListActive(ctx, WorkflowDefinitionListInput{
+		Search:   search,
 		TenantID: tenantID,
 		Limit:    normalizeListLimit(in.Limit),
 		Offset:   in.Offset,
@@ -189,18 +210,24 @@ func newWorkflowListItem(def WorkflowDefinition) WorkflowListItem {
 	if def.Spec.FailPolicy == v1alpha1.Continue {
 		failPolicy = string(domainworkflow.FailPolicyContinue)
 	}
+	concurrencyPolicy := def.Spec.ConcurrencyPolicy
+	if concurrencyPolicy == "" {
+		concurrencyPolicy = v1alpha1.Allow
+	}
 	return WorkflowListItem{
-		ID:             def.ID,
-		Name:           def.Name,
-		Namespace:      def.Namespace,
-		SourceUID:      def.SourceUID,
-		Generation:     def.Generation,
-		Schedule:       def.Spec.Schedule,
-		Suspend:        def.Spec.Suspend,
-		FailPolicy:     failPolicy,
-		TimeoutSeconds: def.Spec.TimeoutSeconds,
-		TaskCount:      len(def.Spec.Tasks),
-		CreatedAt:      def.CreatedAt,
+		ID:                def.ID,
+		Name:              def.Name,
+		Namespace:         def.Namespace,
+		SourceUID:         def.SourceUID,
+		Generation:        def.Generation,
+		Schedule:          def.Spec.Schedule,
+		TimeZone:          workflowschedule.Zone(def.Spec.TimeZone),
+		ConcurrencyPolicy: string(concurrencyPolicy),
+		Suspend:           def.Spec.Suspend,
+		FailPolicy:        failPolicy,
+		TimeoutSeconds:    def.Spec.TimeoutSeconds,
+		TaskCount:         len(def.Spec.Tasks),
+		CreatedAt:         def.CreatedAt,
 	}
 }
 
@@ -210,7 +237,7 @@ func newWorkflowTaskItems(spec v1alpha1.WorkflowJobSpec) []WorkflowTaskItem {
 		item := WorkflowTaskItem{
 			Name:      task.Name,
 			JobRef:    task.JobRef.Name,
-			DependsOn: append([]string(nil), task.DependsOn...),
+			DependsOn: append([]string{}, task.DependsOn...),
 		}
 		if task.Condition != nil {
 			cond := &WorkflowConditionItem{Type: string(task.Condition.Type)}
@@ -288,6 +315,7 @@ type WorkflowTriggerResult struct {
 	OccurrenceKey string `json:"occurrence_key"`
 	Trigger       string `json:"trigger"`
 	Phase         string `json:"phase"`
+	Reason        string `json:"reason,omitempty"`
 	Created       bool   `json:"created"`
 }
 
@@ -330,6 +358,7 @@ func (uc *TriggerWorkflowUseCase) Trigger(ctx context.Context, in WorkflowTrigge
 		OccurrenceKey: occurrenceKey,
 		Trigger:       string(v1alpha1.Manual),
 		Phase:         stored.Status.Phase,
+		Reason:        stored.Status.Reason,
 		Created:       created,
 	}, nil
 }
@@ -349,8 +378,8 @@ func normalizeWorkflowTriggerInput(in WorkflowTriggerInput) (WorkflowTriggerInpu
 	if actorID == "" {
 		return WorkflowTriggerInput{}, validation.New("actor_id", "is required")
 	}
-	if len(actorID) > 255 {
-		return WorkflowTriggerInput{}, validation.New("actor_id", "must be <= 255 characters")
+	if len(actorID) > v1alpha1.RunActorMaxLength {
+		return WorkflowTriggerInput{}, validation.New("actor_id", fmt.Sprintf("must be <= %d characters", v1alpha1.RunActorMaxLength))
 	}
 	return WorkflowTriggerInput{
 		WorkflowID:      in.WorkflowID,
@@ -409,8 +438,8 @@ func workflowSHA256Hex(s string) string {
 // ==================== Workflow runs ====================
 
 // ListWorkflowRunsUseCase lists one workflow's runs from the workflow ledger,
-// newest first. The workflow is named by its active revision id, so the use
-// case resolves the definition first and answers with its runs only.
+// newest first. Read-only history accepts an active or retained historical
+// parent revision, and answers with that original source UID's runs only.
 type ListWorkflowRunsUseCase struct {
 	definitions workflowDefinitionReader
 	runs        workflowRunReader
@@ -421,6 +450,8 @@ func NewListWorkflowRunsUseCase(definitions workflowDefinitionReader, runs workf
 }
 
 type WorkflowRunListInput struct {
+	CreatedFrom     string
+	CreatedBefore   string
 	WorkflowID      int64
 	TenantID        string
 	ResourceGroupID string
@@ -429,15 +460,17 @@ type WorkflowRunListInput struct {
 }
 
 type WorkflowRunItem struct {
-	ID            int64     `json:"id"`
-	SourceUID     string    `json:"workflow_source_uid"`
-	RevisionID    int64     `json:"revision_id"`
-	OccurrenceKey string    `json:"occurrence_key"`
-	Trigger       string    `json:"trigger"`
-	Actor         string    `json:"actor"`
-	Phase         string    `json:"phase"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID            int64      `json:"id"`
+	SourceUID     string     `json:"workflow_source_uid"`
+	RevisionID    int64      `json:"revision_id"`
+	OccurrenceKey string     `json:"occurrence_key"`
+	Trigger       string     `json:"trigger"`
+	ScheduledFor  *time.Time `json:"scheduled_for"`
+	Actor         string     `json:"actor"`
+	Phase         string     `json:"phase"`
+	Reason        string     `json:"reason,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
 func newWorkflowRunItem(run domainworkflow.Run) WorkflowRunItem {
@@ -447,8 +480,10 @@ func newWorkflowRunItem(run domainworkflow.Run) WorkflowRunItem {
 		RevisionID:    run.RevisionID,
 		OccurrenceKey: run.OccurrenceKey,
 		Trigger:       string(run.Trigger),
+		ScheduledFor:  run.ScheduledFor,
 		Actor:         run.Actor,
 		Phase:         string(run.Phase),
+		Reason:        run.Reason,
 		CreatedAt:     run.CreatedAt,
 		UpdatedAt:     run.UpdatedAt,
 	}
@@ -466,7 +501,7 @@ func (uc *ListWorkflowRunsUseCase) List(ctx context.Context, in WorkflowRunListI
 		return nil, fmt.Errorf("workflow run reader is required")
 	}
 
-	def, err := (&GetWorkflowUseCase{definitions: uc.definitions}).get(ctx, WorkflowGetInput{
+	def, err := workflowHistoryDefinition(ctx, uc.definitions, WorkflowGetInput{
 		ID:              in.WorkflowID,
 		TenantID:        tenantID,
 		ResourceGroupID: in.ResourceGroupID,
@@ -475,7 +510,23 @@ func (uc *ListWorkflowRunsUseCase) List(ctx context.Context, in WorkflowRunListI
 		return nil, err
 	}
 
-	rows, err := uc.runs.RunsForDefinition(ctx, tenantID, def.SourceUID, normalizeListLimit(in.Limit), in.Offset)
+	from, before, err := queryfilter.Range(in.CreatedFrom, in.CreatedBefore)
+	if err != nil {
+		return nil, err
+	}
+	if in.Offset < 0 {
+		return nil, validation.New("offset", "must be >= 0")
+	}
+	var rows []domainworkflow.Run
+	if reader, ok := uc.runs.(interface {
+		RunsForDefinitionWindow(context.Context, string, string, int, int, string, string) ([]domainworkflow.Run, error)
+	}); ok {
+		rows, err = reader.RunsForDefinitionWindow(ctx, tenantID, def.SourceUID, normalizeListLimit(in.Limit), in.Offset, from, before)
+	} else if from != "" || before != "" {
+		return nil, fmt.Errorf("windowed workflow history reader is required")
+	} else {
+		rows, err = uc.runs.RunsForDefinition(ctx, tenantID, def.SourceUID, normalizeListLimit(in.Limit), in.Offset)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -506,6 +557,7 @@ type WorkflowRunGetInput struct {
 }
 
 type WorkflowStepItem struct {
+	TaskName      string    `json:"task_name,omitempty"`
 	ID            int64     `json:"id"`
 	SourceUID     string    `json:"source_uid"`
 	OccurrenceKey string    `json:"occurrence_key"`
@@ -517,11 +569,16 @@ type WorkflowStepItem struct {
 
 type WorkflowRunGetItem struct {
 	WorkflowRunItem
-	Steps []WorkflowStepItem `json:"steps"`
+	SnapshotVersion         int                                    `json:"snapshot_version"`
+	TaskSnapshots           map[string]domainworkflow.TaskSnapshot `json:"task_snapshots"`
+	Steps                   []WorkflowStepItem                     `json:"steps"`
+	Tasks                   *[]WorkflowTaskItem                    `json:"tasks"`
+	TaskDecisions           map[string]domainworkflow.TaskDecision `json:"task_decisions"`
+	PinnedRevisionAvailable bool                                   `json:"pinned_revision_available"`
 }
 
 func (uc *GetWorkflowRunUseCase) Get(ctx context.Context, in WorkflowRunGetInput) (WorkflowRunGetItem, error) {
-	run, err := uc.resolveRun(ctx, in.WorkflowID, in.RunID, in.TenantID, in.ResourceGroupID)
+	run, err := uc.resolveRunForRead(ctx, in.WorkflowID, in.RunID, in.TenantID, in.ResourceGroupID)
 	if err != nil {
 		return WorkflowRunGetItem{}, err
 	}
@@ -535,10 +592,36 @@ func (uc *GetWorkflowRunUseCase) Get(ctx context.Context, in WorkflowRunGetInput
 		return WorkflowRunGetItem{}, err
 	}
 
-	out := WorkflowRunGetItem{WorkflowRunItem: newWorkflowRunItem(run)}
+	out := WorkflowRunGetItem{WorkflowRunItem: newWorkflowRunItem(run), TaskDecisions: run.TaskDecisions, SnapshotVersion: run.SnapshotVersion, TaskSnapshots: run.TaskSnapshots}
+	if out.TaskSnapshots == nil {
+		out.TaskSnapshots = map[string]domainworkflow.TaskSnapshot{}
+	}
+	if out.TaskDecisions == nil {
+		out.TaskDecisions = map[string]domainworkflow.TaskDecision{}
+	}
+	taskNames := map[string]string{}
+	if reader, ok := uc.definitions.(workflowRevisionReader); ok && run.RevisionID > 0 {
+		pinned, readErr := reader.GetRevision(ctx, tenantID, run.RevisionID)
+		var missing *resource.NotFoundError
+		if readErr != nil && !errors.As(readErr, &missing) {
+			return WorkflowRunGetItem{}, readErr
+		}
+		if readErr == nil {
+			if pinned.ID != run.RevisionID || pinned.SourceUID != run.SourceUID {
+				return WorkflowRunGetItem{}, fmt.Errorf("workflow pinned revision identity mismatch")
+			}
+			tasks := newWorkflowTaskItems(pinned.Spec)
+			out.Tasks = &tasks
+			out.PinnedRevisionAvailable = true
+			for _, task := range pinned.Spec.Tasks {
+				taskNames[domainworkflow.StepOccurrenceKey(run.SourceUID, run.OccurrenceKey, task.Name)] = task.Name
+			}
+		}
+	}
 	out.Steps = make([]WorkflowStepItem, 0, len(steps))
 	for _, step := range steps {
 		out.Steps = append(out.Steps, WorkflowStepItem{
+			TaskName:      taskNames[step.OccurrenceKey],
 			ID:            step.ID,
 			SourceUID:     step.SourceUID,
 			OccurrenceKey: step.OccurrenceKey,
@@ -552,11 +635,17 @@ func (uc *GetWorkflowRunUseCase) Get(ctx context.Context, in WorkflowRunGetInput
 }
 
 // resolveRun loads one run and verifies it belongs to the workflow the route
-// names. The id the route carries is the workflow's active revision id, and a
+// names. Read-only callers may resolve a retained historical parent; a
 // run of a different definition must be indistinguishable from a run that does
 // not exist -- saying anything else would leak other workflows' history
 // through the route's own prefix.
+func (uc *GetWorkflowRunUseCase) resolveRunForRead(ctx context.Context, workflowID, runID int64, tenantID, scope string) (domainworkflow.Run, error) {
+	return uc.resolveRunMode(ctx, workflowID, runID, tenantID, scope, true)
+}
 func (uc *GetWorkflowRunUseCase) resolveRun(ctx context.Context, workflowID, runID int64, tenantID, scope string) (domainworkflow.Run, error) {
+	return uc.resolveRunMode(ctx, workflowID, runID, tenantID, scope, false)
+}
+func (uc *GetWorkflowRunUseCase) resolveRunMode(ctx context.Context, workflowID, runID int64, tenantID, scope string, historical bool) (domainworkflow.Run, error) {
 	if runID < 1 {
 		return domainworkflow.Run{}, validation.New("run_id", "must be >= 1")
 	}
@@ -571,11 +660,18 @@ func (uc *GetWorkflowRunUseCase) resolveRun(ctx context.Context, workflowID, run
 		return domainworkflow.Run{}, fmt.Errorf("workflow run reader is required")
 	}
 
-	def, err := (&GetWorkflowUseCase{definitions: uc.definitions}).get(ctx, WorkflowGetInput{
+	input := WorkflowGetInput{
 		ID:              workflowID,
 		TenantID:        normalizedTenant,
 		ResourceGroupID: scope,
-	})
+	}
+	resolve := (&GetWorkflowUseCase{definitions: uc.definitions}).get
+	if historical {
+		resolve = func(ctx context.Context, in WorkflowGetInput) (WorkflowDefinition, error) {
+			return workflowHistoryDefinition(ctx, uc.definitions, in)
+		}
+	}
+	def, err := resolve(ctx, input)
 	if err != nil {
 		return domainworkflow.Run{}, err
 	}

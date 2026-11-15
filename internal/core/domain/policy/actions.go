@@ -37,19 +37,24 @@ var KnownActions = []string{
 	"group:List",
 
 	// Jobs.
+	"job:Apply",
 	"job:Get",
+	"job:ManageExecution",
 	"job:List",
 	"job:Trigger",
 
 	// Instances.
 	"instance:Cancel",
 	"instance:Get",
+	"instance:ReadLogs",
+	"instance:DeleteLogs",
 	"instance:List",
 
 	// Checks and their runs.
 	"check:Create",
 	"check:Delete",
 	"check:Get",
+	"check:ManageExecution",
 	"check:List",
 	"check:Pause",
 	"check:Resume",
@@ -72,22 +77,24 @@ var KnownActions = []string{
 	"sloalert:Get",
 	"sloalert:List",
 
-	// Functions. The definition surface is read-only plus invoke in v1: a
-	// function is a tenant-owned row read through its read paths and executed
-	// by an invocation, which publishes a JobRun custom resource exactly as a
-	// manual job trigger does. Create, update and delete routes would need
-	// actions of their own and land together with those routes.
+	// Function management is independently authorized from reads and invocation.
+	// ReadLogs independently authorizes
+	// a bounded snapshot under the exact Function parent and history mapping.
 	"function:Get",
+	"function:ManageExecution",
+	"function:Create",
+	"function:Update",
+	"function:ReadLogs",
+	"function:DeleteLogs",
 	"function:Invoke",
 	"function:List",
 
-	// Workflows. A WorkflowJob definition is declared as a Custom Resource and
-	// read here through its projection, so like jobs the surface is read-only
-	// plus one mutation verb: workflow:Trigger covers creating a manual run
-	// (a WorkflowRun custom resource) and requesting a run's cancel (a
-	// cancelRequested patch on the same kind of resource) -- both are CR
-	// writes that ask the operator to do ledger work.
+	// Workflows have separate projected reads, typed CR Apply, and Trigger.
+	// Trigger creates WorkflowRuns or requests cancellation; Apply never grants
+	// ledger writes or arbitrary Kubernetes resource access.
+	"workflow:Apply",
 	"workflow:Get",
+	"workflow:ManageExecution",
 	"workflow:List",
 	"workflow:Trigger",
 }

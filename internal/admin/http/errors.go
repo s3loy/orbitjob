@@ -54,6 +54,10 @@ func humanReadableTag(fe validator.FieldError) string {
 
 // toAPIError maps a domain/use-case error to the stable API error structure.
 func toAPIError(err error) apperror.APIError {
+	var unavailable *resource.UnavailableError
+	if errors.As(err, &unavailable) {
+		return apperror.APIError{Code: apperror.CodeServiceUnavailable, Message: unavailable.Error(), Field: unavailable.Resource}
+	}
 	var ve *validation.Error
 	if validation.As(err, &ve) {
 		return apperror.APIError{

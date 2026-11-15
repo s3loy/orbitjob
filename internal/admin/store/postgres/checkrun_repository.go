@@ -19,7 +19,7 @@ func NewCheckRunRepository(db *sql.DB) *CheckRunRepository {
 	return &CheckRunRepository{db: db}
 }
 
-func (r *CheckRunRepository) Get(ctx context.Context, tenantID string, id int64) (checkrunquery.GetResult, error) {
+func (r *CheckRunRepository) Get(ctx context.Context, tenantID, resourceGroupID string, id int64) (checkrunquery.GetResult, error) {
 	var snap checkrun.Snapshot
 	var outputBytes, evalResultBytes []byte
 
@@ -34,7 +34,9 @@ func (r *CheckRunRepository) Get(ctx context.Context, tenantID string, id int64)
 			       scheduled_at, started_at, finished_at, duration_ms, version, created_at
 			FROM check_runs
 			WHERE tenant_id = $1 AND id = $2
-		`, tenantID, id).Scan(
+              AND ($3::text IS NULL OR EXISTS (
+                SELECT 1 FROM checks c WHERE c.tenant_id = $1 AND c.id = check_runs.check_id AND c.resource_group_id = $3))
+		`, tenantID, id, nullableGroup(resourceGroupID)).Scan(
 		&snap.ID, &snap.RunID, &snap.TenantID, &snap.CheckID, &snap.Status, &snap.Severity,
 		&outputBytes, &evalResultBytes, &snap.ScheduledAt, &snap.StartedAt, &snap.FinishedAt,
 		&snap.DurationMs, &snap.Version, &snap.CreatedAt,
@@ -85,7 +87,9 @@ func (r *CheckRunRepository) List(ctx context.Context, in checkrunquery.ListChec
 			WHERE tenant_id = $1
 			  AND ($2::bigint IS NULL OR check_id = $2)
 			  AND ($3::text IS NULL OR status = $3)
-		`, in.TenantID, in.CheckID, in.Status).Scan(&total)
+              AND ($4::text IS NULL OR EXISTS (
+                SELECT 1 FROM checks c WHERE c.tenant_id = $1 AND c.id = check_runs.check_id AND c.resource_group_id = $4))
+		`, in.TenantID, in.CheckID, in.Status, nullableGroup(in.ResourceGroupID)).Scan(&total)
 	if err != nil {
 		return nil, 0, fmt.Errorf("count check_runs: %w", err)
 	}
@@ -96,15 +100,17 @@ func (r *CheckRunRepository) List(ctx context.Context, in checkrunquery.ListChec
 			WHERE tenant_id = $1
 			  AND ($2::bigint IS NULL OR check_id = $2)
 			  AND ($3::text IS NULL OR status = $3)
+              AND ($4::text IS NULL OR EXISTS (
+                SELECT 1 FROM checks c WHERE c.tenant_id = $1 AND c.id = check_runs.check_id AND c.resource_group_id = $4))
 			ORDER BY created_at DESC
-			LIMIT $4 OFFSET $5
-		`, in.TenantID, in.CheckID, in.Status, limit, in.Offset)
+			LIMIT $5 OFFSET $6
+		`, in.TenantID, in.CheckID, in.Status, nullableGroup(in.ResourceGroupID), limit, in.Offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list check_runs: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	var items []checkrunquery.ListItem
+	items := make([]checkrunquery.ListItem, 0)
 	for rows.Next() {
 		var item checkrunquery.ListItem
 		var severity sql.NullString

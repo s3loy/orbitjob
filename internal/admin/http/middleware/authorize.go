@@ -1,12 +1,15 @@
 package middleware
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 
 	"orbitjob/internal/admin/http/apperror"
 	"orbitjob/internal/core/domain/policy"
+	"orbitjob/internal/domain/resource"
+	"orbitjob/internal/domain/validation"
 )
 
 // ResourceResolver maps a request onto the ARN it targets. A resolver that
@@ -37,10 +40,20 @@ func Require(action string, resolve ResourceResolver) gin.HandlerFunc {
 
 		arn, err := resolve(c)
 		if err != nil {
-			apperror.Write(c, http.StatusBadRequest, apperror.APIError{
-				Code:    apperror.CodeMalformedRequest,
-				Message: err.Error(),
-			})
+			apiErr := apperror.APIError{Code: apperror.CodeInternal, Message: "resource could not be resolved"}
+			var missing *resource.NotFoundError
+			var invalid *validation.Error
+			switch {
+			case errors.Is(err, ErrTenantMismatch), errors.Is(err, ErrTenantRequired), errors.Is(err, ErrResourceUnavailable):
+				apiErr = apperror.APIError{Code: apperror.CodeForbidden, Message: "resource is unavailable in the requested scope"}
+			case errors.As(err, &missing):
+				apiErr = apperror.APIError{Code: apperror.CodeNotFound, Message: "resource not found", Field: missing.Resource}
+			case errors.As(err, &invalid):
+				apiErr = apperror.APIError{Code: apperror.CodeValidation, Message: invalid.Message, Field: invalid.Field}
+			default:
+				_ = c.Error(err)
+			}
+			apperror.Write(c, apperror.StatusForCode(apiErr.Code), apiErr)
 			c.Abort()
 			return
 		}

@@ -10,6 +10,8 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 
 	jobquery "orbitjob/internal/admin/app/job/query"
+
+	"orbitjob/internal/platform/scan"
 )
 
 // nightlySpec is a normalized spec as the operator projects it, so the decode
@@ -26,23 +28,23 @@ func TestJobRepository_Get(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	created := time.Date(2026, 9, 1, 8, 0, 0, 0, time.UTC)
-	expectTenantTx(t, mock, "tenant-a")
-	mock.ExpectQuery(`SELECT (.+) FROM job_definition_revisions WHERE tenant_id = \$1 AND id = \$2 AND is_active`).
-		WithArgs("tenant-a", int64(11)).
+	expectTenantTx(t, mock, jobStoreFixtureTenantID)
+	mock.ExpectQuery(`SELECT (.+) FROM job_definition_revisions WHERE tenant_id = \$1 AND id = \$2 AND source_mode = 'kubernetes' AND is_active`).
+		WithArgs(jobStoreFixtureTenantID, int64(11)).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "tenant_id", "source_mode", "source_uid", "source_namespace", "source_name",
 			"generation", "spec_hash", "normalized_spec", "actor", "created_at",
 		}).AddRow(
-			11, "tenant-a", "kubernetes", "nightly", "jobs", "nightly",
+			11, jobStoreFixtureTenantID, "kubernetes", "nightly", "jobs", "nightly",
 			3, "hash-3", []byte(nightlySpec), "operator", created,
 		))
 	mock.ExpectCommit()
 
-	item, err := NewJobRepository(db).Get(context.Background(), jobquery.GetInput{ID: 11, TenantID: "tenant-a"})
+	item, err := NewJobRepository(db).Get(context.Background(), jobquery.GetInput{ID: 11, TenantID: jobStoreFixtureTenantID})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if item.ID != 11 || item.TenantID != "tenant-a" || item.SourceUID != "nightly" {
+	if item.ID != 11 || item.TenantID != jobStoreFixtureTenantID || item.SourceUID != "nightly" {
 		t.Fatalf("identity did not survive the scan: %+v", item)
 	}
 	if item.Generation != 3 || item.SpecHash != "hash-3" || item.Actor != "operator" {
@@ -75,13 +77,13 @@ func TestJobRepository_Get_NotFound(t *testing.T) {
 	}
 	defer func() { _ = db.Close() }()
 
-	expectTenantTx(t, mock, "tenant-a")
+	expectTenantTx(t, mock, jobStoreFixtureTenantID)
 	mock.ExpectQuery(`SELECT (.+) FROM job_definition_revisions`).
-		WithArgs("tenant-a", int64(99)).
+		WithArgs(jobStoreFixtureTenantID, int64(99)).
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectRollback()
 
-	_, err = NewJobRepository(db).Get(context.Background(), jobquery.GetInput{ID: 99, TenantID: "tenant-a"})
+	_, err = NewJobRepository(db).Get(context.Background(), jobquery.GetInput{ID: 99, TenantID: jobStoreFixtureTenantID})
 	assertNotFound(t, err, "job")
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unmet expectations: %v", err)
@@ -96,21 +98,21 @@ func TestJobRepository_Get_CorruptSpecSurfaces(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	created := time.Date(2026, 9, 1, 8, 0, 0, 0, time.UTC)
-	expectTenantTx(t, mock, "tenant-a")
+	expectTenantTx(t, mock, jobStoreFixtureTenantID)
 	// A revision row whose normalized spec does not parse is a write-side
 	// defect; serving an empty job would read as "exists, does nothing".
 	mock.ExpectQuery(`SELECT (.+) FROM job_definition_revisions`).
-		WithArgs("tenant-a", int64(11)).
+		WithArgs(jobStoreFixtureTenantID, int64(11)).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "tenant_id", "source_mode", "source_uid", "source_namespace", "source_name",
 			"generation", "spec_hash", "normalized_spec", "actor", "created_at",
 		}).AddRow(
-			11, "tenant-a", "kubernetes", "nightly", "jobs", "nightly",
+			11, jobStoreFixtureTenantID, "kubernetes", "nightly", "jobs", "nightly",
 			3, "hash-3", []byte(`{not-json`), "operator", created,
 		))
 	mock.ExpectRollback()
 
-	if _, err := NewJobRepository(db).Get(context.Background(), jobquery.GetInput{ID: 11, TenantID: "tenant-a"}); err == nil {
+	if _, err := NewJobRepository(db).Get(context.Background(), jobquery.GetInput{ID: 11, TenantID: jobStoreFixtureTenantID}); err == nil {
 		t.Fatal("expected the corrupt spec to surface")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -126,18 +128,18 @@ func TestJobRepository_List(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	created := time.Date(2026, 9, 1, 8, 0, 0, 0, time.UTC)
-	expectTenantTx(t, mock, "tenant-a")
-	mock.ExpectQuery(`SELECT (.+) FROM job_definition_revisions WHERE tenant_id = \$1 AND is_active`).
-		WithArgs("tenant-a", 50, 0).
+	expectTenantTx(t, mock, jobStoreFixtureTenantID)
+	mock.ExpectQuery(`SELECT (.+) FROM job_definition_revisions WHERE tenant_id = \$1 AND source_mode = 'kubernetes' AND is_active`).
+		WithArgs(jobStoreFixtureTenantID, 50, 0, "", "", "").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "tenant_id", "source_namespace", "source_name", "source_uid",
-			"generation", "actor", "normalized_spec", "created_at",
+			"generation", "actor", "normalized_spec", "created_at", "source_mode",
 		}).
-			AddRow(12, "tenant-a", "jobs", "hourly", "hourly", 1, "operator", []byte(`{"schedule":"0 * * * *"}`), created).
-			AddRow(11, "tenant-a", "jobs", "nightly", "nightly", 3, "operator", []byte(nightlySpec), created))
+			AddRow(12, jobStoreFixtureTenantID, "jobs", "hourly", "hourly", 1, "operator", []byte(`{"schedule":"0 * * * *"}`), created, "kubernetes").
+			AddRow(11, jobStoreFixtureTenantID, "jobs", "nightly", "nightly", 3, "operator", []byte(nightlySpec), created, "kubernetes"))
 	mock.ExpectCommit()
 
-	items, err := NewJobRepository(db).List(context.Background(), jobquery.ListInput{TenantID: "tenant-a", Limit: 50, Offset: 0})
+	items, err := NewJobRepository(db).List(context.Background(), jobquery.ListInput{TenantID: jobStoreFixtureTenantID, Limit: 50, Offset: 0})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -163,19 +165,19 @@ func TestJobRepository_List_SuspendedSummary(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	created := time.Date(2026, 9, 1, 8, 0, 0, 0, time.UTC)
-	expectTenantTx(t, mock, "tenant-a")
+	expectTenantTx(t, mock, jobStoreFixtureTenantID)
 	mock.ExpectQuery(`SELECT (.+) FROM job_definition_revisions`).
-		WithArgs("tenant-a", 50, 0).
+		WithArgs(jobStoreFixtureTenantID, 50, 0, "", "", "").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "tenant_id", "source_namespace", "source_name", "source_uid",
-			"generation", "actor", "normalized_spec", "created_at",
-		}).AddRow(11, "tenant-a", "jobs", "nightly", "nightly", 3, "operator",
-			[]byte(`{"schedule":"*/5 * * * *","suspend":true}`), created))
+			"generation", "actor", "normalized_spec", "created_at", "source_mode",
+		}).AddRow(11, jobStoreFixtureTenantID, "jobs", "nightly", "nightly", 3, "operator",
+			[]byte(`{"schedule":"*/5 * * * *","suspend":true}`), created, "kubernetes"))
 	mock.ExpectCommit()
 
 	// Suspend wins over the expression: a stopped definition must not be
 	// described by the cron it no longer follows.
-	items, err := NewJobRepository(db).List(context.Background(), jobquery.ListInput{TenantID: "tenant-a", Limit: 50, Offset: 0})
+	items, err := NewJobRepository(db).List(context.Background(), jobquery.ListInput{TenantID: jobStoreFixtureTenantID, Limit: 50, Offset: 0})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -191,16 +193,16 @@ func TestJobRepository_List_Empty(t *testing.T) {
 	}
 	defer func() { _ = db.Close() }()
 
-	expectTenantTx(t, mock, "tenant-a")
+	expectTenantTx(t, mock, jobStoreFixtureTenantID)
 	mock.ExpectQuery(`SELECT (.+) FROM job_definition_revisions`).
-		WithArgs("tenant-a", 50, 0).
+		WithArgs(jobStoreFixtureTenantID, 50, 0, "", "", "").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "tenant_id", "source_namespace", "source_name", "source_uid",
-			"generation", "actor", "normalized_spec", "created_at",
+			"generation", "actor", "normalized_spec", "created_at", "source_mode",
 		}))
 	mock.ExpectCommit()
 
-	items, err := NewJobRepository(db).List(context.Background(), jobquery.ListInput{TenantID: "tenant-a", Limit: 50, Offset: 0})
+	items, err := NewJobRepository(db).List(context.Background(), jobquery.ListInput{TenantID: jobStoreFixtureTenantID, Limit: 50, Offset: 0})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -216,16 +218,18 @@ func TestJobRepository_List_DBError(t *testing.T) {
 	}
 	defer func() { _ = db.Close() }()
 
-	expectTenantTx(t, mock, "tenant-a")
+	expectTenantTx(t, mock, jobStoreFixtureTenantID)
 	mock.ExpectQuery(`SELECT (.+) FROM job_definition_revisions`).
-		WithArgs("tenant-a", 50, 0).
+		WithArgs(jobStoreFixtureTenantID, 50, 0, "", "", "").
 		WillReturnError(errors.New("db down"))
 	mock.ExpectRollback()
 
-	if _, err := NewJobRepository(db).List(context.Background(), jobquery.ListInput{TenantID: "tenant-a", Limit: 50, Offset: 0}); err == nil {
+	if _, err := NewJobRepository(db).List(context.Background(), jobquery.ListInput{TenantID: jobStoreFixtureTenantID, Limit: 50, Offset: 0}); err == nil {
 		t.Fatal("expected error, got nil")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unmet expectations: %v", err)
 	}
 }
+
+var jobStoreFixtureTenantID = scan.GenerateID()

@@ -9,6 +9,8 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 
 	"orbitjob/internal/core/domain/audit"
+
+	"orbitjob/internal/platform/scan"
 )
 
 func TestInsertAuditEvent(t *testing.T) {
@@ -23,8 +25,8 @@ func TestInsertAuditEvent(t *testing.T) {
 	// that says what changed.
 	mock.ExpectExec(`INSERT INTO audit_events`).
 		WithArgs(
-			"tenant-a", "caller-key", audit.EventCreate, audit.ResourcePolicy,
-			"p1", jsonBytes{want: `{"statement":"allow"}`},
+			eventStoreFixtureTenantID, eventStoreFixtureActorID, audit.EventCreate, audit.ResourcePolicy,
+			eventStoreFixtureSubjectID, jsonBytes{want: `{"statement":"allow"}`},
 		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
@@ -33,7 +35,7 @@ func TestInsertAuditEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
-	ev := testAuditEvent()
+	ev := testAuditEvent(eventStoreFixtureTenantID, eventStoreFixtureActorID, audit.EventCreate, audit.ResourcePolicy, eventStoreFixtureSubjectID)
 	ev.Diff = map[string]any{"statement": "allow"}
 	if err := insertAuditEvent(context.Background(), tx, ev); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -89,7 +91,7 @@ func TestInsertAuditEvent_ExecError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
-	if err := insertAuditEvent(context.Background(), tx, testAuditEvent()); err == nil {
+	if err := insertAuditEvent(context.Background(), tx, testAuditEvent(eventStoreFixtureTenantID, eventStoreFixtureActorID, audit.EventCreate, audit.ResourcePolicy, eventStoreFixtureSubjectID)); err == nil {
 		t.Fatal("expected error, got nil")
 	}
 	_ = tx.Rollback()
@@ -106,7 +108,7 @@ func TestInsertAuditEvent_NullsAnEmptyActor(t *testing.T) {
 	// An absent actor is stored as NULL rather than as an empty string, so
 	// "unknown" and "unrecorded" do not become two spellings of each other.
 	mock.ExpectExec(`INSERT INTO audit_events`).
-		WithArgs("tenant-a", nil, audit.EventCreate, audit.ResourcePolicy, "p1", sqlmock.AnyArg()).
+		WithArgs(eventStoreFixtureTenantID, nil, audit.EventCreate, audit.ResourcePolicy, eventStoreFixtureSubjectID, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
@@ -114,7 +116,7 @@ func TestInsertAuditEvent_NullsAnEmptyActor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
-	ev := testAuditEvent()
+	ev := testAuditEvent(eventStoreFixtureTenantID, eventStoreFixtureActorID, audit.EventCreate, audit.ResourcePolicy, eventStoreFixtureSubjectID)
 	ev.ActorID = ""
 	if err := insertAuditEvent(context.Background(), tx, ev); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -126,8 +128,8 @@ func TestInsertAuditEvent_NullsAnEmptyActor(t *testing.T) {
 }
 
 func TestNewGrantEvent(t *testing.T) {
-	ev := newGrantEvent("tenant-a", "caller-key", audit.EventCreate, audit.ResourcePolicy, "p1", nil)
-	if ev.TenantID != "tenant-a" || ev.ActorID != "caller-key" {
+	ev := newGrantEvent(eventStoreFixtureTenantID, eventStoreFixtureActorID, audit.EventCreate, audit.ResourcePolicy, eventStoreFixtureSubjectID, nil)
+	if ev.TenantID != eventStoreFixtureTenantID || ev.ActorID != eventStoreFixtureActorID {
 		t.Fatalf("event = %+v", ev)
 	}
 	// A nil diff becomes an empty object, so the encoded row is {} and not
@@ -140,9 +142,15 @@ func TestNewGrantEvent(t *testing.T) {
 		t.Fatalf("encoded diff = %s err = %v, want {}", b, err)
 	}
 
-	withDiff := newGrantEvent("tenant-a", "caller-key", audit.EventCreate, audit.ResourcePolicy, "p1",
+	withDiff := newGrantEvent(eventStoreFixtureTenantID, eventStoreFixtureActorID, audit.EventCreate, audit.ResourcePolicy, eventStoreFixtureSubjectID,
 		map[string]any{"granted": true})
 	if withDiff.Diff["granted"] != true {
 		t.Fatalf("diff = %+v, want the granted flag", withDiff.Diff)
 	}
 }
+
+var eventStoreFixtureActorID = scan.GenerateID()
+
+var eventStoreFixtureSubjectID = scan.GenerateID()
+
+var eventStoreFixtureTenantID = scan.GenerateID()

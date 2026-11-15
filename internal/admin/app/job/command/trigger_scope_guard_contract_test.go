@@ -13,6 +13,8 @@ import (
 	"orbitjob/internal/core/domain/jobrun"
 	"orbitjob/internal/domain/resource"
 	"orbitjob/internal/domain/validation"
+
+	"orbitjob/internal/platform/scan"
 )
 
 // The manual trigger gate refuses a scoped caller because a definition has no
@@ -26,9 +28,9 @@ import (
 // Fixtures inserted by this file. Tenant ids are tenants.id values, CHAR(26)
 // ULIDs; slugs like "default" are never tenant identifiers. t3ScopedGroup is a
 // resource group id, a different kind of identifier and never used as a tenant.
-const (
-	t3Tenant      = "01J9Z7V2M4QK7P3XWQ5R8TNBCE"
-	t3ScopedGroup = "01JBB0W9YRXG4SZV2QKM78N3PD"
+var (
+	t3Tenant      = jobCommandScopeIdentityTenantID
+	t3ScopedGroup = jobCommandScopeIdentityOtherTenantID
 )
 
 // t3SpyDefinitionReader records every definition read that crosses the use
@@ -65,12 +67,13 @@ func (s *t3SpyRunPublisher) Publish(_ context.Context, run v1alpha1.JobRun) (v1a
 
 func t3SuspendableDefinition() query.GetItem {
 	return query.GetItem{
-		ID:        7,
-		TenantID:  t3Tenant,
-		Name:      "nightly-index",
-		Namespace: "orbitjob-jobs",
-		SourceUID: "src-nightly-index",
-		Suspend:   false,
+		SourceMode: "kubernetes",
+		ID:         7,
+		TenantID:   t3Tenant,
+		Name:       "nightly-index",
+		Namespace:  "orbitjob-jobs",
+		SourceUID:  "src-nightly-index",
+		Suspend:    false,
 	}
 }
 
@@ -89,7 +92,7 @@ func TestTriggerScopedCallerIsRefusedBeforeAnyEffect(t *testing.T) {
 	result, err := uc.Trigger(context.Background(), TriggerInput{
 		JobID:           7,
 		TenantID:        t3Tenant,
-		ActorID:         "ci-actor",
+		ActorID:         jobCommandScopeIdentityActorID,
 		ResourceGroupID: t3ScopedGroup,
 	})
 
@@ -127,7 +130,7 @@ func TestTriggerUnscopedCallerPublishesExactlyOneRun(t *testing.T) {
 	result, err := uc.Trigger(context.Background(), TriggerInput{
 		JobID:    7,
 		TenantID: t3Tenant,
-		ActorID:  "ci-actor",
+		ActorID:  jobCommandScopeIdentityActorID,
 	})
 	if err != nil {
 		t.Fatalf("unscoped trigger refused: %v", err)
@@ -140,7 +143,7 @@ func TestTriggerUnscopedCallerPublishesExactlyOneRun(t *testing.T) {
 	}
 	// The run the API hands to the cluster carries the authenticated actor and
 	// the revision it triggers, the fields the operator copies into the ledger.
-	if publisher.run.Spec.Actor != "ci-actor" {
+	if publisher.run.Spec.Actor != jobCommandScopeIdentityActorID {
 		t.Fatalf("published run actor %q, want the authenticated caller", publisher.run.Spec.Actor)
 	}
 	if publisher.run.Spec.DefinitionRevision != 7 {
@@ -174,7 +177,7 @@ func TestTriggerTenantSlugIsNeverATenantId(t *testing.T) {
 	_, err := uc.Trigger(context.Background(), TriggerInput{
 		JobID:    7,
 		TenantID: "default",
-		ActorID:  "ci-actor",
+		ActorID:  jobCommandScopeIdentityActorID,
 	})
 	var verr *validation.Error
 	if !errors.As(err, &verr) {
@@ -189,16 +192,22 @@ func TestTriggerTenantSlugIsNeverATenantId(t *testing.T) {
 
 	// At the gate itself: this file's own 26-character ULID is the accepted
 	// shape; the slug is not.
-	out, err := normalizeTriggerInput(TriggerInput{JobID: 7, TenantID: t3Tenant, ActorID: "ci-actor"})
+	out, err := normalizeTriggerInput(TriggerInput{JobID: 7, TenantID: t3Tenant, ActorID: jobCommandScopeIdentityActorID})
 	if err != nil {
 		t.Fatalf("26-character tenant refused: %v", err)
 	}
 	if out.TenantID != t3Tenant {
 		t.Fatalf("tenant normalized to %q, want %q", out.TenantID, t3Tenant)
 	}
-	_, err = normalizeTriggerInput(TriggerInput{JobID: 7, TenantID: "default", ActorID: "ci-actor"})
+	_, err = normalizeTriggerInput(TriggerInput{JobID: 7, TenantID: "default", ActorID: jobCommandScopeIdentityActorID})
 	var verr2 *validation.Error
 	if !errors.As(err, &verr2) || verr2.Field != "tenant_id" {
 		t.Fatalf("slug tenant at the gate got %v, want a *validation.Error on tenant_id", err)
 	}
 }
+
+var jobCommandScopeIdentityTenantID = scan.GenerateID()
+
+var jobCommandScopeIdentityOtherTenantID = scan.GenerateID()
+
+var jobCommandScopeIdentityActorID = scan.GenerateID()

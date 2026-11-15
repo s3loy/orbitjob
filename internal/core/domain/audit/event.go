@@ -7,12 +7,14 @@
 // requires the grant to have been written down when it happened.
 package audit
 
+import "context"
+
 // Event is one authorization change to record.
 type Event struct {
 	TenantID string
-	// ActorID is the id of the key that performed the change.
+	// ActorID is the stable authenticated user or API key that performed the change.
 	ActorID string
-	// EventType is the verb: create, bind, unbind, revoke, delete.
+	// EventType is the verb: create, update, revoke, delete.
 	EventType string
 	// ResourceType is the kind of object changed: policy, apikey, resource_group.
 	ResourceType string
@@ -31,6 +33,7 @@ type Event struct {
 // the same act would make one grant look like two.
 const (
 	EventCreate = "create"
+	EventUpdate = "update"
 	EventDelete = "delete"
 	EventRevoke = "revoke"
 )
@@ -41,3 +44,20 @@ const (
 	ResourceAPIKey = "apikey"
 	ResourceGroup  = "resource_group"
 )
+
+type actorContextKey struct{}
+type actorIdentity struct{ ID, Type string }
+
+// WithActor preserves authenticated actor metadata across application boundaries.
+func WithActor(ctx context.Context, id, kind string) context.Context {
+	return context.WithValue(ctx, actorContextKey{}, actorIdentity{id, kind})
+}
+
+// ActorType reports the verified actor type only when the supplied ID matches.
+func ActorType(ctx context.Context, id string) string {
+	actor, _ := ctx.Value(actorContextKey{}).(actorIdentity)
+	if actor.ID == id && actor.Type == "user" {
+		return "user"
+	}
+	return "api_key"
+}

@@ -11,6 +11,8 @@ import (
 
 	checkquery "orbitjob/internal/admin/app/check/query"
 	"orbitjob/internal/domain/resource"
+
+	"orbitjob/internal/platform/scan"
 )
 
 func TestCheckRepository_Get(t *testing.T) {
@@ -29,27 +31,30 @@ func TestCheckRepository_Get(t *testing.T) {
 	rows := sqlmock.NewRows([]string{
 		"id", "name", "description", "tenant_id", "status", "check_type", "check_config", "assertion_rules",
 		"schedule_type", "cron_expr", "interval_sec", "timezone", "timeout_sec", "retry_limit",
-		"priority", "labels", "next_run_at", "version", "created_at", "updated_at",
+		"priority", "labels", "next_run_at", "version", "created_at", "updated_at", "execution_policy_version",
 	}).AddRow(
-		int64(1), "http-check", "test desc", "default", "active", "http_health",
+		int64(1), "http-check", "test desc", checkStoreFixtureTenantID, "active", "http_health",
 		checkConfigJSON, assertionJSON,
 		"interval", nil, nil, "UTC", 10, 3,
-		5, labelsJSON, nil, 1, now, now,
+		5, labelsJSON, nil, 1, now, now, 0,
 	)
 
 	mock.ExpectBegin()
-	mock.ExpectExec(`SELECT set_config`).WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`SELECT set_config`).WithArgs(checkStoreFixtureTenantID).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT (.+) FROM checks`).
-		WithArgs("default", int64(1), nil).
+		WithArgs(checkStoreFixtureTenantID, int64(1), nil).
 		WillReturnRows(rows)
 	mock.ExpectCommit()
 
-	snap, err := repo.Get(context.Background(), "default", "", 1)
+	snap, err := repo.Get(context.Background(), checkStoreFixtureTenantID, "", 1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if snap.ID != 1 {
 		t.Errorf("expected id 1, got %d", snap.ID)
+	}
+	if snap.ExecutionPolicyVersion != 0 {
+		t.Errorf("legacy execution policy = %d, want 0", snap.ExecutionPolicyVersion)
 	}
 	if snap.CheckConfig["url"] != "https://example.com" {
 		t.Errorf("expected url 'https://example.com', got %v", snap.CheckConfig["url"])
@@ -77,13 +82,13 @@ func TestCheckRepository_Get_NotFound(t *testing.T) {
 
 	repo := NewCheckRepository(db)
 	mock.ExpectBegin()
-	mock.ExpectExec(`SELECT set_config`).WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`SELECT set_config`).WithArgs(checkStoreFixtureTenantID).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT (.+) FROM checks`).
-		WithArgs("default", int64(999), nil).
+		WithArgs(checkStoreFixtureTenantID, int64(999), nil).
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectRollback()
 
-	_, err = repo.Get(context.Background(), "default", "", 999)
+	_, err = repo.Get(context.Background(), checkStoreFixtureTenantID, "", 999)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -108,13 +113,13 @@ func TestCheckRepository_Get_DBError(t *testing.T) {
 
 	repo := NewCheckRepository(db)
 	mock.ExpectBegin()
-	mock.ExpectExec(`SELECT set_config`).WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`SELECT set_config`).WithArgs(checkStoreFixtureTenantID).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT (.+) FROM checks`).
-		WithArgs("default", int64(1), nil).
+		WithArgs(checkStoreFixtureTenantID, int64(1), nil).
 		WillReturnError(errors.New("db down"))
 	mock.ExpectRollback()
 
-	_, err = repo.Get(context.Background(), "default", "", 1)
+	_, err = repo.Get(context.Background(), checkStoreFixtureTenantID, "", 1)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -134,25 +139,25 @@ func TestCheckRepository_List(t *testing.T) {
 	now := time.Now()
 
 	mock.ExpectBegin()
-	mock.ExpectExec(`SELECT set_config`).WithArgs("default").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`SELECT set_config`).WithArgs(checkStoreFixtureTenantID).WillReturnResult(sqlmock.NewResult(0, 0))
 
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM checks`).
-		WithArgs("default", nil, nil).
+		WithArgs(checkStoreFixtureTenantID, nil, nil, "").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 
 	rows := sqlmock.NewRows([]string{
 		"id", "name", "description", "tenant_id", "status", "check_type",
-		"schedule_type", "next_run_at", "version", "created_at",
-	}).AddRow(int64(1), "http-check", "desc", "default", "active", "http_health",
-		"interval", nil, 1, now)
+		"schedule_type", "next_run_at", "version", "created_at", "execution_policy_version",
+	}).AddRow(int64(1), "http-check", "desc", checkStoreFixtureTenantID, "active", "http_health",
+		"interval", nil, 1, now, 1)
 
 	mock.ExpectQuery(`SELECT (.+) FROM checks`).
-		WithArgs("default", nil, nil, 20, 0).
+		WithArgs(checkStoreFixtureTenantID, nil, nil, 20, 0, "").
 		WillReturnRows(rows)
 	mock.ExpectCommit()
 
 	items, total, err := repo.List(context.Background(), checkquery.ListChecksInput{
-		TenantID: "default",
+		TenantID: checkStoreFixtureTenantID,
 		Limit:    20,
 		Offset:   0,
 	})
@@ -168,7 +173,12 @@ func TestCheckRepository_List(t *testing.T) {
 	if items[0].Name != "http-check" {
 		t.Errorf("expected name 'http-check', got %q", items[0].Name)
 	}
+	if items[0].ExecutionPolicyVersion != 1 {
+		t.Errorf("execution policy = %d, want 1", items[0].ExecutionPolicyVersion)
+	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unmet expectations: %v", err)
 	}
 }
+
+var checkStoreFixtureTenantID = scan.GenerateID()

@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"orbitjob/internal/core/domain/policy"
+
+	"orbitjob/internal/platform/scan"
 )
 
 type stubPolicyGetter struct {
@@ -22,13 +24,13 @@ func (s *stubPolicyGetter) Get(_ context.Context, tenantID, id string) (policy.R
 }
 
 func TestGetReturnsTheRequestedPolicy(t *testing.T) {
-	repo := &stubPolicyGetter{rec: policy.Record{ID: "p1", Name: "JobOperator", TenantID: "t1"}}
+	repo := &stubPolicyGetter{rec: policy.Record{ID: "p1", Name: "JobOperator", TenantID: policyGetFixtureTenantID}}
 
-	out, err := NewGetter(repo).Get(context.Background(), GetInput{TenantID: "t1", ID: "p1"})
+	out, err := NewGetter(repo).Get(context.Background(), GetInput{TenantID: policyGetFixtureTenantID, ID: "p1"})
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if repo.gotTenantID != "t1" || repo.gotID != "p1" {
+	if repo.gotTenantID != policyGetFixtureTenantID || repo.gotID != "p1" {
 		t.Fatalf("unexpected arguments: %s / %s", repo.gotTenantID, repo.gotID)
 	}
 	if out.Name != "JobOperator" || out.Platform {
@@ -39,7 +41,7 @@ func TestGetReturnsTheRequestedPolicy(t *testing.T) {
 func TestGetMarksAPlatformPreset(t *testing.T) {
 	repo := &stubPolicyGetter{rec: policy.Record{ID: "preset", Name: "ReadOnlyAccess"}}
 
-	out, err := NewGetter(repo).Get(context.Background(), GetInput{TenantID: "t1", ID: "preset"})
+	out, err := NewGetter(repo).Get(context.Background(), GetInput{TenantID: policyGetFixtureTenantID, ID: "preset"})
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -52,7 +54,9 @@ func TestGetMarksAPlatformPreset(t *testing.T) {
 // forbidden: distinguishing the two would confirm that the id exists.
 func TestGetPropagatesNotFound(t *testing.T) {
 	repo := &stubPolicyGetter{err: errors.New("not found")}
-	if _, err := NewGetter(repo).Get(context.Background(), GetInput{TenantID: "t1", ID: "other"}); err == nil {
+	if _, err := NewGetter(repo).Get(context.Background(), GetInput{TenantID: policyGetFixtureTenantID, ID: "other"}); err == nil {
 		t.Fatal("expected the not-found error to propagate")
 	}
 }
+
+var policyGetFixtureTenantID = scan.GenerateID()

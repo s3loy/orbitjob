@@ -6,7 +6,7 @@ import (
 )
 
 type checkRunGetter interface {
-	Get(ctx context.Context, tenantID string, id int64) (GetResult, error)
+	Get(ctx context.Context, tenantID, resourceGroupID string, id int64) (GetResult, error)
 }
 
 // GetResult is the result of getting a single check run.
@@ -35,6 +35,6 @@ func NewGetCheckRunUseCase(repo checkRunGetter) *GetCheckRunUseCase {
 	return &GetCheckRunUseCase{repo: repo}
 }
 
-func (uc *GetCheckRunUseCase) Get(ctx context.Context, tenantID string, id int64) (GetResult, error) {
-	return uc.repo.Get(ctx, tenantID, id)
+func (uc *GetCheckRunUseCase) Get(ctx context.Context, tenantID, resourceGroupID string, id int64) (GetResult, error) {
+	return uc.repo.Get(ctx, tenantID, resourceGroupID, id)
 }

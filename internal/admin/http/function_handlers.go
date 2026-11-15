@@ -10,9 +10,8 @@ import (
 	"orbitjob/internal/core/app/functioninvoke"
 )
 
-// The function routes serve the definitions read-only plus invoke in v1: a
-// function is a tenant-owned row, and the actions its mutation routes would
-// need land together with those routes. The invoke path is the manual
+// Functions are tenant-owned configuration rows. Management routes require
+// independent grants and transactional audit. The invoke path is the manual
 // trigger's CR-first contract with a Function trigger value: the operator
 // materializes the ledger row, so nothing here writes the ledger.
 
@@ -82,6 +81,7 @@ func (h *Handler) ListFunctions(c *gin.Context) {
 		return
 	}
 	out, err := h.listFunctionsUC.List(c.Request.Context(), FunctionListInput{
+		Search:          req.Search,
 		TenantID:        tenantID,
 		ResourceGroupID: groupFrom(c),
 		Limit:           req.Limit,
@@ -155,6 +155,10 @@ func (h *Handler) InvokeFunction(c *gin.Context) {
 	} else if key != nil {
 		idempotencyKey = *key
 	}
+	expectedVersion := 0
+	if req.ExpectedVersion != nil {
+		expectedVersion = *req.ExpectedVersion
+	}
 
 	out, err := h.invokeFunctionUC.Invoke(c.Request.Context(), functioninvoke.Input{
 		FunctionID:      req.ID,
@@ -163,6 +167,7 @@ func (h *Handler) InvokeFunction(c *gin.Context) {
 		IdempotencyKey:  idempotencyKey,
 		ResourceGroupID: groupFrom(c),
 		WaitSeconds:     req.WaitSeconds,
+		ExpectedVersion: expectedVersion,
 	})
 	if err != nil {
 		writeAPIError(c, err)
@@ -202,6 +207,7 @@ func (h *Handler) ListFunctionRuns(c *gin.Context) {
 		return
 	}
 	out, err := h.listFunctionRunsUC.List(c.Request.Context(), FunctionRunListInput{
+		Offset: req.Offset, CreatedFrom: req.CreatedFrom, CreatedBefore: req.CreatedBefore,
 		FunctionID:      req.ID,
 		TenantID:        tenantID,
 		ResourceGroupID: groupFrom(c),

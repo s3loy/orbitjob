@@ -1,6 +1,7 @@
 package http
 
 import (
+	"strings"
 	"testing"
 
 	"orbitjob/internal/core/domain/policy"
@@ -17,6 +18,12 @@ func TestEveryRouteDeclaresAPermission(t *testing.T) {
 		"/openapi.json": true,
 	}
 	for _, route := range adminAPIRoutes() {
+		// Identity and the workspace directory are authenticated filtered
+		// discovery. Own labels are implicit; the directory authorizes each
+		// foreign tenant:Get before applying SQL search and pagination.
+		if strings.HasPrefix(route.path, "/auth/") || route.path == "/identity" || route.path == "/workspaces" {
+			continue
+		}
 		if public[route.path] {
 			if route.permission != "" {
 				t.Errorf("public route %s should carry no permission, got %q", route.path, route.permission)
@@ -26,7 +33,7 @@ func TestEveryRouteDeclaresAPermission(t *testing.T) {
 		if route.permission == "" {
 			t.Errorf("route %s %s declares no permission", route.method, route.path)
 		}
-		if route.resource == nil {
+		if route.resource == nil && route.resourceForHandler == nil {
 			t.Errorf("route %s %s declares a permission but no resource resolver", route.method, route.path)
 		}
 	}

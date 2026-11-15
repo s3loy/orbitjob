@@ -32,6 +32,10 @@ spec:
                   name: {{ $.Values.database.secretName }}
                   key: {{ if eq $name "admin-api" }}{{ $.Values.database.keys.admin }}{{ else }}{{ $.Values.database.keys.runtime }}{{ end }}
           {{- if eq $name "admin-api" }}
+            {{- if $.Values.operator.enabled }}
+            - name: OPERATOR_NAMESPACE_TENANTS
+              value: {{ include "orbitjob.operatorNamespaceTenants" $ | quote }}
+            {{- end }}
             - name: RATELIMIT_READ_RPS
               value: {{ $.Values.adminapi.rateLimits.readRPS | quote }}
             - name: RATELIMIT_WRITE_RPS

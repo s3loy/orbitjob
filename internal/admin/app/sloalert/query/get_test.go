@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"orbitjob/internal/platform/scan"
 )
 
 type stubAlertReader struct {
@@ -12,7 +14,7 @@ type stubAlertReader struct {
 	err error
 }
 
-func (s *stubAlertReader) Get(_ context.Context, _ string, _ int64) (BudgetAlertItem, error) {
+func (s *stubAlertReader) Get(_ context.Context, _, _ string, _ int64) (BudgetAlertItem, error) {
 	return s.out, s.err
 }
 
@@ -23,7 +25,7 @@ type stubAlertLister struct {
 	err       error
 }
 
-func (s *stubAlertLister) List(_ context.Context, _ string, _ *int64, _ *string, limit, _ int) ([]BudgetAlertItem, int64, error) {
+func (s *stubAlertLister) List(_ context.Context, _, _ string, _ *int64, _ *string, limit, _ int) ([]BudgetAlertItem, int64, error) {
 	s.lastLimit = limit
 	return s.items, s.total, s.err
 }
@@ -35,7 +37,7 @@ func TestGetAlert_Success(t *testing.T) {
 	}}
 	uc := NewGetAlertUseCase(repo)
 
-	result, err := uc.Get(context.Background(), "t1", 1)
+	result, err := uc.Get(context.Background(), sloalertGetFixtureTenantID, "", 1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -55,7 +57,7 @@ func TestGetAlert_WithResolved(t *testing.T) {
 	}}
 	uc := NewGetAlertUseCase(repo)
 
-	result, err := uc.Get(context.Background(), "t1", 1)
+	result, err := uc.Get(context.Background(), sloalertGetFixtureTenantID, "", 1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -68,7 +70,7 @@ func TestGetAlert_InvalidID(t *testing.T) {
 	repo := &stubAlertReader{}
 	uc := NewGetAlertUseCase(repo)
 
-	_, err := uc.Get(context.Background(), "t1", 0)
+	_, err := uc.Get(context.Background(), sloalertGetFixtureTenantID, "", 0)
 	if err == nil {
 		t.Fatal("expected validation error for id<=0")
 	}
@@ -78,7 +80,7 @@ func TestGetAlert_Error(t *testing.T) {
 	repo := &stubAlertReader{err: errors.New("not found")}
 	uc := NewGetAlertUseCase(repo)
 
-	_, err := uc.Get(context.Background(), "t1", 1)
+	_, err := uc.Get(context.Background(), sloalertGetFixtureTenantID, "", 1)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -92,7 +94,7 @@ func TestListAlerts_Success(t *testing.T) {
 	}
 	uc := NewListAlertsUseCase(repo)
 
-	result, err := uc.List(context.Background(), ListInput{TenantID: "t1", Limit: 10})
+	result, err := uc.List(context.Background(), ListInput{TenantID: sloalertGetFixtureTenantID, Limit: 10})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -108,7 +110,7 @@ func TestListAlerts_Error(t *testing.T) {
 	repo := &stubAlertLister{err: errors.New("db down")}
 	uc := NewListAlertsUseCase(repo)
 
-	_, err := uc.List(context.Background(), ListInput{TenantID: "t1"})
+	_, err := uc.List(context.Background(), ListInput{TenantID: sloalertGetFixtureTenantID})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -118,7 +120,7 @@ func TestListAlerts_DefaultLimit(t *testing.T) {
 	repo := &stubAlertLister{}
 	uc := NewListAlertsUseCase(repo)
 
-	if _, err := uc.List(context.Background(), ListInput{TenantID: "t1", Limit: 0}); err != nil {
+	if _, err := uc.List(context.Background(), ListInput{TenantID: sloalertGetFixtureTenantID, Limit: 0}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if repo.lastLimit != 50 {
@@ -130,10 +132,12 @@ func TestListAlerts_ClampsLimit(t *testing.T) {
 	repo := &stubAlertLister{}
 	uc := NewListAlertsUseCase(repo)
 
-	if _, err := uc.List(context.Background(), ListInput{TenantID: "t1", Limit: 500}); err != nil {
+	if _, err := uc.List(context.Background(), ListInput{TenantID: sloalertGetFixtureTenantID, Limit: 500}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if repo.lastLimit != 100 {
 		t.Fatalf("expected limit clamped to 100, got %d", repo.lastLimit)
 	}
 }
+
+var sloalertGetFixtureTenantID = scan.GenerateID()

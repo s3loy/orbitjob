@@ -9,6 +9,8 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"orbitjob/internal/core/domain/policy"
+
+	"orbitjob/internal/platform/scan"
 )
 
 // withDocs installs a principal and its policy documents, standing in for what
@@ -29,9 +31,9 @@ func TestRequireAllowsPermittedAction(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(withDocs(
-		Principal{TenantID: "T1", Kind: KindTenant},
+		Principal{TenantID: authorizeFixtureTenantID, Kind: KindTenant},
 		[]policy.Document{{Statement: []policy.Statement{
-			{Effect: policy.EffectAllow, Action: []string{"job:Get"}, Resource: []string{"orbitjob:T1:*:job/*"}},
+			{Effect: policy.EffectAllow, Action: []string{"job:Get"}, Resource: []string{"orbitjob:" + authorizeFixtureTenantID + ":*:job/*"}},
 		}}},
 	))
 	r.GET("/jobs/:tenant/:group/:id", Require("job:Get", jobARN), func(c *gin.Context) {
@@ -39,7 +41,7 @@ func TestRequireAllowsPermittedAction(t *testing.T) {
 	})
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest("GET", "/jobs/T1/ci/7", nil))
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/jobs/"+authorizeFixtureTenantID+"/ci/7", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
@@ -49,9 +51,9 @@ func TestRequireRejectsUnpermittedAction(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(withDocs(
-		Principal{TenantID: "T1", Kind: KindTenant},
+		Principal{TenantID: authorizeFixtureTenantID, Kind: KindTenant},
 		[]policy.Document{{Statement: []policy.Statement{
-			{Effect: policy.EffectAllow, Action: []string{"job:List"}, Resource: []string{"orbitjob:T1:*:job/*"}},
+			{Effect: policy.EffectAllow, Action: []string{"job:List"}, Resource: []string{"orbitjob:" + authorizeFixtureTenantID + ":*:job/*"}},
 		}}},
 	))
 	r.GET("/jobs/:tenant/:group/:id", Require("job:Get", jobARN), func(c *gin.Context) {
@@ -59,7 +61,7 @@ func TestRequireRejectsUnpermittedAction(t *testing.T) {
 	})
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest("GET", "/jobs/T1/ci/7", nil))
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/jobs/"+authorizeFixtureTenantID+"/ci/7", nil))
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d", w.Code)
 	}
@@ -70,7 +72,7 @@ func TestRequireDeniesWhenResourceUnresolvable(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(withDocs(
-		Principal{TenantID: "T1", Kind: KindTenant},
+		Principal{TenantID: authorizeFixtureTenantID, Kind: KindTenant},
 		[]policy.Document{{Statement: []policy.Statement{
 			{Effect: policy.EffectAllow, Action: []string{"job:Get"}, Resource: []string{"orbitjob:*:*:*/*"}},
 		}}},
@@ -91,7 +93,7 @@ func TestRequireDeniesWhenDocumentsMissing(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
-		SetPrincipal(c, Principal{TenantID: "T1", Kind: KindTenant})
+		SetPrincipal(c, Principal{TenantID: authorizeFixtureTenantID, Kind: KindTenant})
 		c.Next()
 	})
 	r.GET("/jobs/:id", Require("job:Get", jobARN), func(c *gin.Context) { c.Status(http.StatusOK) })
@@ -106,11 +108,11 @@ func TestRequireDeniesWhenDocumentsMissing(t *testing.T) {
 func TestPrincipalRoundTrips(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	want := Principal{
-		KeyID:            "ak_1",
-		TenantID:         "T1",
+		KeyID:            authorizeFixtureKeyID,
+		TenantID:         authorizeFixtureTenantID,
 		Kind:             KindTenant,
-		ResourceGroupID:  "g1",
-		BoundaryPolicyID: "p1",
+		ResourceGroupID:  authorizeFixtureGroupID,
+		BoundaryPolicyID: authorizeFixtureBoundaryID,
 	}
 	var (
 		got    Principal
@@ -191,3 +193,11 @@ func TestDocumentsDistinguishesUnsetFromEmpty(t *testing.T) {
 		t.Fatalf("an explicit empty grant list must be reported as set: ok=%v len=%d", emptyOK, emptyLen)
 	}
 }
+
+var authorizeFixtureTenantID = scan.GenerateID()
+
+var authorizeFixtureKeyID = scan.GenerateID()
+
+var authorizeFixtureGroupID = scan.GenerateID()
+
+var authorizeFixtureBoundaryID = scan.GenerateID()

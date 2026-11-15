@@ -372,10 +372,15 @@ for entry in "${tenants[@]}"; do
   rule=$(awk -F'\t' -v ns="$ns" '
     $1 == "DOC" && $3 == "Role" && $4 == ns && $5 == "orbitjob-admin-api" { d = $2 }
     $1 == "RULE" && $2 == d { print $3 }' "$facts")
-  expected_rule="$expected_rule_jobruns
+  expected_rule='apiGroups=["workloads.orbitjob.io"];resources=["scheduledjobs","workflowjobs"];verbs=["get","create","patch"]
+apiGroups=["batch"];resources=["jobs"];verbs=["get"]
+apiGroups=[""];resources=["pods"];verbs=["get","list"]
+apiGroups=[""];resources=["pods/log"];verbs=["get"]'
+  expected_rule="$expected_rule
+$expected_rule_jobruns
 $expected_rule_workflowruns"
   if [[ $rule == "$expected_rule" ]]; then
-    ok "admin-rbac-rule:$ns grants only create,get,patch on jobruns and workflowruns"
+    ok "admin-rbac-rule:$ns grants exactly ADR0010 definition, run and bounded log access"
   else
     fail "admin-rbac-rule:$ns Role rules are [$rule], want [$expected_rule]"
   fi

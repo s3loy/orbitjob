@@ -11,7 +11,7 @@ import (
 
 // budgetReader retrieves current budgets.
 type budgetReader interface {
-	GetCurrent(ctx context.Context, tenantID string, sloID int64) (slo.Budget, error)
+	GetCurrent(ctx context.Context, tenantID, resourceGroupID string, sloID int64) (slo.Budget, error)
 }
 
 // GetBudgetUseCase handles budget retrieval.
@@ -42,12 +42,12 @@ type GetItem struct {
 }
 
 // Get retrieves the current budget for an SLO.
-func (uc *GetBudgetUseCase) Get(ctx context.Context, tenantID string, sloID int64) (GetItem, error) {
+func (uc *GetBudgetUseCase) Get(ctx context.Context, tenantID, resourceGroupID string, sloID int64) (GetItem, error) {
 	if sloID <= 0 {
 		return GetItem{}, validation.New("slo_id", "slo_id must be positive")
 	}
 
-	budget, err := uc.repo.GetCurrent(ctx, tenantID, sloID)
+	budget, err := uc.repo.GetCurrent(ctx, tenantID, resourceGroupID, sloID)
 	if err != nil {
 		// Newly created SLOs may have no budget rows yet (evaluation cycle not run).
 		// Return an empty budget instead of 404 — "no consumption yet" is a valid state.

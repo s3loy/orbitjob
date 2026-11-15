@@ -56,9 +56,13 @@ func prepend(guard gin.HandlerFunc, handlers []gin.HandlerFunc) []gin.HandlerFun
 
 // guardFor builds the authorization guard for a route, or nil for the public
 // endpoints that declare no permission.
-func guardFor(route routeDefinition) gin.HandlerFunc {
+func guardFor(route routeDefinition, h *Handler) gin.HandlerFunc {
 	if route.permission == "" {
 		return nil
 	}
-	return middleware.Require(route.permission, route.resource)
+	resolve := route.resource
+	if route.resourceForHandler != nil {
+		resolve = route.resourceForHandler(h)
+	}
+	return middleware.Require(route.permission, resolve)
 }

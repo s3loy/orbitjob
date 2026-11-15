@@ -221,6 +221,7 @@ func newIntegrationServerWithWorkloads(t *testing.T) (*httptest.Server, *sql.DB,
 	handler.SetDeleteCheckUseCase(checkcommand.NewDeleteCheckUseCase(checkWriteRepo))
 
 	checkRunReadRepo := adminpostgres.NewCheckRunRepository(adminDB)
+	handler.SetEvidenceScopeReader(adminpostgres.NewEvidenceScopeRepository(adminDB))
 	handler.SetListCheckRunsUseCase(checkrunquery.NewListCheckRunsUseCase(checkRunReadRepo))
 	handler.SetGetCheckRunUseCase(checkrunquery.NewGetCheckRunUseCase(checkRunReadRepo))
 

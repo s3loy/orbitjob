@@ -573,7 +573,7 @@ func TestFunctionRunRepository_RecordDBErrorRollsBack(t *testing.T) {
 
 func functionRunRowColumns() []string {
 	return []string{"id", "run_id", "tenant_id", "function_id", "status", "triggered_at",
-		"started_at", "finished_at", "duration_ms", "version", "created_at"}
+		"started_at", "finished_at", "duration_ms", "version", "created_at", "occurrence_key"}
 }
 
 func TestFunctionRunRepository_RunsByFunctionListsNewestFirst(t *testing.T) {
@@ -584,10 +584,10 @@ func TestFunctionRunRepository_RunsByFunctionListsNewestFirst(t *testing.T) {
 
 	gucExpectations(mock, tenantFixture())
 	mock.ExpectQuery(`FROM function_runs`).
-		WithArgs(tenantFixture(), int64(9), 10).
+		WithArgs(tenantFixture(), int64(9), 10, 0, "", "").
 		WillReturnRows(sqlmock.NewRows(functionRunRowColumns()).
-			AddRow(2, "uuid-2", tenantFixture(), 9, "failed", triggered, started, finished, 12000, 1, finished).
-			AddRow(1, "uuid-1", tenantFixture(), 9, "success", triggered.Add(-time.Minute), nil, nil, nil, 1, triggered))
+			AddRow(2, "uuid-2", tenantFixture(), 9, "failed", triggered, started, finished, 12000, 1, finished, "actual-occurrence").
+			AddRow(1, "uuid-1", tenantFixture(), 9, "success", triggered.Add(-time.Minute), nil, nil, nil, 1, triggered, nil))
 	mock.ExpectCommit()
 
 	runs, err := fnRuns.RunsByFunction(context.Background(), tenantFixture(), 9, 10)
@@ -617,7 +617,7 @@ func TestFunctionRunRepository_RunsByFunctionDefaultsThePage(t *testing.T) {
 
 	gucExpectations(mock, tenantFixture())
 	mock.ExpectQuery(`FROM function_runs`).
-		WithArgs(tenantFixture(), int64(9), defaultRunPage).
+		WithArgs(tenantFixture(), int64(9), defaultRunPage, 0, "", "").
 		WillReturnRows(sqlmock.NewRows(functionRunRowColumns()))
 	mock.ExpectCommit()
 

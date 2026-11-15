@@ -13,6 +13,7 @@ import (
 
 	"orbitjob/internal/core/domain/jobrun"
 	"orbitjob/internal/core/domain/workflow"
+	"orbitjob/internal/domain/queryfilter"
 	"orbitjob/internal/domain/resource"
 )
 
@@ -122,6 +123,8 @@ ORDER BY id`
 
 const workflowRunsForDefinitionSQL = `SELECT ` + workflowRunProjection + `
 FROM workflow_run_control_plane WHERE tenant_id=$1 AND source_uid=$2
+AND (NULLIF($5,'')::timestamptz IS NULL OR created_at >= NULLIF($5,'')::timestamptz)
+AND (NULLIF($6,'')::timestamptz IS NULL OR created_at < NULLIF($6,'')::timestamptz)
 ORDER BY created_at DESC, id DESC
 LIMIT $3 OFFSET $4`
 
@@ -433,6 +436,11 @@ func (r *WorkflowRunRepository) OpenRuns(ctx context.Context, tenantID string) (
 // offset is treated as zero. Terminal and open runs alike are history once
 // they exist, so no phase filter applies here.
 func (r *WorkflowRunRepository) RunsForDefinition(ctx context.Context, tenantID, sourceUID string, limit, offset int) ([]workflow.Run, error) {
+	return r.RunsForDefinitionWindow(ctx, tenantID, sourceUID, limit, offset, "", "")
+}
+
+// RunsForDefinitionWindow applies a created_at interval before paging.
+func (r *WorkflowRunRepository) RunsForDefinitionWindow(ctx context.Context, tenantID, sourceUID string, limit, offset int, from, before string) ([]workflow.Run, error) {
 	if limit < 1 {
 		limit = defaultRunPage
 	}
@@ -441,7 +449,7 @@ func (r *WorkflowRunRepository) RunsForDefinition(ctx context.Context, tenantID,
 	}
 	var out []workflow.Run
 	err := r.withTenantTx(ctx, tenantID, func(ctx context.Context, tx *sql.Tx) error {
-		rows, queryErr := tx.QueryContext(ctx, workflowRunsForDefinitionSQL, tenantID, sourceUID, limit, offset)
+		rows, queryErr := tx.QueryContext(ctx, workflowRunsForDefinitionSQL, tenantID, sourceUID, limit, offset, queryfilter.MicrosecondBound(from), queryfilter.MicrosecondBound(before))
 		if queryErr != nil {
 			return queryErr
 		}
@@ -460,8 +468,6 @@ func (r *WorkflowRunRepository) RunsForDefinition(ctx context.Context, tenantID,
 	}
 	return out, nil
 }
-
-// RunsForDefinitionWindow applies a created_at interval before paging.
 
 // terminalWorkflowPhases is the SQL form of workflow.Terminal, which stays the
 // authority on what a finished workflow is. The values match the job-run

@@ -253,16 +253,17 @@ func TestHandler_ListFunctionRuns_DelegatesToReadModel(t *testing.T) {
 }
 
 func TestHandler_GetFunctionRun_DelegatesRunID(t *testing.T) {
-	getRun := &stubGetFunctionRun{out: FunctionRunItem{ID: 1, RunID: "0d3f", Status: "failed"}}
+	const runID = "026c15a0-b08f-4060-9858-c6e0724c9ac5"
+	getRun := &stubGetFunctionRun{out: FunctionRunItem{ID: 1, RunID: runID, Status: "failed"}}
 	_, router := newFunctionHandler(nil, nil, nil, nil, getRun, "")
 
 	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, httptest.NewRequest(stdhttp.MethodGet, "/api/v1/functions/3/runs/0d3f-uuid", nil))
+	router.ServeHTTP(resp, httptest.NewRequest(stdhttp.MethodGet, "/api/v1/functions/3/runs/"+runID, nil))
 
 	if resp.Code != stdhttp.StatusOK {
 		t.Fatalf("expected status=%d, got %d, body=%s", stdhttp.StatusOK, resp.Code, resp.Body.String())
 	}
-	if getRun.in.RunID != "0d3f-uuid" || getRun.in.FunctionID != 3 {
+	if getRun.in.RunID != runID || getRun.in.FunctionID != 3 {
 		t.Fatalf("unexpected input: %+v", getRun.in)
 	}
 }
@@ -275,9 +276,21 @@ func TestHandler_GetFunctionRun_MapsNotFound(t *testing.T) {
 	_, router := newFunctionHandler(nil, nil, nil, nil, getRun, "")
 
 	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, httptest.NewRequest(stdhttp.MethodGet, "/api/v1/functions/3/runs/missing", nil))
+	router.ServeHTTP(resp, httptest.NewRequest(stdhttp.MethodGet, "/api/v1/functions/3/runs/026c15a0-b08f-4060-9858-c6e0724c9ac5", nil))
 
 	if resp.Code != stdhttp.StatusNotFound {
 		t.Fatalf("expected status=404, got %d, body=%s", resp.Code, resp.Body.String())
+	}
+}
+
+func TestHandler_GetFunctionRun_RejectsMalformedUUID(t *testing.T) {
+	getRun := &stubGetFunctionRun{}
+	_, router := newFunctionHandler(nil, nil, nil, nil, getRun, "")
+	for _, runID := range []string{"not-a-uuid", "026c15a0b08f40609858c6e0724c9ac5", "026c15a0-b08f-4060-9858-c6e0724c9acg"} {
+		resp := httptest.NewRecorder()
+		router.ServeHTTP(resp, httptest.NewRequest(stdhttp.MethodGet, "/api/v1/functions/3/runs/"+runID, nil))
+		if resp.Code != stdhttp.StatusBadRequest || getRun.in.RunID != "" {
+			t.Fatalf("malformed UUID %q: status=%d, delegated=%+v", runID, resp.Code, getRun.in)
+		}
 	}
 }

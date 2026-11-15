@@ -10,6 +10,8 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 
 	checkrunquery "orbitjob/internal/admin/app/checkrun/query"
+
+	"orbitjob/internal/platform/scan"
 )
 
 func TestCheckRunRepository_Get(t *testing.T) {
@@ -25,27 +27,27 @@ func TestCheckRunRepository_Get(t *testing.T) {
 	severity := "critical"
 	duration := 3000
 
-	expectTenantTx(t, mock, "tenant-a")
+	expectTenantTx(t, mock, checkrunStoreFixtureTenantID)
 	// run_id is read through ::text and output/evaluation_result arrive as
 	// JSON documents that must land as maps.
 	mock.ExpectQuery(`SELECT (.+) FROM check_runs WHERE tenant_id = \$1 AND id = \$2`).
-		WithArgs("tenant-a", int64(9)).
+		WithArgs(checkrunStoreFixtureTenantID, int64(9), nil).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "run_id", "tenant_id", "check_id", "status", "severity",
 			"output", "evaluation_result", "scheduled_at", "started_at",
 			"finished_at", "duration_ms", "version", "created_at",
 		}).AddRow(
-			9, "run-abc", "tenant-a", 3, "failed", &severity,
+			9, "run-abc", checkrunStoreFixtureTenantID, 3, "failed", &severity,
 			[]byte(`{"status_code":503}`), []byte(`{"overall_severity":"critical"}`),
 			scheduled, started, finished, &duration, 1, finished,
 		))
 	mock.ExpectCommit()
 
-	out, err := NewCheckRunRepository(db).Get(context.Background(), "tenant-a", 9)
+	out, err := NewCheckRunRepository(db).Get(context.Background(), checkrunStoreFixtureTenantID, "", 9)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if out.ID != 9 || out.RunID != "run-abc" || out.TenantID != "tenant-a" || out.CheckID != 3 {
+	if out.ID != 9 || out.RunID != "run-abc" || out.TenantID != checkrunStoreFixtureTenantID || out.CheckID != 3 {
 		t.Fatalf("identity did not survive the scan: %+v", out)
 	}
 	if out.Status != "failed" || out.Severity == nil || *out.Severity != "critical" {
@@ -73,20 +75,20 @@ func TestCheckRunRepository_Get_NullJSONAndTimes(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	scheduled := time.Date(2026, 9, 1, 8, 0, 0, 0, time.UTC)
-	expectTenantTx(t, mock, "tenant-a")
+	expectTenantTx(t, mock, checkrunStoreFixtureTenantID)
 	mock.ExpectQuery(`SELECT (.+) FROM check_runs`).
-		WithArgs("tenant-a", int64(9)).
+		WithArgs(checkrunStoreFixtureTenantID, int64(9), nil).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "run_id", "tenant_id", "check_id", "status", "severity",
 			"output", "evaluation_result", "scheduled_at", "started_at",
 			"finished_at", "duration_ms", "version", "created_at",
 		}).AddRow(
-			9, "run-abc", "tenant-a", 3, "pending", nil,
+			9, "run-abc", checkrunStoreFixtureTenantID, 3, "pending", nil,
 			nil, nil, scheduled, nil, nil, nil, 1, scheduled,
 		))
 	mock.ExpectCommit()
 
-	out, err := NewCheckRunRepository(db).Get(context.Background(), "tenant-a", 9)
+	out, err := NewCheckRunRepository(db).Get(context.Background(), checkrunStoreFixtureTenantID, "", 9)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -106,13 +108,13 @@ func TestCheckRunRepository_Get_NotFound(t *testing.T) {
 	}
 	defer func() { _ = db.Close() }()
 
-	expectTenantTx(t, mock, "tenant-a")
+	expectTenantTx(t, mock, checkrunStoreFixtureTenantID)
 	mock.ExpectQuery(`SELECT (.+) FROM check_runs`).
-		WithArgs("tenant-a", int64(99)).
+		WithArgs(checkrunStoreFixtureTenantID, int64(99), nil).
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectRollback()
 
-	_, err = NewCheckRunRepository(db).Get(context.Background(), "tenant-a", 99)
+	_, err = NewCheckRunRepository(db).Get(context.Background(), checkrunStoreFixtureTenantID, "", 99)
 	assertNotFound(t, err, "check_run")
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unmet expectations: %v", err)
@@ -126,13 +128,13 @@ func TestCheckRunRepository_Get_DBError(t *testing.T) {
 	}
 	defer func() { _ = db.Close() }()
 
-	expectTenantTx(t, mock, "tenant-a")
+	expectTenantTx(t, mock, checkrunStoreFixtureTenantID)
 	mock.ExpectQuery(`SELECT (.+) FROM check_runs`).
-		WithArgs("tenant-a", int64(9)).
+		WithArgs(checkrunStoreFixtureTenantID, int64(9), nil).
 		WillReturnError(errors.New("db down"))
 	mock.ExpectRollback()
 
-	if _, err := NewCheckRunRepository(db).Get(context.Background(), "tenant-a", 9); err == nil {
+	if _, err := NewCheckRunRepository(db).Get(context.Background(), checkrunStoreFixtureTenantID, "", 9); err == nil {
 		t.Fatal("expected error, got nil")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -153,19 +155,19 @@ func TestCheckRunRepository_List(t *testing.T) {
 	checkID := int64(3)
 	status := "success"
 
-	expectTenantTx(t, mock, "tenant-a")
+	expectTenantTx(t, mock, checkrunStoreFixtureTenantID)
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM check_runs`).
-		WithArgs("tenant-a", &checkID, &status).
+		WithArgs(checkrunStoreFixtureTenantID, &checkID, &status, nil).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
-	mock.ExpectQuery(`SELECT (.+) FROM check_runs WHERE tenant_id = \$1 (.+) ORDER BY created_at DESC LIMIT \$4 OFFSET \$5`).
-		WithArgs("tenant-a", &checkID, &status, 20, 0).
+	mock.ExpectQuery(`SELECT (.+) FROM check_runs WHERE tenant_id = \$1 (.+) ORDER BY created_at DESC LIMIT \$5 OFFSET \$6`).
+		WithArgs(checkrunStoreFixtureTenantID, &checkID, &status, nil, 20, 0).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "run_id", "check_id", "status", "severity", "duration_ms", "created_at",
 		}).AddRow(9, "run-abc", 3, "success", &severity, &duration, created))
 	mock.ExpectCommit()
 
 	items, total, err := NewCheckRunRepository(db).List(context.Background(), checkrunquery.ListCheckRunsInput{
-		TenantID: "tenant-a",
+		TenantID: checkrunStoreFixtureTenantID,
 		CheckID:  &checkID,
 		Status:   &status,
 		Limit:    20,
@@ -198,20 +200,20 @@ func TestCheckRunRepository_ListClampsLimit(t *testing.T) {
 	}
 	defer func() { _ = db.Close() }()
 
-	expectTenantTx(t, mock, "tenant-a")
+	expectTenantTx(t, mock, checkrunStoreFixtureTenantID)
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM check_runs`).
-		WithArgs("tenant-a", nil, nil).
+		WithArgs(checkrunStoreFixtureTenantID, nil, nil, nil).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	// A caller-supplied limit of 500 is clamped to 100 before it is bound.
 	mock.ExpectQuery(`SELECT (.+) FROM check_runs`).
-		WithArgs("tenant-a", nil, nil, 100, 0).
+		WithArgs(checkrunStoreFixtureTenantID, nil, nil, nil, 100, 0).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "run_id", "check_id", "status", "severity", "duration_ms", "created_at",
 		}))
 	mock.ExpectCommit()
 
 	if _, _, err := NewCheckRunRepository(db).List(context.Background(), checkrunquery.ListCheckRunsInput{
-		TenantID: "tenant-a", Limit: 500,
+		TenantID: checkrunStoreFixtureTenantID, Limit: 500,
 	}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -227,20 +229,20 @@ func TestCheckRunRepository_List_DefaultLimit(t *testing.T) {
 	}
 	defer func() { _ = db.Close() }()
 
-	expectTenantTx(t, mock, "tenant-a")
+	expectTenantTx(t, mock, checkrunStoreFixtureTenantID)
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM check_runs`).
-		WithArgs("tenant-a", nil, nil).
+		WithArgs(checkrunStoreFixtureTenantID, nil, nil, nil).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	// Zero or negative limits fall back to the default page of 20.
 	mock.ExpectQuery(`SELECT (.+) FROM check_runs`).
-		WithArgs("tenant-a", nil, nil, 20, 0).
+		WithArgs(checkrunStoreFixtureTenantID, nil, nil, nil, 20, 0).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "run_id", "check_id", "status", "severity", "duration_ms", "created_at",
 		}))
 	mock.ExpectCommit()
 
 	if _, _, err := NewCheckRunRepository(db).List(context.Background(), checkrunquery.ListCheckRunsInput{
-		TenantID: "tenant-a", Limit: -5,
+		TenantID: checkrunStoreFixtureTenantID, Limit: -5,
 	}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -256,14 +258,14 @@ func TestCheckRunRepository_List_CountError(t *testing.T) {
 	}
 	defer func() { _ = db.Close() }()
 
-	expectTenantTx(t, mock, "tenant-a")
+	expectTenantTx(t, mock, checkrunStoreFixtureTenantID)
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM check_runs`).
-		WithArgs("tenant-a", nil, nil).
+		WithArgs(checkrunStoreFixtureTenantID, nil, nil, nil).
 		WillReturnError(errors.New("count failed"))
 	mock.ExpectRollback()
 
 	if _, _, err := NewCheckRunRepository(db).List(context.Background(), checkrunquery.ListCheckRunsInput{
-		TenantID: "tenant-a",
+		TenantID: checkrunStoreFixtureTenantID,
 	}); err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -271,3 +273,5 @@ func TestCheckRunRepository_List_CountError(t *testing.T) {
 		t.Errorf("unmet expectations: %v", err)
 	}
 }
+
+var checkrunStoreFixtureTenantID = scan.GenerateID()

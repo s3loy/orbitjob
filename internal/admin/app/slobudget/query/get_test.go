@@ -8,6 +8,8 @@ import (
 
 	"orbitjob/internal/core/domain/slo"
 	"orbitjob/internal/domain/resource"
+
+	"orbitjob/internal/platform/scan"
 )
 
 type stubBudgetReader struct {
@@ -15,7 +17,7 @@ type stubBudgetReader struct {
 	err error
 }
 
-func (s *stubBudgetReader) GetCurrent(_ context.Context, _ string, _ int64) (slo.Budget, error) {
+func (s *stubBudgetReader) GetCurrent(_ context.Context, _, _ string, _ int64) (slo.Budget, error) {
 	return s.out, s.err
 }
 
@@ -26,7 +28,7 @@ type stubBudgetLister struct {
 	err       error
 }
 
-func (s *stubBudgetLister) ListHistory(_ context.Context, _ string, _ int64, limit, _ int) ([]slo.Budget, int64, error) {
+func (s *stubBudgetLister) ListHistory(_ context.Context, _, _ string, _ int64, limit, _ int) ([]slo.Budget, int64, error) {
 	s.lastLimit = limit
 	return s.items, s.total, s.err
 }
@@ -39,7 +41,7 @@ func TestGetBudget_Success(t *testing.T) {
 	}}
 	uc := NewGetBudgetUseCase(repo)
 
-	result, err := uc.Get(context.Background(), "t1", 5)
+	result, err := uc.Get(context.Background(), slobudgetGetFixtureTenantID, "", 5)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -52,7 +54,7 @@ func TestGetBudget_InvalidSLOID(t *testing.T) {
 	repo := &stubBudgetReader{}
 	uc := NewGetBudgetUseCase(repo)
 
-	_, err := uc.Get(context.Background(), "t1", 0)
+	_, err := uc.Get(context.Background(), slobudgetGetFixtureTenantID, "", 0)
 	if err == nil {
 		t.Fatal("expected validation error for slo_id<=0")
 	}
@@ -62,7 +64,7 @@ func TestGetBudget_NoDataYet(t *testing.T) {
 	repo := &stubBudgetReader{err: &resource.NotFoundError{Resource: "budget", ID: 5}}
 	uc := NewGetBudgetUseCase(repo)
 
-	result, err := uc.Get(context.Background(), "t1", 5)
+	result, err := uc.Get(context.Background(), slobudgetGetFixtureTenantID, "", 5)
 	if err != nil {
 		t.Fatalf("expected no error for not-found budget (should return empty), got %v", err)
 	}
@@ -79,7 +81,7 @@ func TestGetBudget_Error(t *testing.T) {
 	repo := &stubBudgetReader{err: errors.New("not found")}
 	uc := NewGetBudgetUseCase(repo)
 
-	_, err := uc.Get(context.Background(), "t1", 5)
+	_, err := uc.Get(context.Background(), slobudgetGetFixtureTenantID, "", 5)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -93,7 +95,7 @@ func TestListBudgetHistory_Success(t *testing.T) {
 	}
 	uc := NewListBudgetHistoryUseCase(repo)
 
-	result, err := uc.List(context.Background(), ListInput{TenantID: "t1", SLOID: 5, Limit: 10})
+	result, err := uc.List(context.Background(), ListInput{TenantID: slobudgetGetFixtureTenantID, SLOID: 5, Limit: 10})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -109,7 +111,7 @@ func TestListBudgetHistory_Error(t *testing.T) {
 	repo := &stubBudgetLister{err: errors.New("db down")}
 	uc := NewListBudgetHistoryUseCase(repo)
 
-	_, err := uc.List(context.Background(), ListInput{TenantID: "t1", SLOID: 5})
+	_, err := uc.List(context.Background(), ListInput{TenantID: slobudgetGetFixtureTenantID, SLOID: 5})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -119,7 +121,7 @@ func TestListBudgetHistory_DefaultLimit(t *testing.T) {
 	repo := &stubBudgetLister{}
 	uc := NewListBudgetHistoryUseCase(repo)
 
-	if _, err := uc.List(context.Background(), ListInput{TenantID: "t1", SLOID: 5, Limit: 0}); err != nil {
+	if _, err := uc.List(context.Background(), ListInput{TenantID: slobudgetGetFixtureTenantID, SLOID: 5, Limit: 0}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if repo.lastLimit != 50 {
@@ -131,10 +133,12 @@ func TestListBudgetHistory_ClampsLimit(t *testing.T) {
 	repo := &stubBudgetLister{}
 	uc := NewListBudgetHistoryUseCase(repo)
 
-	if _, err := uc.List(context.Background(), ListInput{TenantID: "t1", SLOID: 5, Limit: 500}); err != nil {
+	if _, err := uc.List(context.Background(), ListInput{TenantID: slobudgetGetFixtureTenantID, SLOID: 5, Limit: 500}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if repo.lastLimit != 100 {
 		t.Fatalf("expected limit clamped to 100, got %d", repo.lastLimit)
 	}
 }
+
+var slobudgetGetFixtureTenantID = scan.GenerateID()

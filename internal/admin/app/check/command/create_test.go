@@ -7,6 +7,8 @@ import (
 	"time"
 
 	domaincheck "orbitjob/internal/core/domain/check"
+
+	"orbitjob/internal/platform/scan"
 )
 
 type fakeClock struct{ t time.Time }
@@ -53,7 +55,7 @@ func intPtr(i int) *int { return &i }
 
 // testTenantID is a valid tenant id: normalization requires exactly 26
 // characters, the width of the CHAR(26) ULID every tenants.id carries.
-const testTenantID = "00000000000000000000000001"
+var testTenantID = checkBaseFixtureTenantID
 
 func validCreateInput() CreateInput {
 	return CreateInput{
@@ -97,7 +99,7 @@ func TestCreateCheck_NormalizeError(t *testing.T) {
 
 	// Empty name -> NormalizeCreate returns validation error before repo is called.
 	_, err := uc.Create(context.Background(), CreateInput{
-		Name: "", TenantID: "t1", CheckType: domaincheck.CheckTypeHTTPHealth,
+		Name: "", TenantID: checkCreateFixtureTenantID, CheckType: domaincheck.CheckTypeHTTPHealth,
 		ScheduleType: domaincheck.ScheduleTypeInterval, IntervalSec: intPtr(60), Timezone: "UTC",
 	})
 	if err == nil {
@@ -123,11 +125,11 @@ func TestDeleteCheck_Success(t *testing.T) {
 	repo := &stubCheckDeleter{}
 	uc := NewDeleteCheckUseCase(repo)
 
-	if err := uc.Delete(context.Background(), DeleteInput{TenantID: "t1", ID: 7, Version: 3}); err != nil {
+	if err := uc.Delete(context.Background(), DeleteInput{TenantID: checkCreateFixtureTenantID, ID: 7, Version: 3}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if repo.lastTenantID != "t1" || repo.lastID != 7 || repo.lastVersion != 3 {
-		t.Fatalf("expected delete t1/7/3, got %s/%d/%d", repo.lastTenantID, repo.lastID, repo.lastVersion)
+	if repo.lastTenantID != checkCreateFixtureTenantID || repo.lastID != 7 || repo.lastVersion != 3 {
+		t.Fatalf("expected delete "+checkCreateFixtureTenantID+"/7/3, got %s/%d/%d", repo.lastTenantID, repo.lastID, repo.lastVersion)
 	}
 }
 
@@ -135,7 +137,7 @@ func TestDeleteCheck_RepoError(t *testing.T) {
 	repo := &stubCheckDeleter{err: errors.New("not found")}
 	uc := NewDeleteCheckUseCase(repo)
 
-	if err := uc.Delete(context.Background(), DeleteInput{TenantID: "t1", ID: 7, Version: 3}); err == nil {
+	if err := uc.Delete(context.Background(), DeleteInput{TenantID: checkCreateFixtureTenantID, ID: 7, Version: 3}); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -144,7 +146,7 @@ func TestPauseCheck_Success(t *testing.T) {
 	repo := &stubCheckStatusChanger{out: domaincheck.Snapshot{ID: 7, Status: "paused", Version: 4}}
 	uc := NewPauseCheckUseCase(repo)
 
-	result, err := uc.Pause(context.Background(), ChangeStatusInput{TenantID: "t1", ID: 7, Version: 3})
+	result, err := uc.Pause(context.Background(), ChangeStatusInput{TenantID: checkCreateFixtureTenantID, ID: 7, Version: 3})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -160,7 +162,7 @@ func TestPauseCheck_RepoError(t *testing.T) {
 	repo := &stubCheckStatusChanger{err: errors.New("stale version")}
 	uc := NewPauseCheckUseCase(repo)
 
-	_, err := uc.Pause(context.Background(), ChangeStatusInput{TenantID: "t1", ID: 7, Version: 3})
+	_, err := uc.Pause(context.Background(), ChangeStatusInput{TenantID: checkCreateFixtureTenantID, ID: 7, Version: 3})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -170,7 +172,7 @@ func TestResumeCheck_Success(t *testing.T) {
 	repo := &stubCheckStatusChanger{out: domaincheck.Snapshot{ID: 7, Status: "active", Version: 5}}
 	uc := NewResumeCheckUseCase(repo)
 
-	result, err := uc.Resume(context.Background(), ChangeStatusInput{TenantID: "t1", ID: 7, Version: 4})
+	result, err := uc.Resume(context.Background(), ChangeStatusInput{TenantID: checkCreateFixtureTenantID, ID: 7, Version: 4})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -186,7 +188,7 @@ func TestResumeCheck_RepoError(t *testing.T) {
 	repo := &stubCheckStatusChanger{err: errors.New("stale version")}
 	uc := NewResumeCheckUseCase(repo)
 
-	_, err := uc.Resume(context.Background(), ChangeStatusInput{TenantID: "t1", ID: 7, Version: 4})
+	_, err := uc.Resume(context.Background(), ChangeStatusInput{TenantID: checkCreateFixtureTenantID, ID: 7, Version: 4})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -206,3 +208,7 @@ func TestCreateCheck_DefaultClock(t *testing.T) {
 		t.Fatalf("unexpected error with default clock: %v", err)
 	}
 }
+
+var checkCreateFixtureTenantID = scan.GenerateID()
+
+var checkBaseFixtureTenantID = scan.GenerateID()

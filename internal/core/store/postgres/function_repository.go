@@ -10,6 +10,7 @@ import (
 
 	"orbitjob/internal/core/domain/function"
 	"orbitjob/internal/domain/executionpolicy"
+	"orbitjob/internal/domain/queryfilter"
 	"orbitjob/internal/domain/resource"
 )
 
@@ -400,6 +401,19 @@ func NewFunctionRunRepository(db *sql.DB) *FunctionRunRepository {
 // name one, matching the admin list surfaces' default.
 const defaultRunPage = 50
 
+// The projection UUID identifies a terminal row, not its ledger occurrence.
+// Resolve the real key under the same tenant and Function parent. A retained
+// orphan or ambiguous digest prefix returns NULL instead of inventing a link.
+const functionRunReadColumns = `fr.id, fr.run_id, fr.tenant_id, fr.function_id, fr.status,
+	fr.triggered_at, fr.started_at, fr.finished_at, fr.duration_ms, fr.version, fr.created_at,
+	(SELECT CASE WHEN count(*)=1 THEN min(rtrim(r.occurrence_key)) END
+	 FROM job_run_control_plane r JOIN job_definition_revisions d
+	 ON d.id=r.revision_id AND d.tenant_id=r.tenant_id
+	 WHERE r.tenant_id=fr.tenant_id AND r.source_uid='function-' || fr.function_id::text
+	 AND d.source_mode='function' AND d.source_uid=r.source_uid
+	 AND replace(fr.run_id::text,'-','')=substr(CASE WHEN length(rtrim(r.occurrence_key))=64
+	 THEN rtrim(r.occurrence_key) ELSE encode(digest(rtrim(r.occurrence_key),'sha256'),'hex') END,1,32))`
+
 const recordCompletedFunctionRunSQL = `
 INSERT INTO function_runs
   (run_id, tenant_id, function_id, status, triggered_at, started_at, finished_at, duration_ms)
@@ -504,13 +518,12 @@ func (r *FunctionRunRepository) RunByRunID(ctx context.Context, tenantID string,
 		durationMs            sql.NullInt64
 	)
 	scanErr := tx.QueryRowContext(ctx, `
-		SELECT id, run_id, tenant_id, function_id, status, triggered_at, started_at, finished_at,
-		       duration_ms, version, created_at
-		FROM function_runs
-		WHERE tenant_id = $1 AND function_id = $2 AND run_id = $3
+		SELECT `+functionRunReadColumns+`
+		FROM function_runs fr
+		WHERE fr.tenant_id = $1 AND fr.function_id = $2 AND fr.run_id = $3
 	`, tenantID, functionID, runID).Scan(
 		&run.ID, &run.RunID, &run.TenantID, &run.FunctionID, &run.Status, &run.TriggeredAt,
-		&startedAt, &finishedAt, &durationMs, &run.Version, &run.CreatedAt,
+		&startedAt, &finishedAt, &durationMs, &run.Version, &run.CreatedAt, &run.OccurrenceKey,
 	)
 	if scanErr == sql.ErrNoRows {
 		// Deleted, foreign-function and other-tenant rows are alike not found:
@@ -542,6 +555,11 @@ func (r *FunctionRunRepository) RunByRunID(ctx context.Context, tenantID string,
 // RunsByFunction lists the function's most recent terminal invocations, newest
 // first. A non-positive limit means the default page.
 func (r *FunctionRunRepository) RunsByFunction(ctx context.Context, tenantID string, functionID int64, limit int) ([]function.FunctionRun, error) {
+	return r.RunsByFunctionPage(ctx, tenantID, functionID, limit, 0, "", "")
+}
+
+// RunsByFunctionPage filters terminal history on triggered_at before pagination.
+func (r *FunctionRunRepository) RunsByFunctionPage(ctx context.Context, tenantID string, functionID int64, limit, offset int, from, before string) ([]function.FunctionRun, error) {
 	if limit < 1 {
 		limit = defaultRunPage
 	}
@@ -560,13 +578,14 @@ func (r *FunctionRunRepository) RunsByFunction(ctx context.Context, tenantID str
 	}
 
 	rows, err := tx.QueryContext(ctx, `
-		SELECT id, run_id, tenant_id, function_id, status, triggered_at, started_at, finished_at,
-		       duration_ms, version, created_at
-		FROM function_runs
-		WHERE tenant_id = $1 AND function_id = $2
-		ORDER BY created_at DESC, id DESC
-		LIMIT $3
-	`, tenantID, functionID, limit)
+		SELECT `+functionRunReadColumns+`
+		FROM function_runs fr
+		WHERE fr.tenant_id = $1 AND fr.function_id = $2
+ AND (NULLIF($5,'')::timestamptz IS NULL OR fr.triggered_at >= NULLIF($5,'')::timestamptz)
+ AND (NULLIF($6,'')::timestamptz IS NULL OR fr.triggered_at < NULLIF($6,'')::timestamptz)
+		ORDER BY fr.triggered_at DESC, fr.id DESC
+		LIMIT $3 OFFSET $4
+	`, tenantID, functionID, limit, offset, queryfilter.MicrosecondBound(from), queryfilter.MicrosecondBound(before))
 	if err != nil {
 		return nil, fmt.Errorf("list function runs: %w", err)
 	}
@@ -579,7 +598,7 @@ func (r *FunctionRunRepository) RunsByFunction(ctx context.Context, tenantID str
 		var durationMs sql.NullInt64
 		err := rows.Scan(
 			&run.ID, &run.RunID, &run.TenantID, &run.FunctionID, &run.Status, &run.TriggeredAt,
-			&startedAt, &finishedAt, &durationMs, &run.Version, &run.CreatedAt,
+			&startedAt, &finishedAt, &durationMs, &run.Version, &run.CreatedAt, &run.OccurrenceKey,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan function run: %w", err)
@@ -607,8 +626,6 @@ func (r *FunctionRunRepository) RunsByFunction(ctx context.Context, tenantID str
 	}
 	return runs, nil
 }
-
-// RunsByFunctionPage filters terminal history on triggered_at before pagination.
 
 // Resource strings were normalized at the management boundary; marshal cannot fail.
 func nullableResourceJSON(resources *executionpolicy.Resources) any {

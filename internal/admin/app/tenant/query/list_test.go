@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"orbitjob/internal/core/domain/tenant"
+
+	"orbitjob/internal/platform/scan"
 )
 
 type stubTenantListReader struct {
@@ -26,18 +28,18 @@ func (s *stubTenantListReader) List(ctx context.Context, tenantID string, limit,
 }
 
 func TestLister_List_Defaults(t *testing.T) {
-	repo := &stubTenantListReader{returnList: []tenant.Tenant{{ID: "t1", Slug: "acme"}}}
+	repo := &stubTenantListReader{returnList: []tenant.Tenant{{ID: tenantListFixtureTenantID, Slug: "acme"}}}
 	uc := NewLister(repo)
 
-	out, err := uc.List(context.Background(), ListInput{TenantID: "t1"})
+	out, err := uc.List(context.Background(), ListInput{TenantID: tenantListFixtureTenantID})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !repo.called {
 		t.Fatal("expected repo.List to be called")
 	}
-	if repo.tenantID != "t1" {
-		t.Fatalf("expected tenantID=%q, got %q", "t1", repo.tenantID)
+	if repo.tenantID != tenantListFixtureTenantID {
+		t.Fatalf("expected tenantID=%q, got %q", tenantListFixtureTenantID, repo.tenantID)
 	}
 	if repo.limit != defaultListLimit {
 		t.Fatalf("expected default limit=%d, got %d", defaultListLimit, repo.limit)
@@ -54,7 +56,7 @@ func TestLister_List_CapsLimit(t *testing.T) {
 	repo := &stubTenantListReader{}
 	uc := NewLister(repo)
 
-	_, err := uc.List(context.Background(), ListInput{TenantID: "t1", Limit: 500, Offset: 10})
+	_, err := uc.List(context.Background(), ListInput{TenantID: tenantListFixtureTenantID, Limit: 500, Offset: 10})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -70,7 +72,7 @@ func TestLister_List_NegativeOffset(t *testing.T) {
 	repo := &stubTenantListReader{}
 	uc := NewLister(repo)
 
-	_, err := uc.List(context.Background(), ListInput{TenantID: "t1", Offset: -5})
+	_, err := uc.List(context.Background(), ListInput{TenantID: tenantListFixtureTenantID, Offset: -5})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -83,8 +85,10 @@ func TestLister_List_RepoError(t *testing.T) {
 	repo := &stubTenantListReader{err: errors.New("db down")}
 	uc := NewLister(repo)
 
-	_, err := uc.List(context.Background(), ListInput{TenantID: "t1"})
+	_, err := uc.List(context.Background(), ListInput{TenantID: tenantListFixtureTenantID})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
 }
+
+var tenantListFixtureTenantID = scan.GenerateID()

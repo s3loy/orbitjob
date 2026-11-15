@@ -22,7 +22,7 @@ type BudgetAlertItem struct {
 
 // alertReader retrieves budget alerts.
 type alertReader interface {
-	Get(ctx context.Context, tenantID string, id int64) (BudgetAlertItem, error)
+	Get(ctx context.Context, tenantID, resourceGroupID string, id int64) (BudgetAlertItem, error)
 }
 
 // GetAlertUseCase handles alert retrieval.
@@ -48,12 +48,12 @@ type GetItem struct {
 }
 
 // Get retrieves a single budget alert.
-func (uc *GetAlertUseCase) Get(ctx context.Context, tenantID string, id int64) (GetItem, error) {
+func (uc *GetAlertUseCase) Get(ctx context.Context, tenantID, resourceGroupID string, id int64) (GetItem, error) {
 	if id <= 0 {
 		return GetItem{}, validation.New("id", "id must be positive")
 	}
 
-	item, err := uc.repo.Get(ctx, tenantID, id)
+	item, err := uc.repo.Get(ctx, tenantID, resourceGroupID, id)
 	if err != nil {
 		return GetItem{}, err
 	}

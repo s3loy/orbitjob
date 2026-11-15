@@ -10,6 +10,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 
 	"orbitjob/internal/core/domain/apikey"
+	"orbitjob/internal/core/domain/audit"
 	"orbitjob/internal/domain/resource"
 )
 
@@ -33,7 +34,7 @@ func TestAPIKeyRepository_Create(t *testing.T) {
 	mock.ExpectExec(`INSERT INTO audit_events`).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
-	if err := repo.Create(context.Background(), apikey.PersistInput{TenantID: "tenant1", ID: "01HZX", KeyHash: "hash", KeyPrefix: "otj_abc123"}, testAuditEvent()); err != nil {
+	if err := repo.Create(context.Background(), apikey.PersistInput{TenantID: "tenant1", ID: "01HZX", KeyHash: "hash", KeyPrefix: "otj_abc123"}, testAuditEvent("tenant-a", "caller-key", audit.EventCreate, audit.ResourcePolicy, "p1")); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -58,7 +59,7 @@ func TestAPIKeyRepository_Create_DBError(t *testing.T) {
 		WillReturnError(errors.New("db down"))
 	mock.ExpectRollback()
 
-	if err := repo.Create(context.Background(), apikey.PersistInput{TenantID: "tenant1", ID: "01HZX", KeyHash: "hash", KeyPrefix: "otj_abc123"}, testAuditEvent()); err == nil {
+	if err := repo.Create(context.Background(), apikey.PersistInput{TenantID: "tenant1", ID: "01HZX", KeyHash: "hash", KeyPrefix: "otj_abc123"}, testAuditEvent("tenant-a", "caller-key", audit.EventCreate, audit.ResourcePolicy, "p1")); err == nil {
 		t.Fatal("expected error, got nil")
 	}
 }
@@ -218,7 +219,7 @@ func TestAPIKeyRepository_Revoke(t *testing.T) {
 	mock.ExpectExec(`INSERT INTO audit_events`).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
-	if err := repo.Revoke(context.Background(), "tenant1", "01HZX", testAuditEvent()); err != nil {
+	if err := repo.Revoke(context.Background(), "tenant1", "01HZX", testAuditEvent("tenant-a", "caller-key", audit.EventCreate, audit.ResourcePolicy, "p1")); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -243,7 +244,7 @@ func TestAPIKeyRepository_Revoke_NotFound(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectRollback()
 
-	err = repo.Revoke(context.Background(), "tenant1", "01HZX", testAuditEvent())
+	err = repo.Revoke(context.Background(), "tenant1", "01HZX", testAuditEvent("tenant-a", "caller-key", audit.EventCreate, audit.ResourcePolicy, "p1"))
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -276,7 +277,7 @@ func TestAPIKeyRepository_Revoke_DBError(t *testing.T) {
 		WillReturnError(errors.New("db down"))
 	mock.ExpectRollback()
 
-	if err := repo.Revoke(context.Background(), "tenant1", "01HZX", testAuditEvent()); err == nil {
+	if err := repo.Revoke(context.Background(), "tenant1", "01HZX", testAuditEvent("tenant-a", "caller-key", audit.EventCreate, audit.ResourcePolicy, "p1")); err == nil {
 		t.Fatal("expected error, got nil")
 	}
 }
@@ -298,7 +299,7 @@ func TestAPIKeyRepository_Revoke_RowsAffectedError(t *testing.T) {
 		WillReturnResult(sqlmock.NewErrorResult(errors.New("rows affected failed")))
 	mock.ExpectRollback()
 
-	if err := repo.Revoke(context.Background(), "tenant1", "01HZX", testAuditEvent()); err == nil {
+	if err := repo.Revoke(context.Background(), "tenant1", "01HZX", testAuditEvent("tenant-a", "caller-key", audit.EventCreate, audit.ResourcePolicy, "p1")); err == nil {
 		t.Fatal("expected error, got nil")
 	}
 }

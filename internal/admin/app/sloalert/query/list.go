@@ -6,7 +6,7 @@ import (
 
 // alertLister lists budget alerts.
 type alertLister interface {
-	List(ctx context.Context, tenantID string, sloID *int64, status *string, limit, offset int) ([]BudgetAlertItem, int64, error)
+	List(ctx context.Context, tenantID, resourceGroupID string, sloID *int64, status *string, limit, offset int) ([]BudgetAlertItem, int64, error)
 }
 
 // ListAlertsUseCase handles alert listing.
@@ -21,11 +21,12 @@ func NewListAlertsUseCase(repo alertLister) *ListAlertsUseCase {
 
 // ListInput contains the parameters for listing.
 type ListInput struct {
-	TenantID string
-	SLOID    *int64
-	Status   *string
-	Limit    int
-	Offset   int
+	TenantID        string
+	ResourceGroupID string
+	SLOID           *int64
+	Status          *string
+	Limit           int
+	Offset          int
 }
 
 // ListItem is a single item in the list.
@@ -55,7 +56,7 @@ func (uc *ListAlertsUseCase) List(ctx context.Context, in ListInput) (ListResult
 		in.Limit = 100
 	}
 
-	alerts, total, err := uc.repo.List(ctx, in.TenantID, in.SLOID, in.Status, in.Limit, in.Offset)
+	alerts, total, err := uc.repo.List(ctx, in.TenantID, in.ResourceGroupID, in.SLOID, in.Status, in.Limit, in.Offset)
 	if err != nil {
 		return ListResult{}, err
 	}

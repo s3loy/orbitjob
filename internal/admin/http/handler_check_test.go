@@ -15,6 +15,8 @@ import (
 	checkquery "orbitjob/internal/admin/app/check/query"
 	checkrunquery "orbitjob/internal/admin/app/checkrun/query"
 	"orbitjob/internal/domain/resource"
+
+	"orbitjob/internal/platform/scan"
 )
 
 // ---------------------------------------------------------------------------
@@ -115,7 +117,7 @@ type stubGetCheckRunUseCase struct {
 	err    error
 }
 
-func (s *stubGetCheckRunUseCase) Get(ctx context.Context, tenantID string, id int64) (checkrunquery.GetResult, error) {
+func (s *stubGetCheckRunUseCase) Get(ctx context.Context, tenantID, _ string, id int64) (checkrunquery.GetResult, error) {
 	s.called = true
 	return s.out, s.err
 }
@@ -133,6 +135,7 @@ func newCheckHandler(t *testing.T,
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	h := NewHandler(nil, nil, nil)
+	h.SetEvidenceScopeReader(stubEvidenceScopes{})
 	if createUC != nil {
 		h.SetCreateCheckUseCase(createUC)
 	}
@@ -158,7 +161,7 @@ func newCheckHandler(t *testing.T,
 		h.SetGetCheckRunUseCase(getRunUC)
 	}
 	r := gin.New()
-	r.Use(testTenantMiddleware("default"))
+	r.Use(testTenantMiddleware(checkHandlerFixtureTenantID))
 	h.Register(r)
 	return h, r
 }
@@ -173,7 +176,7 @@ func TestHandler_CreateCheck(t *testing.T) {
 		out: checkcommand.CreateResult{
 			ID:        1,
 			Name:      "api-health",
-			TenantID:  "default",
+			TenantID:  checkHandlerFixtureTenantID,
 			Status:    "active",
 			CheckType: "http_health",
 			CreatedAt: now,
@@ -407,3 +410,5 @@ func TestHandler_GetCheckRun(t *testing.T) {
 		t.Fatal("expected use case to be called")
 	}
 }
+
+var checkHandlerFixtureTenantID = scan.GenerateID()

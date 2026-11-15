@@ -229,18 +229,19 @@ func TestFunctionGet_TenantIsolation(t *testing.T) {
 // is addressable by its deterministic run id, and another function's id under
 // the same route is a 404.
 func TestFunctionRuns_ReadModelLifecycle(t *testing.T) {
+	const runID = "026c15a0-b08f-4060-9858-c6e0724c9ac5"
 	server, _, key, stores := newIntegrationServerWithWorkloads(t)
 	defer server.Close()
 
 	stores.functions.seed(functionIntegrationDef(3, bootstrap.DefaultTenantID))
 	now := time.Now()
 	row := domainfunction.FunctionRun{
-		ID: 1, RunID: "uuid-success", TenantID: bootstrap.DefaultTenantID,
+		ID: 1, RunID: runID, TenantID: bootstrap.DefaultTenantID,
 		FunctionID: 3, Status: domainfunction.StatusSuccess,
 		TriggeredAt: now, CreatedAt: now,
 	}
 	stores.functionRuns.byFunction = map[int64][]domainfunction.FunctionRun{3: {row}}
-	stores.functionRuns.byRunID = map[string]domainfunction.FunctionRun{"uuid-success": row}
+	stores.functionRuns.byRunID = map[string]domainfunction.FunctionRun{runID: row}
 
 	resp := get(t, server.Client(), server.URL+"/api/v1/functions/3/runs", key)
 	requireStatus(t, resp, http.StatusOK)
@@ -251,14 +252,20 @@ func TestFunctionRuns_ReadModelLifecycle(t *testing.T) {
 		} `json:"items"`
 	}
 	decodeJSON(t, resp, &list)
-	if len(list.Items) != 1 || list.Items[0].RunID != "uuid-success" || list.Items[0].Status != "success" {
+	if len(list.Items) != 1 || list.Items[0].RunID != runID || list.Items[0].Status != "success" {
 		t.Fatalf("unexpected run list: %+v", list.Items)
 	}
 
-	resp = get(t, server.Client(), server.URL+"/api/v1/functions/3/runs/uuid-success", key)
+	resp = get(t, server.Client(), server.URL+"/api/v1/functions/3/runs/"+runID, key)
 	requireStatus(t, resp, http.StatusOK)
 
-	resp = get(t, server.Client(), server.URL+"/api/v1/functions/9/runs/uuid-success", key)
+	resp = get(t, server.Client(), server.URL+"/api/v1/functions/9/runs/"+runID, key)
+	requireStatus(t, resp, http.StatusNotFound)
+
+	resp = get(t, server.Client(), server.URL+"/api/v1/functions/3/runs/not-a-uuid", key)
+	requireStatus(t, resp, http.StatusBadRequest)
+
+	resp = get(t, server.Client(), server.URL+"/api/v1/functions/3/runs/ffffffff-ffff-ffff-ffff-ffffffffffff", key)
 	requireStatus(t, resp, http.StatusNotFound)
 }
 

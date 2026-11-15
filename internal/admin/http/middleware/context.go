@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -42,6 +43,9 @@ type Principal struct {
 	ResourceGroupID  string
 	BoundaryPolicyID string
 }
+
+func (p Principal) ActorID() string   { return p.KeyID }
+func (p Principal) ActorType() string { return "api_key" }
 
 // IsPlatform reports whether this identity acts outside any tenant.
 func (p Principal) IsPlatform() bool { return p.Kind == KindPlatform }
@@ -100,3 +104,33 @@ func ResolveTenantID(c *gin.Context, fromRequest string) (string, error) {
 	}
 	return tid, nil
 }
+
+// ErrTenantMismatch denies a credential attempting to switch tenant scope.
+var ErrTenantMismatch = errors.New("tenant mismatch")
+
+// ResolveEffectiveTenant binds request targets to the authenticated credential.
+// Platform credentials have no default tenant and must select one explicitly.
+func ResolveEffectiveTenant(c *gin.Context, explicit string) (string, error) {
+	explicit = strings.TrimSpace(explicit)
+	p, ok := PrincipalFrom(c)
+	if !ok {
+		return "", ErrTenantRequired
+	}
+	if p.IsPlatform() {
+		if explicit == "" {
+			return "", ErrTenantRequired
+		}
+		return explicit, nil
+	}
+	if explicit != "" && explicit != p.TenantID {
+		return "", ErrTenantMismatch
+	}
+	if p.TenantID == "" {
+		return "", ErrTenantRequired
+	}
+	return p.TenantID, nil
+}
+
+// Resource lookup errors are classified without disclosing row existence.
+var ErrResourceUnavailable = errors.New("resource unavailable")
+var ErrAuthorizationLookup = errors.New("authorization lookup failed")

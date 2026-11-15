@@ -49,7 +49,7 @@ func TestAuth_BearerToken_Valid(t *testing.T) {
 	}
 }
 
-func TestAuth_BearerToken_Invalid(t *testing.T) {
+func TestAuth_BearerToken_DatabaseUnavailable(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("sqlmock.New: %v", err)
@@ -70,8 +70,8 @@ func TestAuth_BearerToken_Invalid(t *testing.T) {
 
 	auth.Middleware()(c)
 
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d", w.Code)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", w.Code)
 	}
 	if !c.IsAborted() {
 		t.Fatal("expected request to be aborted")

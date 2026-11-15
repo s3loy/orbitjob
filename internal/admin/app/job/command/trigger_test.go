@@ -8,6 +8,8 @@ import (
 
 	"orbitjob/internal/domain/resource"
 	"orbitjob/internal/domain/validation"
+
+	"orbitjob/internal/platform/scan"
 )
 
 // normalizeTriggerInput (trigger.go:129) is the write gate in front of the run
@@ -33,7 +35,7 @@ type boundsCase struct {
 }
 
 // validTenant is a well-formed 26-character ULID, the shape of tenants.id.
-const validTenant = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+var validTenant = jobTriggerIdentityTenantID
 
 func triggerBoundsCases() []boundsCase {
 	return []boundsCase{
@@ -61,55 +63,55 @@ func triggerBoundsCases() []boundsCase {
 		},
 		{
 			name:        "a tenant that is not 26 characters is refused",
-			in:          TriggerInput{JobID: 7, TenantID: strings.Repeat("t", 27), ActorID: "key-9"},
+			in:          TriggerInput{JobID: 7, TenantID: strings.Repeat("t", 27), ActorID: jobTriggerIdentityActorID},
 			expectField: "tenant_id",
 		},
 		{
 			name:       "a tenant of exactly 26 characters is the accepted bound",
-			in:         TriggerInput{JobID: 7, TenantID: strings.Repeat("t", 26), ActorID: "key-9"},
+			in:         TriggerInput{JobID: 7, TenantID: strings.Repeat("t", 26), ActorID: jobTriggerIdentityActorID},
 			wantTenant: strings.Repeat("t", 26),
-			wantActor:  "key-9",
+			wantActor:  jobTriggerIdentityActorID,
 			wantIdem:   "",
 		},
 		{
 			name:        "job id zero is refused",
-			in:          TriggerInput{JobID: 0, TenantID: validTenant, ActorID: "key-9"},
+			in:          TriggerInput{JobID: 0, TenantID: validTenant, ActorID: jobTriggerIdentityActorID},
 			expectField: "id",
 		},
 		{
 			name:        "a negative job id is refused",
-			in:          TriggerInput{JobID: -3, TenantID: validTenant, ActorID: "key-9"},
+			in:          TriggerInput{JobID: -3, TenantID: validTenant, ActorID: jobTriggerIdentityActorID},
 			expectField: "id",
 		},
 		{
 			name:        "a blank tenant is refused; there is no default tenant",
-			in:          TriggerInput{JobID: 7, TenantID: "", ActorID: "key-9"},
+			in:          TriggerInput{JobID: 7, TenantID: "", ActorID: jobTriggerIdentityActorID},
 			expectField: "tenant_id",
 		},
 		{
 			name:       "the tenant is trimmed",
-			in:         TriggerInput{JobID: 7, TenantID: "  " + validTenant + "  ", ActorID: "key-9"},
+			in:         TriggerInput{JobID: 7, TenantID: "  " + validTenant + "  ", ActorID: jobTriggerIdentityActorID},
 			wantTenant: validTenant,
-			wantActor:  "key-9",
+			wantActor:  jobTriggerIdentityActorID,
 			wantIdem:   "",
 		},
 		{
 			name:       "the actor is trimmed",
-			in:         TriggerInput{JobID: 7, TenantID: validTenant, ActorID: "  key-9  "},
+			in:         TriggerInput{JobID: 7, TenantID: validTenant, ActorID: "  " + jobTriggerIdentityActorID + "  "},
 			wantTenant: validTenant,
-			wantActor:  "key-9",
+			wantActor:  jobTriggerIdentityActorID,
 			wantIdem:   "",
 		},
 		{
 			name:       "the idempotency key is trimmed",
-			in:         TriggerInput{JobID: 7, TenantID: validTenant, ActorID: "key-9", IdempotencyKey: "  idem-7  "},
+			in:         TriggerInput{JobID: 7, TenantID: validTenant, ActorID: jobTriggerIdentityActorID, IdempotencyKey: "  idem-7  "},
 			wantTenant: validTenant,
-			wantActor:  "key-9",
+			wantActor:  jobTriggerIdentityActorID,
 			wantIdem:   "idem-7",
 		},
 		{
 			name:               "a scoped resource group is refused",
-			in:                 TriggerInput{JobID: 7, TenantID: validTenant, ActorID: "key-9", ResourceGroupID: "rg-7"},
+			in:                 TriggerInput{JobID: 7, TenantID: validTenant, ActorID: jobTriggerIdentityActorID, ResourceGroupID: jobTriggerIdentityGroupID},
 			expectScopeRefusal: true,
 		},
 	}
@@ -234,3 +236,9 @@ func TestNormalizeTriggerInputBoundsRedProof(t *testing.T) {
 		}
 	}
 }
+
+var jobTriggerIdentityTenantID = scan.GenerateID()
+
+var jobTriggerIdentityActorID = scan.GenerateID()
+
+var jobTriggerIdentityGroupID = scan.GenerateID()

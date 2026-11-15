@@ -6,6 +6,8 @@ import (
 
 	"orbitjob/internal/domain/resource"
 	"orbitjob/internal/domain/validation"
+
+	"orbitjob/internal/platform/scan"
 )
 
 // NormalizeGetInput and NormalizeListInput are the read gates for job
@@ -16,7 +18,7 @@ import (
 // ulidTenant matches tenants.id: a CHAR(26) ULID. The gate refuses anything
 // else so a bad id surfaces as a 400 instead of a database rejection, and
 // there is no default tenant to fall back to.
-const ulidTenant = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+var ulidTenant = jobNormalizeIdentityTenantID
 
 func TestNormalizeJobGetInputBounds(t *testing.T) {
 	tests := []struct {
@@ -95,15 +97,15 @@ func TestNormalizeJobGetInputBounds(t *testing.T) {
 }
 
 func TestNormalizeJobGetInputRefusesScopedCaller(t *testing.T) {
-	_, err := NormalizeGetInput(GetInput{TenantID: ulidTenant, ID: 7, ResourceGroupID: "rg-7"})
+	_, err := NormalizeGetInput(GetInput{TenantID: ulidTenant, ID: 7, ResourceGroupID: jobNormalizeIdentityGroupID})
 	var serr *resource.ScopeError
 	if !errors.As(err, &serr) {
 		t.Fatalf("got %v (%T), want *resource.ScopeError", err, err)
 	}
 	// The refusal names the definition as the resource, because the same gate
 	// shape is reused across read models and the verb must say what was denied.
-	if serr.Resource != "job definition" || serr.Scope != "rg-7" {
-		t.Fatalf("scope refusal = %+v, want resource %q scope %q", serr, "job definition", "rg-7")
+	if serr.Resource != "job definition" || serr.Scope != jobNormalizeIdentityGroupID {
+		t.Fatalf("scope refusal = %+v, want resource %q scope %q", serr, "job definition", jobNormalizeIdentityGroupID)
 	}
 }
 
@@ -191,12 +193,16 @@ func TestNormalizeJobListInputBounds(t *testing.T) {
 }
 
 func TestNormalizeJobListInputRefusesScopedCaller(t *testing.T) {
-	_, err := NormalizeListInput(ListInput{TenantID: ulidTenant, ResourceGroupID: "rg-7"})
+	_, err := NormalizeListInput(ListInput{TenantID: ulidTenant, ResourceGroupID: jobNormalizeIdentityGroupID})
 	var serr *resource.ScopeError
 	if !errors.As(err, &serr) {
 		t.Fatalf("got %v (%T), want *resource.ScopeError", err, err)
 	}
-	if serr.Resource != "job definition" || serr.Scope != "rg-7" {
-		t.Fatalf("scope refusal = %+v, want resource %q scope %q", serr, "job definition", "rg-7")
+	if serr.Resource != "job definition" || serr.Scope != jobNormalizeIdentityGroupID {
+		t.Fatalf("scope refusal = %+v, want resource %q scope %q", serr, "job definition", jobNormalizeIdentityGroupID)
 	}
 }
+
+var jobNormalizeIdentityTenantID = scan.GenerateID()
+
+var jobNormalizeIdentityGroupID = scan.GenerateID()

@@ -12,15 +12,15 @@ import (
 )
 
 // testAuditEvent is the record a mutation writes alongside the change. Every
-// write path carries one, so the fixtures name it once rather than repeating
-// the fields at each call site.
-func testAuditEvent() audit.Event {
+// fixture requires the actual actor, tenant, operation and subject at each
+// call site so a generic event cannot conceal incorrect audit attribution.
+func testAuditEvent(tenantID, actorID, eventType, resourceType, resourceID string) audit.Event {
 	return audit.Event{
-		TenantID:     "tenant-a",
-		ActorID:      "caller-key",
-		EventType:    audit.EventCreate,
-		ResourceType: audit.ResourcePolicy,
-		ResourceID:   "p1",
+		TenantID:     tenantID,
+		ActorID:      actorID,
+		EventType:    eventType,
+		ResourceType: resourceType,
+		ResourceID:   resourceID,
 	}
 }
 

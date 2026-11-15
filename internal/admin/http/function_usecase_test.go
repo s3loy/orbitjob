@@ -3,17 +3,20 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
 	domainfunction "orbitjob/internal/core/domain/function"
+	"orbitjob/internal/domain/validation"
+	"orbitjob/internal/platform/scan"
 )
 
 // usecaseTestTenant is a 26-character tenant id, the shape tenants.id values
 // take and the read model's inputs validate.
-const (
-	usecaseTestTenant  = "01JBB0W9YRXG4SZV2QKM78N3PD"
-	usecaseTestTenantB = "01JBB0W9YRXG4SZV2QKM78N3PE"
+var (
+	usecaseTestTenant  = functionUseCaseIdentityTenantID
+	usecaseTestTenantB = functionUseCaseIdentityOtherTenantID
 )
 
 // Use-case coverage for the function surface, over in-memory implementations
@@ -83,7 +86,7 @@ func TestListFunctionsUseCase_GroupVisibility(t *testing.T) {
 	store := &fakeFunctionStore{}
 	store.seed(
 		domainfunction.Definition{ID: 1, TenantID: usecaseTestTenant, Name: "ungrouped", Status: "active"},
-		domainfunction.Definition{ID: 2, TenantID: usecaseTestTenant, Name: "mine", ResourceGroupID: "group-9", Status: "active"},
+		domainfunction.Definition{ID: 2, TenantID: usecaseTestTenant, Name: "mine", ResourceGroupID: functionUseCaseIdentityForeignGroupID, Status: "active"},
 		domainfunction.Definition{ID: 3, TenantID: usecaseTestTenantB, Name: "theirs", Status: "active"},
 	)
 
@@ -97,7 +100,7 @@ func TestListFunctionsUseCase_GroupVisibility(t *testing.T) {
 	}
 
 	scoped, err := (&ListFunctionsUseCase{lister: store}).List(context.Background(),
-		FunctionListInput{TenantID: usecaseTestTenant, ResourceGroupID: "group-9"})
+		FunctionListInput{TenantID: usecaseTestTenant, ResourceGroupID: functionUseCaseIdentityForeignGroupID})
 	if err != nil {
 		t.Fatalf("scoped list: %v", err)
 	}
@@ -108,14 +111,14 @@ func TestListFunctionsUseCase_GroupVisibility(t *testing.T) {
 
 func TestGetFunctionUseCase_VisibilityAndNotFound(t *testing.T) {
 	store := &fakeFunctionStore{}
-	store.seed(domainfunction.Definition{ID: 2, TenantID: usecaseTestTenant, ResourceGroupID: "group-9", Name: "mine"})
+	store.seed(domainfunction.Definition{ID: 2, TenantID: usecaseTestTenant, ResourceGroupID: functionUseCaseIdentityForeignGroupID, Name: "mine"})
 
 	if _, err := (&GetFunctionUseCase{reader: store}).Get(context.Background(),
 		FunctionGetInput{ID: 2, TenantID: usecaseTestTenant}); err != nil {
 		t.Fatalf("unscoped get: %v", err)
 	}
 	if _, err := (&GetFunctionUseCase{reader: store}).Get(context.Background(),
-		FunctionGetInput{ID: 2, TenantID: usecaseTestTenant, ResourceGroupID: "group-2"}); err == nil {
+		FunctionGetInput{ID: 2, TenantID: usecaseTestTenant, ResourceGroupID: functionUseCaseIdentityGroupID}); err == nil {
 		t.Fatal("expected not-found for a function outside the caller's group")
 	}
 	if _, err := (&GetFunctionUseCase{reader: store}).Get(context.Background(),
@@ -125,14 +128,15 @@ func TestGetFunctionUseCase_VisibilityAndNotFound(t *testing.T) {
 }
 
 func TestFunctionRunReads_VerifyFunctionFirst(t *testing.T) {
+	const runID = "026c15a0-b08f-4060-9858-c6e0724c9ac5"
 	store := &fakeFunctionStore{}
 	store.seed(domainfunction.Definition{ID: 3, TenantID: usecaseTestTenant, Name: "resize"})
 	runs := &fakeFunctionRuns{
 		byFunction: map[int64][]domainfunction.FunctionRun{
-			3: {{ID: 1, RunID: "uuid-1", TenantID: usecaseTestTenant, FunctionID: 3, Status: "success"}},
+			3: {{ID: 1, RunID: runID, TenantID: usecaseTestTenant, FunctionID: 3, Status: "success"}},
 		},
 		byRunID: map[string]domainfunction.FunctionRun{
-			"uuid-1": {ID: 1, RunID: "uuid-1", TenantID: usecaseTestTenant, FunctionID: 3, Status: "success"},
+			runID: {ID: 1, RunID: runID, TenantID: usecaseTestTenant, FunctionID: 3, Status: "success"},
 		},
 	}
 
@@ -141,12 +145,12 @@ func TestFunctionRunReads_VerifyFunctionFirst(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list runs: %v", err)
 	}
-	if len(items) != 1 || items[0].RunID != "uuid-1" {
+	if len(items) != 1 || items[0].RunID != runID {
 		t.Fatalf("unexpected run list: %+v", items)
 	}
 
 	item, err := (&GetFunctionRunUseCase{runs: runs, reader: store}).Get(context.Background(),
-		FunctionRunGetInput{FunctionID: 3, RunID: "uuid-1", TenantID: usecaseTestTenant})
+		FunctionRunGetInput{FunctionID: 3, RunID: strings.ToUpper(runID), TenantID: usecaseTestTenant})
 	if err != nil {
 		t.Fatalf("get run: %v", err)
 	}
@@ -157,12 +161,25 @@ func TestFunctionRunReads_VerifyFunctionFirst(t *testing.T) {
 	// A run id belonging to another function is not found -- the route names
 	// both ids, and both must match.
 	if _, err := (&GetFunctionRunUseCase{runs: runs, reader: store}).Get(context.Background(),
-		FunctionRunGetInput{FunctionID: 4, RunID: "uuid-1", TenantID: usecaseTestTenant}); err == nil {
+		FunctionRunGetInput{FunctionID: 4, RunID: runID, TenantID: usecaseTestTenant}); err == nil {
 		t.Fatal("expected not-found for another function's run")
 	}
 	if _, err := (&ListFunctionRunsUseCase{runs: runs, reader: store}).List(context.Background(),
 		FunctionRunListInput{FunctionID: 99, TenantID: usecaseTestTenant}); err == nil {
 		t.Fatal("expected not-found listing runs of a missing function")
+	}
+}
+
+func TestGetFunctionRunUseCase_RejectsMalformedUUID(t *testing.T) {
+	store := &fakeFunctionStore{}
+	store.seed(domainfunction.Definition{ID: 3, TenantID: usecaseTestTenant})
+	uc := NewGetFunctionRunUseCase(&fakeFunctionRuns{}, store)
+	for _, runID := range []string{"", "not-a-uuid", "026c15a0b08f40609858c6e0724c9ac5"} {
+		_, err := uc.Get(context.Background(), FunctionRunGetInput{FunctionID: 3, RunID: runID, TenantID: usecaseTestTenant})
+		var invalid *validation.Error
+		if !errors.As(err, &invalid) {
+			t.Fatalf("run ID %q: expected validation error, got %v", runID, err)
+		}
 	}
 }
 
@@ -183,3 +200,11 @@ func TestFunctionInvokeResult_JSONShape(t *testing.T) {
 		}
 	}
 }
+
+var functionUseCaseIdentityTenantID = scan.GenerateID()
+
+var functionUseCaseIdentityOtherTenantID = scan.GenerateID()
+
+var functionUseCaseIdentityGroupID = scan.GenerateID()
+
+var functionUseCaseIdentityForeignGroupID = scan.GenerateID()

@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"orbitjob/internal/core/domain/tenant"
+
+	"orbitjob/internal/platform/scan"
 )
 
 type stubTenantGetReader struct {
@@ -24,24 +26,24 @@ func (s *stubTenantGetReader) Get(ctx context.Context, tenantID, id string) (ten
 }
 
 func TestGetter_Get_Success(t *testing.T) {
-	repo := &stubTenantGetReader{result: tenant.Tenant{ID: "t1", Slug: "acme"}}
+	repo := &stubTenantGetReader{result: tenant.Tenant{ID: tenantGetFixtureSubjectID, Slug: "acme"}}
 	uc := NewGetter(repo)
 
-	out, err := uc.Get(context.Background(), GetInput{TenantID: "tenant1", ID: "t1"})
+	out, err := uc.Get(context.Background(), GetInput{TenantID: tenantGetFixtureCallerID, ID: tenantGetFixtureSubjectID})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !repo.called {
 		t.Fatal("expected repo.Get to be called")
 	}
-	if repo.tenantID != "tenant1" {
-		t.Fatalf("expected tenantID=%q, got %q", "tenant1", repo.tenantID)
+	if repo.tenantID != tenantGetFixtureCallerID {
+		t.Fatalf("expected tenantID=%q, got %q", tenantGetFixtureCallerID, repo.tenantID)
 	}
-	if repo.id != "t1" {
-		t.Fatalf("expected id=%q, got %q", "t1", repo.id)
+	if repo.id != tenantGetFixtureSubjectID {
+		t.Fatalf("expected id=%q, got %q", tenantGetFixtureSubjectID, repo.id)
 	}
-	if out.ID != "t1" {
-		t.Fatalf("expected result id=%q, got %q", "t1", out.ID)
+	if out.ID != tenantGetFixtureSubjectID {
+		t.Fatalf("expected result id=%q, got %q", tenantGetFixtureSubjectID, out.ID)
 	}
 }
 
@@ -49,8 +51,12 @@ func TestGetter_Get_RepoError(t *testing.T) {
 	repo := &stubTenantGetReader{err: errors.New("db down")}
 	uc := NewGetter(repo)
 
-	_, err := uc.Get(context.Background(), GetInput{TenantID: "tenant1", ID: "t1"})
+	_, err := uc.Get(context.Background(), GetInput{TenantID: tenantGetFixtureCallerID, ID: tenantGetFixtureSubjectID})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
 }
+
+var tenantGetFixtureSubjectID = scan.GenerateID()
+
+var tenantGetFixtureCallerID = scan.GenerateID()

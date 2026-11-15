@@ -9,6 +9,8 @@ import (
 	"orbitjob/internal/core/domain/audit"
 	"orbitjob/internal/core/domain/policy"
 	"orbitjob/internal/domain/validation"
+
+	"orbitjob/internal/platform/scan"
 )
 
 // stubPolicyWriter records the event it was handed, because the repository
@@ -39,10 +41,10 @@ func TestCreateStoresTheValidatedBytes(t *testing.T) {
 	raw := validDocument(t)
 
 	got, err := NewCreator(writer).Create(context.Background(), CreateInput{
-		TenantID: "tenant-a",
+		TenantID: policyCreateFixtureTenantID,
 		Name:     "JobOperator",
 		Document: raw,
-		ActorID:  "key-1",
+		ActorID:  policyCreateFixtureActorID,
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -55,7 +57,7 @@ func TestCreateStoresTheValidatedBytes(t *testing.T) {
 	if string(writer.gotRaw) != string(raw) {
 		t.Fatalf("stored bytes differ from the validated ones:\n got %s\nwant %s", writer.gotRaw, raw)
 	}
-	if writer.got.TenantID != "tenant-a" || writer.got.Name != "JobOperator" {
+	if writer.got.TenantID != policyCreateFixtureTenantID || writer.got.Name != "JobOperator" {
 		t.Fatalf("unexpected record: %+v", writer.got)
 	}
 }
@@ -65,7 +67,7 @@ func TestCreateRejectsAnUnknownAction(t *testing.T) {
 	raw := []byte(`{"version":"1","statement":[{"effect":"Allow","action":["job:Creat"],"resource":["orbitjob:self:*:job/*"]}]}`)
 
 	_, err := NewCreator(writer).Create(context.Background(), CreateInput{
-		TenantID: "tenant-a",
+		TenantID: policyCreateFixtureTenantID,
 		Name:     "Typo",
 		Document: raw,
 	})
@@ -86,7 +88,7 @@ func TestCreateRejectsTheWildcardAction(t *testing.T) {
 	raw := []byte(`{"version":"1","statement":[{"effect":"Allow","action":["*"],"resource":["orbitjob:self:*:*/*"]}]}`)
 
 	if _, err := NewCreator(writer).Create(context.Background(), CreateInput{
-		TenantID: "tenant-a",
+		TenantID: policyCreateFixtureTenantID,
 		Name:     "Everything",
 		Document: raw,
 	}); err == nil {
@@ -102,7 +104,7 @@ func TestCreateRejectsAMalformedDocument(t *testing.T) {
 	raw := []byte(`{"version":"1","statement":[]}`)
 
 	if _, err := NewCreator(writer).Create(context.Background(), CreateInput{
-		TenantID: "tenant-a",
+		TenantID: policyCreateFixtureTenantID,
 		Name:     "Empty",
 		Document: raw,
 	}); err == nil {
@@ -116,16 +118,16 @@ func TestCreateRecordsAnAuditEvent(t *testing.T) {
 	writer := &stubPolicyWriter{}
 
 	out, err := NewCreator(writer).Create(context.Background(), CreateInput{
-		TenantID: "tenant-a",
+		TenantID: policyCreateFixtureTenantID,
 		Name:     "JobOperator",
 		Document: validDocument(t),
-		ActorID:  "key-1",
+		ActorID:  policyCreateFixtureActorID,
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	e := writer.gotEvent
-	if e.ActorID != "key-1" || e.TenantID != "tenant-a" {
+	if e.ActorID != policyCreateFixtureActorID || e.TenantID != policyCreateFixtureTenantID {
 		t.Fatalf("audit event names the wrong actor: %+v", e)
 	}
 	if e.EventType != audit.EventCreate || e.ResourceType != audit.ResourcePolicy || e.ResourceID != out.ID {
@@ -142,7 +144,7 @@ func TestCreateSurfacesAWriteFailure(t *testing.T) {
 	writer := &stubPolicyWriter{err: errors.New("transaction aborted")}
 
 	_, err := NewCreator(writer).Create(context.Background(), CreateInput{
-		TenantID: "tenant-a",
+		TenantID: policyCreateFixtureTenantID,
 		Name:     "JobOperator",
 		Document: validDocument(t),
 	})
@@ -155,7 +157,7 @@ func TestCreatePropagatesAStoreConflict(t *testing.T) {
 	writer := &stubPolicyWriter{err: errors.New("duplicate key")}
 
 	_, err := NewCreator(writer).Create(context.Background(), CreateInput{
-		TenantID: "tenant-a",
+		TenantID: policyCreateFixtureTenantID,
 		Name:     "JobOperator",
 		Document: validDocument(t),
 	})
@@ -169,7 +171,7 @@ func TestCreatePropagatesAStoreConflict(t *testing.T) {
 func TestCreateAlwaysRecordsAnEvent(t *testing.T) {
 	writer := &stubPolicyWriter{}
 	if _, err := NewCreator(writer).Create(context.Background(), CreateInput{
-		TenantID: "tenant-a",
+		TenantID: policyCreateFixtureTenantID,
 		Name:     "JobOperator",
 		Document: validDocument(t),
 	}); err != nil {
@@ -179,3 +181,7 @@ func TestCreateAlwaysRecordsAnEvent(t *testing.T) {
 		t.Fatalf("no audit event reached the repository: %+v", writer.gotEvent)
 	}
 }
+
+var policyCreateFixtureActorID = scan.GenerateID()
+
+var policyCreateFixtureTenantID = scan.GenerateID()

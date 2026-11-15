@@ -28,29 +28,35 @@ import (
 // There is no status filter: a definition is an immutable revision, so it has
 // no mutable status to filter on.
 type ListJobsRequest struct {
-	TenantID string `form:"tenant_id" binding:"omitempty,len=26"`
-	Limit    int    `form:"limit" binding:"omitempty,min=1,max=100"`
-	Offset   int    `form:"offset" binding:"omitempty,min=0"`
+	Search    string `form:"search" binding:"omitempty,max=128"`
+	Namespace string `form:"namespace" binding:"omitempty,max=63"`
+	SourceUID string `form:"source_uid" binding:"omitempty,max=128"`
+	TenantID  string `form:"tenant_id" binding:"omitempty,len=26"`
+	Limit     int    `form:"limit" binding:"omitempty,min=1,max=100"`
+	Offset    int    `form:"offset" binding:"omitempty,min=0"`
 }
 
 // ToListInput converts the HTTP query parameters into a control-plane query input.
 func (r ListJobsRequest) ToListInput() jobquery.ListInput {
 	return jobquery.ListInput{
-		TenantID: r.TenantID,
-		Limit:    r.Limit,
-		Offset:   r.Offset,
+		TenantID:  r.TenantID,
+		Search:    r.Search,
+		Namespace: r.Namespace,
+		SourceUID: r.SourceUID,
+		Limit:     r.Limit,
+		Offset:    r.Offset,
 	}
 }
 
 // GetJobRequest defines the route and query parameters for reading one job. The
 // id is the active revision id, which is the identity the read model exposes.
 type GetJobRequest struct {
-	ID       int64  `uri:"id" binding:"required,min=1"`
+	ID       int64  `uri:"id" form:"-" json:"-" binding:"required,min=1"`
 	TenantID string `form:"tenant_id" binding:"omitempty,len=26"`
 }
 
 type jobIDURI struct {
-	ID int64 `uri:"id" binding:"required,min=1"`
+	ID int64 `uri:"id" form:"-" json:"-" binding:"required,min=1"`
 }
 
 type tenantQueryRequest struct {
@@ -66,16 +72,29 @@ func (r GetJobRequest) ToGetInput() jobquery.GetInput {
 }
 
 type instanceRunIDURI struct {
-	RunID int64 `uri:"run_id" binding:"required,min=1"`
+	RunID int64 `uri:"run_id" form:"-" json:"-" binding:"required,min=1"`
 }
 
 // ListInstancesRequest filters the run ledger. phase is the ledger's own
 // vocabulary: a run is Pending, Running or Succeeded, and renaming that to a
 // client-side synonym would make the API disagree with the table it reads.
 type ListInstancesRequest struct {
-	Phase  string `form:"phase" binding:"omitempty,oneof=Pending CreatingAttempt Running RetryWaiting Succeeded Failed CancelRequested Canceled CancelUnknown"`
-	Limit  int    `form:"limit" binding:"omitempty,min=1,max=100"`
-	Offset int    `form:"offset" binding:"omitempty,min=0"`
+	CreatedFrom   string `form:"created_from"`
+	CreatedBefore string `form:"created_before"`
+	SourceUID     string `form:"source_uid" binding:"omitempty,max=128"`
+	OccurrenceKey string `form:"occurrence_key" binding:"omitempty,max=64"`
+	Phase         string `form:"phase" binding:"omitempty,oneof=Pending CreatingAttempt Running RetryWaiting Succeeded Failed CancelRequested Canceled CancelUnknown ExecutionUnknown"`
+	Limit         int    `form:"limit" binding:"omitempty,min=1,max=100"`
+	Offset        int    `form:"offset" binding:"omitempty,min=0"`
+}
+
+// SummarizeInstancesRequest shares list predicates without pagination.
+type SummarizeInstancesRequest struct {
+	SourceUID     string `form:"source_uid" binding:"omitempty,max=128"`
+	OccurrenceKey string `form:"occurrence_key" binding:"omitempty,max=64"`
+	Phase         string `form:"phase" binding:"omitempty,oneof=Pending CreatingAttempt Running RetryWaiting Succeeded Failed CancelRequested Canceled CancelUnknown ExecutionUnknown"`
+	CreatedFrom   string `form:"created_from"`
+	CreatedBefore string `form:"created_before"`
 }
 
 // VersionRequest is the optimistic-locking body shared by the delete routes
@@ -129,6 +148,7 @@ func (r CreateCheckRequest) ToCreateInput() checkcommand.CreateInput {
 
 // ListChecksRequest defines the query parameters for listing checks.
 type ListChecksRequest struct {
+	Search   string `form:"search" binding:"omitempty,max=128"`
 	TenantID string `form:"tenant_id" binding:"omitempty,len=26"`
 	Status   string `form:"status" binding:"omitempty,oneof=active paused"`
 	Limit    int    `form:"limit" binding:"omitempty,min=1,max=100"`
@@ -141,6 +161,7 @@ func (r ListChecksRequest) ToListInput() checkquery.ListChecksInput {
 		status = &r.Status
 	}
 	return checkquery.ListChecksInput{
+		Search:   r.Search,
 		TenantID: r.TenantID,
 		Status:   status,
 		Limit:    r.Limit,
@@ -150,22 +171,22 @@ func (r ListChecksRequest) ToListInput() checkquery.ListChecksInput {
 
 // GetCheckRequest defines the route and query parameters for reading one check.
 type GetCheckRequest struct {
-	ID       int64  `uri:"id" binding:"required,min=1"`
+	ID       int64  `uri:"id" form:"-" json:"-" binding:"required,min=1"`
 	TenantID string `form:"tenant_id" binding:"omitempty,len=26"`
 }
 
 type checkIDURI struct {
-	ID int64 `uri:"id" binding:"required,min=1"`
+	ID int64 `uri:"id" form:"-" json:"-" binding:"required,min=1"`
 }
 
 // ChangeCheckStatusRequest defines the payload for pause/resume checks.
 type ChangeCheckStatusRequest struct {
-	ID       int64
-	TenantID string
+	ID       int64  `json:"-"`
+	TenantID string `json:"-"`
 	// ResourceGroupID is the caller's scope, filled from the authenticated
 	// principal rather than the request body.
-	ResourceGroupID string
-	Version         int `json:"version" binding:"required,min=1"`
+	ResourceGroupID string `json:"-"`
+	Version         int    `json:"version" binding:"required,min=1"`
 }
 
 func (r ChangeCheckStatusRequest) ToChangeStatusInput() checkcommand.ChangeStatusInput {
@@ -206,7 +227,7 @@ func (r ListCheckRunsRequest) ToListInput() checkrunquery.ListCheckRunsInput {
 
 // GetCheckRunRequest defines the route parameters for reading one check run.
 type GetCheckRunRequest struct {
-	ID int64 `uri:"id" binding:"required,min=1"`
+	ID int64 `uri:"id" form:"-" json:"-" binding:"required,min=1"`
 }
 
 // --- SLI Requests ---
@@ -237,14 +258,15 @@ func (r CreateSLIRequest) ToCreateInput() slicommand.CreateInput {
 }
 
 type sliIDURI struct {
-	ID int64 `uri:"id" binding:"required,min=1"`
+	ID int64 `uri:"id" form:"-" json:"-" binding:"required,min=1"`
 }
 
 type GetSLIRequest struct {
-	ID int64 `uri:"id" binding:"required,min=1"`
+	ID int64 `uri:"id" form:"-" json:"-" binding:"required,min=1"`
 }
 
 type ListSLIsRequest struct {
+	Search   string `form:"search" binding:"omitempty,max=128"`
 	TenantID string `form:"tenant_id"`
 	Limit    int    `form:"limit,default=50" binding:"min=1,max=100"`
 	Offset   int    `form:"offset,default=0" binding:"min=0"`
@@ -252,6 +274,7 @@ type ListSLIsRequest struct {
 
 func (r ListSLIsRequest) ToListInput() sliquery.ListInput {
 	return sliquery.ListInput{
+		Search: r.Search,
 		Limit:  r.Limit,
 		Offset: r.Offset,
 	}
@@ -290,14 +313,15 @@ func (r CreateSLORequest) ToCreateInput() (slocommand.CreateInput, error) {
 }
 
 type sloIDURI struct {
-	ID int64 `uri:"id" binding:"required,min=1"`
+	ID int64 `uri:"id" form:"-" json:"-" binding:"required,min=1"`
 }
 
 type GetSLORequest struct {
-	ID int64 `uri:"id" binding:"required,min=1"`
+	ID int64 `uri:"id" form:"-" json:"-" binding:"required,min=1"`
 }
 
 type ListSLOsRequest struct {
+	Search   string `form:"search" binding:"omitempty,max=128"`
 	TenantID string `form:"tenant_id"`
 	Limit    int    `form:"limit,default=50" binding:"min=1,max=100"`
 	Offset   int    `form:"offset,default=0" binding:"min=0"`
@@ -305,6 +329,7 @@ type ListSLOsRequest struct {
 
 func (r ListSLOsRequest) ToListInput() sloquery.ListInput {
 	return sloquery.ListInput{
+		Search: r.Search,
 		Limit:  r.Limit,
 		Offset: r.Offset,
 	}
@@ -322,7 +347,7 @@ func (r ChangeSLOStatusRequest) ToChangeStatusInput(id int64) slocommand.ChangeS
 }
 
 type GetSLOBudgetRequest struct {
-	SLOID int64 `uri:"id" binding:"required,min=1"`
+	SLOID int64 `uri:"id" form:"-" json:"-" binding:"required,min=1"`
 }
 
 type ListSLOBudgetsRequest struct {
@@ -340,7 +365,7 @@ func (r ListSLOBudgetsRequest) ToListInput() slobudgetquery.ListInput {
 }
 
 type GetSLOAlertRequest struct {
-	ID int64 `uri:"id" binding:"required,min=1"`
+	ID int64 `uri:"id" form:"-" json:"-" binding:"required,min=1"`
 }
 
 type ListSLOAlertsRequest struct {
@@ -394,14 +419,14 @@ func (r ListTenantsRequest) ToListInput() tenantquery.ListInput {
 
 // TenantURI defines the route parameters for reading one tenant.
 type TenantURI struct {
-	ID string `uri:"id" binding:"required,max=26"`
+	ID string `uri:"id" form:"-" json:"-" binding:"required,max=26"`
 }
 
 // ==================== API Keys ====================
 
 // CreateAPIKeyRequest defines the HTTP payload for creating an API key.
 //
-// All three fields are optional: a bare request mints a key with no grants,
+// All fields are optional: a bare request mints an unnamed key with no grants,
 // which can authenticate but reach no guarded route.
 type CreateAPIKeyRequest struct {
 	// Policies names the policy documents the new key carries.
@@ -427,8 +452,11 @@ func (r CreateAPIKeyRequest) ToCreateInput(tenantID string, caller apikeycommand
 
 // APIKeyURI defines the route parameters for revoking one API key.
 type APIKeyURI struct {
-	ID string `uri:"id" binding:"required,max=26"`
+	ID string `uri:"id" form:"-" json:"-" binding:"required,max=26"`
 }
+
+// RenameAPIKeyRequest changes only the human-readable label. A pointer
+// distinguishes an omitted label from an explicit empty string to clear it.
 
 // ==================== Policies ====================
 
@@ -457,7 +485,7 @@ func (r CreatePolicyRequest) ToCreateInput(tenantID, actorID string) policycomma
 
 // PolicyURI defines the route parameters for reading or deleting one policy.
 type PolicyURI struct {
-	ID string `uri:"id" binding:"required,max=26"`
+	ID string `uri:"id" form:"-" json:"-" binding:"required,max=26"`
 }
 
 // ==================== Resource groups ====================
@@ -485,6 +513,7 @@ func (r CreateResourceGroupRequest) ToCreateInput(tenantID, actorID string) reso
 // none: what a caller can address is the live row, and paused is a property
 // the body already carries.
 type ListFunctionsRequest struct {
+	Search   string `form:"search" binding:"omitempty,max=128"`
 	TenantID string `form:"tenant_id" binding:"omitempty,len=26"`
 	Limit    int    `form:"limit" binding:"omitempty,min=1,max=100"`
 	Offset   int    `form:"offset" binding:"omitempty,min=0"`
@@ -493,7 +522,7 @@ type ListFunctionsRequest struct {
 // GetFunctionRequest defines the route and query parameters for reading one
 // function definition.
 type GetFunctionRequest struct {
-	ID       int64  `uri:"id" binding:"required,min=1"`
+	ID       int64  `uri:"id" form:"-" json:"-" binding:"required,min=1"`
 	TenantID string `form:"tenant_id" binding:"omitempty,len=26"`
 }
 
@@ -502,24 +531,28 @@ type GetFunctionRequest struct {
 // absent) means async-with-reference, and the cap keeps one HTTP request from
 // being held open past the platform's honest latency promise.
 type InvokeFunctionRequest struct {
-	ID          int64 `uri:"id" binding:"required,min=1"`
-	WaitSeconds int   `form:"wait_seconds" binding:"omitempty,min=0,max=60"`
+	ID              int64 `uri:"id" form:"-" json:"-" binding:"required,min=1"`
+	WaitSeconds     int   `form:"wait_seconds" binding:"omitempty,min=0,max=60"`
+	ExpectedVersion *int  `form:"expected_version" binding:"omitempty,min=1"`
 }
 
 // ListFunctionRunsRequest defines the route and query parameters for listing
 // one function's terminal invocations.
 type ListFunctionRunsRequest struct {
-	ID       int64  `uri:"id" binding:"required,min=1"`
-	TenantID string `form:"tenant_id" binding:"omitempty,len=26"`
-	Limit    int    `form:"limit" binding:"omitempty,min=1,max=100"`
+	Offset        int    `form:"offset" binding:"omitempty,min=0"`
+	CreatedFrom   string `form:"created_from"`
+	CreatedBefore string `form:"created_before"`
+	ID            int64  `uri:"id" form:"-" json:"-" binding:"required,min=1"`
+	TenantID      string `form:"tenant_id" binding:"omitempty,len=26"`
+	Limit         int    `form:"limit" binding:"omitempty,min=1,max=100"`
 }
 
 // GetFunctionRunRequest defines the route parameters for reading one terminal
 // invocation. The run id is the read model's deterministic UUID, derived from
 // the ledger occurrence key, so a replayed recording addresses the same row.
 type GetFunctionRunRequest struct {
-	ID    int64  `uri:"id" binding:"required,min=1"`
-	RunID string `uri:"run_id" binding:"required,max=64"`
+	ID    int64  `uri:"id" form:"-" json:"-" binding:"required,min=1"`
+	RunID string `uri:"run_id" form:"-" json:"-" binding:"required,uuid"`
 }
 
 // ==================== Workflow Requests ====================
@@ -527,6 +560,7 @@ type GetFunctionRunRequest struct {
 // ListWorkflowsRequest defines the query parameters for listing workflow
 // definitions.
 type ListWorkflowsRequest struct {
+	Search   string `form:"search" binding:"omitempty,max=128"`
 	TenantID string `form:"tenant_id" binding:"omitempty,len=26"`
 	Limit    int    `form:"limit" binding:"omitempty,min=1,max=100"`
 	Offset   int    `form:"offset" binding:"omitempty,min=0"`
@@ -535,22 +569,24 @@ type ListWorkflowsRequest struct {
 // GetWorkflowRequest defines the route and query parameters for reading one
 // workflow definition. The id is the active revision id, the jobs convention.
 type GetWorkflowRequest struct {
-	ID       int64  `uri:"id" binding:"required,min=1"`
+	ID       int64  `uri:"id" form:"-" json:"-" binding:"required,min=1"`
 	TenantID string `form:"tenant_id" binding:"omitempty,len=26"`
 }
 
 // ListWorkflowRunsRequest defines the route and query parameters for listing
 // one workflow's runs.
 type ListWorkflowRunsRequest struct {
-	ID       int64  `uri:"id" binding:"required,min=1"`
-	TenantID string `form:"tenant_id" binding:"omitempty,len=26"`
-	Limit    int    `form:"limit" binding:"omitempty,min=1,max=100"`
-	Offset   int    `form:"offset" binding:"omitempty,min=0"`
+	CreatedFrom   string `form:"created_from"`
+	CreatedBefore string `form:"created_before"`
+	ID            int64  `uri:"id" form:"-" json:"-" binding:"required,min=1"`
+	TenantID      string `form:"tenant_id" binding:"omitempty,len=26"`
+	Limit         int    `form:"limit" binding:"omitempty,min=1,max=100"`
+	Offset        int    `form:"offset" binding:"omitempty,min=0"`
 }
 
 // workflowRunIDURI addresses one run under one workflow: the workflow by its
 // active revision id, the run by its ledger id.
 type workflowRunIDURI struct {
-	ID    int64 `uri:"id" binding:"required,min=1"`
-	RunID int64 `uri:"run_id" binding:"required,min=1"`
+	ID    int64 `uri:"id" form:"-" json:"-" binding:"required,min=1"`
+	RunID int64 `uri:"run_id" form:"-" json:"-" binding:"required,min=1"`
 }

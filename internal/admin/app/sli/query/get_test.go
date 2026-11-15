@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"orbitjob/internal/core/domain/sli"
+
+	"orbitjob/internal/platform/scan"
 )
 
 type stubSLIReader struct {
@@ -37,7 +39,7 @@ func TestGetSLI_Success(t *testing.T) {
 	}}
 	uc := NewGetSLIUseCase(repo)
 
-	result, err := uc.Get(context.Background(), "t1", "", 1)
+	result, err := uc.Get(context.Background(), sliGetFixtureTenantID, "", 1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -50,7 +52,7 @@ func TestGetSLI_Error(t *testing.T) {
 	repo := &stubSLIReader{err: errors.New("not found")}
 	uc := NewGetSLIUseCase(repo)
 
-	_, err := uc.Get(context.Background(), "t1", "", 1)
+	_, err := uc.Get(context.Background(), sliGetFixtureTenantID, "", 1)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -63,7 +65,7 @@ func TestListSLIs_Success(t *testing.T) {
 	}
 	uc := NewListSLIsUseCase(repo)
 
-	result, err := uc.List(context.Background(), ListInput{TenantID: "t1", Limit: 10})
+	result, err := uc.List(context.Background(), ListInput{TenantID: sliGetFixtureTenantID, Limit: 10})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -79,7 +81,7 @@ func TestListSLIs_Error(t *testing.T) {
 	repo := &stubSLILister{err: errors.New("db down")}
 	uc := NewListSLIsUseCase(repo)
 
-	_, err := uc.List(context.Background(), ListInput{TenantID: "t1"})
+	_, err := uc.List(context.Background(), ListInput{TenantID: sliGetFixtureTenantID})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -89,7 +91,7 @@ func TestListSLIs_DefaultLimitWhenZeroOrNegative(t *testing.T) {
 	repo := &stubSLILister{}
 	uc := NewListSLIsUseCase(repo)
 
-	if _, err := uc.List(context.Background(), ListInput{TenantID: "t1", Limit: 0}); err != nil {
+	if _, err := uc.List(context.Background(), ListInput{TenantID: sliGetFixtureTenantID, Limit: 0}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if repo.lastLimit != 50 {
@@ -101,10 +103,12 @@ func TestListSLIs_ClampsLimitToMax(t *testing.T) {
 	repo := &stubSLILister{}
 	uc := NewListSLIsUseCase(repo)
 
-	if _, err := uc.List(context.Background(), ListInput{TenantID: "t1", Limit: 200}); err != nil {
+	if _, err := uc.List(context.Background(), ListInput{TenantID: sliGetFixtureTenantID, Limit: 200}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if repo.lastLimit != 100 {
 		t.Fatalf("expected limit clamped to 100, got %d", repo.lastLimit)
 	}
 }
+
+var sliGetFixtureTenantID = scan.GenerateID()

@@ -28,7 +28,7 @@ func (r *JobRepository) Get(ctx context.Context, in query.GetInput) (query.GetIt
 		SELECT id, tenant_id, source_mode, source_uid, source_namespace, source_name,
 		       generation, rtrim(spec_hash), normalized_spec::text, actor, created_at
 		FROM job_definition_revisions
-		WHERE tenant_id = $1 AND id = $2 AND is_active
+		WHERE tenant_id = $1 AND id = $2 AND source_mode = 'kubernetes' AND is_active
 	`, in.TenantID, in.ID)
 
 	item, err := scanDefinitionDetail(row)

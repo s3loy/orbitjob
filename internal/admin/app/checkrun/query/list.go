@@ -10,11 +10,12 @@ type checkRunLister interface {
 }
 
 type ListCheckRunsInput struct {
-	TenantID string
-	CheckID  *int64
-	Status   *string
-	Limit    int
-	Offset   int
+	TenantID        string
+	ResourceGroupID string
+	CheckID         *int64
+	Status          *string
+	Limit           int
+	Offset          int
 }
 
 // ListItem represents a single check run in the list response.

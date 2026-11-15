@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"orbitjob/internal/core/app/functioninvoke"
 
 	apikeycommand "orbitjob/internal/admin/app/apikey/command"
 	apikeyquery "orbitjob/internal/admin/app/apikey/query"
@@ -31,15 +32,15 @@ import (
 	"orbitjob/internal/admin/bootstrap"
 	"orbitjob/internal/admin/http/apperror"
 	"orbitjob/internal/admin/http/middleware"
+	"orbitjob/internal/admin/logs"
 	domaincheck "orbitjob/internal/core/domain/check"
+	"orbitjob/internal/core/domain/policy"
 	"orbitjob/internal/domain/validation"
 	"orbitjob/internal/platform/metrics"
 )
 
-// A job definition is a ScheduledJob Custom Resource projected into an
-// immutable revision. The API server reads the revision; it neither creates nor
-// mutates the definition, so there is no create, update, pause, resume or delete
-// capability here. Declarations are applied as Custom Resources.
+// These job read use cases consume immutable projected revisions. The separate
+// typed definition backend reads/applies live CRs under independent Apply grants.
 type listJobsUseCase interface {
 	List(ctx context.Context, in jobquery.ListInput) ([]jobquery.ListItem, error)
 }
@@ -106,7 +107,7 @@ type listCheckRunsUseCase interface {
 }
 
 type getCheckRunUseCase interface {
-	Get(ctx context.Context, tenantID string, id int64) (checkrunquery.GetResult, error)
+	Get(ctx context.Context, tenantID, resourceGroupID string, id int64) (checkrunquery.GetResult, error)
 }
 
 type createSLIUseCase interface {
@@ -147,7 +148,7 @@ type deleteSLOUseCase interface {
 }
 
 type getBudgetUseCase interface {
-	Get(ctx context.Context, tenantID string, sloID int64) (slobudgetquery.GetItem, error)
+	Get(ctx context.Context, tenantID, resourceGroupID string, sloID int64) (slobudgetquery.GetItem, error)
 }
 
 type listBudgetHistoryUseCase interface {
@@ -155,7 +156,7 @@ type listBudgetHistoryUseCase interface {
 }
 
 type getAlertUseCase interface {
-	Get(ctx context.Context, tenantID string, id int64) (sloalertquery.GetItem, error)
+	Get(ctx context.Context, tenantID, resourceGroupID string, id int64) (sloalertquery.GetItem, error)
 }
 
 type listAlertsUseCase interface {
@@ -265,57 +266,67 @@ type resourceGroupListResponse struct {
 
 // Handler wires HTTP endpoints to application use cases.
 type Handler struct {
-	listJobsUC          listJobsUseCase
-	getJobUC            getJobUseCase
-	triggerJobUC        triggerJobUseCase
-	listInstancesUC     listInstancesUseCase
-	getInstanceUC       getInstanceUseCase
-	cancelRunUC         cancelRunUseCase
-	listAttemptsUC      listAttemptsUseCase
-	createCheckUC       createCheckUseCase
-	listChecksUC        listChecksUseCase
-	getCheckUC          getCheckUseCase
-	pauseCheckUC        pauseCheckUseCase
-	resumeCheckUC       resumeCheckUseCase
-	deleteCheckUC       deleteCheckUseCase
-	listCheckRunsUC     listCheckRunsUseCase
-	getCheckRunUC       getCheckRunUseCase
-	createSLIUC         createSLIUseCase
-	listSLIsUC          listSLIsUseCase
-	getSLIUC            getSLIUseCase
-	deleteSLIUC         deleteSLIUseCase
-	createSLOUC         createSLOUseCase
-	listSLOsUC          listSLOsUseCase
-	getSLOUC            getSLOUseCase
-	statusSLOUC         changeSLOStatusUseCase
-	deleteSLOUC         deleteSLOUseCase
-	getBudgetUC         getBudgetUseCase
-	listBudgetHistoryUC listBudgetHistoryUseCase
-	getAlertUC          getAlertUseCase
-	listAlertsUC        listAlertsUseCase
-	createTenantUC      createTenantUseCase
-	listTenantsUC       listTenantsUseCase
-	getTenantUC         getTenantUseCase
-	createAPIKeyUC      createAPIKeyUseCase
-	listAPIKeysUC       listAPIKeysUseCase
-	revokeAPIKeyUC      revokeAPIKeyUseCase
-	createPolicyUC      createPolicyUseCase
-	listPoliciesUC      listPoliciesUseCase
-	getPolicyUC         getPolicyUseCase
-	deletePolicyUC      deletePolicyUseCase
-	createGroupUC       createResourceGroupUseCase
-	listGroupsUC        listResourceGroupsUseCase
-	listFunctionsUC     listFunctionsUseCase
-	getFunctionUC       getFunctionUseCase
-	invokeFunctionUC    invokeFunctionUseCase
-	listFunctionRunsUC  listFunctionRunsUseCase
-	getFunctionRunUC    getFunctionRunUseCase
-	listWorkflowsUC     listWorkflowsUseCase
-	getWorkflowUC       getWorkflowUseCase
-	triggerWorkflowUC   triggerWorkflowUseCase
-	listWorkflowRunsUC  listWorkflowRunsUseCase
-	getWorkflowRunUC    getWorkflowRunUseCase
-	cancelWorkflowRunUC cancelWorkflowRunUseCase
+	sourceControls              sourceControlService
+	evidenceScopes              evidenceScopeReader
+	definitions                 definitionBackend
+	logLocators                 logs.Reader
+	workloadLogs                logBackend
+	archiveDirectory            archiveDirectory
+	archiveReader               archiveReader
+	listJobsUC                  listJobsUseCase
+	getJobUC                    getJobUseCase
+	triggerJobUC                triggerJobUseCase
+	listInstancesUC             listInstancesUseCase
+	getInstanceUC               getInstanceUseCase
+	cancelRunUC                 cancelRunUseCase
+	listAttemptsUC              listAttemptsUseCase
+	createCheckUC               createCheckUseCase
+	listChecksUC                listChecksUseCase
+	getCheckUC                  getCheckUseCase
+	pauseCheckUC                pauseCheckUseCase
+	resumeCheckUC               resumeCheckUseCase
+	deleteCheckUC               deleteCheckUseCase
+	listCheckRunsUC             listCheckRunsUseCase
+	getCheckRunUC               getCheckRunUseCase
+	createSLIUC                 createSLIUseCase
+	listSLIsUC                  listSLIsUseCase
+	getSLIUC                    getSLIUseCase
+	deleteSLIUC                 deleteSLIUseCase
+	createSLOUC                 createSLOUseCase
+	listSLOsUC                  listSLOsUseCase
+	getSLOUC                    getSLOUseCase
+	statusSLOUC                 changeSLOStatusUseCase
+	deleteSLOUC                 deleteSLOUseCase
+	getBudgetUC                 getBudgetUseCase
+	listBudgetHistoryUC         listBudgetHistoryUseCase
+	getAlertUC                  getAlertUseCase
+	listAlertsUC                listAlertsUseCase
+	createTenantUC              createTenantUseCase
+	listTenantsUC               listTenantsUseCase
+	getTenantUC                 getTenantUseCase
+	createAPIKeyUC              createAPIKeyUseCase
+	listAPIKeysUC               listAPIKeysUseCase
+	revokeAPIKeyUC              revokeAPIKeyUseCase
+	createPolicyUC              createPolicyUseCase
+	listPoliciesUC              listPoliciesUseCase
+	getPolicyUC                 getPolicyUseCase
+	deletePolicyUC              deletePolicyUseCase
+	createGroupUC               createResourceGroupUseCase
+	listGroupsUC                listResourceGroupsUseCase
+	listFunctionsUC             listFunctionsUseCase
+	getFunctionUC               getFunctionUseCase
+	invokeFunctionUC            invokeFunctionUseCase
+	listFunctionRunsUC          listFunctionRunsUseCase
+	getFunctionRunUC            getFunctionRunUseCase
+	functionManager             functionManager
+	functionManagementReader    functionReader
+	functionManagementReadiness functioninvoke.RevisionSource
+	listWorkflowsUC             listWorkflowsUseCase
+	getWorkflowUC               getWorkflowUseCase
+	triggerWorkflowUC           triggerWorkflowUseCase
+	listWorkflowRunsUC          listWorkflowRunsUseCase
+	getWorkflowRunUC            getWorkflowRunUseCase
+	cancelWorkflowRunUC         cancelWorkflowRunUseCase
 }
 
 func NewHandler(
@@ -384,7 +395,16 @@ func (h *Handler) Register(r gin.IRouter) {
 		}
 		// Routes that declare a permission are registered behind the
 		// authorization guard; the three public endpoints are not.
-		if guard := guardFor(route); guard != nil {
+		if route.path == "/functions/:id/runs/:run_id/attempts/:attempt/logs" {
+			route.resource = h.functionLogResource
+		}
+		if h.functionManagementReader != nil && strings.HasPrefix(route.path, "/functions/:id") && !strings.HasSuffix(route.path, "/logs") {
+			route.resource = h.functionResource
+		}
+		if guard := guardFor(route, h); guard != nil {
+			if strings.HasSuffix(route.path, "/logs") {
+				guard = logDeadline(guard)
+			}
 			route.register(permissionRouter{IRouter: v1, guard: guard}, h)
 			continue
 		}
@@ -406,6 +426,9 @@ func (h *Handler) ListJobs(c *gin.Context) {
 		return
 	}
 	out, err := h.listJobsUC.List(c.Request.Context(), jobquery.ListInput{
+		Search:          req.Search,
+		Namespace:       req.Namespace,
+		SourceUID:       req.SourceUID,
 		TenantID:        tenantID,
 		ResourceGroupID: groupFrom(c),
 		Limit:           req.Limit,
@@ -475,26 +498,22 @@ func writeAPIError(c *gin.Context, err error) {
 
 // requireTenantID resolves the tenant a tenant-scoped request acts on.
 //
-// The authenticated tenant wins. A request may name a different tenant only
-// when the caller is a platform principal: the authorization guard on a
-// tenant-scoped route resolves its ARN from the caller's own tenant, so a
-// tenant key that named another tenant would be authorized against its own
-// tenant and then read or write the other one. Refusing that here is what makes
-// the guard's answer mean what it says.
+// Both authorization and handler execution use the same effective target.
+// Platform credentials must choose a tenant explicitly; tenant credentials
+// cannot change their data scope with request parameters.
 func requireTenantID(c *gin.Context, fromRequest string) (string, bool) {
-	tenantID, err := middleware.ResolveTenantID(c, "")
+	var tenantID string
+	var err error
+	if fromRequest != "" {
+		tenantID, err = middleware.ResolveEffectiveTenant(c, fromRequest)
+	} else {
+		tenantID, err = requestTenant(c)
+	}
 	if err != nil {
-		writeForbidden(c, "tenant required")
+		writeForbidden(c, err.Error())
 		return "", false
 	}
-	if fromRequest == "" || fromRequest == tenantID {
-		return tenantID, true
-	}
-	if p, ok := middleware.PrincipalFrom(c); ok && p.IsPlatform() {
-		return fromRequest, true
-	}
-	writeForbidden(c, "tenant mismatch")
-	return "", false
+	return tenantID, true
 }
 
 func writeForbidden(c *gin.Context, message string) {
@@ -526,14 +545,10 @@ func groupFrom(c *gin.Context) string {
 // with a hardcoded "must be an admin key" rule -- would create a second,
 // weaker answer to the same question.
 func requireTenantIDFor(c *gin.Context, fromRequest string) (string, bool) {
-	authenticated, ok := requireTenantID(c, "")
-	if !ok {
-		return "", false
+	if fromRequest != "" {
+		return fromRequest, true
 	}
-	if fromRequest == "" || fromRequest == authenticated {
-		return authenticated, true
-	}
-	return fromRequest, true
+	return requireTenantID(c, "")
 }
 
 // callerFrom assembles what the escalation guards need to know about the
@@ -559,8 +574,8 @@ func callerFrom(c *gin.Context) apikeycommand.Caller {
 // A manual trigger publishes a JobRun custom resource, not a ledger row. The
 // operator owns the run table and writes the row in its own transaction, so the
 // run's actor travels on the resource and the API never gains INSERT on the
-// ledger. The actor is the authenticated key, not a client-supplied header:
-// "who triggered it" has to name the credential that actually called.
+// ledger. The actor is the authenticated human or key, never a client-supplied
+// header. Later control-plane writers preserve this initiating identity.
 func (h *Handler) TriggerJob(c *gin.Context) {
 	var pathReq jobIDURI
 	if err := c.ShouldBindUri(&pathReq); err != nil {
@@ -601,7 +616,7 @@ func (h *Handler) TriggerJob(c *gin.Context) {
 }
 
 // ListInstances lists runs from the ledger, newest first, optionally narrowed
-// to one phase.
+// to one phase, source UID or exact occurrence.
 func (h *Handler) ListInstances(c *gin.Context) {
 	var req ListInstancesRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -614,8 +629,11 @@ func (h *Handler) ListInstances(c *gin.Context) {
 		return
 	}
 	out, err := h.listInstancesUC.List(c.Request.Context(), runquery.ListInput{
+		CreatedFrom: req.CreatedFrom, CreatedBefore: req.CreatedBefore,
 		TenantID:        tenantID,
 		Phase:           req.Phase,
+		SourceUID:       req.SourceUID,
+		OccurrenceKey:   req.OccurrenceKey,
 		ResourceGroupID: groupFrom(c),
 		Limit:           req.Limit,
 		Offset:          req.Offset,
@@ -801,19 +819,18 @@ func (h *Handler) changeCheckStatus(c *gin.Context, action string) {
 		return
 	}
 
-	req := ChangeCheckStatusRequest{
-		ID: pathReq.ID,
+	var req ChangeCheckStatusRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
+		return
 	}
 	var ok bool
+	req.ID = pathReq.ID
 	req.TenantID, ok = requireTenantID(c, "")
 	if !ok {
 		return
 	}
 	req.ResourceGroupID = groupFrom(c)
-	if err := c.ShouldBindJSON(&req); err != nil {
-		apperror.Write(c, stdhttp.StatusBadRequest, toBindAPIError(err))
-		return
-	}
 
 	var out checkcommand.ChangeStatusResult
 	var err error
@@ -884,6 +901,7 @@ func (h *Handler) ListCheckRuns(c *gin.Context) {
 	if !ok {
 		return
 	}
+	in.ResourceGroupID = groupFrom(c)
 	out, err := h.listCheckRunsUC.List(c.Request.Context(), in)
 	if err != nil {
 		writeAPIError(c, err)
@@ -905,7 +923,7 @@ func (h *Handler) GetCheckRun(c *gin.Context) {
 	if !ok {
 		return
 	}
-	out, err := h.getCheckRunUC.Get(c.Request.Context(), tenantID, req.ID)
+	out, err := h.getCheckRunUC.Get(c.Request.Context(), tenantID, evidenceQueryGroup(c), req.ID)
 	if err != nil {
 		writeAPIError(c, err)
 		return
@@ -1088,6 +1106,17 @@ func (h *Handler) GetSLO(c *gin.Context) {
 		return
 	}
 
+	// An optional budget must obey the same grant and scope as the dedicated
+	// evidence endpoint, independently of permission to read the definition.
+	if out.CurrentBudget != nil {
+		docs, hasDocuments := middleware.Documents(c)
+		arn, resolveErr := h.resolveEvidenceResource(c, "slo")
+		if groupFrom(c) != "" || !hasDocuments || resolveErr != nil ||
+			policy.Evaluate(docs, policy.Request{Action: "slo:GetBudget", Resource: arn}) != policy.DecisionAllow {
+			out.CurrentBudget = nil
+		}
+	}
+
 	c.JSON(stdhttp.StatusOK, out)
 }
 
@@ -1192,7 +1221,7 @@ func (h *Handler) GetSLOBudget(c *gin.Context) {
 	if !ok {
 		return
 	}
-	out, err := h.getBudgetUC.Get(c.Request.Context(), tenantID, req.SLOID)
+	out, err := h.getBudgetUC.Get(c.Request.Context(), tenantID, evidenceQueryGroup(c), req.SLOID)
 	if err != nil {
 		writeAPIError(c, err)
 		return
@@ -1222,6 +1251,7 @@ func (h *Handler) ListSLOBudgets(c *gin.Context) {
 	if !ok {
 		return
 	}
+	in.ResourceGroupID = evidenceQueryGroup(c)
 	out, err := h.listBudgetHistoryUC.List(c.Request.Context(), in)
 	if err != nil {
 		writeAPIError(c, err)
@@ -1243,7 +1273,7 @@ func (h *Handler) GetSLOAlert(c *gin.Context) {
 	if !ok {
 		return
 	}
-	out, err := h.getAlertUC.Get(c.Request.Context(), tenantID, req.ID)
+	out, err := h.getAlertUC.Get(c.Request.Context(), tenantID, evidenceQueryGroup(c), req.ID)
 	if err != nil {
 		writeAPIError(c, err)
 		return
@@ -1266,6 +1296,7 @@ func (h *Handler) ListSLOAlerts(c *gin.Context) {
 	if !ok {
 		return
 	}
+	in.ResourceGroupID = groupFrom(c)
 	out, err := h.listAlertsUC.List(c.Request.Context(), in)
 	if err != nil {
 		writeAPIError(c, err)

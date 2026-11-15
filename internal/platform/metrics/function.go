@@ -6,6 +6,10 @@ import (
 )
 
 var (
+	FunctionDefinitionWritesTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "orbitjob_function_definition_writes_total",
+		Help: "Accepted Function configuration writes by bounded outcome (created, replayed, updated).",
+	}, []string{"outcome"})
 	// FunctionInvocationsTotal counts function invocations the invoke use
 	// case accepted, labeled by tenant_id and outcome: created for an
 	// invocation whose JobRun the API server accepted as a new object,

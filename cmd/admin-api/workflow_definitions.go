@@ -17,7 +17,7 @@ type workflowDefinitionSource struct {
 }
 
 func (s workflowDefinitionSource) ListActive(ctx context.Context, in adminhttp.WorkflowDefinitionListInput) ([]adminhttp.WorkflowDefinition, error) {
-	rows, err := s.definitions.ListActiveWorkflowDefinitions(ctx, in.TenantID, in.Limit, in.Offset)
+	rows, err := s.definitions.SearchActiveWorkflowDefinitions(ctx, in.TenantID, in.Limit, in.Offset, in.Search)
 	if err != nil {
 		return nil, err
 	}
@@ -38,6 +38,22 @@ func (s workflowDefinitionSource) ListActive(ctx context.Context, in adminhttp.W
 
 func (s workflowDefinitionSource) GetActive(ctx context.Context, tenantID string, id int64) (adminhttp.WorkflowDefinition, error) {
 	row, err := s.definitions.ActiveWorkflowDefinition(ctx, tenantID, id)
+	if err != nil {
+		return adminhttp.WorkflowDefinition{}, err
+	}
+	return adminhttp.WorkflowDefinition{
+		ID:         row.ID,
+		Name:       row.Name,
+		Namespace:  row.Namespace,
+		SourceUID:  row.SourceUID,
+		Generation: row.Generation,
+		Spec:       row.Spec,
+		CreatedAt:  row.CreatedAt,
+	}, nil
+}
+
+func (s workflowDefinitionSource) GetRevision(ctx context.Context, tenantID string, id int64) (adminhttp.WorkflowDefinition, error) {
+	row, err := s.definitions.WorkflowRevision(ctx, tenantID, id)
 	if err != nil {
 		return adminhttp.WorkflowDefinition{}, err
 	}

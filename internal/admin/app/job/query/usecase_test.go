@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"orbitjob/internal/domain/validation"
+
+	"orbitjob/internal/platform/scan"
 )
 
 // The job definition read use cases are thin: validate, then hand the
@@ -85,7 +87,7 @@ func TestGetJobUseCaseScopedCallerRefused(t *testing.T) {
 	repo := &stubJobGetter{}
 	uc := NewGetJobUseCase(repo)
 
-	_, err := uc.Get(context.Background(), GetInput{TenantID: ulidTenant, ID: 7, ResourceGroupID: "rg-7"})
+	_, err := uc.Get(context.Background(), GetInput{TenantID: ulidTenant, ID: 7, ResourceGroupID: jobQueryFixtureGroupID})
 	if err == nil {
 		t.Fatal("expected a scope refusal")
 	}
@@ -146,3 +148,5 @@ func TestListJobsUseCaseStoreErrorPropagates(t *testing.T) {
 		t.Fatalf("got %v, want the store error", err)
 	}
 }
+
+var jobQueryFixtureGroupID = scan.GenerateID()

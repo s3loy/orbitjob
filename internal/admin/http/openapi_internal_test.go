@@ -334,16 +334,16 @@ func TestStructSchema_DashAndEmptyJSONTags(t *testing.T) {
 		t.Fatal("expected json:\"-\" field to be skipped")
 	}
 
-	// json:"" with empty tag value → skipped at jsonTag == "" check
+	// Untagged exported fields use their Go names, like encoding/json.
 	emptySchema := registry.structSchema(reflect.TypeOf(emptyJSONNameModel{}), schemaModeResponse)
-	if _, ok := emptySchema.Properties["value"]; ok {
-		t.Fatal("expected field without json name to be skipped")
+	if _, ok := emptySchema.Properties["Value"]; !ok {
+		t.Fatal("expected default JSON field name")
 	}
 
-	// json:"," with empty name before comma → skipped at name == "" check
+	// An empty JSON tag name also defaults to the Go field name.
 	commaSchema := registry.structSchema(reflect.TypeOf(commaOnlyJSONNameModel{}), schemaModeResponse)
-	if _, ok := commaSchema.Properties["value"]; ok {
-		t.Fatal("expected field with comma-only json name to be skipped")
+	if _, ok := commaSchema.Properties["Value"]; !ok {
+		t.Fatal("expected default JSON field name")
 	}
 }
 

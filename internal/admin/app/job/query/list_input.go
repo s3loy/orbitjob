@@ -3,6 +3,7 @@ package query
 import (
 	"strings"
 
+	"orbitjob/internal/domain/queryfilter"
 	"orbitjob/internal/domain/resource"
 	"orbitjob/internal/domain/validation"
 )
@@ -20,7 +21,10 @@ const (
 // neither a group column nor a mutable status, and inventing either would
 // describe a row the schema does not have.
 type ListInput struct {
-	TenantID string
+	Search    string
+	Namespace string
+	SourceUID string
+	TenantID  string
 	// ResourceGroupID is the scope the caller's key is limited to; empty for an
 	// unscoped caller. A definition has no group, so a scoped caller is refused
 	// rather than shown the whole tenant's definitions.
@@ -59,5 +63,18 @@ func NormalizeListInput(in ListInput) (ListInput, error) {
 		return ListInput{}, validation.New("offset", "must be >= 0")
 	}
 
-	return ListInput{TenantID: tenantID, ResourceGroupID: in.ResourceGroupID, Limit: limit, Offset: offset}, nil
+	search, err := queryfilter.Search(in.Search)
+	if err != nil {
+		return ListInput{}, err
+	}
+	namespace, sourceUID := strings.TrimSpace(in.Namespace), strings.TrimSpace(in.SourceUID)
+	for _, filter := range []struct {
+		field, value string
+		maximum      int
+	}{{"namespace", namespace, 63}, {"source_uid", sourceUID, 128}} {
+		if len(filter.value) > filter.maximum || strings.ContainsRune(filter.value, 0) {
+			return ListInput{}, validation.Errorf(filter.field, "must contain at most %d characters and no NUL", filter.maximum)
+		}
+	}
+	return ListInput{Search: search, Namespace: namespace, SourceUID: sourceUID, TenantID: tenantID, ResourceGroupID: in.ResourceGroupID, Limit: limit, Offset: offset}, nil
 }

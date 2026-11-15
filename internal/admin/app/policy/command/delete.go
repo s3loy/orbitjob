@@ -34,7 +34,7 @@ func NewDeleter(policies policyDeleter) *Deleter {
 // mean either leaking the existence of other tenants' policies or reporting a
 // protected preset as missing.
 func (d *Deleter) Delete(ctx context.Context, in DeleteInput) error {
-	// A refused delete -- a platform preset, an unbound policy, a missing id --
+	// A refused delete -- a platform preset, a bound policy, a missing id --
 	// returns before this, so no audit row claims a removal that did not happen.
 	return d.policies.Delete(ctx, in.TenantID, in.ID, audit.Event{
 		TenantID:     in.TenantID,

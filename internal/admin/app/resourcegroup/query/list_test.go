@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"orbitjob/internal/core/domain/resourcegroup"
+
+	"orbitjob/internal/platform/scan"
 )
 
 type stubGroupLister struct {
@@ -21,15 +23,15 @@ func (s *stubGroupLister) List(_ context.Context, tenantID string) ([]resourcegr
 
 func TestListMapsEveryGroup(t *testing.T) {
 	repo := &stubGroupLister{groups: []resourcegroup.Group{
-		{ID: "g1", TenantID: "t1", Slug: "ci", Name: "Continuous Integration"},
-		{ID: "g2", TenantID: "t1", Slug: "prod", Name: "Production"},
+		{ID: "g1", TenantID: resourcegroupListFixtureTenantID, Slug: "ci", Name: "Continuous Integration"},
+		{ID: "g2", TenantID: resourcegroupListFixtureTenantID, Slug: "prod", Name: "Production"},
 	}}
 
-	items, err := NewLister(repo).List(context.Background(), ListInput{TenantID: "t1"})
+	items, err := NewLister(repo).List(context.Background(), ListInput{TenantID: resourcegroupListFixtureTenantID})
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if repo.gotTenantID != "t1" {
+	if repo.gotTenantID != resourcegroupListFixtureTenantID {
 		t.Fatalf("expected the caller's tenant, got %q", repo.gotTenantID)
 	}
 	if len(items) != 2 || items[0].Slug != "ci" || items[1].ID != "g2" {
@@ -38,7 +40,7 @@ func TestListMapsEveryGroup(t *testing.T) {
 }
 
 func TestListReturnsAnEmptySliceRatherThanNil(t *testing.T) {
-	items, err := NewLister(&stubGroupLister{}).List(context.Background(), ListInput{TenantID: "t1"})
+	items, err := NewLister(&stubGroupLister{}).List(context.Background(), ListInput{TenantID: resourcegroupListFixtureTenantID})
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -49,7 +51,9 @@ func TestListReturnsAnEmptySliceRatherThanNil(t *testing.T) {
 
 func TestListPropagatesAStoreError(t *testing.T) {
 	repo := &stubGroupLister{err: errors.New("db down")}
-	if _, err := NewLister(repo).List(context.Background(), ListInput{TenantID: "t1"}); err == nil {
+	if _, err := NewLister(repo).List(context.Background(), ListInput{TenantID: resourcegroupListFixtureTenantID}); err == nil {
 		t.Fatal("expected the store error to propagate")
 	}
 }
+
+var resourcegroupListFixtureTenantID = scan.GenerateID()

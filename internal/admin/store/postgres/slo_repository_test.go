@@ -108,10 +108,10 @@ func TestSLOReadRepository_List(t *testing.T) {
 	now := time.Date(2026, 9, 1, 8, 0, 0, 0, time.UTC)
 	expectTenantTx(t, mock, "tenant-a")
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM slos`).
-		WithArgs("tenant-a", nil).
+		WithArgs("tenant-a", nil, "").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
-	mock.ExpectQuery(`SELECT (.+) FROM slos WHERE tenant_id = \$1 AND deleted_at IS NULL AND \(\$2::text IS NULL OR resource_group_id = \$2\) ORDER BY id DESC LIMIT \$3 OFFSET \$4`).
-		WithArgs("tenant-a", nil, 50, 0).
+	mock.ExpectQuery(`SELECT (.+) FROM slos WHERE tenant_id = \$1 AND deleted_at IS NULL AND \(\$2::text IS NULL OR resource_group_id = \$2\).* ORDER BY id DESC LIMIT \$3 OFFSET \$4`).
+		WithArgs("tenant-a", nil, 50, 0, "").
 		WillReturnRows(sqlmock.NewRows(adminSLOColumns).
 			AddRow(4, "tenant-a", "signup-slo", nil, 8, 0.999,
 				"calendar", 604800, 14.4, 6, "active", 1, now, now).
@@ -146,10 +146,10 @@ func TestSLOReadRepository_List_Empty(t *testing.T) {
 
 	expectTenantTx(t, mock, "tenant-a")
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM slos`).
-		WithArgs("tenant-a", "rg-1").
+		WithArgs("tenant-a", "rg-1", "").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	mock.ExpectQuery(`SELECT (.+) FROM slos`).
-		WithArgs("tenant-a", "rg-1", 50, 0).
+		WithArgs("tenant-a", "rg-1", 50, 0, "").
 		WillReturnRows(sqlmock.NewRows(adminSLOColumns))
 	mock.ExpectCommit()
 
@@ -175,10 +175,10 @@ func TestSLOReadRepository_List_RowsError(t *testing.T) {
 	now := time.Date(2026, 9, 1, 8, 0, 0, 0, time.UTC)
 	expectTenantTx(t, mock, "tenant-a")
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM slos`).
-		WithArgs("tenant-a", nil).
+		WithArgs("tenant-a", nil, "").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	mock.ExpectQuery(`SELECT (.+) FROM slos`).
-		WithArgs("tenant-a", nil, 50, 0).
+		WithArgs("tenant-a", nil, 50, 0, "").
 		WillReturnRows(sqlmock.NewRows(adminSLOColumns).
 			AddRow(3, "tenant-a", "checkout-slo", nil, 7, 0.99,
 				"rolling", 3600, 14.4, 6, "active", 2, now, now).

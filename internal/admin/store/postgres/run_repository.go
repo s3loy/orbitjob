@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	runquery "orbitjob/internal/admin/app/run/query"
+	"orbitjob/internal/domain/queryfilter"
 	"orbitjob/internal/domain/resource"
 	"orbitjob/internal/platform/scan"
 )
@@ -46,13 +47,14 @@ func (r *RunRepository) List(ctx context.Context, in runquery.ListInput) ([]runq
 	defer func() { _ = tx.Rollback() }()
 
 	rows, err := tx.QueryContext(ctx, `
-		SELECT `+runColumns+`
+		SELECT `+runColumns+`, d.source_name, d.source_namespace, d.source_mode
 		FROM job_run_control_plane r
-		WHERE r.tenant_id = $1
-		  AND ($2 = '' OR r.phase = $2)
+		LEFT JOIN job_definition_revisions d
+		 ON d.id=r.revision_id AND d.tenant_id=r.tenant_id AND d.source_uid=r.source_uid
+ `+runFilterSQL+`
 		ORDER BY r.created_at DESC, r.id DESC
-		LIMIT $3 OFFSET $4
-	`, in.TenantID, in.Phase, in.Limit, in.Offset)
+		LIMIT $7 OFFSET $8
+	`, in.TenantID, in.Phase, in.SourceUID, in.OccurrenceKey, queryfilter.MicrosecondBound(in.CreatedFrom), queryfilter.MicrosecondBound(in.CreatedBefore), in.Limit, in.Offset)
 	if err != nil {
 		return nil, fmt.Errorf("list runs: %w", err)
 	}
@@ -74,6 +76,9 @@ func (r *RunRepository) List(ctx context.Context, in runquery.ListInput) ([]runq
 			&item.MaxAttempts,
 			&item.CreatedAt,
 			&item.UpdatedAt,
+			&item.SourceName,
+			&item.SourceNamespace,
+			&item.SourceKind,
 		); err != nil {
 			return nil, fmt.Errorf("scan run row: %w", err)
 		}
@@ -95,7 +100,8 @@ const getRunSQL = `
 	SELECT ` + runColumns + `,
 	       a.id, a.run_id, a.attempt_number, a.phase, a.kubernetes_job_name,
 	       a.kubernetes_job_uid, a.observed_resource_version,
-	       a.started_at, a.completed_at, a.created_at
+	       a.started_at, a.completed_at, a.created_at,
+	       a.owner_run_uid, a.execution_unknown_since, a.execution_unknown_reason
 	FROM job_run_control_plane r
 	LEFT JOIN job_run_attempts_control_plane a
 	  ON a.tenant_id = r.tenant_id AND a.run_id = r.id
@@ -121,16 +127,19 @@ func (r *RunRepository) Get(ctx context.Context, in runquery.GetInput) (runquery
 	found := false
 	for rows.Next() {
 		var (
-			attemptID    sql.NullInt64
-			attemptRunID sql.NullInt64
-			attemptNo    sql.NullInt64
-			attemptPhase sql.NullString
-			jobName      sql.NullString
-			jobUID       sql.NullString
-			observedRV   sql.NullString
-			startedAt    sql.NullTime
-			completedAt  sql.NullTime
-			attemptAt    sql.NullTime
+			attemptID     sql.NullInt64
+			attemptRunID  sql.NullInt64
+			attemptNo     sql.NullInt64
+			attemptPhase  sql.NullString
+			jobName       sql.NullString
+			jobUID        sql.NullString
+			observedRV    sql.NullString
+			startedAt     sql.NullTime
+			completedAt   sql.NullTime
+			attemptAt     sql.NullTime
+			ownerRunUID   sql.NullString
+			unknownSince  sql.NullTime
+			unknownReason sql.NullString
 		)
 		if err := rows.Scan(
 			&out.ID,
@@ -155,6 +164,9 @@ func (r *RunRepository) Get(ctx context.Context, in runquery.GetInput) (runquery
 			&startedAt,
 			&completedAt,
 			&attemptAt,
+			&ownerRunUID,
+			&unknownSince,
+			&unknownReason,
 		); err != nil {
 			return runquery.GetItem{}, fmt.Errorf("scan run detail row: %w", err)
 		}
@@ -174,6 +186,9 @@ func (r *RunRepository) Get(ctx context.Context, in runquery.GetInput) (runquery
 			StartedAt:               scan.NullTimePtr(startedAt),
 			CompletedAt:             scan.NullTimePtr(completedAt),
 			CreatedAt:               attemptAt.Time,
+			OwnerRunUID:             scan.NullStringPtr(ownerRunUID),
+			ExecutionUnknownSince:   scan.NullTimePtr(unknownSince),
+			ExecutionUnknownReason:  scan.NullStringPtr(unknownReason),
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -201,7 +216,8 @@ func (r *RunRepository) ListAttempts(ctx context.Context, in runquery.GetInput) 
 	rows, err := tx.QueryContext(ctx, `
 		SELECT a.id, a.run_id, a.attempt_number, a.phase, a.kubernetes_job_name,
 		       a.kubernetes_job_uid, a.observed_resource_version,
-		       a.started_at, a.completed_at, a.created_at
+		       a.started_at, a.completed_at, a.created_at,
+		       a.owner_run_uid, a.execution_unknown_since, a.execution_unknown_reason
 		FROM job_run_attempts_control_plane a
 		JOIN job_run_control_plane r
 		  ON r.tenant_id = a.tenant_id AND r.id = a.run_id
@@ -216,11 +232,14 @@ func (r *RunRepository) ListAttempts(ctx context.Context, in runquery.GetInput) 
 	out := []runquery.AttemptItem{}
 	for rows.Next() {
 		var (
-			item        runquery.AttemptItem
-			jobUID      sql.NullString
-			observedRV  sql.NullString
-			startedAt   sql.NullTime
-			completedAt sql.NullTime
+			item          runquery.AttemptItem
+			jobUID        sql.NullString
+			observedRV    sql.NullString
+			startedAt     sql.NullTime
+			completedAt   sql.NullTime
+			ownerRunUID   sql.NullString
+			unknownSince  sql.NullTime
+			unknownReason sql.NullString
 		)
 		if err := rows.Scan(
 			&item.ID,
@@ -233,6 +252,9 @@ func (r *RunRepository) ListAttempts(ctx context.Context, in runquery.GetInput) 
 			&startedAt,
 			&completedAt,
 			&item.CreatedAt,
+			&ownerRunUID,
+			&unknownSince,
+			&unknownReason,
 		); err != nil {
 			return nil, fmt.Errorf("scan attempt row: %w", err)
 		}
@@ -240,6 +262,9 @@ func (r *RunRepository) ListAttempts(ctx context.Context, in runquery.GetInput) 
 		item.ObservedResourceVersion = scan.NullStringPtr(observedRV)
 		item.StartedAt = scan.NullTimePtr(startedAt)
 		item.CompletedAt = scan.NullTimePtr(completedAt)
+		item.OwnerRunUID = scan.NullStringPtr(ownerRunUID)
+		item.ExecutionUnknownSince = scan.NullTimePtr(unknownSince)
+		item.ExecutionUnknownReason = scan.NullStringPtr(unknownReason)
 		out = append(out, item)
 	}
 	if err := rows.Err(); err != nil {

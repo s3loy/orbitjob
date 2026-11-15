@@ -44,17 +44,20 @@ type CompletedRecord struct {
 // FunctionRun is one persisted read-model row, the admin read shape over
 // function_runs.
 type FunctionRun struct {
-	ID          int64
-	RunID       string
-	TenantID    string
-	FunctionID  int64
-	Status      string
-	TriggeredAt time.Time
-	StartedAt   *time.Time
-	FinishedAt  *time.Time
-	DurationMs  *int
-	Version     int
-	CreatedAt   time.Time
+	ID         int64
+	RunID      string
+	TenantID   string
+	FunctionID int64
+	// OccurrenceKey is read from the uniquely matched real ledger row. A
+	// missing or ambiguous retained mapping remains unknown, never guessed.
+	OccurrenceKey *string
+	Status        string
+	TriggeredAt   time.Time
+	StartedAt     *time.Time
+	FinishedAt    *time.Time
+	DurationMs    *int
+	Version       int
+	CreatedAt     time.Time
 }
 
 // ReadModelStatus maps a run's terminal phase to the read-model status. It is
@@ -72,4 +75,13 @@ func ReadModelStatus(phase jobrun.Phase) (string, bool) {
 		return StatusCanceled, true
 	}
 	return "", false
+}
+
+// Attempt is a retained execution fact, linked through the uniquely matched
+// function ledger row. It is never inferred from retry configuration.
+type Attempt struct {
+	AttemptNumber int        `json:"attempt_number"`
+	Phase         string     `json:"phase"`
+	StartedAt     *time.Time `json:"started_at"`
+	CompletedAt   *time.Time `json:"completed_at"`
 }

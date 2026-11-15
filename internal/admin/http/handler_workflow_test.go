@@ -193,10 +193,10 @@ func TestHandler_TriggerWorkflow_ReplayAnswers200(t *testing.T) {
 	}
 }
 
-func TestHandler_TriggerWorkflow_MapsSuspendedConflict(t *testing.T) {
+func TestHandler_TriggerWorkflow_MapsVersionConflict(t *testing.T) {
 	trigger := &stubTriggerWorkflow{err: &resource.ConflictError{
-		Resource: "workflow", ID: int64(5), Field: "suspend",
-		Message: "cannot trigger a suspended workflow",
+		Resource: "workflow", ID: int64(5), Field: "revision",
+		Message: "workflow revision has changed",
 	}}
 	_, router := newWorkflowHandler(nil, nil, trigger, nil, nil, nil, "")
 

@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"orbitjob/internal/domain/validation"
+
+	"orbitjob/internal/platform/scan"
 )
 
 // The run read use cases are thin: validate, then hand the normalized input to
@@ -107,7 +109,7 @@ func TestGetRunUseCaseScopedCallerRefused(t *testing.T) {
 	repo := &stubRunGetter{}
 	uc := NewGetRunUseCase(repo)
 
-	_, err := uc.Get(context.Background(), GetInput{TenantID: ulidTenant, ID: 7, ResourceGroupID: "rg-7"})
+	_, err := uc.Get(context.Background(), GetInput{TenantID: ulidTenant, ID: 7, ResourceGroupID: runQueryFixtureGroupID})
 	if err == nil {
 		t.Fatal("expected a scope refusal")
 	}
@@ -219,3 +221,5 @@ func TestListAttemptsUseCaseRefusedInputNeverReachesStore(t *testing.T) {
 		t.Fatalf("refused input reached the store %d times", repo.calls)
 	}
 }
+
+var runQueryFixtureGroupID = scan.GenerateID()

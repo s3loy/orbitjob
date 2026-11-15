@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"orbitjob/internal/core/domain/policy"
+
+	"orbitjob/internal/platform/scan"
 )
 
 type stubPolicyLister struct {
@@ -19,11 +21,11 @@ func (s *stubPolicyLister) List(_ context.Context, _ string) ([]policy.Record, e
 
 func TestListMarksPlatformPresets(t *testing.T) {
 	repo := &stubPolicyLister{records: []policy.Record{
-		{ID: "preset", Name: "ReadOnlyAccess"},           // TenantID empty: a preset
-		{ID: "own", Name: "JobOperator", TenantID: "t1"}, // the tenant's own
+		{ID: "preset", Name: "ReadOnlyAccess"},                                // TenantID empty: a preset
+		{ID: "own", Name: "JobOperator", TenantID: policyListFixtureTenantID}, // the tenant's own
 	}}
 
-	items, err := NewLister(repo).List(context.Background(), ListInput{TenantID: "t1"})
+	items, err := NewLister(repo).List(context.Background(), ListInput{TenantID: policyListFixtureTenantID})
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -48,7 +50,7 @@ func TestListReturnsTheDocument(t *testing.T) {
 	}}}
 	repo := &stubPolicyLister{records: []policy.Record{{ID: "p1", Document: doc}}}
 
-	items, err := NewLister(repo).List(context.Background(), ListInput{TenantID: "t1"})
+	items, err := NewLister(repo).List(context.Background(), ListInput{TenantID: policyListFixtureTenantID})
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -59,7 +61,7 @@ func TestListReturnsTheDocument(t *testing.T) {
 }
 
 func TestListReturnsAnEmptySliceRatherThanNil(t *testing.T) {
-	items, err := NewLister(&stubPolicyLister{}).List(context.Background(), ListInput{TenantID: "t1"})
+	items, err := NewLister(&stubPolicyLister{}).List(context.Background(), ListInput{TenantID: policyListFixtureTenantID})
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -73,7 +75,9 @@ func TestListReturnsAnEmptySliceRatherThanNil(t *testing.T) {
 
 func TestListPropagatesAStoreError(t *testing.T) {
 	repo := &stubPolicyLister{err: errors.New("db down")}
-	if _, err := NewLister(repo).List(context.Background(), ListInput{TenantID: "t1"}); err == nil {
+	if _, err := NewLister(repo).List(context.Background(), ListInput{TenantID: policyListFixtureTenantID}); err == nil {
 		t.Fatal("expected the store error to propagate")
 	}
 }
+
+var policyListFixtureTenantID = scan.GenerateID()
