@@ -42,6 +42,7 @@ import (
 	tenantcommand "orbitjob/internal/admin/app/tenant/command"
 	tenantquery "orbitjob/internal/admin/app/tenant/query"
 	workspacequery "orbitjob/internal/admin/app/workspace/query"
+	"orbitjob/internal/admin/console"
 	adminhttp "orbitjob/internal/admin/http"
 	"orbitjob/internal/admin/http/middleware"
 	"orbitjob/internal/admin/kube"
@@ -80,6 +81,10 @@ func newJobRunPublisher() (kube.JobRunPublisher, kube.WorkflowRunPublisher, erro
 }
 
 func newRouter(handler *adminhttp.Handler, auth *middleware.Auth, rl *middleware.RateLimiter) *gin.Engine {
+	return newRouterWithConsole(handler, auth, rl, console.NewHandler(os.DirFS(console.AssetDirectory)))
+}
+
+func newRouterWithConsole(handler *adminhttp.Handler, auth *middleware.Auth, rl *middleware.RateLimiter, assets http.Handler) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.LoggerWithConfig(gin.LoggerConfig{SkipQueryString: true}), gin.Recovery())
 	r.Use(func(c *gin.Context) {
@@ -92,6 +97,12 @@ func newRouter(handler *adminhttp.Handler, auth *middleware.Auth, rl *middleware
 	// still counted with the status the client received.
 	r.Use(middleware.RequestMetrics())
 	r.Use(middleware.TraceMiddleware())
+	r.GET("/", func(c *gin.Context) { c.Redirect(http.StatusTemporaryRedirect, console.Prefix) })
+	r.HEAD("/", func(c *gin.Context) { c.Redirect(http.StatusTemporaryRedirect, console.Prefix) })
+	r.GET("/console", func(c *gin.Context) { c.Redirect(http.StatusTemporaryRedirect, console.Prefix) })
+	r.HEAD("/console", func(c *gin.Context) { c.Redirect(http.StatusTemporaryRedirect, console.Prefix) })
+	r.GET("/console/*path", gin.WrapH(assets))
+	r.HEAD("/console/*path", gin.WrapH(assets))
 
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
