@@ -37,19 +37,17 @@ func TestTriggerJobSendsIdempotencyKey(t *testing.T) {
 	}
 }
 
-func TestTriggerJobConflictMeansNoNewRun(t *testing.T) {
+func TestTriggerJobConflictIsARejection(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusConflict)
 	}))
 	defer srv.Close()
 
 	c := NewAPIClient(srv.URL, "tenant-key")
-	resp, err := c.TriggerJob(context.Background(), 7, "case-7")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp.Created {
-		t.Fatal("conflict should not create a run")
+	_, err := c.TriggerJob(context.Background(), 7, "case-7")
+	var terr *TriggerError
+	if !errors.As(err, &terr) || terr.StatusCode != http.StatusConflict {
+		t.Fatalf("conflict accepted: %v", err)
 	}
 }
 

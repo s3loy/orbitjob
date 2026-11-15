@@ -44,6 +44,9 @@ cd "$PROJECT_ROOT"
 
 run_id="ci-${profile}-$(date -u +%Y%m%dT%H%M%SZ)"
 run_dir="test/load/runs/${run_id}"
+if [[ -n ${GITHUB_OUTPUT:-} ]]; then
+    printf 'run_dir=%s\n' "$run_dir" >> "$GITHUB_OUTPUT"
+fi
 log "run $run_id using $config"
 
 # --- port-forwards -----------------------------------------------------------
@@ -84,7 +87,7 @@ admin_dsn="$(kubectl get secret "$SECRET_NAME" -n "$RELEASE_NAMESPACE" \
     -o jsonpath='{.data.admin-dsn}' | base64 -d)"
 # The Secret holds the in-cluster Service address; this host reaches PostgreSQL
 # through a port-forward instead.
-admin_dsn="${admin_dsn/orbitjob-postgres.orbitjob.svc:5432/127.0.0.1:${DB_PORT}}"
+admin_dsn="${admin_dsn/orbitjob-postgres.${DB_NAMESPACE}.svc:5432/127.0.0.1:${DB_PORT}}"
 bootstrap_key="$(kubectl get secret "$SECRET_NAME" -n "$RELEASE_NAMESPACE" \
     -o jsonpath='{.data.bootstrap-api-key}' | base64 -d)"
 [[ -n $admin_dsn && -n $bootstrap_key ]] || die "the installation Secret is missing its DSN or API key"
@@ -101,7 +104,7 @@ export ORBITJOB_DSN="$admin_dsn"
 
 log "deploying load fixtures"
 kubectl apply -f deploy/load/namespace.yaml >/dev/null
-kubectl apply -f deploy/load/operations-rbac.yaml >/dev/null
+bash scripts/render-local-manifest.sh load-operations "$RELEASE_NAMESPACE" | kubectl apply -f - >/dev/null
 kubectl apply -f deploy/load/fixture-configmap.yaml >/dev/null
 # The TLS secret is generated rather than committed, so the private key never
 # enters git history.
@@ -136,7 +139,7 @@ go run ./scripts/loadtest reset --confirm
 
 log "generating definitions"
 go run ./scripts/loadtest generate --config "$config" \
-    --images test/load/config/images.lock.yaml --run-id "$run_id"
+    --images test/load/config/images.lock.yaml --profile "$profile" --run-id "$run_id"
 
 log "preparing tenants and definitions"
 go run ./scripts/loadtest prepare --config "$config" --profile "$profile" \
@@ -184,7 +187,8 @@ done
 
 log "running the schedule; this is the part that takes $profile's duration"
 go run ./scripts/loadtest run --config "$config" --profile "$profile" \
-    --run-id "$run_id" --api-url "http://localhost:${ADMIN_PORT}"
+    --run-id "$run_id" --api-url "http://localhost:${ADMIN_PORT}" \
+    --fixture-url "http://localhost:${FIXTURE_PORT}"
 
 # Runs the operator has not yet carried to a terminal phase count as in flight,
 # and verifying immediately after the run fails spuriously on them: the last
@@ -193,16 +197,10 @@ go run ./scripts/loadtest run --config "$config" --profile "$profile" \
 log "waiting for runs to reach a terminal state"
 settled=false
 for _ in $(seq 1 60); do
-    # Through the DSN, not `kubectl exec` with a hardcoded password: the
-    # credential is already in the installation Secret and this reads it from
-    # there rather than repeating a fixture password in a second place.
-    #
-    # Only an integer is allowed out of this. A psql failure can quote the
-    # connection string back, and this value ends up in a log line, so anything
-    # that is not a count is discarded rather than echoed.
-    in_flight="$(psql "$admin_dsn" -Atqc \
-        "SELECT count(*) FROM job_run_control_plane WHERE phase NOT IN ('Succeeded','Failed','Canceled')" \
-        2>/dev/null)" || in_flight=""
+    # The tool reads ORBITJOB_DSN from the environment and applies each run
+    # tenant's transaction-local RLS context plus its recorded revision IDs.
+    # Missing observations or a failed query are unknown, never a zero count.
+    in_flight="$(go run ./scripts/loadtest settle --run-id "$run_id")" || in_flight=""
     [[ $in_flight =~ ^[0-9]+$ ]] || in_flight="unknown"
     if [[ $in_flight == "0" ]]; then settled=true; break; fi
     log "in flight: $in_flight"

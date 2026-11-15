@@ -110,6 +110,9 @@ func Generate(cfg Config, scenarios []ScenarioFile, lock ImageLock) (Manifest, e
 				origin := assignment.Origin
 				productTrigger := assignment.ProductTrigger
 				caseID := fmt.Sprintf("%s-%s-%04d", scenario.Category, family.ID, i)
+				if cfg.RunID != "" {
+					caseID = fmt.Sprintf("%s-%x", caseID, sha256.Sum256([]byte(cfg.RunID)))
+				}
 				timeoutSec := 60
 				switch scenario.Category {
 				case "database", "http-webhook", "external-probes":

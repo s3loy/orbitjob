@@ -191,7 +191,7 @@ func TestValidateTenantsRejectsAnEmptyEntry(t *testing.T) {
 // tenant id. The schema's CHAR(26) foreign keys reject one, and this
 // validation refuses it before a cluster is touched.
 func TestValidateTenantsRejectsSlugs(t *testing.T) {
-	for _, slug := range []string{"default", "load-alpha", strings.Repeat("2", 25) + "I"} {
+	for _, slug := range []string{"default", "load-alpha", strings.Repeat("2", 25) + "I", "80000000000000000000000000"} {
 		cfg := Config{Tenants: []string{slug}}
 		err := ValidateTenants(cfg)
 		if err == nil || !strings.Contains(err.Error(), "ULID") {

@@ -5,13 +5,17 @@ metadata:
   namespace: orbitjob-load
 data:
   server.py: |
-    import hashlib, json, ssl, threading, time
+    import datetime, hashlib, json, ssl, threading, time, uuid
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     from urllib.parse import parse_qs, urlparse
 
     lock = threading.Lock()
-    ledger = {}
+    dedupe = set()
+    side_effects = []
     attempts = {}
+    boot_id = str(uuid.uuid4())
+    releases = set()
+    release_changed = threading.Condition(lock)
 
     class Handler(BaseHTTPRequestHandler):
       def send_json(self, status, body, headers=None):
@@ -64,8 +68,18 @@ data:
           # timeout comes from the client giving up rather than from an error.
           time.sleep(30)
           self.send_json(200, {"slept": 30})
+        elif parsed.path == "/journal":
+          with lock:
+            entries = [v.copy() for v in side_effects]
+            snapshot = {"version": 1, "run_id": query.get("run_id", [""])[0],
+                        "boot_id": boot_id, "head": len(entries), "entries": entries}
+          self.send_json(200, snapshot)
         elif parsed.path == "/ledger":
-          self.send_json(200, [v for v in ledger.values() if not case or v["case_id"] == case])
+          # The journal records effects independently of dedupe state. A broken
+          # dedupe guard can append the same key twice, which verification sees.
+          with lock:
+            entries = [v.copy() for v in side_effects if not case or v["case_id"] == case]
+          self.send_json(200, entries)
         else:
           self.send_json(404, {"error": "not found"})
 
@@ -83,12 +97,36 @@ data:
             self.send_json(200, {"accepted": True, "bytes": len(raw)})
           return
         body = json.loads(raw or b"{}")
-        if self.path in ("/ledger", "/webhook-origin"):
-          key = body.get("idempotency_key", hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest())
+        if self.path == "/recovery/checkpoint":
+          entry = {"case_id": body.get("case_id", ""), "operation": "recovery-checkpoint",
+                   "idempotency_key": body.get("idempotency_key", ""), "checkpoint": body.get("checkpoint")}
           with lock:
-            duplicate = key in ledger
-            ledger.setdefault(key, {"case_id": body.get("case_id", ""), "operation": body.get("operation", self.path), "idempotency_key": key})
-          self.send_json(200 if duplicate else 201, {"duplicate": duplicate, "entry": ledger[key]})
+            entry["seq"] = len(side_effects) + 1
+            entry["observed_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            side_effects.append(entry)
+          self.send_json(201, entry)
+        elif self.path == "/recovery/release":
+          with release_changed:
+            releases.add(body.get("case_id", ""))
+            release_changed.notify_all()
+          self.send_json(200, {"released": body.get("case_id", "")})
+        elif self.path in ("/ledger", "/webhook-origin", "/recovery/effect"):
+          key = body.get("idempotency_key", hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest())
+          entry = {"case_id": body.get("case_id", ""), "operation": body.get("operation", self.path), "idempotency_key": key}
+          with lock:
+            duplicate = key in dedupe
+            if not duplicate:
+              dedupe.add(key)
+              entry["seq"] = len(side_effects) + 1
+              entry["observed_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+              side_effects.append(entry)
+          if self.path == "/recovery/effect" and body.get("hold"):
+            with release_changed:
+              released = release_changed.wait_for(lambda: entry["case_id"] in releases, timeout=180)
+            if not released:
+              self.send_json(504, {"error": "recovery hold expired"})
+              return
+          self.send_json(200 if duplicate else 201, {"duplicate": duplicate, "entry": entry})
         else:
           self.send_json(404, {"error": "not found"})
 
@@ -108,5 +146,6 @@ data:
       server.socket = context.wrap_socket(server.socket, server_side=True)
       server.serve_forever()
 
-    threading.Thread(target=serve_tls, daemon=True).start()
-    ThreadingHTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+    if __name__ == "__main__":
+      threading.Thread(target=serve_tls, daemon=True).start()
+      ThreadingHTTPServer(("0.0.0.0", 8080), Handler).serve_forever()

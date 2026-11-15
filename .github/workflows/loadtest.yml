@@ -114,6 +114,7 @@ jobs:
       # the input allows can never reach a shell. The script validates it
       # against the same two names as well.
       - name: Run the profile
+        id: execution
         run: ./scripts/loadtest-ci.sh "$PROFILE"
 
       # The run directory holds the manifest, the stats, the verdict and the
@@ -149,8 +150,11 @@ jobs:
         if: always()
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RUN_DIR: ${{ steps.execution.outputs.run_dir }}
         run: |
-          run_dir="$(find test/load/runs -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p/\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2-)"
+          # Use the exact attempted run, including early failures. The newest
+          # directory may belong to an older successful run on a reused host.
+          run_dir="${RUN_DIR:+${RUN_DIR}/}"
           verdict="none (job ended before the verifier ran)"
           if [ -n "$run_dir" ] && [ -f "${run_dir}result.json" ]; then
             verdict="$(jq -r '.verdict // "unknown"' "${run_dir}result.json")"

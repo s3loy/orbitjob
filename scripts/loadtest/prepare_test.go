@@ -71,7 +71,8 @@ func TestTenantNamespaceManifestGrantsOperatorInTenantNamespace(t *testing.T) {
 	wantRules := []rule{
 		{[]string{"workloads.orbitjob.io"}, []string{"scheduledjobs"}, []string{"get", "list", "watch", "update", "patch"}},
 		{[]string{"workloads.orbitjob.io"}, []string{"jobruns"}, []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
-		{[]string{"workloads.orbitjob.io"}, []string{"workflowjobs", "workflowruns"}, []string{"get", "list", "watch", "patch"}},
+		{[]string{"workloads.orbitjob.io"}, []string{"workflowjobs"}, []string{"get", "list", "watch", "patch"}},
+		{[]string{"workloads.orbitjob.io"}, []string{"workflowruns"}, []string{"get", "list", "watch", "patch", "delete"}},
 		{[]string{"workloads.orbitjob.io"}, []string{"scheduledjobs/status", "jobruns/status", "workflowruns/status", "workflowjobs/status"}, []string{"get", "update", "patch"}},
 		{[]string{"batch"}, []string{"jobs"}, []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
 		{[]string{""}, []string{"pods"}, []string{"get", "list", "watch"}},

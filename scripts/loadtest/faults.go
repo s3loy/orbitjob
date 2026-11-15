@@ -2,15 +2,18 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os/exec"
+	"strings"
 	"sync"
 	"time"
 )
 
 type FaultSpec struct {
-	Name          string
-	Offset        time.Duration
-	DisconnectFor time.Duration
+	Name          string        `json:"name"`
+	Offset        time.Duration `json:"offset_ns"`
+	DisconnectFor time.Duration `json:"disconnect_for_ns"`
 }
 
 // StandardFaultPlan faults every surviving control-plane component in turn.
@@ -128,13 +131,22 @@ func FaultInjectionPlan(name, namespace string) (inject, restore []string, err e
 	}
 }
 
-// FaultRecord is one fault injection's evidence: when it fired, how long
-// recovery took, and whether injection itself failed.
+// FaultRecord separates injection/restoration, readiness and legacy business
+// claims. The verifier never promotes a recorded claim into independent proof.
 type FaultRecord struct {
-	Name             string  `json:"name"`
-	InjectedAt       string  `json:"injected_at"`
-	RecoveredSeconds float64 `json:"recovered_seconds"`
-	InjectError      string  `json:"inject_error,omitempty"`
+	Name               string                `json:"name"`
+	ScheduledOffset    time.Duration         `json:"scheduled_offset_ns"`
+	InjectedAt         string                `json:"injected_at"`
+	InjectionSucceeded bool                  `json:"injection_succeeded"`
+	Ready              bool                  `json:"ready"`
+	ReadySeconds       float64               `json:"ready_seconds"`
+	BusinessRecovered  bool                  `json:"business_recovered"`
+	BusinessEvidence   string                `json:"business_evidence,omitempty"`
+	RecoveryError      string                `json:"recovery_error,omitempty"`
+	RecoveryIncomplete bool                  `json:"recovery_incomplete,omitempty"`
+	RecoveredSeconds   float64               `json:"recovered_seconds"`
+	InjectError        string                `json:"inject_error,omitempty"`
+	Recovery           *FaultRecoveryReceipt `json:"recovery,omitempty"`
 }
 
 // FaultRecorder collects FaultRecords from the injection goroutine; read after
@@ -159,7 +171,7 @@ func (r *FaultRecorder) Records() []FaultRecord {
 }
 
 func WaitForRecovery(ctx context.Context, gate RecoveryGate, check func(context.Context) bool) error {
-	readyCtx, cancel := context.WithTimeout(ctx, gate.BusinessTimeout)
+	readyCtx, cancel := context.WithTimeout(ctx, gate.ReadyTimeout)
 	defer cancel()
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
@@ -167,9 +179,9 @@ func WaitForRecovery(ctx context.Context, gate RecoveryGate, check func(context.
 	for {
 		select {
 		case <-readyCtx.Done():
-			return fmt.Errorf("%s recovery timed out", gate.Name)
+			return fmt.Errorf("%s readiness not confirmed: %w", gate.Name, readyCtx.Err())
 		case <-ticker.C:
-			if check(ctx) {
+			if check(readyCtx) {
 				consecutive++
 				if consecutive >= 2 {
 					return nil
@@ -179,4 +191,42 @@ func WaitForRecovery(ctx context.Context, gate RecoveryGate, check func(context.
 			}
 		}
 	}
+}
+
+// executeFaultDuring compensates even when cancellation interrupts the disconnect
+// window or kubectl reports an ambiguous failure after applying the change.
+// Cleanup has its own deadline because the run context may already be canceled.
+func executeFaultDuring(ctx context.Context, fault FaultSpec, inject, restore []string, during func(context.Context)) (result error) {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if len(restore) > 0 {
+		defer func() {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			out, err := exec.CommandContext(cleanupCtx, restore[0], restore[1:]...).CombinedOutput()
+			if err != nil {
+				result = errors.Join(result, fmt.Errorf("restore: %w: %s", err, strings.TrimSpace(string(out))))
+			}
+		}()
+	}
+	commandCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(commandCtx, inject[0], inject[1:]...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("inject: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	if during != nil {
+		during(ctx)
+	}
+	if len(restore) > 0 && fault.DisconnectFor > 0 {
+		timer := time.NewTimer(fault.DisconnectFor)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return nil
 }

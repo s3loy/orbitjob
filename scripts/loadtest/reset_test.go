@@ -5,6 +5,21 @@ import (
 	"testing"
 )
 
+func TestResetRequiresPositiveOwnershipForEveryDelete(t *testing.T) {
+	for _, step := range resetSteps() {
+		statement := step.cmd[len(step.cmd)-1]
+		if !strings.Contains(statement, "DELETE FROM") {
+			continue
+		}
+		if !strings.Contains(statement, "metadata") || !strings.Contains(statement, loadManagedByLabelValue) {
+			t.Errorf("step %q can select an ordinary tenant without load ownership: %s", step.name, statement)
+		}
+		if strings.Contains(statement, "WHERE slug != 'default'") {
+			t.Errorf("step %q selects unrelated tenants by exclusion", step.name)
+		}
+	}
+}
+
 // The reset's database steps were once a tenant-blind TRUNCATE of the whole
 // control-plane ledger, which wiped the default tenant's check history and
 // orphaned its JobRun CRs (2026-09-19). These pins keep the wipe scoped to
@@ -18,7 +33,7 @@ func TestResetDeletesAreScopedToLoadTenants(t *testing.T) {
 		if !strings.Contains(statement, "DELETE FROM") {
 			continue
 		}
-		if !strings.Contains(statement, defaultTenantGuard) {
+		if !strings.Contains(statement, loadTenantGuard()) {
 			t.Errorf("step %q deletes without the default-tenant guard: %s", step.name, statement)
 		}
 	}

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"github.com/lib/pq"
 )
 
 // resetStep is one destructive reset command, named for the progress output.
@@ -13,11 +15,16 @@ type resetStep struct {
 	cmd  []string
 }
 
-// defaultTenantGuard is the WHERE clause that keeps every delete scoped to
-// the load-test tenants. The default tenant is install state: its bootstrap
-// key, check history and SLIs must survive a reset. Tenant-blind wipes here
-// are what orphaned the default tenant's check-run CRs on 2026-09-19.
-const defaultTenantGuard = "tenant_id != (SELECT id FROM tenants WHERE slug = 'default')"
+// loadTenantPredicate requires an ownership marker written by prepare. A
+// tenant's name or its difference from the bootstrap identity is not ownership.
+func loadTenantPredicate() string {
+	return fmt.Sprintf("metadata->>%s = %s AND slug LIKE 'load-%%'",
+		pq.QuoteLiteral(loadManagedByLabelKey), pq.QuoteLiteral(loadManagedByLabelValue))
+}
+
+func loadTenantGuard() string {
+	return "tenant_id IN (SELECT id FROM tenants WHERE " + loadTenantPredicate() + ")"
+}
 
 // psqlShell builds a kubectl exec psql invocation. ON_ERROR_STOP makes the
 // multi-statement steps fail loudly: without it psql keeps going after a
@@ -32,8 +39,9 @@ func psqlShell(statement string) []string {
 // load-tenant rows go before the tenants themselves; within the ledger the
 // order honors the RESTRICT chain (attempts cascade from runs, runs pin
 // workflow runs and revisions, workflow runs pin revisions). Every delete
-// carries the default-tenant guard, so the shared install state survives.
+// requires positive tool ownership, so unrelated tenant state survives.
 func resetSteps() []resetStep {
+	guard := loadTenantGuard()
 	return []resetStep{
 		// Control-plane rows are keyed by source_uid + generation and occurrence,
 		// so leftover rows collide with a recreated CR of the same name and
@@ -45,19 +53,24 @@ func resetSteps() []resetStep {
 				"DELETE FROM workflow_run_control_plane WHERE %s; "+
 				"DELETE FROM function_runs WHERE %s; "+
 				"DELETE FROM job_definition_revisions WHERE %s",
-			defaultTenantGuard, defaultTenantGuard, defaultTenantGuard, defaultTenantGuard, defaultTenantGuard))},
+			guard, guard, guard, guard, guard))},
 		// The baseline schema puts ON DELETE RESTRICT foreign keys on tenants(id)
 		// in these four tables, so their load-tenant rows have to be removed before
 		// the tenants themselves or the delete is rejected. Everything else the
 		// tenant owns (resource_groups, policies, checks, slis, slos, budgets,
 		// functions) cascades and needs no explicit delete.
-		{name: "delete load-tenant audit events", cmd: psqlShell("DELETE FROM audit_events WHERE " + defaultTenantGuard)},
-		{name: "delete load-tenant check runs", cmd: psqlShell("DELETE FROM check_runs WHERE " + defaultTenantGuard)},
-		{name: "delete load-tenant SLI snapshots", cmd: psqlShell("DELETE FROM sli_snapshots WHERE " + defaultTenantGuard)},
-		{name: "delete load-tenant budget alerts", cmd: psqlShell("DELETE FROM budget_alerts WHERE " + defaultTenantGuard)},
+		{name: "delete load-tenant audit events", cmd: psqlShell("DELETE FROM audit_events WHERE " + guard)},
+		{name: "delete load-tenant check runs", cmd: psqlShell("DELETE FROM check_runs WHERE " + guard)},
+		{name: "delete load-tenant SLI deduplication facts", cmd: psqlShell("DELETE FROM sli_snapshot_events WHERE " + guard)},
+		{name: "delete load-tenant SLI event plan members", cmd: psqlShell("DELETE FROM sli_event_plan_members WHERE " + guard)},
+		{name: "delete load-tenant SLI event plans", cmd: psqlShell("DELETE FROM sli_event_plans WHERE " + guard)},
+		{name: "delete load-tenant SLI observation state", cmd: psqlShell("DELETE FROM sli_observation_state WHERE " + guard)},
+		{name: "delete load-tenant SLI configuration history", cmd: psqlShell("DELETE FROM sli_configuration_versions WHERE " + guard)},
+		{name: "delete load-tenant SLI snapshots", cmd: psqlShell("DELETE FROM sli_snapshots WHERE " + guard)},
+		{name: "delete load-tenant budget alerts", cmd: psqlShell("DELETE FROM budget_alerts WHERE " + guard)},
 		// Keep the default tenant and its bootstrap API key; remove load-test tenants
 		// and their keys so repeated runs do not hit 409 on tenant creation.
-		{name: "delete load-test tenants", cmd: psqlShell("DELETE FROM api_keys WHERE " + defaultTenantGuard + "; DELETE FROM tenants WHERE slug != 'default'")},
+		{name: "delete load-test tenants", cmd: psqlShell("DELETE FROM api_keys WHERE " + guard + "; DELETE FROM tenants WHERE " + loadTenantPredicate())},
 	}
 }
 
@@ -84,7 +97,7 @@ func runReset(args []string) error {
 	// exist, and neither does control_plane_tenant_mode: execution is one
 	// Kubernetes path, so there is no per-tenant mode row and no separate
 	// business-table layer to clear.
-	steps := resetSteps()
+	var steps []resetStep
 	// Per-tenant namespaces are where this tool declared its ScheduledJobs and
 	// where the operator rendered the Kubernetes Jobs. They are labeled, so
 	// the cleanup discovers them instead of guessing names, and deleting the
@@ -104,6 +117,14 @@ func runReset(args []string) error {
 	for _, namespace := range namespaceNames {
 		steps = append(steps, resetStep{name: "delete load namespace " + namespace, cmd: []string{"kubectl", "delete", "namespace", namespace, "--ignore-not-found"}})
 	}
+	// Stop owned workloads before purging their ledger. Keep all database
+	// changes in one transaction so a failed delete cannot leave half a reset.
+	var statements []string
+	for _, step := range resetSteps() {
+		statements = append(statements, step.cmd[len(step.cmd)-1])
+	}
+	steps = append(steps, resetStep{name: "delete owned load-test database state",
+		cmd: psqlShell("BEGIN; " + strings.Join(statements, "; ") + "; COMMIT;")})
 	// Monitoring is long-lived infrastructure installed and removed by the
 	// make targets, not by this tool, so reset only reports it and moves on.
 	if namespaceExists("monitoring") {

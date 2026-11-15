@@ -35,7 +35,8 @@ type TriggerEvent struct {
 }
 
 type PhaseSchedule struct {
-	Events []TriggerEvent
+	Events   []TriggerEvent
+	Duration time.Duration
 }
 
 // BuildPhaseSchedule assigns created definitions to phase time slots and appends
@@ -51,10 +52,13 @@ func BuildPhaseSchedule(cfg Config, cases []CreatedDefinition) PhaseSchedule {
 	eventIndex := 0
 	caseIndex := 0
 	for _, phase := range cfg.Phases {
-		if phase.RatePerMinute == 0 || len(cases) == 0 {
+		if phase.RatePerMinute <= 0 || len(cases) == 0 {
 			continue
 		}
 		interval := time.Minute / time.Duration(phase.RatePerMinute)
+		if interval <= 0 {
+			continue
+		}
 		for offset := phase.Offset; offset < phase.Offset+phase.Duration; offset += interval {
 			c := cases[caseIndex%len(cases)]
 			events = append(events, TriggerEvent{
@@ -78,7 +82,7 @@ func BuildPhaseSchedule(cfg Config, cases []CreatedDefinition) PhaseSchedule {
 	// burst goes off in a lump at the end of the run and hits the trigger
 	// rate limiter.
 	sort.SliceStable(events, func(i, j int) bool { return events[i].At < events[j].At })
-	return PhaseSchedule{Events: events}
+	return PhaseSchedule{Events: events, Duration: cfg.Duration}
 }
 
 func burstEvents(cfg Config, cases []CreatedDefinition, startIndex int) []TriggerEvent {
@@ -148,6 +152,15 @@ type RunEngine struct {
 	rejectServer      atomic.Int64
 	rejectTransport   atomic.Int64
 	rejectOther       atomic.Int64
+	virtualElapsed    atomic.Int64
+	acceptedMu        sync.Mutex
+	acceptedTriggers  []AcceptedTrigger
+}
+
+// VirtualElapsed is the same paced clock used to release trigger events.
+// Faults observe this clock rather than advancing an independent wall clock.
+func (e *RunEngine) VirtualElapsed() time.Duration {
+	return time.Duration(e.virtualElapsed.Load())
 }
 
 // RejectionBreakdown splits rejected triggers by cause so a long soak run can
@@ -202,22 +215,13 @@ func (e *RunEngine) Run(ctx context.Context, clock func() time.Duration) error {
 	var lastReal time.Duration
 	virtual := time.Duration(0)
 	progressLast := time.Duration(0)
-
-	for _, event := range e.schedule.Events {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-e.stop:
-			return nil
-		default:
-		}
-
+	waitUntil := func(target time.Duration) error {
 		for {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			case <-e.stop:
-				return nil
+				return context.Canceled
 			default:
 			}
 			nowReal := clock()
@@ -231,14 +235,32 @@ func (e *RunEngine) Run(ctx context.Context, clock func() time.Duration) error {
 				virtual += dt
 			}
 			lastReal = nowReal
-			if virtual >= event.At {
-				break
+			e.virtualElapsed.Store(int64(virtual))
+			if virtual >= target {
+				return nil
 			}
 			time.Sleep(time.Millisecond)
+		}
+	}
+
+	for _, event := range e.schedule.Events {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-e.stop:
+			return nil
+		default:
+		}
+
+		if err := waitUntil(event.At); err != nil {
+			return err
 		}
 
 		skip := false
 		for {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			activeMu.Lock()
 			limit := e.maxActive[event.Phase]
 			if limit > 0 && active >= limit {
@@ -279,6 +301,9 @@ func (e *RunEngine) Run(ctx context.Context, clock func() time.Duration) error {
 				return
 			}
 			e.accepted.Add(1)
+			e.acceptedMu.Lock()
+			e.acceptedTriggers = append(e.acceptedTriggers, AcceptedTrigger{Tenant: ev.Tenant, RevisionID: ev.RevisionID, OccurrenceKey: resp.OccurrenceKey})
+			e.acceptedMu.Unlock()
 			if ev.ExpectCancel {
 				e.cancelExpected(ctx, client, ev, resp.OccurrenceKey)
 			}
@@ -294,7 +319,7 @@ func (e *RunEngine) Run(ctx context.Context, clock func() time.Duration) error {
 				e.triggered.Load(), e.accepted.Load(), e.rejected.Load(), e.skipped.Load(), pace)
 		}
 	}
-	return nil
+	return waitUntil(e.schedule.Duration)
 }
 
 // classifyRejection buckets a trigger error for the breakdown counters.
@@ -340,6 +365,12 @@ func (e *RunEngine) Stop() {
 
 func (e *RunEngine) Stats() (triggered, accepted, rejected, skipped int64) {
 	return e.triggered.Load(), e.accepted.Load(), e.rejected.Load(), e.skipped.Load()
+}
+
+func (e *RunEngine) AcceptedTriggers() []AcceptedTrigger {
+	e.acceptedMu.Lock()
+	defer e.acceptedMu.Unlock()
+	return append([]AcceptedTrigger(nil), e.acceptedTriggers...)
 }
 
 // CancelStats reports how the cancel-expecting scenarios went.

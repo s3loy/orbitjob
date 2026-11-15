@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"strings"
 	"testing"
+
+	"orbitjob/internal/platform/scan"
 )
 
 func TestVerifyDetectsDuplicateSucceededAttempts(t *testing.T) {
@@ -33,7 +35,7 @@ func TestVerifyAllowsOneSucceededAttemptPerRun(t *testing.T) {
 
 func TestVerifyDetectsTenantLeak(t *testing.T) {
 	e := Evidence{TenantReads: []TenantRead{
-		{ActorTenant: "20000000000000000000000001", ObjectTenant: "20000000000000000000000002", HTTPStatus: 200},
+		{ActorTenant: scan.GenerateID(), ObjectTenant: scan.GenerateID(), HTTPStatus: 200},
 	}}
 	for _, check := range VerifyCorrectness(e) {
 		if check.ID == "tenant-leak" && check.Status != VerdictFail {
@@ -118,28 +120,36 @@ func TestMissingDefinitionsAreInconclusive(t *testing.T) {
 func TestPassRequiresMinimumQualifiedRuns(t *testing.T) {
 	// Raw run count no longer feeds the gate: 20000 raw rows with only
 	// 5000 in the expected terminal phase must fail.
-	result := EvaluateQualification(RunRecord{Qualification: true}, Evidence{Runs: 20000, QualifiedRuns: 5000}, 10000)
+	evidence := completeVerificationEvidence()
+	evidence.Runs, evidence.QualifiedRuns = 20000, 5000
+	result := EvaluateQualification(RunRecord{Qualification: true}, evidence, 10000)
 	if result.Verdict != VerdictFail {
 		t.Fatalf("verdict = %s, want FAIL", result.Verdict)
 	}
 }
 
 func TestFullPass(t *testing.T) {
-	result := EvaluateQualification(RunRecord{Qualification: true}, Evidence{Runs: 11234, QualifiedRuns: 11234}, 10000)
+	evidence := completeVerificationEvidence()
+	evidence.Runs, evidence.QualifiedRuns = 11234, 11234
+	result := EvaluateQualification(RunRecord{Qualification: true}, evidence, 10000)
 	if result.Verdict != VerdictPass {
 		t.Fatalf("verdict = %s, want PASS", result.Verdict)
 	}
 }
 
 func TestPassUsesConfigurableMinimum(t *testing.T) {
-	result := EvaluateQualification(RunRecord{Qualification: true}, Evidence{Runs: 8000, QualifiedRuns: 8000}, 8000)
+	evidence := completeVerificationEvidence()
+	evidence.Runs, evidence.QualifiedRuns = 8000, 8000
+	result := EvaluateQualification(RunRecord{Qualification: true}, evidence, 8000)
 	if result.Verdict != VerdictPass {
 		t.Fatalf("verdict = %s, want PASS", result.Verdict)
 	}
 }
 
 func TestNonQualificationPass(t *testing.T) {
-	result := EvaluateQualification(RunRecord{Qualification: false}, Evidence{Runs: 9000, QualifiedRuns: 9000}, 0)
+	evidence := completeVerificationEvidence()
+	evidence.Runs, evidence.QualifiedRuns = 9000, 9000
+	result := EvaluateQualification(RunRecord{Qualification: false}, evidence, 0)
 	if result.Verdict != VerdictPass {
 		t.Fatalf("verdict = %s, want PASS", result.Verdict)
 	}
@@ -185,7 +195,9 @@ func TestResolveRunIdentityFallsBackForOlderRuns(t *testing.T) {
 // about 500 events. Judging it by whether it touched every definition marked
 // every smoke run inconclusive, which reads as a failure and is not one.
 func TestMissingDefinitionsDoNotBlockANonQualifyingRun(t *testing.T) {
-	result := EvaluateQualification(RunRecord{Qualification: false}, Evidence{MissingDefinitions: 590, QualifiedRuns: 680}, 0)
+	evidence := completeVerificationEvidence()
+	evidence.MissingDefinitions, evidence.QualifiedRuns = 590, 680
+	result := EvaluateQualification(RunRecord{Qualification: false}, evidence, 0)
 	if result.Verdict != VerdictPass {
 		t.Fatalf("verdict = %s, want PASS", result.Verdict)
 	}
@@ -210,15 +222,14 @@ func TestScenarioToLedgerPhaseCoversTheScenarioVocabulary(t *testing.T) {
 	}
 }
 
-// jobRunCRName mirrors the operator's naming rule: scheduled job name plus the
-// first eight characters of the occurrence key.
-func TestJobRunCRNameMirrorsTheOperatorRule(t *testing.T) {
-	got := jobRunCRName("failure-cancel-while-running-0001", "0123456789abcdef")
-	if got != "failure-cancel-while-running-0001-01234567" {
-		t.Fatalf("CR name = %q", got)
+func TestJobRunCRNameKeepsDistinctFullOccurrences(t *testing.T) {
+	a := jobRunCRName("failure-cancel-while-running-0001", "0123456789abcdef")
+	b := jobRunCRName("failure-cancel-while-running-0001", "01234567different")
+	if a == b {
+		t.Fatal("different occurrences with the same eight-character prefix collide")
 	}
-	if jobRunCRName("case-1", "") != "case-1-unknown" {
-		t.Fatalf("empty occurrence key has no fallback applied: %q", jobRunCRName("case-1", ""))
+	if len(jobRunCRName(strings.Repeat("x", 253), "occurrence")) > 253 {
+		t.Fatal("generated run name exceeds the Kubernetes limit")
 	}
 }
 

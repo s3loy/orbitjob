@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -28,6 +30,8 @@ func main() {
 		err = runPrepare(os.Args[2:])
 	case "run":
 		err = runRun(os.Args[2:])
+	case "settle":
+		err = runSettle(os.Args[2:])
 	case "verify":
 		err = runVerify(os.Args[2:])
 	case "report":
@@ -153,6 +157,13 @@ func runGenerate(args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := ensureRunNotStarted(*runRoot, *runID); err != nil {
+		return err
+	}
+	cfg, err = resolveRunTenants(cfg, *runRoot, *runID, true)
+	if err != nil {
+		return err
+	}
 	manifest, err := Generate(cfg, scenarios, lock)
 	if err != nil {
 		return err
@@ -161,7 +172,10 @@ func runGenerate(args []string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	if err := writeStableJSON(filepath.Join(dir, "definitions.json"), manifest.Definitions); err != nil {
+	if err := writeGeneratedCorpus(filepath.Join(dir, "definitions.json"), manifest.Definitions); err != nil {
+		return err
+	}
+	if err := generateRecoveryManifest(dir, cfg, lock); err != nil {
 		return err
 	}
 	counts := map[string]int{}
@@ -198,6 +212,8 @@ func runRun(args []string) error {
 	runID := flags.String("run-id", "", "run ID")
 	runRoot := flags.String("run-root", "test/load/runs", "run root")
 	apiURL := flags.String("api-url", os.Getenv("ORBITJOB_API_URL"), "Admin API URL")
+	orbitjobDSN := flags.String("orbitjob-dsn", os.Getenv("ORBITJOB_DSN"), "OrbitJob read-only DSN for fault recovery probes")
+	fixtureEndpoint := flags.String("fixture-url", defaultFixtureURL(), "load fixture HTTP URL")
 	prometheusURL := flags.String("prometheus-url", "http://localhost:9090", "Prometheus URL for feedback controller")
 	tuneDeployments := flags.Bool("tune-deployments", false, "patch admin-api env from resource model")
 	dryRunTuning := flags.Bool("dry-run-tuning", false, "print computed tuning and exit")
@@ -214,6 +230,13 @@ func runRun(args []string) error {
 	if err := validateProfile(*profile, cfg); err != nil {
 		return fmt.Errorf("validate profile: %w", err)
 	}
+	if err := ensureRunNotStarted(*runRoot, *runID); err != nil {
+		return err
+	}
+	cfg, err = resolveRunTenants(cfg, *runRoot, *runID, false)
+	if err != nil {
+		return err
+	}
 	if *tuneDeployments && !cfg.DynamicTuningEnabled() {
 		return fmt.Errorf("--tune-deployments requires dynamic.enabled=true in the load config; static profiles have no tuning model to apply")
 	}
@@ -227,9 +250,25 @@ func runRun(args []string) error {
 	if err != nil {
 		return fmt.Errorf("load tenant keys: %w", err)
 	}
+	definitions, err := loadGeneratedDefinitions(filepath.Join(runDir, "generated", "definitions.json"))
+	if err != nil {
+		return fmt.Errorf("load generated definitions: %w", err)
+	}
+	namespaces, err := loadTenantNamespaces(filepath.Join(runDir, "tenant-namespaces.json"))
+	if err != nil {
+		return fmt.Errorf("load tenant namespaces: %w", err)
+	}
+	if err := validateVerificationArtifacts(created, definitions, tenantKeys, namespaces); err != nil {
+		return err
+	}
+	configHash := configSHA256(cfg)
 	clients := make(map[string]*APIClient, len(tenantKeys))
 	for tenant, key := range tenantKeys {
 		clients[tenant] = NewAPIClient(*apiURL, key)
+	}
+	prober := newRecoveryProber(runDir, cfg, *orbitjobDSN, *fixtureEndpoint, clients)
+	if prober.DB != nil {
+		defer func() { _ = prober.DB.Close() }()
 	}
 
 	var schedule PhaseSchedule
@@ -280,7 +319,14 @@ func runRun(args []string) error {
 		engine = NewRunEngine(clients, schedule, maxActive)
 	}
 
+	for i := range schedule.Events {
+		schedule.Events[i].IdempotencyKey += "-" + *runID
+	}
+	if err := claimRun(runDir, *runID); err != nil {
+		return err
+	}
 	start := time.Now()
+	commit, dirty := gitCommit(), gitDirty()
 	release := holdSleepAssertion()
 	defer release()
 	timeout := cfg.Duration + 30*time.Minute
@@ -288,13 +334,21 @@ func runRun(args []string) error {
 		// Allow stretched schedule when under pressure.
 		timeout = time.Duration(float64(cfg.Duration)/cfg.Dynamic.Feedback.MinPace) + 30*time.Minute
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	ctx, cancel := context.WithTimeout(signalCtx, timeout)
 	defer cancel()
 
-	faults := &FaultRecorder{}
-	go injectFaults(ctx, start, FaultPlanFromConfig(cfg), faults)
-	runErr := engine.Run(ctx, func() time.Duration { return time.Since(start) })
-	engine.Stop()
+	faultPlan := activeFaultPlan(cfg)
+	var journalStart *JournalCursor
+	journal, journalErr := readJournalSnapshot(ctx, *fixtureEndpoint, *runID)
+	if journalErr == nil {
+		cursor := journal.Cursor()
+		journalStart = &cursor
+	} else {
+		fmt.Printf("run: journal continuity unavailable: %v\n", journalErr)
+	}
+	faultRecords, runErr := runEngineWithFaults(ctx, engine, func() time.Duration { return time.Since(start) }, faultPlan, prober)
 	reportSuspension(start, time.Since(start))
 	triggered, accepted, rejected, skipped := engine.Stats()
 	fmt.Printf("run: triggered=%d accepted=%d rejected=%d skipped=%d\n", triggered, accepted, rejected, skipped)
@@ -302,20 +356,26 @@ func runRun(args []string) error {
 		fmt.Printf("run: canceled=%d cancel_failed=%d\n", canceled, failed)
 	}
 	stats := RunStats{
-		RunID:           *runID,
-		Profile:         cfg.Profile,
-		Seed:            cfg.Seed,
-		Qualification:   cfg.Qualification,
-		StartedAt:       start,
-		FinishedAt:      time.Now(),
-		ScheduledEvents: len(schedule.Events),
-		Triggered:       triggered,
-		Accepted:        accepted,
-		Rejected:        rejected,
-		Skipped:         skipped,
-		Breakdown:       engine.Rejections(),
-		Completed:       runErr == nil,
-		Faults:          faults.Records(),
+		RunID:            *runID,
+		ConfigSHA256:     configHash,
+		Commit:           commit,
+		Dirty:            dirty,
+		AcceptedTriggers: engine.AcceptedTriggers(),
+		Profile:          cfg.Profile,
+		Seed:             cfg.Seed,
+		Qualification:    cfg.Qualification,
+		StartedAt:        start,
+		FinishedAt:       time.Now(),
+		ScheduledEvents:  len(schedule.Events),
+		Triggered:        triggered,
+		Accepted:         accepted,
+		Rejected:         rejected,
+		Skipped:          skipped,
+		Breakdown:        engine.Rejections(),
+		Completed:        runErr == nil,
+		FaultPlan:        faultPlan,
+		Faults:           faultRecords,
+		JournalStart:     journalStart,
 	}
 	if rejected > 0 {
 		fmt.Printf("run: rejections: rate_limited=%d server=%d transport=%d other=%d\n",
@@ -346,6 +406,8 @@ func applyTuningToConfig(cfg Config, params TuningParameters) Config {
 }
 
 func patchDeploymentEnv(ctx context.Context, name string, env map[string]string) error {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
 	if len(env) == 0 {
 		return nil
 	}
@@ -366,65 +428,15 @@ func patchDeploymentEnv(ctx context.Context, name string, env map[string]string)
 }
 
 func injectFaults(ctx context.Context, start time.Time, plan []FaultSpec, rec *FaultRecorder) {
-	for _, fault := range plan {
-		wait := fault.Offset - time.Since(start)
-		if wait > 0 {
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(wait):
-			}
-		}
-		namespace := FaultNamespace(fault.Name)
-		cmd, restore, err := FaultInjectionPlan(fault.Name, namespace)
-		if err != nil || len(cmd) == 0 {
-			if err != nil {
-				rec.add(FaultRecord{Name: fault.Name, InjectedAt: time.Now().UTC().Format(time.RFC3339), InjectError: err.Error()})
-			}
-			continue
-		}
-		fmt.Printf("fault: injecting %s at %s\n", fault.Name, time.Since(start).Round(time.Second))
-		injectStart := time.Now()
-		record := FaultRecord{Name: fault.Name, InjectedAt: injectStart.UTC().Format(time.RFC3339)}
-		if out, err := exec.Command(cmd[0], cmd[1:]...).CombinedOutput(); err != nil {
-			record.InjectError = fmt.Sprintf("%v: %s", err, strings.TrimSpace(string(out)))
-			rec.add(record)
-			fmt.Printf("fault: %s injection failed: %s\n", fault.Name, record.InjectError)
-			continue
-		}
-		// A restore step runs whenever one exists. Gating it on DisconnectFor
-		// meant a fault declared in a config -- which carries only a name and an
-		// offset -- scaled PostgreSQL to zero and left it there: the plan
-		// supplies no DisconnectFor, so the branch never ran.
-		if len(restore) > 0 {
-			if fault.DisconnectFor > 0 {
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(fault.DisconnectFor):
-				}
-			}
-			if out, err := exec.Command(restore[0], restore[1:]...).CombinedOutput(); err != nil {
-				record.InjectError = fmt.Sprintf("restore: %v: %s", err, strings.TrimSpace(string(out)))
-				rec.add(record)
-				fmt.Printf("fault: %s restore failed: %s\n", fault.Name, record.InjectError)
-				continue
-			}
-		}
-		gate := RecoveryGate{Name: fault.Name, ReadyTimeout: 2 * time.Minute, BusinessTimeout: 5 * time.Minute}
-		if err := WaitForRecovery(ctx, gate, deploymentReadyCheck(fault.Name, namespace)); err != nil {
-			record.InjectError = err.Error()
-		}
-		record.RecoveredSeconds = time.Since(injectStart).Seconds()
-		rec.add(record)
-		fmt.Printf("fault: %s recovered in %.0fs\n", fault.Name, record.RecoveredSeconds)
-	}
+	injectFaultsAt(ctx, func() time.Duration { return time.Since(start) }, plan, rec)
 }
 
 // deploymentReadyCheck polls the target deployment until it reports one ready
 // replica, twice in a row (handled by WaitForRecovery).
 func deploymentReadyCheck(name, namespace string) func(context.Context) bool {
 	return func(ctx context.Context) bool {
+		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
 		out, err := exec.CommandContext(ctx, "kubectl", "get", "deployment", "orbitjob-"+name,
 			"-n", namespace, "-o", "json").Output()
 		if err != nil {
@@ -448,6 +460,9 @@ func runReport(args []string) error {
 	if *runID == "" {
 		return fmt.Errorf("run-id is required")
 	}
+	if err := ValidateCleanRunID(*runID); err != nil {
+		return err
+	}
 	runDir := filepath.Join(*runRoot, *runID)
 	data, err := os.ReadFile(filepath.Join(runDir, "result.json"))
 	if err != nil {
@@ -458,28 +473,28 @@ func runReport(args []string) error {
 		return fmt.Errorf("decode result: %w", err)
 	}
 
-	// verify writes run-record.json with the run's true environment and start
-	// time; fall back to a minimal record for run dirs predating it.
 	var run RunRecord
-	if recordData, err := os.ReadFile(filepath.Join(runDir, "run-record.json")); err == nil {
-		if err := json.Unmarshal(recordData, &run); err != nil {
-			return fmt.Errorf("decode run record: %w", err)
-		}
-	} else {
-		run = RunRecord{
-			RunID:         *runID,
-			Qualification: result.Qualification,
-			Commit:        gitCommit(),
-			Dirty:         gitDirty(),
-			StartedAt:     result.CompletedAt,
-		}
+	recordData, err := os.ReadFile(filepath.Join(runDir, "run-record.json"))
+	if err != nil {
+		return fmt.Errorf("read run record: %w", err)
 	}
-
-	var stats *RunStats
-	if s, err := loadRunStats(filepath.Join(runDir, "run-stats.json")); err == nil {
-		stats = &s
+	if err := json.Unmarshal(recordData, &run); err != nil {
+		return fmt.Errorf("decode run record: %w", err)
 	}
-	if err := WriteReport(runDir, run, result, stats); err != nil {
+	stats, err := loadRunStats(filepath.Join(runDir, "run-stats.json"))
+	if err != nil {
+		return fmt.Errorf("read run stats: %w", err)
+	}
+	if result.RunID != *runID || run.RunID != *runID || stats.RunID != *runID || result.Qualification != run.Qualification || stats.Qualification != run.Qualification || stats.Profile != run.Profile || stats.Seed != run.Seed || !stats.StartedAt.Equal(run.StartedAt) || stats.Commit != run.Commit || stats.Dirty != run.Dirty {
+		return fmt.Errorf("report artifacts disagree on run identity, qualification or execution source")
+	}
+	if result.Verdict != VerdictPass && result.Verdict != VerdictFail && result.Verdict != VerdictInconclusive {
+		return fmt.Errorf("report result has an invalid verdict")
+	}
+	if err := validateReportPass(result, stats); err != nil {
+		return err
+	}
+	if err := WriteReport(runDir, run, result, &stats); err != nil {
 		return err
 	}
 	if err := WriteChecksums(runDir); err != nil {
@@ -503,9 +518,8 @@ func runClean(args []string) error {
 	if err := ValidateCleanRunID(*runID); err != nil {
 		return err
 	}
-	for _, manifest := range []string{"fixture.yaml", "postgres.yaml", "fixture-configmap.yaml", "operations-rbac.yaml", "namespace.yaml"} {
-		_ = exec.Command("kubectl", "delete", "-f", filepath.Join("deploy/load", manifest), "--ignore-not-found").Run()
-	}
+	// Shared fixtures have no per-run owner. Clearing one run's artifacts
+	// must not remove infrastructure serving other runs.
 	runDir := filepath.Join(*runRoot, *runID)
 	if err := os.RemoveAll(runDir); err != nil {
 		return fmt.Errorf("remove run dir: %w", err)
@@ -543,5 +557,5 @@ func validateProfile(profile string, cfg Config) error {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: loadtest <preflight|generate|prepare|run|verify|report|clean|reset> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: loadtest <preflight|generate|prepare|run|settle|verify|report|clean|reset> [flags]")
 }

@@ -106,7 +106,7 @@ func TestRunEngineCountsSkippedWhenAtCapacity(t *testing.T) {
 		<-release
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		_, _ = fmt.Fprint(w, `{"run_id":"r","job_id":1,"tenant_id":"t1","status":"pending","created":true}`)
+		_, _ = fmt.Fprint(w, `{"namespace":"tasks","name":"run","occurrence_key":"observed","trigger":"Manual","created":true}`)
 	}))
 	defer srv.Close()
 

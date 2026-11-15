@@ -7,7 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/oklog/ulid/v2"
 	"gopkg.in/yaml.v3"
+	"orbitjob/internal/platform/scan"
 )
 
 func LoadConfig(path string) (Config, error) {
@@ -45,6 +47,14 @@ func LoadConfig(path string) (Config, error) {
 		}
 	}
 	cfg = withDefaults(cfg)
+	if cfg.TenantCount != 0 {
+		if cfg.TenantCount != 4 || len(cfg.Tenants) != 0 {
+			return Config{}, fmt.Errorf("tenant_count must be four and cannot be combined with tenants")
+		}
+		for range cfg.TenantCount {
+			cfg.Tenants = append(cfg.Tenants, scan.GenerateID())
+		}
+	}
 	return cfg, nil
 }
 
@@ -124,10 +134,10 @@ func ValidateStandard(c Config) error {
 		return nil
 	}
 	for _, phase := range c.Phases {
-		if phase.RatePerMinute == 0 {
-			return fmt.Errorf("phase %s must have rate_per_minute > 0 in static mode", phase.Name)
+		if phase.RatePerMinute <= 0 || phase.RatePerMinute > int(time.Minute) {
+			return fmt.Errorf("phase %s must have rate_per_minute between 1 and %d in static mode", phase.Name, int(time.Minute))
 		}
-		if phase.MaxActive == 0 {
+		if phase.MaxActive <= 0 {
 			return fmt.Errorf("phase %s must have max_active > 0 in static mode", phase.Name)
 		}
 	}
@@ -137,6 +147,9 @@ func ValidateStandard(c Config) error {
 func validatePhaseContinuity(c Config) error {
 	var end time.Duration
 	for _, phase := range c.Phases {
+		if phase.Duration <= 0 {
+			return fmt.Errorf("phase %s must have positive duration", phase.Name)
+		}
 		if phase.Offset != end {
 			return fmt.Errorf("phase %s starts at %s, expected %s", phase.Name, phase.Offset, end)
 		}
@@ -208,10 +221,10 @@ func ValidateSmoke(c Config) error {
 		return validateDynamicPhases(c)
 	}
 	for _, phase := range c.Phases {
-		if phase.RatePerMinute == 0 {
-			return fmt.Errorf("phase %s must have rate_per_minute > 0 in static mode", phase.Name)
+		if phase.RatePerMinute <= 0 || phase.RatePerMinute > int(time.Minute) {
+			return fmt.Errorf("phase %s must have rate_per_minute between 1 and %d in static mode", phase.Name, int(time.Minute))
 		}
-		if phase.MaxActive == 0 {
+		if phase.MaxActive <= 0 {
 			return fmt.Errorf("phase %s must have max_active > 0 in static mode", phase.Name)
 		}
 	}
@@ -246,10 +259,10 @@ func ValidateLong(c Config) error {
 		return validateDynamicPhases(c)
 	}
 	for _, phase := range c.Phases {
-		if phase.RatePerMinute == 0 {
-			return fmt.Errorf("phase %s must have rate_per_minute > 0 in static mode", phase.Name)
+		if phase.RatePerMinute <= 0 || phase.RatePerMinute > int(time.Minute) {
+			return fmt.Errorf("phase %s must have rate_per_minute between 1 and %d in static mode", phase.Name, int(time.Minute))
 		}
-		if phase.MaxActive == 0 {
+		if phase.MaxActive <= 0 {
 			return fmt.Errorf("phase %s must have max_active > 0 in static mode", phase.Name)
 		}
 	}
@@ -276,9 +289,8 @@ func EstimatedCronRuns(cfg Config) int {
 }
 
 // ValidateTenants checks the tenant list itself: no empty entries, no
-// duplicates, and every entry shaped like a tenant identifier. Tenants.id is
-// a CHAR(26) ULID and the schema's foreign keys reject anything else, so a
-// slug that slipped into a profile fails here instead of at trigger time.
+// duplicates, and every entry a canonical ULID, including its 128-bit bound.
+// The database foreign keys verify existence, not the ULID encoding itself.
 func ValidateTenants(c Config) error {
 	seen := make(map[string]bool, len(c.Tenants))
 	for _, id := range c.Tenants {
@@ -309,6 +321,9 @@ func validateTenantID(id string) error {
 		if !strings.ContainsRune(ulidAlphabet, r) {
 			return fmt.Errorf("tenant %q must be a %d-character ULID: rune %q is not in the ULID alphabet", id, TenantIDLen, r)
 		}
+	}
+	if _, err := ulid.ParseStrict(id); err != nil {
+		return fmt.Errorf("tenant %q must be a %d-character ULID: %w", id, TenantIDLen, err)
 	}
 	return nil
 }

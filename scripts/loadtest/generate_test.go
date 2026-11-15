@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"orbitjob/internal/platform/scan"
 )
 
 func TestGenerateStandardManifest(t *testing.T) {
@@ -591,16 +593,17 @@ func TestWebhookFamiliesWriteToTheLedger(t *testing.T) {
 // scheduledJobManifests is what prepare applies; the objects must land in the
 // tenant's namespace and carry the declared spec unchanged.
 func TestScheduledJobManifestsLandInTheTenantNamespace(t *testing.T) {
+	tenantID := scan.GenerateID()
 	defs := []Definition{{
 		CaseID: "data-processing-sha256-json-document-0001",
-		Tenant: "20000000000000000000000001",
+		Tenant: tenantID,
 		ScheduledJob: ScheduledJobSpec{
 			Schedule: neverFiresCron, HistorySuccessful: 10, HistoryFailed: 10,
 			TimeoutSeconds: 60, Image: "python:3", Command: []string{"python", "-c"},
 			Args: []string{"print(1)"}, BackoffLimit: 0,
 		},
 	}}
-	objects := scheduledJobManifests(defs, "20000000000000000000000001")
+	objects := scheduledJobManifests(defs, tenantID)
 	if len(objects) != 1 {
 		t.Fatalf("objects = %d, want 1", len(objects))
 	}
@@ -608,7 +611,7 @@ func TestScheduledJobManifestsLandInTheTenantNamespace(t *testing.T) {
 	if object.Kind != "ScheduledJob" {
 		t.Fatalf("kind = %q", object.Kind)
 	}
-	if object.Metadata.Namespace != TenantNamespace("20000000000000000000000001") {
+	if object.Metadata.Namespace != TenantNamespace(tenantID) {
 		t.Fatalf("namespace = %q", object.Metadata.Namespace)
 	}
 	if object.Metadata.Name != defs[0].CaseID {

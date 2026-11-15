@@ -85,11 +85,12 @@ func (c *APIClient) TriggerJob(ctx context.Context, revisionID int64, idempotenc
 	case http.StatusCreated, http.StatusOK:
 		var out TriggerResponse
 		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-			return TriggerResponse{}, err
+			return TriggerResponse{}, &TriggerError{RevisionID: revisionID, StatusCode: resp.StatusCode, Message: "invalid trigger response"}
+		}
+		if out.Namespace == "" || out.Name == "" || out.OccurrenceKey == "" || out.Trigger != "Manual" {
+			return TriggerResponse{}, &TriggerError{RevisionID: revisionID, StatusCode: resp.StatusCode, Message: "trigger response lacks run identity"}
 		}
 		return out, nil
-	case http.StatusConflict:
-		return TriggerResponse{Created: false}, nil
 	default:
 		return TriggerResponse{}, &TriggerError{RevisionID: revisionID, StatusCode: resp.StatusCode}
 	}
@@ -206,7 +207,7 @@ func (c *APIClient) PolicyIDByName(ctx context.Context, name string) (string, er
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("list policies: status %d", resp.StatusCode)
+		return "", &APIError{StatusCode: resp.StatusCode, Message: fmt.Sprintf("list policies: status %d", resp.StatusCode)}
 	}
 	var body struct {
 		Items []struct {
@@ -237,7 +238,7 @@ func (c *APIClient) CreateAPIKey(ctx context.Context, tenantID string, policyIDs
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusCreated {
-		return "", fmt.Errorf("create api key for %s: status %d", tenantID, resp.StatusCode)
+		return "", &APIError{StatusCode: resp.StatusCode, Message: fmt.Sprintf("create api key for %s: status %d", tenantID, resp.StatusCode)}
 	}
 	var created struct {
 		Key string `json:"key"`
@@ -293,5 +294,9 @@ func (c *APIClient) do(ctx context.Context, method, path, idempotencyKey string,
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	return c.client.Do(req)
+	response, err := c.client.Do(req)
+	if err != nil {
+		return nil, &APIError{Message: err.Error()}
+	}
+	return response, nil
 }

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/lib/pq"
+	workloadsv1alpha1 "orbitjob/api/kubernetes/workloads/v1alpha1"
 )
 
 // The run lifecycle the ledger records. These mirror the phases the operator
@@ -39,14 +40,23 @@ var scenarioToLedgerPhase = map[string]string{
 }
 
 func VerifyCorrectness(evidence Evidence) []CheckResult {
-	return []CheckResult{
+	checks := []CheckResult{
 		checkDuplicateSucceededAttempts(evidence.Attempts),
 		checkTenantLeak(evidence.TenantReads),
 		checkDuplicateLedger(evidence.Ledger),
-		checkTerminalRegression(evidence.Regressions),
+		checkTerminalRegression(evidence.Regressions, evidence.TransitionObservations),
 		checkExpectedTerminal(evidence.TerminalMismatches),
 		checkJobRunCRsPresent(evidence.MissingCRs, evidence.MissingCRSamples),
 	}
+	if evidence.Runs == 0 {
+		for i := range checks {
+			if checks[i].Status == VerdictPass && (checks[i].ID == "expected-terminal-state" || checks[i].ID == "jobrun-cr-present") {
+				checks[i].Status, checks[i].Message = VerdictInconclusive, "empty run evidence source"
+			}
+		}
+	}
+	checks = append(checks, evidence.ExecutionChecks...)
+	return append(checks, evidence.FaultChecks...)
 }
 
 func EvaluateQualification(run RunRecord, evidence Evidence, minimumRuns int) Result {
@@ -59,6 +69,13 @@ func EvaluateQualification(run RunRecord, evidence Evidence, minimumRuns int) Re
 		if check.Status == VerdictFail {
 			result.Verdict = VerdictFail
 			result.Reason = fmt.Sprintf("correctness failure: %s", check.ID)
+			result.CompletedAt = time.Now()
+			return result
+		}
+	}
+	for _, check := range correctness {
+		if check.Status == VerdictInconclusive {
+			result.Verdict, result.Reason = VerdictInconclusive, fmt.Sprintf("incomplete evidence: %s: %s", check.ID, check.Message)
 			result.CompletedAt = time.Now()
 			return result
 		}
@@ -123,19 +140,23 @@ func EvaluateQualification(run RunRecord, evidence Evidence, minimumRuns int) Re
 }
 
 type Evidence struct {
-	Runs               int // runs belonging to this run's definitions
-	QualifiedRuns      int // runs in their expected terminal state with their CR present
-	InFlight           int // runs not yet in a terminal state
-	MissingDefinitions int // created definitions with zero runs
-	MissingCRs         int // terminal ledger runs whose JobRun custom resource is gone
-	MissingCRSamples   []string
-	Attempts           []RunAttempt
-	TenantReads        []TenantRead
-	Ledger             []LedgerEntry
-	Regressions        []Regression
-	TerminalMismatches []TerminalMismatch
-	MissingSources     []string
-	Truncated          bool
+	ManualRuns             []AcceptedTrigger
+	ExecutionChecks        []CheckResult
+	Runs                   int // runs belonging to this run's definitions
+	QualifiedRuns          int // runs in their expected terminal state with their CR present
+	InFlight               int // runs not yet in a terminal state
+	MissingDefinitions     int // created definitions with zero runs
+	MissingCRs             int // terminal ledger runs whose JobRun custom resource is gone
+	MissingCRSamples       []string
+	Attempts               []RunAttempt
+	TenantReads            []TenantRead
+	Ledger                 []LedgerEntry
+	Regressions            []Regression
+	TransitionObservations int
+	FaultChecks            []CheckResult
+	TerminalMismatches     []TerminalMismatch
+	MissingSources         []string
+	Truncated              bool
 }
 
 // RunAttempt is one platform attempt of one run: an attempt is one Kubernetes
@@ -179,6 +200,9 @@ type TerminalMismatch struct {
 // attempts: each attempt is one Kubernetes Job, so two succeeded means the
 // same occurrence executed twice.
 func checkDuplicateSucceededAttempts(attempts []RunAttempt) CheckResult {
+	if len(attempts) == 0 {
+		return CheckResult{ID: "duplicate-succeeded-attempt", Status: VerdictInconclusive, Message: "empty attempt evidence source"}
+	}
 	succeeded := map[int64]bool{}
 	for _, attempt := range attempts {
 		if !attempt.Succeeded {
@@ -193,6 +217,9 @@ func checkDuplicateSucceededAttempts(attempts []RunAttempt) CheckResult {
 }
 
 func checkTenantLeak(reads []TenantRead) CheckResult {
+	if len(reads) == 0 {
+		return CheckResult{ID: "tenant-leak", Status: VerdictInconclusive, Message: "empty tenant-probe evidence source"}
+	}
 	for _, read := range reads {
 		if read.ActorTenant != read.ObjectTenant && read.HTTPStatus == 200 {
 			return CheckResult{ID: "tenant-leak", Status: VerdictFail, Message: fmt.Sprintf("%s read %s data", read.ActorTenant, read.ObjectTenant)}
@@ -202,6 +229,9 @@ func checkTenantLeak(reads []TenantRead) CheckResult {
 }
 
 func checkDuplicateLedger(entries []LedgerEntry) CheckResult {
+	if len(entries) == 0 {
+		return CheckResult{ID: "duplicate-idempotent-side-effect", Status: VerdictInconclusive, Message: "empty side-effect journal"}
+	}
 	seen := map[string]bool{}
 	for _, entry := range entries {
 		if seen[entry.IdempotencyKey] {
@@ -212,11 +242,14 @@ func checkDuplicateLedger(entries []LedgerEntry) CheckResult {
 	return CheckResult{ID: "duplicate-idempotent-side-effect", Status: VerdictPass}
 }
 
-func checkTerminalRegression(regressions []Regression) CheckResult {
+func checkTerminalRegression(regressions []Regression, observations int) CheckResult {
 	if len(regressions) > 0 {
 		first := regressions[0]
 		return CheckResult{ID: "terminal-regression", Status: VerdictFail,
 			Message: fmt.Sprintf("%d terminal regressions; first: run %s went %s -> %s", len(regressions), first.ResourceID, first.From, first.To)}
+	}
+	if observations == 0 {
+		return CheckResult{ID: "terminal-regression", Status: VerdictInconclusive, Message: "empty phase-transition evidence source"}
 	}
 	return CheckResult{ID: "terminal-regression", Status: VerdictPass}
 }
@@ -294,6 +327,9 @@ func CollectEvidence(ctx context.Context, orbitjobDSN, fixtureURL, apiURL string
 		if err != nil {
 			return e, err
 		}
+		if len(rows) == 0 {
+			e.MissingSources = append(e.MissingSources, "runs:"+tenant)
+		}
 		for _, row := range rows {
 			runsByRevision[row.revisionID] = append(runsByRevision[row.revisionID], row)
 		}
@@ -303,12 +339,27 @@ func CollectEvidence(ctx context.Context, orbitjobDSN, fixtureURL, apiURL string
 			return e, err
 		}
 		e.Attempts = append(e.Attempts, attempts...)
+		if len(attempts) == 0 {
+			e.MissingSources = append(e.MissingSources, "attempts:"+tenant)
+		}
 
-		regressions, err := queryTenantRegressions(ctx, odb, tenant)
+		transitions, err := queryTenantTransitions(ctx, odb, tenant, revisions)
 		if err != nil {
 			return e, err
 		}
-		e.Regressions = append(e.Regressions, regressions...)
+		if len(transitions) == 0 {
+			e.MissingSources = append(e.MissingSources, "phase-transitions:"+tenant)
+		}
+		for _, transition := range transitions {
+			if transition.From == "" || transition.To == "" {
+				e.MissingSources = append(e.MissingSources, "invalid-phase-transition:"+tenant)
+				continue
+			}
+			e.TransitionObservations++
+			if terminalPhases[transition.From] && transition.To != transition.From {
+				e.Regressions = append(e.Regressions, transition)
+			}
+		}
 	}
 
 	// Classify each created definition's runs against its expectation.
@@ -321,6 +372,9 @@ func CollectEvidence(ctx context.Context, orbitjobDSN, fixtureURL, apiURL string
 		expected := expectedByRevision[cd.RevisionID]
 		mismatches := map[string]int{}
 		for _, row := range rows {
+			if row.trigger == "Manual" {
+				e.ManualRuns = append(e.ManualRuns, AcceptedTrigger{Tenant: cd.Tenant, RevisionID: row.revisionID, OccurrenceKey: row.occurrenceKey})
+			}
 			e.Runs++
 			switch {
 			case !terminalPhases[row.phase]:
@@ -348,7 +402,7 @@ func CollectEvidence(ctx context.Context, orbitjobDSN, fixtureURL, apiURL string
 	// is pruned mid-run, so a terminal row without its object is a finding.
 	// A namespace read failure is an evidence gap instead: the difference
 	// between "the cluster lost an object" and "we could not look" matters.
-	crPresent, err := collectCRNames(ctx, tenantNamespaces)
+	crPresent, err := collectRunCRs(ctx, tenantNamespaces)
 	if err != nil {
 		e.MissingSources = append(e.MissingSources, err.Error())
 	} else {
@@ -357,7 +411,7 @@ func CollectEvidence(ctx context.Context, orbitjobDSN, fixtureURL, apiURL string
 				if !terminalPhases[row.phase] {
 					continue
 				}
-				if !crPresent[jobRunCRName(cd.CaseID, row.occurrenceKey)] {
+				if !runCRPresent(crPresent, tenantNamespaces[cd.Tenant], cd.CaseID, row) {
 					e.MissingCRs++
 					if len(e.MissingCRSamples) < 5 {
 						e.MissingCRSamples = append(e.MissingCRSamples, jobRunCRName(cd.CaseID, row.occurrenceKey))
@@ -387,7 +441,7 @@ func CollectEvidence(ctx context.Context, orbitjobDSN, fixtureURL, apiURL string
 					status = 0
 				}
 			}
-			if status == 0 || status >= 500 {
+			if status != 200 && status != http.StatusForbidden && status != http.StatusNotFound {
 				e.MissingSources = append(e.MissingSources, fmt.Sprintf("tenant-probe:%s", actor))
 				break
 			}
@@ -399,32 +453,15 @@ func CollectEvidence(ctx context.Context, orbitjobDSN, fixtureURL, apiURL string
 		}
 	}
 
-	if fixtureURL != "" {
-		// The fixture keeps its ledger in an in-memory dict exposed over HTTP
-		// (deploy/load/fixture-configmap.yaml), not a Postgres table. Querying the
-		// HTTP endpoint is the only way to read it.
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, fixtureURL+"/ledger", nil)
-		if err != nil {
-			e.MissingSources = append(e.MissingSources, "ledger")
-		} else {
-			resp, err := http.DefaultClient.Do(req)
-			if err != nil {
-				e.MissingSources = append(e.MissingSources, "ledger")
-			} else {
-				defer func() { _ = resp.Body.Close() }()
-				var entries []struct {
-					IdempotencyKey string `json:"idempotency_key"`
-					Operation      string `json:"operation"`
-				}
-				if err := json.NewDecoder(resp.Body).Decode(&entries); err != nil {
-					e.MissingSources = append(e.MissingSources, "ledger")
-				} else {
-					for _, entry := range entries {
-						e.Ledger = append(e.Ledger, LedgerEntry{IdempotencyKey: entry.IdempotencyKey, Operation: entry.Operation})
-					}
-				}
-			}
-		}
+	caseIDs := make(map[string]bool, len(created))
+	for _, def := range created {
+		caseIDs[def.CaseID] = true
+	}
+	entries, err := collectFixtureJournal(ctx, fixtureURL, caseIDs)
+	if err != nil {
+		e.MissingSources = append(e.MissingSources, "ledger: "+err.Error())
+	} else {
+		e.Ledger = entries
 	}
 
 	return e, nil
@@ -438,6 +475,8 @@ type ledgerRun struct {
 	revisionID    int64
 	phase         string
 	occurrenceKey string
+	sourceUID     string
+	trigger       string
 }
 
 // queryTenantRuns reads the run rows of one tenant's revisions inside a
@@ -448,7 +487,7 @@ func queryTenantRuns(ctx context.Context, odb *sql.DB, tenant string, revisions 
 	rows := []ledgerRun{}
 	err := withTenantTx(ctx, odb, tenant, func(tx *sql.Tx) error {
 		result, err := tx.QueryContext(ctx, `
-			SELECT id, revision_id, phase, occurrence_key
+			SELECT id, revision_id, phase, occurrence_key, source_uid, trigger
 			FROM job_run_control_plane
 			WHERE revision_id = ANY($1)
 		`, pq.Array(revisions))
@@ -458,7 +497,7 @@ func queryTenantRuns(ctx context.Context, odb *sql.DB, tenant string, revisions 
 		defer func() { _ = result.Close() }()
 		for result.Next() {
 			var row ledgerRun
-			if err := result.Scan(&row.id, &row.revisionID, &row.phase, &row.occurrenceKey); err != nil {
+			if err := result.Scan(&row.id, &row.revisionID, &row.phase, &row.occurrenceKey, &row.sourceUID, &row.trigger); err != nil {
 				return fmt.Errorf("scan run row: %w", err)
 			}
 			rows = append(rows, row)
@@ -503,20 +542,17 @@ func queryTenantAttempts(ctx context.Context, odb *sql.DB, tenant string, revisi
 	return attempts, nil
 }
 
-// queryTenantRegressions reads terminal-phase violations from the audit log:
-// a run that left a terminal phase after reaching it. audit_events survives
-// runs, so the window bounds how far back the scan reaches.
-func queryTenantRegressions(ctx context.Context, odb *sql.DB, tenant string) ([]Regression, error) {
+// Read all observed transitions of this run's revisions. An empty violation-only
+// query cannot distinguish healthy transitions from an absent audit producer.
+func queryTenantTransitions(ctx context.Context, odb *sql.DB, tenant string, revisions []int64) ([]Regression, error) {
 	regressions := []Regression{}
 	err := withTenantTx(ctx, odb, tenant, func(tx *sql.Tx) error {
 		result, err := tx.QueryContext(ctx, `
-			SELECT resource_id, diff->>'from_phase', diff->>'to_phase'
-			FROM audit_events
-			WHERE event_type = 'job_run.status_changed'
-			  AND diff->>'from_phase' IN ('Succeeded','Failed','Canceled')
-			  AND diff->>'to_phase' IS DISTINCT FROM diff->>'from_phase'
-			  AND created_at > now() - interval '1 day'
-		`)
+			SELECT ae.resource_id, COALESCE(ae.diff->>'from_phase',''), COALESCE(ae.diff->>'to_phase','')
+			FROM audit_events ae
+			JOIN job_run_control_plane r ON r.id::text = ae.resource_id AND r.tenant_id = ae.tenant_id
+			WHERE ae.event_type = 'job_run.status_changed' AND r.revision_id = ANY($1)
+		`, pq.Array(revisions))
 		if err != nil {
 			return err
 		}
@@ -566,36 +602,53 @@ func withTenantTx(ctx context.Context, odb *sql.DB, tenant string, fn func(*sql.
 }
 
 // jobRunCRName mirrors the operator's JobRun naming rule: the scheduled job's
-// name plus the first eight characters of the occurrence key.
+// name plus the shared complete occurrence digest.
 func jobRunCRName(scheduledJobName, occurrenceKey string) string {
-	suffix := occurrenceKey
-	if len(suffix) > 8 {
-		suffix = suffix[:8]
-	}
-	if suffix == "" {
-		suffix = "unknown"
-	}
-	return scheduledJobName + "-" + suffix
+	return workloadsv1alpha1.RunObjectName(scheduledJobName, occurrenceKey)
 }
 
-// collectCRNames lists the JobRun custom resources per tenant namespace and
-// returns the set of object names. A namespace read failure is reported as a
-// missing evidence source, not as missing CRs: the difference between "the
-// cluster lost an object" and "we could not look" matters.
-func collectCRNames(ctx context.Context, tenantNamespaces map[string]string) (map[string]bool, error) {
-	present := map[string]bool{}
+type observedRunCR struct {
+	Metadata struct {
+		Name string `json:"name"`
+	} `json:"metadata"`
+	Spec struct {
+		OccurrenceKey string `json:"occurrenceKey"`
+		RevisionID    int64  `json:"definitionRevision"`
+		Trigger       string `json:"trigger"`
+		Source        struct {
+			UID string `json:"uid"`
+		} `json:"scheduledJobRef"`
+	} `json:"spec"`
+}
+
+func runCRPresent(objects map[string]observedRunCR, namespace, definition string, run ledgerRun) bool {
+	for _, name := range workloadsv1alpha1.RunNameCandidates(definition, run.occurrenceKey) {
+		obj, ok := objects[namespace+"/"+name]
+		if ok && obj.Spec.OccurrenceKey == run.occurrenceKey && obj.Spec.RevisionID == run.revisionID && obj.Spec.Source.UID == run.sourceUID && obj.Spec.Trigger == run.trigger {
+			return true
+		}
+	}
+	return false
+}
+
+// Evidence must identify the object in its tenant namespace and verify its
+// immutable occurrence spec; a matching short name alone is not ownership.
+func collectRunCRs(ctx context.Context, tenantNamespaces map[string]string) (map[string]observedRunCR, error) {
+	present := map[string]observedRunCR{}
 	for _, namespace := range tenantNamespaces {
 		out, err := exec.CommandContext(ctx, "kubectl", "get", "jobruns", "-n", namespace,
 			"-o", "json").CombinedOutput()
 		if err != nil {
 			return nil, fmt.Errorf("jobruns:%s", namespace)
 		}
-		names, err := decodeKubeNames(out)
-		if err != nil {
-			return nil, fmt.Errorf("jobruns:%s", namespace)
+		var list struct {
+			Items []observedRunCR `json:"items"`
 		}
-		for _, name := range names {
-			present[name] = true
+		if err := json.Unmarshal(out, &list); err != nil {
+			return nil, fmt.Errorf("jobruns:%s: %w", namespace, err)
+		}
+		for _, obj := range list.Items {
+			present[namespace+"/"+obj.Metadata.Name] = obj
 		}
 	}
 	return present, nil
@@ -619,6 +672,10 @@ func runVerify(args []string) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	cfg, err = resolveRunTenants(cfg, *runRoot, *runID, false)
+	if err != nil {
+		return err
+	}
 	runDir := filepath.Join(*runRoot, *runID)
 	tenantKeys, err := loadTenantKeys(filepath.Join(runDir, "tenant-keys.json"))
 	if err != nil {
@@ -636,6 +693,20 @@ func runVerify(args []string) error {
 	if err != nil {
 		return fmt.Errorf("load generated definitions: %w", err)
 	}
+	if err := validateVerificationArtifacts(created, definitions, tenantKeys, tenantNamespaces); err != nil {
+		return err
+	}
+	stats, err := loadRunStats(filepath.Join(runDir, "run-stats.json"))
+	if err != nil {
+		return fmt.Errorf("load run stats: %w (run the loadtest run command first)", err)
+	}
+	if stats.RunID != *runID || (stats.ConfigSHA256 != "" && stats.ConfigSHA256 != configSHA256(cfg)) {
+		return fmt.Errorf("run stats do not match this run ID and execution config; use the original artifacts and config")
+	}
+	profile, seed, qualification, err := resolveRunIdentity(stats, cfg, *runID)
+	if err != nil {
+		return err
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -644,24 +715,29 @@ func runVerify(args []string) error {
 		return fmt.Errorf("collect evidence: %w", err)
 	}
 
-	stats, err := loadRunStats(filepath.Join(runDir, "run-stats.json"))
-	if err != nil {
-		return fmt.Errorf("load run stats: %w (run the loadtest run command first; it writes run-stats.json)", err)
-	}
 	evidence.Truncated = !stats.Completed
-
-	profile, seed, qualification, err := resolveRunIdentity(stats, cfg, *runID)
-	if err != nil {
-		return err
+	journal, journalErr := readJournalSnapshot(ctx, *fixtureURL, *runID)
+	journalCheck := CheckResult{ID: "journal-continuity", Status: VerdictInconclusive}
+	if journalErr == nil {
+		journalErr = verifyJournalContinuity(stats.JournalStart, journal)
 	}
+	if journalErr == nil {
+		journalCheck.Status = VerdictPass
+		journalCheck.Message = "fixture epoch and complete sequence interval preserved"
+	} else {
+		journalCheck.Message = journalErr.Error()
+	}
+	evidence.FaultChecks = faultEvidenceChecks(stats, cfg, collectFaultRecoveryChecks(ctx, runDir, cfg, stats, *orbitjobDSN, journal))
+	evidence.ExecutionChecks = executionEvidenceChecks(stats, evidence)
+	evidence.ExecutionChecks = append(evidence.ExecutionChecks, journalCheck)
 
 	run := RunRecord{
 		RunID:         *runID,
 		Profile:       profile,
 		Qualification: qualification,
 		Seed:          seed,
-		Commit:        gitCommit(),
-		Dirty:         gitDirty(),
+		Commit:        stats.Commit,
+		Dirty:         stats.Dirty,
 		StartedAt:     stats.StartedAt,
 		Environment: Environment{
 			DockerCPU:         cfg.Environment.DockerCPU,

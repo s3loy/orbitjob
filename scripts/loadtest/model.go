@@ -17,6 +17,7 @@ const (
 const TenantIDLen = 26
 
 type Config struct {
+	RunID            string            `yaml:"-"`
 	Profile          string            `yaml:"profile"`
 	Qualification    bool              `yaml:"qualification"`
 	Seed             string            `yaml:"seed"`
@@ -28,12 +29,13 @@ type Config struct {
 	// Tenants are the tenant identifiers this profile runs against, each a
 	// 26-character ULID. There is exactly one execution path (the Kubernetes
 	// control plane), so a profile declares who runs, not how.
-	Tenants  []string       `yaml:"tenants"`
-	Phases   []Phase        `yaml:"phases"`
-	Burst    BurstConfig    `yaml:"burst"`
-	Sampling SamplingConfig `yaml:"sampling"`
-	Dynamic  DynamicConfig  `yaml:"dynamic"`
-	Faults   FaultsConfig   `yaml:"faults"`
+	TenantCount int            `yaml:"tenant_count"`
+	Tenants     []string       `yaml:"tenants,omitempty"`
+	Phases      []Phase        `yaml:"phases"`
+	Burst       BurstConfig    `yaml:"burst"`
+	Sampling    SamplingConfig `yaml:"sampling"`
+	Dynamic     DynamicConfig  `yaml:"dynamic"`
+	Faults      FaultsConfig   `yaml:"faults"`
 }
 
 // FaultsConfig optionally overrides the fault injection plan. Profiles that
@@ -194,7 +196,11 @@ type CheckResult struct {
 // is false when the engine stopped early (timeout) — a truncated run cannot
 // produce a PASS verdict.
 type RunStats struct {
-	RunID string `json:"run_id"`
+	RunID            string            `json:"run_id"`
+	ConfigSHA256     string            `json:"config_sha256"`
+	Commit           string            `json:"commit"`
+	Dirty            bool              `json:"dirty"`
+	AcceptedTriggers []AcceptedTrigger `json:"accepted_triggers"`
 	// Profile and Seed record what this run was, so a later verify cannot
 	// relabel it. Without them the run record took its profile from whatever
 	// --config the verify caller passed, and a smoke run verified without one
@@ -211,7 +217,9 @@ type RunStats struct {
 	Skipped         int64              `json:"skipped"`
 	Breakdown       RejectionBreakdown `json:"breakdown"`
 	Completed       bool               `json:"completed"`
+	FaultPlan       []FaultSpec        `json:"fault_plan"`
 	Faults          []FaultRecord      `json:"faults,omitempty"`
+	JournalStart    *JournalCursor     `json:"journal_start,omitempty"`
 }
 
 type Result struct {

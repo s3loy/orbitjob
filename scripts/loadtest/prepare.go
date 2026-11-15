@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lib/pq"
 	"gopkg.in/yaml.v3"
 )
 
@@ -112,7 +113,7 @@ func TenantSlug(tenantID string) string {
 // Prepare declares every generated definition as a ScheduledJob custom
 // resource and records the revision ids the operator materializes. It also
 // provisions everything the run depends on: tenant rows with the config's
-// fixed ULIDs, one watched namespace per tenant, the operator's namespace
+// persisted generated ULIDs, one watched namespace per tenant, the operator's namespace
 // table, and tenant API keys. Tenant keys are written with 0600 permissions.
 //
 // Prepare is idempotent rather than resume-capable: reapplying an unchanged
@@ -120,6 +121,9 @@ func TenantSlug(tenantID string) string {
 // definitions file is rewritten from what the cluster reports rather than
 // trusted from a previous attempt.
 func Prepare(configPath, imagesPath, runID, runRoot, apiURL, bootstrapKey, profile string) error {
+	if err := ValidateCleanRunID(runID); err != nil {
+		return err
+	}
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
@@ -139,6 +143,13 @@ func Prepare(configPath, imagesPath, runID, runRoot, apiURL, bootstrapKey, profi
 		return fmt.Errorf("create run dir: %w", err)
 	}
 
+	if err := ensureRunNotStarted(runRoot, runID); err != nil {
+		return err
+	}
+	cfg, err = resolveRunTenants(cfg, runRoot, runID, false)
+	if err != nil {
+		return err
+	}
 	// The TLS secret is generated rather than committed, so the private key
 	// never enters git history.
 	if err := generateTLSManifest(); err != nil {
@@ -167,7 +178,7 @@ func Prepare(configPath, imagesPath, runID, runRoot, apiURL, bootstrapKey, profi
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
-	// Tenants exist with the config's fixed ULIDs before anything references
+	// Tenants exist with the run's persisted generated ULIDs before anything references
 	// them: the namespace table names these ids, so a missing tenant row would
 	// leave the operator resolving CRs into a tenant that does not exist.
 	if err := seedTenants(ctx, cfg.Tenants); err != nil {
@@ -284,6 +295,9 @@ func Prepare(configPath, imagesPath, runID, runRoot, apiURL, bootstrapKey, profi
 	if err := writeStableJSON(filepath.Join(runDir, "tenant-keys.json"), tenantKeys); err != nil {
 		return fmt.Errorf("write tenant keys: %w", err)
 	}
+	if err := prepareRecovery(ctx, runDir, cfg, apiURL, tenantKeys); err != nil {
+		return fmt.Errorf("prepare independent recovery canaries: %w", err)
+	}
 	fmt.Printf("prepare: declared %d definitions across %d tenants\n", len(created), len(tenantKeys))
 	return nil
 }
@@ -318,24 +332,28 @@ func scheduledJobManifests(defs []Definition, tenantID string) []kubeObject {
 	return objects
 }
 
-// seedTenants inserts any missing tenant rows with the config's ULIDs. The
+// seedTenants inserts any missing tenant rows with the run's generated ULIDs. The
 // API cannot mint a tenant under a chosen id -- the server generates one --
 // and the namespace table needs these exact ids, so the rows are written the
 // way reset cleans them: with psql in the installation database. INSERT ..
 // ON CONFLICT DO NOTHING makes the step idempotent; the count check after it
 // makes it honest.
 func seedTenants(ctx context.Context, tenants []string) error {
+	metadata, err := json.Marshal(map[string]string{loadManagedByLabelKey: loadManagedByLabelValue})
+	if err != nil {
+		return fmt.Errorf("encode load ownership: %w", err)
+	}
 	for _, tenantID := range tenants {
 		slug := TenantSlug(tenantID)
 		sql := fmt.Sprintf(
-			"INSERT INTO tenants (id, slug, name, status) VALUES ('%s', '%s', '%s', 'active') ON CONFLICT DO NOTHING",
-			tenantID, slug, slug)
+			"INSERT INTO tenants (id, slug, name, status, metadata) VALUES (%s, %s, %s, 'active', %s::jsonb) ON CONFLICT DO NOTHING",
+			pq.QuoteLiteral(tenantID), pq.QuoteLiteral(slug), pq.QuoteLiteral(slug), pq.QuoteLiteral(string(metadata)))
 		if out, err := exec.CommandContext(ctx, "kubectl", "exec", "-n", DatabaseNamespace(),
 			"deployment/orbitjob-postgres", "--", "psql", "-U", "postgres", "-d", "orbitjob", "-c", sql).CombinedOutput(); err != nil {
 			return fmt.Errorf("insert tenant %s: %s", tenantID, strings.TrimSpace(string(out)))
 		}
 	}
-	check := fmt.Sprintf("SELECT count(*) FROM tenants WHERE id IN (%s)", quotedList(tenants))
+	check := fmt.Sprintf("SELECT count(*) FROM tenants WHERE id IN (%s) AND %s", quotedList(tenants), loadTenantPredicate())
 	out, err := exec.CommandContext(ctx, "kubectl", "exec", "-n", DatabaseNamespace(),
 		"deployment/orbitjob-postgres", "--", "psql", "-U", "postgres", "-d", "orbitjob", "-Atqc", check).CombinedOutput()
 	if err != nil {
@@ -346,7 +364,7 @@ func seedTenants(ctx context.Context, tenants []string) error {
 		return fmt.Errorf("verify tenants: psql answered %q", strings.TrimSpace(string(out)))
 	}
 	if found != len(tenants) {
-		return fmt.Errorf("verify tenants: %d of %d tenant rows present", found, len(tenants))
+		return fmt.Errorf("verify tenants: %d of %d load-owned tenant rows present; existing unowned identities cannot be reused", found, len(tenants))
 	}
 	return nil
 }
@@ -425,8 +443,11 @@ rules:
     resources: ["jobruns"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["workloads.orbitjob.io"]
-    resources: ["workflowjobs", "workflowruns"]
+    resources: ["workflowjobs"]
     verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["workloads.orbitjob.io"]
+    resources: ["workflowruns"]
+    verbs: ["get", "list", "watch", "patch", "delete"]
   - apiGroups: ["workloads.orbitjob.io"]
     resources: ["scheduledjobs/status", "jobruns/status", "workflowruns/status", "workflowjobs/status"]
     verbs: ["get", "update", "patch"]
@@ -713,7 +734,17 @@ func diagnoseRevisionWait(tenants []string, declared map[string]string) string {
 }
 
 func kubectlApply(path string) error {
-	out, err := exec.Command("kubectl", "apply", "-f", path).CombinedOutput()
+	command := exec.Command("kubectl", "apply", "-f", path)
+	if filepath.Base(path) == "operations-rbac.yaml" {
+		renderer := filepath.Join(filepath.Dir(path), "..", "..", "scripts", "render-local-manifest.sh")
+		manifest, err := exec.Command("bash", renderer, "load-operations", WorkloadNamespace()).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("render operations RBAC: %w: %s", err, strings.TrimSpace(string(manifest)))
+		}
+		command = exec.Command("kubectl", "apply", "-f", "-")
+		command.Stdin = bytes.NewReader(manifest)
+	}
+	out, err := command.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s: %s", err, strings.TrimSpace(string(out)))
 	}

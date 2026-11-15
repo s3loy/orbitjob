@@ -47,13 +47,16 @@ func TestPaceController_BoostsWhenBehind(t *testing.T) {
 	}
 
 	// Initialize baseline.
-	_, _, err := pc.Update(context.Background(), NewPrometheusClient("http://localhost:1"), 10, 10, 2*time.Hour)
+	server := failingPrometheus()
+	t.Cleanup(server.Close)
+	client := NewPrometheusClient(server.URL)
+	_, _, err := pc.Update(context.Background(), client, 10, 10, 2*time.Hour)
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
 	}
-	// Sleep so the next Update sees near-zero recent trigger rate.
-	time.Sleep(1100 * time.Millisecond)
-	pf, _, err := pc.Update(context.Background(), NewPrometheusClient("http://localhost:1"), 11, 11, 2*time.Hour)
+	// Supply an elapsed sample interval without a wall-clock sleep.
+	pc.lastUpdate = time.Now().Add(-time.Second)
+	pf, _, err := pc.Update(context.Background(), client, 11, 11, 2*time.Hour)
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
 	}

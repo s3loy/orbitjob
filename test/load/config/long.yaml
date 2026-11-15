@@ -24,14 +24,8 @@ definitions:
     cron: 360
     webhook: 120
   cron_interval_minutes: 60
-# Tenant identifiers are ULIDs, matching tenants.id. Prefix digit marks the
-# profile (2=standard, 3=smoke, 4=long) so a tenant created by one profile can
-# never be confused with another's.
-tenants:
-  - 40000000000000000000000001
-  - 40000000000000000000000002
-  - 40000000000000000000000003
-  - 40000000000000000000000004
+# Tenant identities are generated and persisted once per run.
+tenant_count: 4
 # 8h soak: definitions are cycled so the schedule covers the full duration.
 # Cron jobs fire hourly for a steady baseline; manual triggers provide shape.
 # Rates are capped to the task namespace capacity so jobs execute instead of
