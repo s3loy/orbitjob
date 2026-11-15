@@ -1,59 +1,70 @@
 package policy
 
-// Intersect returns the documents that survive a permission boundary.
-//
-// A boundary only ever narrows, so this is a filter, never a grant: an Allow
-// statement survives only where the boundary also allows it, while every Deny
-// in the boundary is carried over verbatim because a deny is already the
-// narrowest possible statement.
-//
-// Statements are split into single-action, single-resource atoms before the
-// boundary is consulted. Deciding whole statements would drop a statement that
-// is permitted in part, which would silently remove access the caller holds.
+// Intersect retains the boundary as an internal expression. Denies remain
+// global across nested constraints, and serialization cannot discard a boundary
+// while retaining wider grants. Bound the same expansion used for delegation.
 func Intersect(docs []Document, boundary Document) []Document {
-	boundaryDocs := []Document{boundary}
+	effective := []Document{{Version: boundary.Version, grants: append([]Document(nil), docs...), boundary: &boundary}}
+	budget := maxPolicySetWork
+	// Evaluation ignores malformed resource patterns; persisted documents have
+	// already passed ParseDocument. Keep that behavior for internal expressions.
+	if _, ok := effectivePolicyAtoms(effective, &budget, 0, true); !ok {
+		return nil
+	}
+	return effective
+}
 
-	var out []Document
-	for _, doc := range docs {
-		var kept []Statement
-		for _, st := range doc.Statement {
-			if st.Effect == EffectDeny {
-				kept = append(kept, st)
+func intersectPolicyAtoms(grants, ceiling []policyAtom, budget *int) ([]policyAtom, bool) {
+	var out []policyAtom
+	appendAtom := func(atom policyAtom) bool {
+		if len(out) >= maxPolicyAtoms {
+			return false
+		}
+		out = append(out, atom)
+		return true
+	}
+	for _, a := range grants {
+		if a.effect == EffectDeny {
+			if !appendAtom(a) {
+				return nil, false
+			}
+			continue
+		}
+		for _, b := range ceiling {
+			*budget--
+			if *budget < 0 {
+				return nil, false
+			}
+			if b.effect != EffectAllow {
 				continue
 			}
-			for _, action := range st.Action {
-				for _, resource := range st.Resource {
-					// Evaluated rather than compared, so a boundary that
-					// allows job:* but denies job:Delete does not let
-					// job:Delete through into the surviving grants.
-					target, err := concreteTarget(resource)
-					if err != nil {
-						continue
-					}
-					if Evaluate(boundaryDocs, Request{Action: action, Resource: target}) != DecisionAllow {
-						continue
-					}
-					kept = append(kept, Statement{
-						Effect:   EffectAllow,
-						Action:   []string{action},
-						Resource: []string{resource},
-					})
+			if atom, overlap := intersectAtoms(a, b); overlap {
+				if !appendAtom(atom) {
+					return nil, false
 				}
 			}
 		}
-		if len(kept) > 0 {
-			out = append(out, Document{Version: doc.Version, Statement: kept})
+	}
+	for _, atom := range ceiling {
+		if atom.effect == EffectDeny {
+			if !appendAtom(atom) {
+				return nil, false
+			}
 		}
 	}
+	return out, true
+}
 
-	var denies []Statement
-	for _, st := range boundary.Statement {
-		if st.Effect == EffectDeny {
-			denies = append(denies, st)
+func intersectAtoms(a, b policyAtom) (policyAtom, bool) {
+	out := a
+	for i, v := range a.parts {
+		switch {
+		case v == b.parts[i], b.parts[i] == "*":
+		case v == "*":
+			out.parts[i] = b.parts[i]
+		default:
+			return policyAtom{}, false
 		}
 	}
-	if len(denies) > 0 {
-		out = append(out, Document{Version: boundary.Version, Statement: denies})
-	}
-	return out
+	return out, true
 }

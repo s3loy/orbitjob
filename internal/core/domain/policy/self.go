@@ -13,6 +13,13 @@ const SelfToken = "self"
 // whoever reads it next.
 func ResolveSelf(doc Document, tenantID string) Document {
 	out := Document{Version: doc.Version, Statement: make([]Statement, 0, len(doc.Statement))}
+	if doc.boundary != nil {
+		resolved := ResolveSelf(*doc.boundary, tenantID)
+		out.boundary = &resolved
+		for _, grant := range doc.grants {
+			out.grants = append(out.grants, ResolveSelf(grant, tenantID))
+		}
+	}
 	for _, st := range doc.Statement {
 		next := Statement{
 			Effect:   st.Effect,

@@ -160,21 +160,3 @@ func TestPermitsRejectsUnparseableSubsetPattern(t *testing.T) {
 		t.Fatal("an unreadable pattern must not pass the subset check")
 	}
 }
-
-// concreteTarget substitutes the probe into every wildcard segment and leaves
-// literal segments alone.
-func TestConcreteTargetSubstitutesOnlyWildcards(t *testing.T) {
-	got, err := concreteTarget("orbitjob:T1:*:job/*")
-	if err != nil {
-		t.Fatalf("concreteTarget: %v", err)
-	}
-	if got.Tenant != "T1" {
-		t.Fatalf("a literal tenant must be preserved, got %q", got.Tenant)
-	}
-	if got.Group != probeSegment || got.ID != probeSegment {
-		t.Fatalf("wildcards must become the probe, got %+v", got)
-	}
-	if _, err := concreteTarget("garbage"); err == nil {
-		t.Fatal("a malformed pattern must be reported")
-	}
-}

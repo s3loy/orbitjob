@@ -39,6 +39,19 @@ The authentication function must look up candidate keys when the tenant is unkno
 
 Revoked, expired, unknown keys, suspended tenants and wrong passwords all return the same `401`, so the existence of a key or tenant is never revealed.
 
+### Policy documents
+
+Policy documents accept only the lowercase fields `version` and `statement` at
+the root, and `effect`, `action` and `resource` in each statement. Parsing rejects
+duplicate JSON fields, case variants, unsupported fields such as `Condition`
+and `NotAction`, and trailing JSON values. These constructs are rejected before
+a policy can be evaluated or persisted.
+
+An explicit `Deny` overrides matching grants. Policy intersections preserve
+Denies from both the grants and their boundaries, including nested boundaries;
+a boundary cannot grant access without a matching source grant. Delegation
+checks include these constraints and reject grants that exceed them.
+
 ### PostgreSQL roles
 
 The deployment uses these roles:

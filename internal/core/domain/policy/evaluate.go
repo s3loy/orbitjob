@@ -30,22 +30,36 @@ const (
 // grant. Deny is checked across documents rather than per-document, because a
 // deny in one policy must override an allow in another.
 func Evaluate(docs []Document, req Request) Decision {
-	allowed := false
+	allowed, denied := evaluateState(docs, req)
+	if allowed && !denied {
+		return DecisionAllow
+	}
+	return DecisionDeny
+}
+
+// Keep explicit Deny distinct from an absent Allow, including across nested
+// constraints and sibling documents. A boundary can never hide a global Deny.
+func evaluateState(docs []Document, req Request) (allowed, denied bool) {
 	for _, doc := range docs {
+		if doc.boundary != nil {
+			grant, grantDeny := evaluateState(doc.grants, req)
+			bound, boundaryDeny := evaluateState([]Document{*doc.boundary}, req)
+			if grantDeny || boundaryDeny {
+				return false, true
+			}
+			allowed = allowed || (grant && bound)
+		}
 		for _, st := range doc.Statement {
 			if !st.matches(req) {
 				continue
 			}
 			if st.Effect == EffectDeny {
-				return DecisionDeny
+				return false, true
 			}
 			allowed = true
 		}
 	}
-	if allowed {
-		return DecisionAllow
-	}
-	return DecisionDeny
+	return allowed, false
 }
 
 func (st Statement) matches(req Request) bool {
