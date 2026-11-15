@@ -42,4 +42,8 @@ jobs:
         run: go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
 
       - name: Run govulncheck
-        run: govulncheck ./...
+        run: |
+          for architecture in amd64 arm64; do
+            echo "Checking linux/$architecture"
+            GOOS=linux GOARCH="$architecture" CGO_ENABLED=0 govulncheck ./...
+          done
