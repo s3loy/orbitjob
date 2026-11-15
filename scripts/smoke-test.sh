@@ -49,7 +49,13 @@ http() {
   local method="$1" path="$2"
   shift 2
   local code body
-  body=$(curl -s -w "\n%{http_code}" -X "$method" "$API$path" "$@" 2>/dev/null) || true
+  if ! body=$(curl -s --connect-timeout 5 --max-time 30 -w "\n%{http_code}" -X "$method" "$API$path" "$@" 2>/dev/null); then
+    # curl can print HTTP 200 and still fail while reading the response body.
+    # Preserve transport failure instead of treating that partial body as proof.
+    LAST_CODE="000"
+    LAST_BODY="HTTP transfer failed"
+    return 0
+  fi
   code=$(echo "$body" | tail -1)
   body=$(echo "$body" | sed '$d')
   LAST_CODE="$code"
@@ -161,7 +167,7 @@ command -v kubectl >/dev/null && log_pass "kubectl available" || { log_fail "kub
 
 log_info "Waiting for admin-api to become ready (up to 60s)"
 for i in $(seq 1 60); do
-  if curl -s "$API/healthz" >/dev/null 2>&1; then
+  if curl -fsS --connect-timeout 2 --max-time 5 "$API/healthz" >/dev/null 2>&1; then
     log_pass "admin-api ready (${i}s)"
     break
   fi
@@ -447,9 +453,9 @@ CANCEL_LINE=$(wait_run_appear "$CANCEL_KEY" 60 || true)
 CANCEL_RUN_ID="${CANCEL_LINE%% *}"
 CANCEL_PHASE="${CANCEL_LINE#* }"
 if [ -z "$CANCEL_RUN_ID" ]; then
-  log_skip "cancel run (run never entered the ledger)"
+  log_fail "cancel run (run never entered the ledger)"
 elif [ "$CANCEL_PHASE" = "Succeeded" ] || [ "$CANCEL_PHASE" = "Failed" ] || [ "$CANCEL_PHASE" = "Canceled" ]; then
-  log_skip "cancel run (run already terminal: $CANCEL_PHASE)"
+  log_fail "cancel run (run already terminal before cancellation: $CANCEL_PHASE)"
 else
   # Wait until the run is actually Running so we observe Canceled rather than
   # a finish-then-200 race.
@@ -465,7 +471,7 @@ else
       log_fail "run did not reach Canceled after cancel (phase=${CANCEL_FINAL:-unknown})"
     fi
   else
-    log_skip "cancel run (already terminal while waiting for Running: $RUNNING_PHASE)"
+    log_fail "cancel run (did not observe Running before cancellation: ${RUNNING_PHASE:-unknown})"
   fi
 fi
 
@@ -562,11 +568,7 @@ if [ -n "$CHECK_RUN_ID" ]; then
   http GET "/api/v1/check-runs/$CHECK_RUN_ID" -H "Authorization: Bearer $BOOTSTRAP_KEY"
   assert_code "200" "get single check run"
 else
-  # Known server-side defect (not an API contract failure): the scheduler
-  # queries checks as the orbitjob_runtime role without setting app.tenant_id,
-  # so RLS filters out every row and no check_run is ever produced. Once the
-  # defect is fixed this SKIP turns back into full assertions.
-  log_skip "no check run within 60s (known server defect: scheduler ListDue does not set app.tenant_id, RLS rejects all rows; not an API contract issue)"
+  log_fail "no check run produced within 60s"
 fi
 
 # ═══════════════════════════════════════════════════════════════
@@ -603,14 +605,7 @@ http POST "/api/v1/slos" \
     "alert_fast_burn_rate":0.5,
     "alert_slow_burn_rate":0.1
   }'
-# Known server-side defect (not an API contract failure): the SLO repository
-# insert does not set app.tenant_id, so RLS rejects the write with a 500. Once
-# the defect is fixed this SKIP turns back into full assertions.
-if [ "$LAST_CODE" = "500" ]; then
-  SLO_ID=""
-  SLO_VERSION=""
-  log_skip "create SLO: server 500 (known defect: slos insert does not set app.tenant_id and RLS rejects the write; not an API contract issue) — SLO cases skipped"
-elif [ "$LAST_CODE" = "201" ]; then
+if [ "$LAST_CODE" = "201" ]; then
   log_pass "create SLO (99.9% / 30d rolling) (HTTP 201)"
   SLO_ID=$(jget "$LAST_BODY" "id")
   SLO_VERSION=$(jget "$LAST_BODY" "version")
@@ -750,6 +745,12 @@ echo -e "Total: ${GREEN}$PASS passed${NC} / ${RED}$FAIL failed${NC} / ${YELLOW}$
 echo -e "Report written to: ${BLUE}$RESULTS_FILE${NC}"
 echo ""
 
-[ "$FAIL" = "0" ] && echo -e "${GREEN}All checks passed.${NC}" || echo -e "${RED}$FAIL check(s) failed; see $RESULTS_FILE${NC}"
+if [ "$FAIL" != "0" ]; then
+  echo -e "${RED}$FAIL check(s) failed; see $RESULTS_FILE${NC}"
+elif [ "$SKIP" != "0" ]; then
+  echo -e "${YELLOW}Required checks passed; $SKIP optional check(s) remain unverified.${NC}"
+else
+  echo -e "${GREEN}All checks passed.${NC}"
+fi
 
 exit $FAIL

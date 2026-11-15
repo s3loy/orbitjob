@@ -36,6 +36,7 @@ check_prerequisites() {
     done
     [[ ${#missing[@]} -eq 0 ]] || die "missing commands: ${missing[*]}"
     docker info >/dev/null 2>&1 || die "docker is not running"
+    bash scripts/preflight-local.sh
     ok "prerequisites present"
 }
 
@@ -48,6 +49,7 @@ create_cluster() {
 prepare_database() {
     log "Step 3/7: preparing PostgreSQL and the installation Secret"
     make kind-db
+    bash scripts/preflight-local.sh --cluster
     ok "database and installation Secret ready"
 }
 

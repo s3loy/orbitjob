@@ -180,6 +180,25 @@ spec:
           annotations:
             summary: "Scheduler process is down"
             description: "The scheduler's /metrics endpoint is unreachable. Leadership itself emits no metric in the default build; process liveness is the closest safe signal."
+        - alert: ExecutionIsolationNeedsRecovery
+          expr: |
+            max by (namespace, phase) (orbitjob_execution_isolated_runs{job="orbitjob-operator"}) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Execution evidence remains unresolved in {{ $labels.phase }}"
+            description: "The ledger contains {{ $value }} isolated run(s). Inspect authorized run attempts for the original Job UID, unknown reason and first unknown time. Restore trustworthy evidence before releasing concurrency slots; elapsed time and missing Pods do not prove termination."
+        - alert: ExecutionIsolationObservationStale
+          expr: |
+            orbitjob_execution_isolation_collection_success{job="orbitjob-operator"} == 0
+              or (time() - orbitjob_execution_isolation_observed_timestamp_seconds{job="orbitjob-operator"} > 180)
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Execution isolation inventory is incomplete or stale"
+            description: "The operator cannot obtain a complete ledger inventory for its configured tenant scopes. Previous counts are retained and must not be interpreted as a current zero-obligation result."
         - alert: PostgresExporterDown
           expr: up{job="orbitjob-postgres-exporter"} == 0
           for: 5m

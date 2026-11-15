@@ -98,18 +98,54 @@ if bad:
 print(f'[OK] Prometheus: {len(rules)} OrbitJob alert rules loaded and evaluating')
 PY
 
-# 6. The dashboard. Its ConfigMap must exist with the sidecar label (that is
-# what gets it loaded); the live Grafana API check is best-effort because it
-# needs a second port-forward. Anonymous viewer access is part of the dev
-# posture, so no credentials are involved.
-if kubectl -n "$NAMESPACE" get configmap -l grafana_dashboard=1 2>/dev/null | grep -q .; then
-  echo "[OK] Grafana: dashboard ConfigMap(s) labeled grafana_dashboard=1 present in $NAMESPACE"
-else
-  fail "Grafana: no dashboard ConfigMap labeled grafana_dashboard=1 in $NAMESPACE — apply deploy/monitoring/grafana-dashboards.yaml"
+# 6. Check the OrbitJob dashboard itself. An unrelated sidecar-labeled
+# ConfigMap cannot establish that this installation shipped the intended UID.
+dashboard_dir=$(mktemp -d)
+trap 'rm -rf "$dashboard_dir"' EXIT
+if ! kubectl -n "$NAMESPACE" get configmap orbitjob-run-ledger-dashboard -o json >"$dashboard_dir/configmap.json"; then
+  fail "Grafana: OrbitJob dashboard ConfigMap missing or unreadable in $NAMESPACE — apply deploy/monitoring/grafana-dashboards.yaml"
 fi
+python3 - "$dashboard_dir/configmap.json" "$DASHBOARD_UID" <<'PYDASHBOARD'
+import json, sys
 
-if curl -fsS --max-time 5 "http://localhost:3000/api/dashboards/uid/$DASHBOARD_UID" >/dev/null 2>&1; then
-  echo "[OK] Grafana: dashboard $DASHBOARD_UID loaded (anonymous viewer, http://localhost:3000)"
+try:
+    with open(sys.argv[1]) as source:
+        configmap = json.load(source)
+    metadata = configmap.get('metadata', {})
+    if metadata.get('name') != 'orbitjob-run-ledger-dashboard':
+        raise ValueError('unexpected ConfigMap identity')
+    if metadata.get('labels', {}).get('grafana_dashboard') != '1':
+        raise ValueError('grafana_dashboard=1 sidecar label missing')
+    dashboard = json.loads(configmap.get('data', {}).get('orbitjob-run-ledger.json', ''))
+    if dashboard.get('uid') != sys.argv[2]:
+        raise ValueError('dashboard payload UID does not match ' + sys.argv[2])
+except (AttributeError, OSError, TypeError, ValueError) as error:
+    raise SystemExit('[FAIL] Grafana: invalid OrbitJob dashboard ConfigMap: ' + str(error))
+print('[OK] Grafana: OrbitJob dashboard ConfigMap has the sidecar label and expected UID')
+PYDASHBOARD
+
+# A missing optional port-forward remains a warning. Once Grafana responds,
+# an absent or invalid dashboard is an observed failure, not unreachability.
+if dashboard_code=$(curl -sS --max-time 5 -o "$dashboard_dir/grafana.json" -w '%{http_code}' \
+    "http://localhost:3000/api/dashboards/uid/$DASHBOARD_UID"); then
+  case "$dashboard_code" in
+    200)
+      python3 - "$dashboard_dir/grafana.json" "$DASHBOARD_UID" <<'PYLIVE'
+import json, sys
+
+try:
+    with open(sys.argv[1]) as source:
+        response = json.load(source)
+    if response.get('dashboard', {}).get('uid') != sys.argv[2]:
+        raise ValueError('unexpected dashboard UID')
+except (AttributeError, OSError, TypeError, ValueError) as error:
+    raise SystemExit('[FAIL] Grafana: invalid dashboard API response: ' + str(error))
+print('[OK] Grafana: dashboard ' + sys.argv[2] + ' loaded (anonymous viewer, http://localhost:3000)')
+PYLIVE
+      ;;
+    404) fail "Grafana: reachable but dashboard $DASHBOARD_UID is missing (HTTP 404)" ;;
+    *) fail "Grafana: dashboard $DASHBOARD_UID could not be read (HTTP $dashboard_code)" ;;
+  esac
 else
   warn "Grafana: not reachable at http://localhost:3000 — cannot confirm the dashboard is loaded in Grafana itself. Port-forward with: kubectl port-forward -n $NAMESPACE svc/$RELEASE-grafana 3000:80"
 fi

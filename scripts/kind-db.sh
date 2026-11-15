@@ -33,7 +33,7 @@ done
 
 kubectl get deployment "$DB_DEPLOYMENT" -n "$DB_NAMESPACE" >/dev/null 2>&1 || {
     log "deploying PostgreSQL into $DB_NAMESPACE"
-    kubectl apply -f "$PROJECT_ROOT/deploy/kind/postgres-17.yaml"
+    bash "$PROJECT_ROOT/scripts/render-local-manifest.sh" kind-db "$DB_NAMESPACE" | kubectl apply -f -
 }
 
 log "waiting for $DB_DEPLOYMENT"

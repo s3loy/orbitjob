@@ -135,8 +135,14 @@ mkdir -p "$archive_dir"
 docker image save -o "$archive_dir/source.tar" "$postgres_image"
 tar -xf "$archive_dir/source.tar" -C "$archive_dir"
 tar -cf "$archive_dir/docker.tar" -C "$archive_dir" manifest.json blobs
-docker exec --privileged -i "$node" ctr --namespace=k8s.io images import \
-  --digests --snapshotter=overlayfs - <"$archive_dir/docker.tar"
+# Reused verification clusters may have workers. Every schedulable node needs
+# the same database image before applying the Deployment.
+nodes=$(kind get nodes --name "$cluster")
+[[ -n $nodes ]] || { printf 'verification cluster has no nodes\n' >&2; exit 1; }
+while IFS= read -r node; do
+  docker exec --privileged -i "$node" ctr --namespace=k8s.io images import \
+    --digests --snapshotter=overlayfs - <"$archive_dir/docker.tar"
+done <<<"$nodes"
 
 kubectl apply -f "$root/deploy/kind/postgres-17.yaml"
 kubectl rollout status deployment/orbitjob-postgres -n "$namespace" --timeout=3m
@@ -180,6 +186,18 @@ set -a
 # shellcheck disable=SC1091
 . "$config_dir/database.env"
 set +a
+# A reused verify cluster already binds the bootstrap key in PostgreSQL.
+# Prefer the successfully published key, then an interrupted install's input;
+# regenerating it would make the bootstrap hook conflict on the next run.
+bootstrap_key="$(kubectl get secret bootstrap-api-key -n "$namespace" \
+  -o jsonpath='{.data.api-key}' 2>/dev/null | base64 -d || true)"
+if [[ -z $bootstrap_key ]]; then
+  bootstrap_key="$(kubectl get secret orbitjob-database -n "$namespace" \
+    -o jsonpath='{.data.bootstrap-api-key}' 2>/dev/null | base64 -d || true)"
+fi
+if [[ -z $bootstrap_key ]]; then
+  bootstrap_key="otj_$(openssl rand -hex 24)"
+fi
 kubectl create secret generic orbitjob-database -n "$namespace" \
   --from-literal=bootstrap-owner-dsn="${BOOTSTRAP_OWNER_DSN/127.0.0.1:15432/orbitjob-postgres.orbitjob.svc:5432}" \
   --from-literal=migrator-dsn="${MIGRATOR_DSN/127.0.0.1:15432/orbitjob-postgres.orbitjob.svc:5432}" \
@@ -188,7 +206,7 @@ kubectl create secret generic orbitjob-database -n "$namespace" \
   --from-literal=migrator-password="$MIGRATOR_PASSWORD" \
   --from-literal=admin-password="$ADMIN_PASSWORD" \
   --from-literal=runtime-password="$RUNTIME_PASSWORD" \
-  --from-literal=bootstrap-api-key="otj_$(openssl rand -hex 24)" \
+  --from-literal=bootstrap-api-key="$bootstrap_key" \
   --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kill "$port_forward_pid" 2>/dev/null || true
 wait "$port_forward_pid" 2>/dev/null || true

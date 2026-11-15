@@ -93,14 +93,14 @@ data:
         },
         {
           "id": 2,
-          "title": "Run throughput by trigger",
-          "description": "Creation rate of new runs by why they exist: Schedule, Manual, or Retry. Today's substitute for schedule adherence (no schedule-fire metric exists).",
+          "title": "Retained runs by trigger",
+          "description": "Count of retained JobRun custom resources by trigger. History retention affects this inventory; it does not measure arrival rate or throughput.",
           "type": "timeseries",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
           "targets": [
             {
-              "expr": "sum by (trigger) (rate(jobrun_info{namespace=~\"$namespace\"}[10m]))",
+              "expr": "sum by (trigger) (jobrun_info{namespace=~\"$namespace\"})",
               "legendFormat": "{{trigger}}",
               "refId": "A"
             }
