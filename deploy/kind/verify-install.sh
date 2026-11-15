@@ -210,23 +210,29 @@ helm_args=(
 # skipped here without a second list to keep in step. The repository-to-Docker-
 # target mapping is the Dockerfile's interface.
 rendered_images=$(helm template "$release" "$root/charts/orbitjob" "${helm_args[@]}" |
-  awk '/^[[:space:]]*image:[[:space:]]/ {print $2}' | tr -d '"' | sed 's/:[^:]*$//' | LC_ALL=C sort -u)
+  awk '/^[[:space:]]*image:[[:space:]]/ {print $2}' | tr -d '"' | LC_ALL=C sort -u)
 if [[ -z $rendered_images ]]; then
   printf 'the chart rendered no images; nothing to build\n' >&2
   exit 1
 fi
 while IFS= read -r image; do
   [[ -n $image ]] || continue
-  case "$image" in
+  repository=${image%:*}
+  case "$repository" in
     orbitjob-admin-api) target="admin" ;;
-    orbitjob-*) target=${image#orbitjob-} ;;
+    orbitjob-*) target=${repository#orbitjob-} ;;
     *)
+      expected_collector=$(sed -n 's/^  collectorImage: //p' "$root/charts/orbitjob/values.yaml")
+      if [[ $image == "$expected_collector" && $image == *@sha256:* ]]; then
+        bash "$root/scripts/load-log-collector.sh" "$cluster"
+        continue
+      fi
       printf 'cannot map image %s to a Docker build target\n' "$image" >&2
       exit 1
       ;;
   esac
-  docker build --target "$target" -t "$image:$tag" "$root"
-  kind load docker-image --name "$cluster" "$image:$tag"
+  docker build --target "$target" -t "$image" "$root"
+  kind load docker-image --name "$cluster" "$image"
 done <<<"$rendered_images"
 
 helm upgrade --install "$release" "$root/charts/orbitjob" "${helm_args[@]}" \

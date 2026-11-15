@@ -1,0 +1,108 @@
+{{- if and .Values.logs.enabled .Values.operator.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: orbitjob-log-archive, namespace: {{ .Release.Namespace }}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: orbitjob-log-archive, namespace: {{ .Release.Namespace }}}
+spec:
+  selector: {app.kubernetes.io/name: orbitjob-log-archive}
+  ports:
+    - {name: archive, port: 8443, targetPort: archive}
+    - {name: metrics, port: 8083, targetPort: health}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: orbitjob-log-archive, namespace: {{ .Release.Namespace }}}
+spec:
+  serviceName: orbitjob-log-archive
+  replicas: 1
+  selector: {matchLabels: {app.kubernetes.io/name: orbitjob-log-archive}}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: orbitjob-log-archive}
+    spec:
+      serviceAccountName: orbitjob-log-archive
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        fsGroup: 65534
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: archive
+          image: {{ include "orbitjob.image" (dict "root" . "image" .Values.logs.image) | quote }}
+          imagePullPolicy: {{ include "orbitjob.imagePullPolicy" (dict "root" . "image" .Values.logs.image) }}
+          securityContext:
+{{ include "orbitjob.securityContext" . | indent 12 }}
+          env:
+            - name: RUNTIME_DSN
+              valueFrom: {secretKeyRef: {name: {{ .Values.database.secretName }}, key: {{ .Values.database.keys.runtime }}}}
+            - {name: OPERATOR_NAMESPACE_TENANTS, value: {{ include "orbitjob.operatorNamespaceTenants" . | quote }}}
+            - name: POD_NAMESPACE
+              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - {name: LOG_TOTAL_BYTES, value: {{ .Values.logs.totalBytes | int64 | quote }}}
+            - {name: LOG_RUN_BYTES, value: {{ .Values.logs.runBytes | int64 | quote }}}
+            - {name: LOG_HEAD_BYTES, value: {{ .Values.logs.headBytes | int64 | quote }}}
+            - {name: LOG_WORKFLOW_BYTES, value: {{ .Values.logs.workflowBytes | int64 | quote }}}
+            - {name: LOG_TENANT_BYTES, value: {{ .Values.logs.tenantBytes | int64 | quote }}}
+            - {name: LOG_DECLARED_BYTES, value: {{ .Values.logs.declaredBytes | int64 | quote }}}
+            - {name: LOG_RESERVE_BYTES, value: {{ .Values.logs.reserveBytes | int64 | quote }}}
+          ports:
+            - {name: archive, containerPort: 8443}
+            - {name: health, containerPort: 8083}
+          readinessProbe: {httpGet: {path: /readyz, port: health}, periodSeconds: 5}
+          livenessProbe: {httpGet: {path: /healthz, port: health}, periodSeconds: 15}
+          resources:
+{{ toYaml .Values.logs.resources | indent 12 }}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: tls, mountPath: /tls, readOnly: true}
+      volumes:
+        - name: tls
+          secret: {secretName: orbitjob-log-server-tls, defaultMode: 0440}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- if .Values.logs.storageClass }}
+        storageClassName: {{ .Values.logs.storageClass | quote }}
+        {{- end }}
+        resources: {requests: {storage: {{ .Values.logs.storage | quote }}}}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: orbitjob-log-volume, namespace: {{ .Release.Namespace }}}
+rules:
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    resourceNames: ["data-orbitjob-log-archive-0"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: orbitjob-log-volume, namespace: {{ .Release.Namespace }}}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: orbitjob-log-volume}
+subjects:
+  - {kind: ServiceAccount, name: orbitjob-log-archive, namespace: {{ .Release.Namespace }}}
+{{- range $entry := splitList "," (include "orbitjob.operatorNamespaceTenants" .) }}
+{{- $namespace := first (splitList "=" $entry) }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: orbitjob-log-archive, namespace: {{ $namespace }}}
+rules:
+  - {apiGroups: ["workloads.orbitjob.io"], resources: ["jobruns"], verbs: ["get", "list"]}
+  - {apiGroups: ["batch"], resources: ["jobs"], verbs: ["get"]}
+  - {apiGroups: [""], resources: ["pods", "events"], verbs: ["get", "list"]}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: orbitjob-log-archive, namespace: {{ $namespace }}}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: orbitjob-log-archive}
+subjects:
+  - {kind: ServiceAccount, name: orbitjob-log-archive, namespace: {{ $.Release.Namespace }}}
+{{- end }}
+{{- end }}

@@ -5,8 +5,8 @@
 #     dispatcher, or worker-pdb objects of any kind;
 #   - for each namespace in operator.namespaceTenants: exactly one Role and one
 #     RoleBinding named orbitjob-admin-api, granting the verbs create, get,
-#     patch on jobruns.workloads.orbitjob.io and on
-#     workflowruns.workloads.orbitjob.io in that namespace -- no more, no
+#     patch on jobruns/workflowruns and definitions; get Jobs and pods/log;
+#     get/list Pods in that namespace (ADR0010) -- no more, no
 #     less, and no other namespaced Role grants jobruns anywhere;
 #   - with operator.enabled=false: the operator Deployment and the
 #     per-namespace admin RBAC do not render, while the admin ServiceAccount is
@@ -354,7 +354,8 @@ for crd_name in jobruns.workloads.orbitjob.io workflowjobs.workloads.orbitjob.io
   fi
 done
 
-# Two rules, in document order: jobruns first, workflowruns second. Same verbs
+# Exact ADR0010 rules in document order. Definition writes and immutable log
+# ownership reads are namespaced and carry no delete/status/exec grant. Same verbs
 # on both -- create publishes, get answers a replayed trigger, patch carries a
 # cancel request (fan-out to step JobRuns in the workflow case).
 expected_rule_jobruns='apiGroups=["workloads.orbitjob.io"];resources=["jobruns"];verbs=["create","get","patch"]'

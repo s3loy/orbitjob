@@ -1,3 +1,33 @@
+logs:
+  enabled: true
+  image: {repository: orbitjob-log-archive, tag: "", pullPolicy: ""}
+  collectorImage: cr.fluentbit.io/fluent/fluent-bit:4.2.3@sha256:a5761fa961cb22dd0875883a4d446b1acd99d4935d77358aa9f50ee177e44fe2
+  storage: 10Gi
+  storageClass: ""
+  declaredBytes: 10737418240
+  totalBytes: 7516192768
+  runBytes: 33554432
+  headBytes: 8388608
+  workflowBytes: 134217728
+  tenantBytes: 2147483648
+  reserveBytes: 1073741824
+  collectorBuffer: 128M
+  collectorPersistence:
+    mode: hostPath
+    profile: development
+    hostPathBase: /var/lib/orbitjob-collectors
+    # These values declare an administrator-provisioned node directory quota.
+    # Helm does not create or independently verify a filesystem quota.
+    quotaVerified: false
+    quotaBytes: 268435456
+  tls: {rotate: false}
+  resources:
+    requests: {cpu: 200m, memory: 256Mi}
+    limits: {cpu: "1", memory: 1Gi}
+  collectorResources:
+    requests: {cpu: 100m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+
 admission:
   enabled: true
   replicas: 2
@@ -45,6 +75,8 @@ operator:
   # writing a Custom Resource; a default here would bind some namespace to some
   # tenant that nobody chose. Install fails with a message naming this value
   # rather than starting a pod that cannot run.
+  # Admin uses this same mapping for bounded definition writes and log reads;
+  # its exact namespaced grants are in templates/admin-rbac.yaml.
   namespaceTenants: ""
   scheduleIntervalSec: 5
   # Run-history retention sweep cadence in minutes; independent of the

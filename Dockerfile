@@ -20,6 +20,38 @@ COPY api/ ./api/
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
 
+FROM go-source AS build-admin
+ARG TARGETOS=linux
+ARG TARGETARCH
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o /out/admin-api ./cmd/admin-api/
+
+FROM go-source AS build-identity
+ARG TARGETOS=linux
+ARG TARGETARCH
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o /out/orbitjob-identity ./cmd/orbitjob-identity/
+
+FROM go-source AS build-scheduler
+ARG TARGETOS=linux
+ARG TARGETARCH
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o /out/scheduler ./cmd/scheduler/
+
+FROM go-source AS build-operator
+ARG TARGETOS=linux
+ARG TARGETARCH
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o /out/operator ./cmd/operator/
+
 FROM go-source AS build-log-archive
 ARG TARGETOS=linux
 ARG TARGETARCH
@@ -36,63 +68,25 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w" -o /out/admission ./cmd/admission/
 
-FROM base AS build-admin
+FROM go-source AS build-healthcheck
 ARG TARGETOS=linux
 ARG TARGETARCH
-COPY . .
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -trimpath -ldflags="-s -w" -o /out/admin-api ./cmd/admin-api/
-
-FROM go-source AS build-identity
-ARG TARGETOS=linux
-ARG TARGETARCH
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -trimpath -ldflags="-s -w" -o /out/orbitjob-identity ./cmd/orbitjob-identity/
-
-FROM base AS build-scheduler
-ARG TARGETOS=linux
-ARG TARGETARCH
-COPY . .
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -trimpath -ldflags="-s -w" -o /out/scheduler ./cmd/scheduler/
-
-FROM base AS build-operator
-ARG TARGETOS=linux
-ARG TARGETARCH
-COPY . .
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -trimpath -ldflags="-s -w" -o /out/operator ./cmd/operator/
-
-FROM base AS build-healthcheck
-ARG TARGETOS=linux
-ARG TARGETARCH
-COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w" -o /out/healthcheck ./cmd/healthcheck/
 
-FROM base AS build-bootstrap
+FROM go-source AS build-bootstrap
 ARG TARGETOS=linux
 ARG TARGETARCH
-COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w" -o /out/bootstrap ./cmd/bootstrap/
 
-FROM base AS build-migrate
+FROM go-source AS build-migrate
 ARG TARGETOS=linux
 ARG TARGETARCH
-COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \

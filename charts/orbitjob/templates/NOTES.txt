@@ -1,0 +1,15 @@
+{{- if and .Values.logs.enabled .Values.operator.enabled }}
+Collector state: {{ .Values.logs.collectorPersistence.mode }}
+{{- if eq .Values.logs.collectorPersistence.mode "hostPath" }}
+Node directory: {{ .Values.logs.collectorPersistence.hostPathBase }}/{{ .Release.Namespace }}/{{ .Release.Name }}
+{{- end }}
+The collector output queue is limited to {{ .Values.logs.collectorBuffer }}.
+The physical directory quota is {{ if .Values.logs.collectorPersistence.quotaVerified }}declared by the administrator{{ else }}UNVERIFIED{{ end }}; Helm does not provision or measure node filesystem quotas.
+Provision and monitor the directory quota on every execution node before using the production profile. Node loss and queue overflow can still lose unexported output.
+{{- end }}
+
+{{- if .Values.operator.enabled }}
+Execution networking: {{ if .Values.executionNetwork.enabled }}restricted-v1 NetworkPolicy rendered{{ else }}DISABLED{{ end }}.
+CNI enforcement is {{ if .Values.executionNetwork.enforcementVerified }}declared by the administrator{{ else }}UNVERIFIED{{ end }}; perform a real allowed/denied connectivity test before production use.
+Legacy execution profile 0 is excluded from this policy and is not a secure multi-tenant profile. Existing allow policies can add permissions beyond this policy.
+{{- end }}

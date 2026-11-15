@@ -37,6 +37,7 @@ build-all:
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/operator    ./cmd/operator/
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/configure   ./cmd/configure/
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/bootstrap   ./cmd/bootstrap/
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/log-archive ./cmd/log-archive/
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/admission ./cmd/admission/
 
 # ---- Test ----
@@ -120,7 +121,7 @@ REGISTRY ?= ghcr.io/s3loy
 APP_VERSION := $(shell sed -n 's/^appVersion: *"\(.*\)"/\1/p' charts/orbitjob/Chart.yaml)
 TAG ?= v$(APP_VERSION)
 
-DOCKER_COMPONENTS := admin-api:admin scheduler:scheduler operator:operator migrate:migrate bootstrap:bootstrap admission:admission
+DOCKER_COMPONENTS := admin-api:admin scheduler:scheduler operator:operator migrate:migrate bootstrap:bootstrap log-archive:log-archive admission:admission
 
 docker-build:
 	@set -e; for pair in $(DOCKER_COMPONENTS); do \
@@ -136,6 +137,8 @@ kind-load:
 	  echo "==> load orbitjob-$$name"; \
 	  kind load docker-image $(REGISTRY)/orbitjob-$$name:$(TAG) --name orbitjob-dev; \
 	done
+
+	@bash scripts/load-log-collector.sh orbitjob-dev
 
 # The Docker Compose local path was removed. The product is Kubernetes-only and
 # the operator needs a cluster, so a Compose install could not run it; the

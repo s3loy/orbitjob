@@ -1,0 +1,140 @@
+{{- if and .Values.logs.enabled .Values.operator.enabled }}
+{{- $persistence := .Values.logs.collectorPersistence }}
+{{- $queue := upper .Values.logs.collectorBuffer }}
+{{- if not (regexMatch "^[1-9][0-9]*(K|M|G)?$" $queue) }}
+{{- fail "logs.collectorBuffer must use an integer byte count or K, M, G suffix" }}
+{{- end }}
+{{- if gt (len (regexFind "^[0-9]+" $queue)) 9 }}
+{{- fail "logs.collectorBuffer exceeds the supported 64-GiB queue ceiling" }}
+{{- end }}
+{{- $queueBytes := int64 (regexFind "^[0-9]+" $queue) }}
+{{- if hasSuffix "K" $queue }}{{- $queueBytes = mul $queueBytes 1024 }}{{- end }}
+{{- if hasSuffix "M" $queue }}{{- $queueBytes = mul $queueBytes 1048576 }}{{- end }}
+{{- if hasSuffix "G" $queue }}{{- $queueBytes = mul $queueBytes 1073741824 }}{{- end }}
+{{- if or (lt $queueBytes 1) (gt $queueBytes 68719476736) }}
+{{- fail "logs.collectorBuffer must be positive and no larger than 64 GiB" }}
+{{- end }}
+{{- $minimumQuota := add $queueBytes 67108864 }}
+{{- if eq $persistence.profile "production" }}
+{{- if or (ne $persistence.mode "hostPath") (not $persistence.quotaVerified) (lt (int64 $persistence.quotaBytes) $minimumQuota) }}
+{{- fail "production collector requires hostPath and an administrator-provisioned directory quota at least collectorBuffer plus 64 MiB; quotaVerified is an administrator declaration, not a Helm measurement" }}
+{{- end }}
+{{- end }}
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: orbitjob-log-collector, namespace: {{ .Release.Namespace }}}
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: orbitjob-log-collector, namespace: {{ .Release.Namespace }}}
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush 1
+        Log_Level warn
+        HTTP_Server On
+        HTTP_Listen 0.0.0.0
+        HTTP_Port 2020
+        storage.path /state/chunks
+        storage.sync full
+        storage.checksum On
+        storage.max_chunks_up 8
+        storage.backlog.mem_limit 8M
+        storage.metrics On
+    [INPUT]
+        Name tail
+        Tag execution.*
+        Path {{ range $index,$entry := splitList "," (include "orbitjob.operatorNamespaceTenants" .) }}{{ if $index }},{{ end }}/var/log/pods/{{ first (splitList "=" $entry) }}_*/task/*.log{{ end }}
+        Key log
+        Path_Key source_file
+        Offset_Key source_offset
+        Read_from_Head On
+        Refresh_Interval 1
+        Rotate_Wait 30
+        Buffer_Chunk_Size 32K
+        Buffer_Max_Size 128K
+        Skip_Long_Lines On
+        DB /state/tail.db
+        DB.Sync Full
+        DB.Locking True
+        DB.Journal_Mode Delete
+        DB.Compare_Filename True
+        storage.type filesystem
+    [FILTER]
+        Name record_modifier
+        Match execution.*
+        Uuid_Key record_id
+    [OUTPUT]
+        Name http
+        Match execution.*
+        Host orbitjob-log-archive.{{ .Release.Namespace }}.svc
+        Port 8443
+        URI /v1/ingest
+        Format json_lines
+        Json_Date_Key false
+        tls On
+        tls.verify On
+        tls.vhost orbitjob-log-archive.{{ .Release.Namespace }}.svc
+        tls.ca_file /tls/ca.crt
+        tls.crt_file /tls/collector.crt
+        tls.key_file /tls/collector.key
+        Retry_Limit no_limits
+        Workers 1
+        storage.total_limit_size {{ .Values.logs.collectorBuffer }}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata: {name: orbitjob-log-collector, namespace: {{ .Release.Namespace }}}
+spec:
+  selector: {matchLabels: {app.kubernetes.io/name: orbitjob-log-collector}}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: orbitjob-log-collector}
+      annotations:
+        checksum/config: {{ printf "%s:%s" (toJson .Values.logs) (include "orbitjob.operatorNamespaceTenants" .) | sha256sum | quote }}
+        orbitjob.io/collector-quota-verification: {{ ternary "administrator-declared" "unverified" $persistence.quotaVerified | quote }}
+        orbitjob.io/collector-quota-bytes: {{ int64 $persistence.quotaBytes | quote }}
+    spec:
+      serviceAccountName: orbitjob-log-collector
+      automountServiceAccountToken: false
+      nodeSelector: {kubernetes.io/os: linux}
+      tolerations:
+        - {operator: Exists, effect: NoSchedule}
+      securityContext:
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: collector
+          image: {{ .Values.logs.collectorImage | quote }}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsUser: 0
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          args: ["-c", "/config/fluent-bit.conf"]
+          ports: [{name: metrics, containerPort: 2020}]
+          readinessProbe: {httpGet: {path: /api/v1/metrics, port: metrics}, periodSeconds: 5}
+          resources:
+{{ toYaml .Values.logs.collectorResources | indent 12 }}
+          volumeMounts:
+            - {name: config, mountPath: /config, readOnly: true}
+            - {name: tls, mountPath: /tls, readOnly: true}
+            - {name: pod-logs, mountPath: /var/log/pods, readOnly: true}
+            - {name: state, mountPath: /state}
+      volumes:
+        - name: config
+          configMap: {name: orbitjob-log-collector}
+        - name: tls
+          secret: {secretName: orbitjob-log-collector-tls, defaultMode: 0400}
+        - name: pod-logs
+          hostPath: {path: /var/log/pods, type: Directory}
+        - name: state
+{{- if eq $persistence.mode "hostPath" }}
+          hostPath:
+            path: {{ printf "%s/%s/%s" $persistence.hostPathBase .Release.Namespace .Release.Name | quote }}
+            type: DirectoryOrCreate
+{{- else }}
+          emptyDir: {sizeLimit: {{ $minimumQuota | quote }}}
+{{- end }}
+{{- end }}

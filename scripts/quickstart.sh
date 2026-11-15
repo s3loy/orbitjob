@@ -88,6 +88,9 @@ restart_deployments() {
             --timeout="$ROLLOUT_TIMEOUT" || die "rollout of $deploy did not complete"
         ok "$deploy restarted and ready"
     done
+    kubectl -n "$NAMESPACE" rollout restart statefulset/orbitjob-log-archive daemonset/orbitjob-log-collector
+    kubectl -n "$NAMESPACE" rollout status statefulset/orbitjob-log-archive --timeout="$ROLLOUT_TIMEOUT"
+    kubectl -n "$NAMESPACE" rollout status daemonset/orbitjob-log-collector --timeout="$ROLLOUT_TIMEOUT"
 }
 
 report() {

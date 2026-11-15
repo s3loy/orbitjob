@@ -1,0 +1,53 @@
+{{- if and .Values.logs.enabled .Values.operator.enabled }}
+{{- $server := lookup "v1" "Secret" .Release.Namespace "orbitjob-log-server-tls" }}
+{{- $reader := lookup "v1" "Secret" .Release.Namespace "orbitjob-log-reader-tls" }}
+{{- $collector := lookup "v1" "Secret" .Release.Namespace "orbitjob-log-collector-tls" }}
+{{- if or .Values.logs.tls.rotate (not $server) }}
+{{- $ca := genCA "orbitjob-execution-logs" 3650 }}
+{{- $dns := list "orbitjob-log-archive" (printf "orbitjob-log-archive.%s.svc" .Release.Namespace) (printf "orbitjob-log-archive.%s.svc.cluster.local" .Release.Namespace) }}
+{{- $serv := genSignedCert "orbitjob-log-archive" nil $dns 365 $ca }}
+{{- $read := genSignedCert "orbitjob-log-reader" nil nil 365 $ca }}
+{{- $coll := genSignedCert "orbitjob-log-collector" nil nil 365 $ca }}
+apiVersion: v1
+kind: Secret
+metadata: {name: orbitjob-log-server-tls, namespace: {{ .Release.Namespace }}}
+type: Opaque
+data:
+  ca.crt: {{ $ca.Cert | b64enc }}
+  server.crt: {{ $serv.Cert | b64enc }}
+  server.key: {{ $serv.Key | b64enc }}
+---
+apiVersion: v1
+kind: Secret
+metadata: {name: orbitjob-log-reader-tls, namespace: {{ .Release.Namespace }}}
+type: Opaque
+data:
+  ca.crt: {{ $ca.Cert | b64enc }}
+  reader.crt: {{ $read.Cert | b64enc }}
+  reader.key: {{ $read.Key | b64enc }}
+---
+apiVersion: v1
+kind: Secret
+metadata: {name: orbitjob-log-collector-tls, namespace: {{ .Release.Namespace }}}
+type: Opaque
+data:
+  ca.crt: {{ $ca.Cert | b64enc }}
+  collector.crt: {{ $coll.Cert | b64enc }}
+  collector.key: {{ $coll.Key | b64enc }}
+{{- else }}
+{{- if or (not $reader) (not $collector) }}
+{{- fail "execution log TLS Secrets are incomplete; restore the cohort or rotate logs.tls.rotate with a coordinated rollout" }}
+{{- end }}
+{{- range $secret := list $server $reader $collector }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $secret.metadata.name }}
+  namespace: {{ $.Release.Namespace }}
+type: Opaque
+data:
+{{ toYaml $secret.data | indent 2 }}
+{{- end }}
+{{- end }}
+{{- end }}

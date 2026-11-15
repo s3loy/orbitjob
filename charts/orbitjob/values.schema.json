@@ -179,6 +179,49 @@
           }
         }
       }
+    },
+    "logs": {
+      "type": "object",
+      "properties": {
+        "collectorPersistence": {
+          "type": "object",
+          "required": [
+            "mode",
+            "profile",
+            "hostPathBase",
+            "quotaVerified",
+            "quotaBytes"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": [
+                "hostPath",
+                "ephemeral"
+              ]
+            },
+            "profile": {
+              "type": "string",
+              "enum": [
+                "development",
+                "production"
+              ]
+            },
+            "hostPathBase": {
+              "type": "string",
+              "pattern": "^/([A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+$"
+            },
+            "quotaVerified": {
+              "type": "boolean"
+            },
+            "quotaBytes": {
+              "type": "integer",
+              "minimum": 67108864
+            }
+          }
+        }
+      }
     }
   }
 }

@@ -19,6 +19,9 @@ spec:
       {{- end }}
       securityContext:
 {{ include "orbitjob.podSecurityContext" $ | indent 8 }}
+        {{- if and (eq $name "admin-api") $.Values.logs.enabled $.Values.operator.enabled }}
+        fsGroup: 65534
+        {{- end }}
       containers:
         - name: {{ $name }}
           image: {{ include "orbitjob.image" (dict "root" $ "image" $image) | quote }}
@@ -42,6 +45,10 @@ spec:
             {{- end }}
             - name: RATELIMIT_READ_RPS
               value: {{ $.Values.adminapi.rateLimits.readRPS | quote }}
+            {{- if and $.Values.logs.enabled $.Values.operator.enabled }}
+            - name: LOG_ARCHIVE_URL
+              value: {{ printf "https://orbitjob-log-archive.%s.svc:8443" $.Release.Namespace | quote }}
+            {{- end }}
             - name: RATELIMIT_WRITE_RPS
               value: {{ $.Values.adminapi.rateLimits.writeRPS | quote }}
             - name: RATELIMIT_TRIGGER_RPS
@@ -75,6 +82,13 @@ spec:
 {{ toYaml $.Values.runtimeResources | indent 12 }}
           securityContext:
 {{ include "orbitjob.securityContext" $ | indent 12 }}
+          {{- if and (eq $name "admin-api") $.Values.logs.enabled $.Values.operator.enabled }}
+          volumeMounts:
+            - {name: log-tls, mountPath: /log-tls, readOnly: true}
+      volumes:
+        - name: log-tls
+          secret: {secretName: orbitjob-log-reader-tls, defaultMode: 0440}
+          {{- end }}
 ---
 {{- end }}
 apiVersion: v1
