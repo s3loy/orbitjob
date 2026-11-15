@@ -438,7 +438,7 @@ apiGroups=["workloads.orbitjob.io"];resources=["workflowjobs"];verbs=["get","lis
 apiGroups=["workloads.orbitjob.io"];resources=["workflowruns"];verbs=["get","list","watch","create","patch","delete"]
 apiGroups=["workloads.orbitjob.io"];resources=["scheduledjobs/status","jobruns/status","workflowruns/status","workflowjobs/status"];verbs=["get","update","patch"]
 apiGroups=["batch"];resources=["jobs"];verbs=["get","list","watch","create","update","patch","delete"]
-apiGroups=[""];resources=["pods"];verbs=["get","list","watch"]'
+apiGroups=[""];resources=["pods"];verbs=["get","list","watch","patch"]'
   if [[ $operator_rule == "$expected_operator_rule" ]]; then
     ok "operator-rbac-rule:$ns grants the exact reconciliation surface"
   else

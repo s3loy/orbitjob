@@ -1,0 +1,57 @@
+{{- if and .Values.operator.enabled .Values.executionNetwork.enabled }}
+{{- $network := .Values.executionNetwork }}
+{{- if and (eq $network.profile "production") (not $network.enforcementVerified) }}
+{{- fail "production execution networking requires an administrator declaration after a real CNI allow/deny test; Helm rendering does not verify enforcement" }}
+{{- end }}
+{{- $managed := dict }}
+{{- range $entry := splitList "," (include "orbitjob.operatorNamespaceTenants" .) }}
+{{- $_ := set $managed (first (splitList "=" $entry)) true }}
+{{- end }}
+{{- range $rule := $network.allowedEgress }}
+{{- if not (hasKey $managed $rule.namespace) }}
+{{- fail (printf "executionNetwork.allowedEgress namespace %q is not a managed execution namespace" $rule.namespace) }}
+{{- end }}
+{{- end }}
+{{- range $namespace, $_ := $managed }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: orbitjob-execution-restricted-v1
+  namespace: {{ $namespace }}
+  annotations:
+    orbitjob.io/enforcement-verification: {{ ternary "administrator-declared" "unverified" $network.enforcementVerified | quote }}
+    orbitjob.io/policy-digest: {{ toJson $network | sha256sum | quote }}
+spec:
+  podSelector:
+    matchLabels:
+      orbitjob.io/execution-network-profile: restricted-v1
+    matchExpressions:
+      - key: orbitjob.io/job-run-uid
+        operator: Exists
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: {{ $network.dnsNamespace | quote }}}
+          podSelector:
+            matchLabels:
+{{ toYaml $network.dnsPodLabels | indent 14 }}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+{{- range $rule := $network.allowedEgress }}
+{{- if eq $rule.namespace $namespace }}
+    - to:
+{{- range $cidr := $rule.cidrs }}
+        - ipBlock: {cidr: {{ $cidr | quote }}}
+{{- end }}
+      ports:
+{{ toYaml $rule.ports | indent 8 }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- else if and .Values.operator.enabled (eq .Values.executionNetwork.profile "production") }}
+{{- fail "production execution networking cannot be disabled" }}
+{{- end }}

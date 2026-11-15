@@ -8,12 +8,13 @@ import (
 	"testing"
 
 	"orbitjob/internal/core/domain/jobrun"
+	"orbitjob/internal/platform/scan"
 )
 
 func TestUpdateAttemptPhaseRequiresPersistedJobUID(t *testing.T) {
 	db := OpenStoreDB(t)
 	ctx := ctxStore(t)
-	const tenantID = "01J00000000000000000000001"
+	tenantID := scan.GenerateID()
 
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO tenants (id, slug, name)

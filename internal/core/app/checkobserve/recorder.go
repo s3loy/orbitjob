@@ -7,9 +7,12 @@ package checkobserve
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"orbitjob/internal/core/app/controlplane"
 	"orbitjob/internal/core/domain/check"
 	"orbitjob/internal/core/domain/checkrun"
@@ -33,7 +36,7 @@ type OutcomeReader interface {
 
 // ReadModelWriter maintains the check_runs read model.
 type ReadModelWriter interface {
-	RecordCompleted(ctx context.Context, tenantID string, record checkrun.CompletedRecord) error
+	RecordCompletedOnce(ctx context.Context, tenantID string, record checkrun.CompletedRecord) (bool, error)
 }
 
 // CheckTypes resolves a check definition's type for metric labels.
@@ -49,8 +52,20 @@ type SLISource interface {
 // SnapshotIncrements moves one good/bad event into the current window's
 // snapshot row.
 type SnapshotIncrements interface {
-	IncrementSnapshot(ctx context.Context, tenantID string, sliID int64, windowStart time.Time, isGood bool) error
+	IncrementSnapshotForRun(ctx context.Context, tenantID string, runID, sliID int64, windowStart time.Time, isGood bool) (bool, error)
 }
+
+type eventConfigurationSource interface {
+	EventConfigurationForOutcome(context.Context, string, int64) (sli.EventConfiguration, error)
+}
+
+type plannedSnapshotWriter interface {
+	RecordEvaluation(context.Context, string, sli.Evaluation) (bool, error)
+}
+
+var unavailableSamples = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "orbitjob_sli_samples_unavailable_total", Help: "Committed missing-fact evaluations excluded from sample counters."}, []string{"reason"})
+
+func init() { prometheus.MustRegister(unavailableSamples) }
 
 // Recorder is the operator's terminal-phase bookkeeper for check outcomes.
 type Recorder struct {
@@ -69,36 +84,101 @@ func NewRecorder(outcomes OutcomeReader, readModel ReadModelWriter, checks Check
 }
 
 // RecordTerminalPhase records the consequences of a run reaching Succeeded or
-// Failed. It is called only on a real phase transition, so a resync that
-// re-observes a finished run cannot double-count snapshots or metrics.
-//
-// Bookkeeping failures are logged, not returned: the phase write is the fact,
-// and failing the reconcile for a missed observation would requeue into a run
-// that can never transition again, turning one missed row into a hot loop.
+// Failed. This compatibility entry point logs a failure. The runtime uses
+// RecordTerminalPhaseOnce and leaves the ledger acknowledgement pending on error.
 func (r *Recorder) RecordTerminalPhase(ctx context.Context, tenantID string, runID int64, phase jobrun.Phase) {
+	if err := r.RecordTerminalPhaseOnce(ctx, tenantID, runID, phase); err != nil {
+		slog.Error("terminal bookkeeping remains pending", "tenant_id", tenantID, "run_id", runID, "error", err)
+	}
+}
+
+// RecordTerminalPhaseOnce propagates failures so the ledger's acknowledgement
+// remains pending. Production writers deduplicate by run, including SLI facts.
+func (r *Recorder) RecordTerminalPhaseOnce(ctx context.Context, tenantID string, runID int64, phase jobrun.Phase) error {
 	if phase != jobrun.Succeeded && phase != jobrun.Failed {
-		return
+		return nil
 	}
 	if r.Outcomes == nil {
-		return
+		return fmt.Errorf("outcome reader is required")
 	}
-
 	outcome, err := r.Outcomes.TerminalOutcome(ctx, tenantID, runID)
 	if err != nil {
-		slog.Error("read terminal outcome failed", "tenant_id", tenantID, "run_id", runID, "error", err)
-		return
+		return err
 	}
+	var plan *sli.EventConfiguration
+	if source, ok := r.SLIs.(eventConfigurationSource); ok {
+		configuration, err := source.EventConfigurationForOutcome(ctx, tenantID, runID)
+		if err != nil {
+			return err
+		}
+		if configuration.RunID != runID || configuration.EventTime.IsZero() {
+			return fmt.Errorf("invalid SLI event plan identity")
+		}
+		plan = &configuration
+		if plan.Semantics == sli.EventTime {
+			outcome.StartedAt = time.Time{}
+			outcome.CompletedAt = time.Time{}
+			if plan.ContainerStartedAt != nil && plan.ContainerFinishedAt != nil {
+				outcome.StartedAt = *plan.ContainerStartedAt
+				outcome.CompletedAt = *plan.ContainerFinishedAt
+			}
+		}
+	}
+	var checkErr error
+	if checkID, ok := check.CheckIDFromSourceUID(outcome.SourceUID); ok {
+		checkErr = r.recordCheckRun(ctx, tenantID, checkID, outcome)
+	}
+	if plan != nil {
+		return errors.Join(checkErr, r.recordPlannedSLIEvents(ctx, tenantID, outcome, *plan))
+	}
+	return errors.Join(checkErr, r.recordSLIEvents(ctx, tenantID, outcome))
+}
 
-	if checkID, isCheck := check.CheckIDFromSourceUID(outcome.SourceUID); isCheck {
-		r.recordCheckRun(ctx, tenantID, checkID, outcome)
+func (r *Recorder) recordPlannedSLIEvents(ctx context.Context, tenant string, outcome controlplane.TerminalOutcome, plan sli.EventConfiguration) error {
+	writer, ok := r.Snapshots.(plannedSnapshotWriter)
+	if !ok {
+		return fmt.Errorf("plan-aware SLI snapshot writer is required")
 	}
-	r.recordSLIEvents(ctx, tenantID, outcome)
+	event := outcomeEvent{Status: statusForEvent(outcome.Phase), Duration: outcome.CompletedAt.Sub(outcome.StartedAt), hasTiming: !outcome.StartedAt.IsZero() && !outcome.CompletedAt.IsZero() && !outcome.CompletedAt.Before(outcome.StartedAt)}
+	for _, configuration := range plan.Configurations {
+		if err := sli.ValidateCriteria(configuration.SLIType, configuration.GoodEventCriteria); err != nil {
+			return fmt.Errorf("invalid SLI configuration %d: %w", configuration.ID, err)
+		}
+		evaluation := sli.Evaluation{RunID: outcome.RunID, SLIID: configuration.ID, ConfigurationVersion: configuration.ConfigurationVersion, Semantics: plan.Semantics, EventTime: plan.EventTime, TimeQuality: plan.TimeQuality, WindowStart: plan.EventTime.UTC().Truncate(snapshotWindow)}
+		if _, needsTiming := configuration.GoodEventCriteria["duration_ms"]; needsTiming && !event.hasTiming {
+			evaluation.MissingReason = "task_timing_unavailable"
+		} else {
+			good, err := isGoodEvent(event, configuration)
+			if err != nil {
+				return err
+			}
+			evaluation.Good = &good
+		}
+		inserted, err := writer.RecordEvaluation(ctx, tenant, evaluation)
+		if err != nil {
+			return err
+		}
+		if !inserted {
+			continue
+		}
+		if evaluation.Good == nil {
+			unavailableSamples.WithLabelValues(evaluation.MissingReason).Inc()
+			continue
+		}
+		result := "bad"
+		if *evaluation.Good {
+			result = "good"
+		}
+		metrics.SLIEvaluationsTotal.WithLabelValues(tenant, configuration.SLIType, result).Inc()
+		metrics.SLOSnapshotIncrementsTotal.WithLabelValues(tenant, formatInt(configuration.ID)).Inc()
+	}
+	return nil
 }
 
 // recordCheckRun upserts the check_runs read model and emits the check
 // metrics. Status maps straight from the run phase: v1 evaluation is
 // exit-code-only, so there is no severity and no evaluation result to carry.
-func (r *Recorder) recordCheckRun(ctx context.Context, tenantID string, checkID int64, outcome controlplane.TerminalOutcome) {
+func (r *Recorder) recordCheckRun(ctx context.Context, tenantID string, checkID int64, outcome controlplane.TerminalOutcome) error {
 	status := checkrun.StatusFailed
 	if outcome.Phase == jobrun.Succeeded {
 		status = checkrun.StatusSuccess
@@ -111,13 +191,18 @@ func (r *Recorder) recordCheckRun(ctx context.Context, tenantID string, checkID 
 		StartedAt:   outcome.StartedAt,
 		FinishedAt:  outcome.CompletedAt,
 	}
-	if !outcome.StartedAt.IsZero() && !outcome.CompletedAt.IsZero() {
+	if !outcome.StartedAt.IsZero() && !outcome.CompletedAt.IsZero() && !outcome.CompletedAt.Before(outcome.StartedAt) {
 		record.DurationMs = int(outcome.CompletedAt.Sub(outcome.StartedAt).Milliseconds())
 	}
-	if err := r.ReadModel.RecordCompleted(ctx, tenantID, record); err != nil {
-		slog.Error("record check run read model failed",
-			"tenant_id", tenantID, "run_id", outcome.RunID, "check_id", checkID, "error", err)
-		return
+	if r.ReadModel == nil {
+		return fmt.Errorf("check read model is required")
+	}
+	inserted, err := r.ReadModel.RecordCompletedOnce(ctx, tenantID, record)
+	if err != nil {
+		return err
+	}
+	if !inserted {
+		return nil
 	}
 
 	outcomeLabel := "failed"
@@ -130,6 +215,7 @@ func (r *Recorder) recordCheckRun(ctx context.Context, tenantID string, checkID 
 		metrics.CheckRunDurationSeconds.WithLabelValues(tenantID, checkType).
 			Observe(outcome.CompletedAt.Sub(outcome.StartedAt).Seconds())
 	}
+	return nil
 }
 
 // checkType resolves the metric label; a deleted check keeps its outcome
@@ -144,38 +230,35 @@ func (r *Recorder) checkType(ctx context.Context, tenantID string, checkID int64
 
 // recordSLIEvents derives good/total for every SLI whose source_config names
 // this run's source_uid -- check or ScheduledJob alike -- and increments the
-// current window's snapshot. Canceled runs never reach this method, so a
+// completion window's snapshot. Canceled runs never reach this method, so a
 // human stop stays out of the denominator.
-func (r *Recorder) recordSLIEvents(ctx context.Context, tenantID string, outcome controlplane.TerminalOutcome) {
+func (r *Recorder) recordSLIEvents(ctx context.Context, tenantID string, outcome controlplane.TerminalOutcome) error {
 	if r.SLIs == nil || r.Snapshots == nil {
-		return
+		return nil
 	}
 	slis, err := r.SLIs.FindBySourceUID(ctx, tenantID, outcome.SourceUID)
 	if err != nil {
-		slog.Error("find slis for source failed",
-			"tenant_id", tenantID, "source_uid", outcome.SourceUID, "error", err)
-		return
+		return err
 	}
-	if len(slis) == 0 {
-		return
+	event := outcomeEvent{Status: statusForEvent(outcome.Phase), Duration: outcome.CompletedAt.Sub(outcome.StartedAt), hasTiming: !outcome.StartedAt.IsZero() && !outcome.CompletedAt.IsZero() && !outcome.CompletedAt.Before(outcome.StartedAt)}
+	at := outcome.CompletedAt
+	if at.IsZero() {
+		at = outcome.ScheduledFor
 	}
-
-	event := outcomeEvent{
-		Status:    statusForEvent(outcome.Phase),
-		Duration:  outcome.CompletedAt.Sub(outcome.StartedAt),
-		hasTiming: !outcome.StartedAt.IsZero() && !outcome.CompletedAt.IsZero(),
+	if at.IsZero() {
+		at = r.now()
 	}
-	windowStart := r.now().Truncate(snapshotWindow)
+	windowStart := at.UTC().Truncate(snapshotWindow)
 	for _, s := range slis {
 		isGood, err := isGoodEvent(event, s)
 		if err != nil {
-			slog.Error("invalid sli configuration, skipping snapshot",
-				"tenant_id", tenantID, "sli_id", s.ID, "source_uid", outcome.SourceUID, "error", err)
-			continue
+			return fmt.Errorf("invalid sli %d: %w", s.ID, err)
 		}
-		if err := r.Snapshots.IncrementSnapshot(ctx, tenantID, s.ID, windowStart, isGood); err != nil {
-			slog.Error("increment sli snapshot failed",
-				"tenant_id", tenantID, "sli_id", s.ID, "source_uid", outcome.SourceUID, "error", err)
+		inserted, err := r.Snapshots.IncrementSnapshotForRun(ctx, tenantID, outcome.RunID, s.ID, windowStart, isGood)
+		if err != nil {
+			return err
+		}
+		if !inserted {
 			continue
 		}
 		result := "bad"
@@ -185,6 +268,7 @@ func (r *Recorder) recordSLIEvents(ctx context.Context, tenantID string, outcome
 		metrics.SLIEvaluationsTotal.WithLabelValues(tenantID, s.SLIType, result).Inc()
 		metrics.SLOSnapshotIncrementsTotal.WithLabelValues(tenantID, formatInt(s.ID)).Inc()
 	}
+	return nil
 }
 
 func (r *Recorder) now() time.Time {

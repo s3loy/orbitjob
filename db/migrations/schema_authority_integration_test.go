@@ -20,7 +20,7 @@ import (
 // what this file adds, because a leftover CREATE in a migration file or a
 // stray table in the database is invisible to a missing-only check.
 
-var createTableRE = regexp.MustCompile(`(?m)^CREATE TABLE IF NOT EXISTS (\w+)`)
+var createTableRE = regexp.MustCompile(`(?m)^CREATE TABLE (?:IF NOT EXISTS )?(\w+)`)
 
 // migrationRelations parses the relation names the migration ledger creates,
 // partitions included (audit_events_default is created by a second CREATE

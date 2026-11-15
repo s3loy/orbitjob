@@ -6,14 +6,16 @@ import (
 
 	"orbitjob/internal/core/domain/resourcegroup"
 	"orbitjob/internal/domain/validation"
+
+	"orbitjob/internal/platform/scan"
 )
 
 func TestNewAcceptsAWellFormedGroup(t *testing.T) {
-	g, err := resourcegroup.New("01ABC", "tenant-a", "ci", "Continuous Integration")
+	g, err := resourcegroup.New(groupFixtureID, groupFixtureTenantID, "ci", "Continuous Integration")
 	if err != nil {
 		t.Fatalf("valid group rejected: %v", err)
 	}
-	if g.Slug != "ci" || g.Name != "Continuous Integration" || g.TenantID != "tenant-a" {
+	if g.Slug != "ci" || g.Name != "Continuous Integration" || g.TenantID != groupFixtureTenantID {
 		t.Fatalf("unexpected group: %+v", g)
 	}
 }
@@ -22,7 +24,7 @@ func TestNewAcceptsAWellFormedGroup(t *testing.T) {
 // containing either would make the group unaddressable in a policy -- which
 // would surface as a permission that never matches, not as a validation error.
 func TestNewNormalizesCaseAndTrims(t *testing.T) {
-	g, err := resourcegroup.New("01ABC", "tenant-a", "  CI-Prod  ", "  Production  ")
+	g, err := resourcegroup.New(groupFixtureID, groupFixtureTenantID, "  CI-Prod  ", "  Production  ")
 	if err != nil {
 		t.Fatalf("valid group rejected: %v", err)
 	}
@@ -45,7 +47,7 @@ func TestNewRejectsBadSlugs(t *testing.T) {
 	}
 	for name, slug := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := resourcegroup.New("01ABC", "tenant-a", slug, "Name"); err == nil {
+			if _, err := resourcegroup.New(groupFixtureID, groupFixtureTenantID, slug, "Name"); err == nil {
 				t.Fatalf("slug %q was accepted", slug)
 			}
 		})
@@ -53,11 +55,11 @@ func TestNewRejectsBadSlugs(t *testing.T) {
 }
 
 func TestNewRejectsEmptyAndOversizedNames(t *testing.T) {
-	if _, err := resourcegroup.New("01ABC", "tenant-a", "ci", "   "); err == nil {
+	if _, err := resourcegroup.New(groupFixtureID, groupFixtureTenantID, "ci", "   "); err == nil {
 		t.Fatal("an empty name was accepted")
 	}
 	long := strings.Repeat("n", resourcegroup.MaxNameLength+1)
-	if _, err := resourcegroup.New("01ABC", "tenant-a", "ci", long); err == nil {
+	if _, err := resourcegroup.New(groupFixtureID, groupFixtureTenantID, "ci", long); err == nil {
 		t.Fatal("an oversized name was accepted")
 	}
 }
@@ -65,7 +67,7 @@ func TestNewRejectsEmptyAndOversizedNames(t *testing.T) {
 // Errors carry the field so the API can point at the offending input rather
 // than returning a generic rejection.
 func TestNewReportsTheFailingField(t *testing.T) {
-	_, err := resourcegroup.New("01ABC", "tenant-a", "bad slug", "Name")
+	_, err := resourcegroup.New(groupFixtureID, groupFixtureTenantID, "bad slug", "Name")
 	var ve *validation.Error
 	if !validation.As(err, &ve) {
 		t.Fatalf("expected a validation error, got %T", err)
@@ -74,3 +76,7 @@ func TestNewReportsTheFailingField(t *testing.T) {
 		t.Fatalf("expected field slug, got %q", ve.Field)
 	}
 }
+
+var groupFixtureID = scan.GenerateID()
+
+var groupFixtureTenantID = scan.GenerateID()

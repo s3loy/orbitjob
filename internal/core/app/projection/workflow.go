@@ -8,6 +8,7 @@ import (
 	v1alpha1 "orbitjob/api/kubernetes/workloads/v1alpha1"
 	"orbitjob/internal/core/domain/revision"
 	"orbitjob/internal/core/domain/workflow"
+	"orbitjob/internal/domain/workflowschedule"
 )
 
 // ApplyWorkflowJob materializes a WorkflowJob custom resource as an immutable
@@ -35,10 +36,13 @@ func (s Service) ApplyWorkflowJob(ctx context.Context, obj v1alpha1.WorkflowJob,
 	// Only the fields this projection is responsible for. Identity and
 	// generation are validated by revision.New, so they are not re-checked
 	// here where the two could drift apart.
-	if obj.Spec.Schedule == "" || len(obj.Spec.Tasks) == 0 {
-		return 0, fmt.Errorf("workflow %s/%s: schedule and tasks are required", obj.GetNamespace(), obj.GetName())
+	if err := obj.Spec.Validate(); err != nil {
+		return 0, fmt.Errorf("workflow %s/%s: %w", obj.GetNamespace(), obj.GetName(), err)
 	}
 
+	if err := workflow.ValidateDAG(workflow.DAGFromSpec(obj.Spec)); err != nil {
+		return 0, fmt.Errorf("workflow %s/%s: %w", obj.Namespace, obj.Name, err)
+	}
 	rev, err := revision.New(
 		revision.Identity{
 			SourceMode: workflow.SourceModeWorkflow,
@@ -64,6 +68,11 @@ func (s Service) ApplyWorkflowJob(ctx context.Context, obj v1alpha1.WorkflowJob,
 // struct of strings, integers and slices cannot fail, so this returns no error
 // rather than forcing every caller to handle an impossible branch.
 func normalizeWorkflowSpec(spec v1alpha1.WorkflowJobSpec) string {
+	// Adding a CRD default must not change an existing generation's immutable
+	// spec hash. Empty and UTC have identical scheduling behavior.
+	if spec.TimeZone == workflowschedule.DefaultTimeZone {
+		spec.TimeZone = ""
+	}
 	raw, _ := json.Marshal(spec)
 	return string(raw)
 }

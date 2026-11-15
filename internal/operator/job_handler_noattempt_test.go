@@ -18,7 +18,7 @@ func TestReconcileJobDropsJobWithoutOwningAttempt(t *testing.T) {
 	runs := &fakeRuns{observedErr: fmt.Errorf("record job oj-x-1: %w", corepostgres.ErrNoAttempt)}
 	rt := Runtime{
 		Runs:    runs,
-		Tenants: NamespaceTenantResolver{Tenants: map[string]string{"finance": "finance"}},
+		Tenants: NamespaceTenantResolver{Tenants: map[string]string{"finance": executionTenant}},
 	}
 	if err := rt.ReconcileJob(context.Background(), observedJob(t, "oj-x-1-1", "Succeeded")); err != nil {
 		t.Fatalf("a Job no attempt owns must be dropped, not requeued: %v", err)
@@ -32,7 +32,7 @@ func TestReconcileJobDropsJobWithoutOwningAttempt(t *testing.T) {
 func TestReconcileJobDropsBareErrNoAttempt(t *testing.T) {
 	rt := Runtime{
 		Runs:    &fakeRuns{observedErr: corepostgres.ErrNoAttempt},
-		Tenants: NamespaceTenantResolver{Tenants: map[string]string{"finance": "finance"}},
+		Tenants: NamespaceTenantResolver{Tenants: map[string]string{"finance": executionTenant}},
 	}
 	if err := rt.ReconcileJob(context.Background(), observedJob(t, "oj-x-1-1", "Succeeded")); err != nil {
 		t.Fatalf("a bare ErrNoAttempt must still be dropped, not requeued: %v", err)
@@ -44,7 +44,7 @@ func TestReconcileJobDropsBareErrNoAttempt(t *testing.T) {
 func TestReconcileJobStillSurfacesOtherStoreErrors(t *testing.T) {
 	rt := Runtime{
 		Runs:    &fakeRuns{observedErr: errors.New("connection refused")},
-		Tenants: NamespaceTenantResolver{Tenants: map[string]string{"finance": "finance"}},
+		Tenants: NamespaceTenantResolver{Tenants: map[string]string{"finance": executionTenant}},
 	}
 	if err := rt.ReconcileJob(context.Background(), observedJob(t, "oj-x-1-1", "Succeeded")); err == nil {
 		t.Fatal("expected a store failure other than ErrNoAttempt to surface")
@@ -55,7 +55,7 @@ func TestReconcileJobSurfacesAttemptOwnershipMismatch(t *testing.T) {
 	runs := &fakeRuns{observedErr: corepostgres.ErrAttemptOwnership}
 	rt := Runtime{
 		Runs:    runs,
-		Tenants: NamespaceTenantResolver{Tenants: map[string]string{"finance": "finance"}},
+		Tenants: NamespaceTenantResolver{Tenants: map[string]string{"finance": executionTenant}},
 	}
 	err := rt.ReconcileJob(context.Background(), observedJob(t, "oj-x-1-1", "Running"))
 	if !errors.Is(err, corepostgres.ErrAttemptOwnership) {

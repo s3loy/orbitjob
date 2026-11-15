@@ -18,7 +18,8 @@ import (
 //     non-terminal at CancelUnknown. jobrun.Terminal excludes CancelUnknown
 //     for exactly the same reason: a stop the platform could not confirm is
 //     not an outcome, and guessing a roll-up over it would be a lie.
-//   - Any failed step makes the workflow Failed, under either fail policy:
+//   - A deadline or missing-reference decision is a failure, never a successful
+//     conditional skip. Any failed step makes the workflow Failed, under either fail policy:
 //     FailFast stopped new work because of it, Continue kept going but the
 //     run as a whole did not succeed.
 //   - Any canceled step, or any skip decided with reason canceled, makes the
@@ -31,6 +32,7 @@ import (
 // validation.
 func DerivePhase(tasks []string, steps map[string]StepState, decisions map[string]TaskDecision) (Phase, bool) {
 	unknown := false
+	executionUnknown := false
 	failed := false
 	canceled := false
 	accounted := true
@@ -40,12 +42,17 @@ func DerivePhase(tasks []string, steps map[string]StepState, decisions map[strin
 		switch {
 		case hasStep:
 			switch state.Phase {
+			case jobrun.ExecutionUnknown:
+				executionUnknown = true
 			case jobrun.CancelUnknown:
 				unknown = true
 			case jobrun.Failed:
 				failed = true
 			case jobrun.Canceled:
 				canceled = true
+			case jobrun.Succeeded:
+			default:
+				accounted = false
 			}
 		default:
 			decision, decided := decisions[task]
@@ -53,14 +60,20 @@ func DerivePhase(tasks []string, steps map[string]StepState, decisions map[strin
 				accounted = false
 				continue
 			}
-			if decision.Reason == ReasonCanceled {
+			switch decision.Reason {
+			case ReasonCanceled:
 				canceled = true
+			case ReasonDeadline, ReasonMissingJob:
+				failed = true
 			}
 		}
 	}
 
 	if unknown {
 		return PhaseCancelUnknown, false
+	}
+	if executionUnknown {
+		return PhaseExecutionUnknown, false
 	}
 	if !accounted {
 		return PhaseRunning, false

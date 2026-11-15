@@ -17,7 +17,6 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 
 	v1alpha1 "orbitjob/api/kubernetes/workloads/v1alpha1"
@@ -36,10 +35,8 @@ type JobRunPublisher struct {
 }
 
 // Publish creates the JobRun, or returns the existing one when a run already
-// exists under the same name. An AlreadyExists result is success, not conflict:
-// the object name is derived from the occurrence key, so the same trigger
-// replaying is deduplication, and a run whose create was retried after a
-// partial failure adopts the object rather than doubling it.
+// exists under the same name and has the complete requested identity. Names
+// use a shortened digest, so a name alone never proves an idempotent replay.
 //
 // The returned bool reports whether this call created the object, so the caller
 // can answer 201 for a new run and 200 for a replay.
@@ -50,35 +47,33 @@ func (p JobRunPublisher) Publish(ctx context.Context, run v1alpha1.JobRun) (v1al
 	if run.Namespace == "" || run.Name == "" {
 		return v1alpha1.JobRun{}, false, fmt.Errorf("job run namespace and name are required")
 	}
-
 	object, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&run)
 	if err != nil {
-		return v1alpha1.JobRun{}, false, fmt.Errorf("encode job run %s: %w", run.Name, err)
+		return v1alpha1.JobRun{}, false, fmt.Errorf("encode job run: %w", err)
 	}
-
-	created, err := p.Client.Resource(jobRunGVR).Namespace(run.Namespace).
-		Create(ctx, &unstructured.Unstructured{Object: object}, metav1.CreateOptions{})
+	identity := v1alpha1.RunIdentity{SourceUID: run.Spec.ScheduledJobRef.UID, OccurrenceKey: run.Spec.OccurrenceKey, RevisionID: run.Spec.DefinitionRevision, Trigger: run.Spec.Trigger}
+	names := []string{run.Name, v1alpha1.LegacyRunObjectName(run.Spec.ScheduledJobRef.Name, run.Spec.OccurrenceKey)}
+	stored, created, err := publishRun(ctx, p.Client.Resource(jobRunGVR).Namespace(run.Namespace), &unstructured.Unstructured{Object: object}, names, identity)
 	if err != nil {
-		if !apierrors.IsAlreadyExists(err) {
-			return v1alpha1.JobRun{}, false, fmt.Errorf("create job run %s/%s: %w", run.Namespace, run.Name, err)
-		}
-		existing, getErr := p.Client.Resource(jobRunGVR).Namespace(run.Namespace).
-			Get(ctx, run.Name, metav1.GetOptions{})
-		if getErr != nil {
-			return v1alpha1.JobRun{}, false, fmt.Errorf("read existing job run %s/%s: %w", run.Namespace, run.Name, getErr)
-		}
-		out, decodeErr := decodeJobRun(existing)
-		if decodeErr != nil {
-			return v1alpha1.JobRun{}, false, decodeErr
-		}
-		return out, false, nil
+		return v1alpha1.JobRun{}, false, fmt.Errorf("publish job run %s/%s: %w", run.Namespace, run.Name, err)
 	}
+	out, err := decodeJobRun(stored)
+	if err == nil {
+		err = validatePublishedJobRun(run, out)
+	}
+	return out, created, err
+}
 
-	out, err := decodeJobRun(created)
-	if err != nil {
-		return v1alpha1.JobRun{}, false, err
+func validatePublishedJobRun(wanted, stored v1alpha1.JobRun) error {
+	wantedSpec, storedSpec := wanted.Spec, stored.Spec
+	// Cancellation is independent mutable intent and must survive replay.
+	wantedSpec.CancelRequested, storedSpec.CancelRequested = false, false
+	// publishRun has already resolved the modern or retained legacy address.
+	if wanted.Namespace != stored.Namespace || stored.DeletionTimestamp != nil || wantedSpec != storedSpec {
+		return &resource.ConflictError{Resource: "job run resource", ID: wanted.Namespace + "/" + wanted.Name,
+			Field: "occurrence_key", Message: "the JobRun name belongs to a different or deleting execution; retrying cannot adopt it"}
 	}
-	return out, true, nil
+	return nil
 }
 
 // Get reads one JobRun by namespace and name. The invoke route's synchronous
@@ -117,11 +112,6 @@ func decodeJobRun(object *unstructured.Unstructured) (v1alpha1.JobRun, error) {
 	return out, nil
 }
 
-// cancelPatch is the merge patch a cancel request sends. It touches only
-// spec.cancelRequested, so a patch can never clobber the rest of the spec the
-// scheduler or the operator last wrote.
-const cancelPatch = `{"spec":{"cancelRequested":true}}`
-
 // RequestCancel patches spec.cancelRequested to true on one JobRun. The patch
 // is the whole effect of the request: the operator observes it, deletes the
 // Kubernetes Job, and writes the ledger transitions. Repeated patches are
@@ -133,25 +123,16 @@ const cancelPatch = `{"spec":{"cancelRequested":true}}`
 // not yet terminal; the scheduler repairs such runs by re-publishing, and a
 // caller that reported 404 here would tell the user the run does not exist
 // when the ledger says it does.
-func (p JobRunPublisher) RequestCancel(ctx context.Context, namespace, name string) error {
+func (p JobRunPublisher) RequestCancel(ctx context.Context, namespace, definitionName string, identity v1alpha1.RunIdentity) (string, error) {
 	if p.Client == nil {
-		return fmt.Errorf("dynamic client is required")
+		return "", fmt.Errorf("dynamic client is required")
 	}
-	if namespace == "" || name == "" {
-		return fmt.Errorf("job run namespace and name are required")
+	if namespace == "" || definitionName == "" {
+		return "", fmt.Errorf("job run namespace and name are required")
 	}
-
-	_, err := p.Client.Resource(jobRunGVR).Namespace(namespace).
-		Patch(ctx, name, types.MergePatchType, []byte(cancelPatch), metav1.PatchOptions{})
+	name, err := cancelRun(ctx, p.Client.Resource(jobRunGVR).Namespace(namespace), definitionName, identity)
 	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return &resource.ConflictError{
-				Resource: "job run resource",
-				ID:       namespace + "/" + name,
-				Message:  "the JobRun custom resource is missing; the scheduler republishes open runs",
-			}
-		}
-		return fmt.Errorf("patch job run %s/%s: %w", namespace, name, err)
+		return "", fmt.Errorf("cancel job run %s: %w", namespace, err)
 	}
-	return nil
+	return name, nil
 }

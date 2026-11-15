@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"orbitjob/internal/platform/scan"
 )
 
 // TestStatusAndSeverityLiterals pins the persisted vocabulary. These strings go
@@ -71,7 +73,7 @@ func TestSnapshotJSONKeySetFull(t *testing.T) {
 	snap := Snapshot{
 		ID:               42,
 		RunID:            "run-abc",
-		TenantID:         "acme",
+		TenantID:         checkrunSnapshotFixtureTenantID,
 		CheckID:          7,
 		Status:           StatusFailed,
 		Severity:         &severity,
@@ -103,7 +105,7 @@ func TestSnapshotJSONKeySetOmitsNilPointers(t *testing.T) {
 	snap := Snapshot{
 		ID:          42,
 		RunID:       "run-abc",
-		TenantID:    "acme",
+		TenantID:    checkrunSnapshotFixtureTenantID,
 		CheckID:     7,
 		Status:      StatusPending,
 		ScheduledAt: time.Date(2026, 1, 4, 0, 0, 0, 0, time.UTC),
@@ -152,7 +154,7 @@ func TestSnapshotJSONRoundTrip(t *testing.T) {
 	snap := Snapshot{
 		ID:               42,
 		RunID:            "run-abc",
-		TenantID:         "acme",
+		TenantID:         checkrunSnapshotFixtureTenantID,
 		CheckID:          7,
 		Status:           StatusSuccess,
 		Severity:         &severity,
@@ -187,3 +189,5 @@ func sortedKeyList(m map[string]struct{}) []string {
 	sort.Strings(out)
 	return out
 }
+
+var checkrunSnapshotFixtureTenantID = scan.GenerateID()

@@ -11,6 +11,7 @@ import (
 
 	"orbitjob/internal/domain/resource"
 	"orbitjob/internal/platform/postgrestest"
+	"orbitjob/internal/platform/scan"
 )
 
 // OpenStoreDB returns the per-test schema handle the harness prepared.
@@ -51,7 +52,7 @@ func TestSLIRepository_DeleteNotFound_ReleasesConnections(t *testing.T) {
 
 	// A tenant id that owns no SLIs: every call takes the zero-rows path that
 	// used to leak.
-	const tenantID = "01F8ZCC0NQ5WX9HHQ3P0R7D3LE"
+	tenantID := scan.GenerateID()
 	for i := 0; i < calls; i++ {
 		err := repo.Delete(ctx, tenantID, "", int64(1000+i), 1)
 		var notFound *resource.NotFoundError

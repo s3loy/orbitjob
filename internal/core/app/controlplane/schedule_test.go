@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"orbitjob/internal/platform/scan"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +16,8 @@ import (
 	"orbitjob/internal/core/domain/jobrun"
 	"orbitjob/internal/core/domain/revision"
 )
+
+var controlplaneTenant = scan.GenerateID()
 
 type fakeRevisions struct {
 	revisions []revision.Revision
@@ -102,9 +106,49 @@ func schedulerAt(at time.Time, revisions *fakeRevisions, runs *fakeRuns, publish
 		Revisions:    revisions,
 		Runs:         runs,
 		Publisher:    publisher,
-		Tenants:      []string{"tenant-a"},
+		Tenants:      []string{controlplaneTenant},
 		MisfireGrace: time.Hour,
 		Now:          func() time.Time { return at },
+	}
+}
+
+func TestCatchUpNeverPredatesCurrentRevisionCreation(t *testing.T) {
+	at := time.Date(2026, 11, 12, 13, 30, 0, 0, time.UTC)
+	rev := revisionWith(t, 3, v1alpha1.ScheduledJobSpec{Schedule: "0 * * * *", MisfirePolicy: v1alpha1.CatchUpBounded})
+	rev.CreatedAt = at.Add(-90 * time.Minute)
+	runs := &fakeRuns{}
+	s := schedulerAt(at, &fakeRevisions{revisions: []revision.Revision{rev}}, runs, &fakePublisher{})
+	s.MisfireGrace, s.MaxCatchUp = 6*time.Hour, 5
+	count, err := s.Tick(t.Context())
+	if err != nil || count != 2 || len(runs.recorded) != 2 {
+		t.Fatalf("count=%d runs=%+v err=%v", count, runs.recorded, err)
+	}
+	for _, record := range runs.recorded {
+		if record.run.ScheduledFor.Before(rev.CreatedAt) {
+			t.Fatalf("new revision backfilled prior history: %+v", record.run)
+		}
+	}
+}
+
+func TestCatchUpHasHardLookbackAndAdmissionBounds(t *testing.T) {
+	parsed, err := cron.ParseStandard("*/5 * * * *")
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 11, 13, 12, 3, 0, 0, time.UTC)
+	occurrences := selectOccurrences(cronSchedule{inner: parsed}, v1alpha1.CatchUpBounded, at, 365*24*time.Hour, 100000)
+	if len(occurrences) != MaxCatchUpOccurrences {
+		t.Fatalf("catch-up admissions=%d want=%d", len(occurrences), MaxCatchUpOccurrences)
+	}
+	parsed, err = cron.ParseStandard("0 * * * *")
+	if err != nil {
+		t.Fatal(err)
+	}
+	occurrences = selectOccurrences(cronSchedule{inner: parsed}, v1alpha1.CatchUpBounded, at, 365*24*time.Hour, 100000)
+	for _, instant := range occurrences {
+		if instant.Before(at.Add(-MaxScheduleLookback).Truncate(time.Minute)) {
+			t.Fatalf("unbounded history admitted: %s", instant)
+		}
 	}
 }
 
@@ -196,7 +240,7 @@ func TestTickAppliesConcurrencyPolicy(t *testing.T) {
 	at := time.Date(2026, 3, 1, 2, 0, 30, 0, time.UTC)
 	base := v1alpha1.ScheduledJobSpec{Schedule: "0 * * * *", ConcurrencyPolicy: v1alpha1.Forbid}
 	revisions := &fakeRevisions{revisions: []revision.Revision{revisionWith(t, 3, base)}, openRuns: 1}
-	runs := &fakeRuns{}
+	runs := &fakeRuns{err: &jobrun.AdmissionBlockedError{Policy: "Forbid", Reason: "concurrency"}}
 	created, err := schedulerAt(at, revisions, runs, &fakePublisher{}).Tick(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -272,9 +316,9 @@ func TestTickAbortsOnlyOnListFailure(t *testing.T) {
 	}{
 		{"record failure", &fakeRevisions{revisions: []revision.Revision{ok}}, &fakeRuns{err: errors.New("boom")}, &fakePublisher{}},
 		{"publish failure", &fakeRevisions{revisions: []revision.Revision{ok}}, &fakeRuns{}, &fakePublisher{err: errors.New("boom")}},
-		{"concurrency lookup failure", &fakeRevisions{revisions: []revision.Revision{
+		{"admission lookup failure", &fakeRevisions{revisions: []revision.Revision{
 			revisionWith(t, 3, v1alpha1.ScheduledJobSpec{Schedule: "0 * * * *", ConcurrencyPolicy: v1alpha1.Forbid}),
-		}, countErr: errors.New("boom")}, &fakeRuns{}, &fakePublisher{}},
+		}}, &fakeRuns{err: errors.New("boom")}, &fakePublisher{}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -322,7 +366,7 @@ func TestSchedulerFallsBackToWallClockAndStandardParser(t *testing.T) {
 		Revisions:    revisions,
 		Runs:         runs,
 		Publisher:    &fakePublisher{},
-		Tenants:      []string{"tenant-a"},
+		Tenants:      []string{controlplaneTenant},
 		MisfireGrace: time.Hour,
 	}
 	if _, err := scheduler.Tick(context.Background()); err != nil {
@@ -355,7 +399,7 @@ func TestFireDefinitionSurfacesInvalidSchedule(t *testing.T) {
 	// fireDefinition is where the refusal happens; Tick logs it and moves on,
 	// so the invalid-cron contract is pinned here at its source.
 	s := schedulerAt(at, revisions, &fakeRuns{}, &fakePublisher{})
-	_, err := s.fireDefinition(context.Background(), "tenant-a", revisions.revisions[0], at, time.Hour)
+	_, err := s.fireDefinition(context.Background(), controlplaneTenant, revisions.revisions[0], at, time.Hour)
 	if err == nil {
 		t.Fatal("an invalid cron expression must surface rather than silently never firing")
 	}
@@ -427,8 +471,8 @@ func TestTickRepairsOpenRunsEvenWhenConcurrencyForbids(t *testing.T) {
 	}, openRuns: 1}
 	publisher := &fakePublisher{}
 	runs := &fakeRuns{
-		existing: true,
 		openRuns: []jobrun.OpenRun{{ID: 7, RevisionID: 3, OccurrenceKey: "occ-7", Phase: jobrun.Pending}},
+		err:      &jobrun.AdmissionBlockedError{Policy: "Forbid", Reason: "concurrency"},
 	}
 
 	created, err := schedulerAt(at, revisions, runs, publisher).Tick(context.Background())
@@ -444,7 +488,7 @@ func TestTickRepairsOpenRunsEvenWhenConcurrencyForbids(t *testing.T) {
 		t.Fatalf("published = %d, want the open run repaired", len(publisher.published))
 	}
 	published := publisher.published[0]
-	if published.Name != "nightly-report-occ-7" {
+	if published.Name != v1alpha1.RunObjectName("nightly-report", "occ-7") {
 		t.Fatalf("repaired run name = %q", published.Name)
 	}
 }
@@ -475,7 +519,7 @@ func TestTickRepairsOpenRunsBeforeFiringNewOnes(t *testing.T) {
 	if len(publisher.published) < 2 {
 		t.Fatalf("published = %d, want the repair plus the new occurrence", len(publisher.published))
 	}
-	if publisher.published[0].Name != "nightly-report-occ-7" {
+	if publisher.published[0].Name != v1alpha1.RunObjectName("nightly-report", "occ-7") {
 		t.Fatalf("first publish = %q, want the repair first", publisher.published[0].Name)
 	}
 }
@@ -515,8 +559,17 @@ func TestTickDoesNotTouchTerminalRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, published := range publisher.published {
-		if published.Name == "nightly-report-occ-7" {
+		if published.Name == v1alpha1.RunObjectName("nightly-report", "occ-7") {
 			t.Fatal("a terminal run must not be repaired")
 		}
 	}
+}
+
+func (f *fakeRevisions) RevisionByID(_ context.Context, _ string, id int64) (revision.Revision, error) {
+	for _, rev := range f.revisions {
+		if rev.ID == id {
+			return rev, nil
+		}
+	}
+	return revision.Revision{}, fmt.Errorf("revision %d missing", id)
 }

@@ -271,15 +271,15 @@ func TestNormalizeCreate_NilSourceConfig(t *testing.T) {
 	}
 }
 
-func TestNormalizeCreate_LatencyDoesNotRequireGoodEventCriteria(t *testing.T) {
+func TestNormalizeCreate_LatencyRequiresGoodEventCriteria(t *testing.T) {
 	_, err := NormalizeCreate(CreateInput{
 		Name:         "test",
 		SLIType:      TypeLatency,
 		SourceType:   SourceTypeJobRun,
 		SourceConfig: map[string]any{"source_uid": "check-1"},
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("latency without a duration threshold must be rejected")
 	}
 }
 

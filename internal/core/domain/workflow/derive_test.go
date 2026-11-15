@@ -112,10 +112,10 @@ func TestDerivePhase(t *testing.T) {
 			wantDone:  true,
 		},
 		{
-			name:      "deadline-skipped everything is a succeeded no-op run",
+			name:      "deadline-skipped work is a failed run",
 			tasks:     taskSet("never-created"),
 			decisions: map[string]TaskDecision{"never-created": {Skipped: true, Reason: ReasonDeadline}},
-			wantPhase: PhaseSucceeded,
+			wantPhase: PhaseFailed,
 			wantDone:  true,
 		},
 		{

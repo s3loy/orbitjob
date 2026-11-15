@@ -11,6 +11,8 @@ import (
 	"time"
 
 	pq "github.com/lib/pq"
+
+	"orbitjob/internal/platform/scan"
 )
 
 // These tests pin the tenant_id unification decision (G3b): every tenant_id
@@ -21,11 +23,8 @@ import (
 // edited, the quoted contract does not.
 
 // tenantColumns lists every column in the schema that holds a tenant identity.
-// tenants.id is the referenced side; the rest are the fourteen tenant_id
-// columns (resource_groups, policies, api_keys, audit_events,
-// job_definition_revisions, job_run_control_plane,
-// job_run_attempts_control_plane, checks, check_runs, slis, slos,
-// sli_snapshots, budgets, budget_alerts).
+// tenants.id is the referenced side; tenant_id columns include configuration,
+// execution history, derived facts and their partitions.
 const tenantColumns = `
 	SELECT c.relname, a.attname
 	FROM pg_attribute a
@@ -84,12 +83,15 @@ func TestEveryTenantIdentityColumnIsChar26(t *testing.T) {
 	}
 	// Nineteen base tables carry tenant_id: the baseline's fourteen, plus
 	// functions and function_runs (0004), workflow_run_control_plane (0005),
-	// sli_snapshot_events (0007), and execution_log_archives (0014).
-	// audit_events_default contributes its own catalog attribute so partition
-	// type drift is checked too; tenants.id brings the total to twenty-one.
+	// sli_snapshot_events (0012), and execution_log_archives (0014).
+	// Migrations 0016, 0020, 0021 and 0022 add seven more tenant-owned
+	// tables: definition_operations, workflow_task_snapshots, the four SLI
+	// event/configuration tables and execution_source_controls.
+	// audit_events_default contributes its own catalog attribute
+	// so partition type drift is checked too; tenants.id brings the total to 28.
 	// A changed count requires reviewing the schema's tenant identity set.
-	if total != 21 {
-		t.Fatalf("tenant identity columns = %d, want 21 (19 base tables including execution_log_archives + the audit_events_default partition + tenants.id)", total)
+	if total != 28 {
+		t.Fatalf("tenant identity columns = %d, want 28 (26 base tables + the audit_events_default partition + tenants.id)", total)
 	}
 
 	offenders, err := uncharTenantColumns(ctx, db)
@@ -165,6 +167,7 @@ func TestTenantForeignKeyDeleteActionMatrix(t *testing.T) {
 		"job_run_attempts_control_plane": "r",
 		"check_runs":                     "r",
 		"sli_snapshots":                  "r",
+		"sli_snapshot_events":            "r",
 		"budget_alerts":                  "r",
 	}
 	for table, action := range want {
@@ -214,8 +217,10 @@ func describeAction(code string) string {
 }
 
 // TestTenantDeleteCascadesConfigurationFamily is the live half of the
-// configuration contract: deleting a tenant removes its resource group,
-// tenant policy, check, SLI, SLO and budget in the same statement.
+// configuration contract: after explicit SLI history maintenance, deleting a
+// tenant removes its resource group, tenant policy, check, SLI, SLO and budget
+// in the same statement. Migration 0021 stores SLI configuration and observation
+// history on creation; those RESTRICT references must be removed explicitly.
 // budget_alerts is deliberately absent: its tenant foreign key RESTRICTs (it
 // is history, per the baseline's family comment) and the first draft of this
 // test that assumed otherwise failed red on 2026-09-18 with
@@ -228,13 +233,13 @@ func TestTenantDeleteCascadesConfigurationFamily(t *testing.T) {
 	defer cancel()
 	db := ownerDB(t)
 
-	const alpha = "aaaaaaaaaaaaaaaaaaaaaaaaaa"
+	alpha := scan.GenerateID()
 	seed := `
 		INSERT INTO tenants(id, slug, name) VALUES ('` + alpha + `', 'config-family', 'Config Family');
 		INSERT INTO resource_groups(id, tenant_id, slug, name)
-		  VALUES (repeat('g', 26), '` + alpha + `', 'grp', 'Group');
+		  VALUES ('` + scan.GenerateID() + `', '` + alpha + `', 'grp', 'Group');
 		INSERT INTO policies(id, tenant_id, name, document)
-		  VALUES (repeat('p', 26), '` + alpha + `', 'tenant-policy', '{}');
+		  VALUES ('` + scan.GenerateID() + `', '` + alpha + `', 'tenant-policy', '{}');
 		INSERT INTO checks(name, tenant_id, check_type, schedule_type, cron_expr)
 		  VALUES ('config-family-check', '` + alpha + `', 'http_health', 'cron', '* * * * *');
 		WITH sli AS (
@@ -249,6 +254,21 @@ func TestTenantDeleteCascadesConfigurationFamily(t *testing.T) {
 	`
 	if _, err := db.ExecContext(ctx, seed); err != nil {
 		t.Fatalf("seed configuration family: %v", err)
+	}
+
+	_, err := db.ExecContext(ctx, `DELETE FROM tenants WHERE id = $1`, alpha)
+	var foreignKeyErr *pq.Error
+	if !errors.As(err, &foreignKeyErr) || foreignKeyErr.Code != "23503" ||
+		(foreignKeyErr.Table != "sli_configuration_versions" && foreignKeyErr.Table != "sli_observation_state") {
+		t.Fatalf("SLI history must block tenant deletion before explicit maintenance: %v", err)
+	}
+	// This fixture has no snapshot events or event plans to retain. Remove only
+	// its generated SLI history, as an owner maintenance operation; application
+	// roles must not gain cascading deletion of those records.
+	for _, table := range []string{"sli_observation_state", "sli_configuration_versions"} {
+		if _, err := db.ExecContext(ctx, `DELETE FROM public.`+table+` WHERE tenant_id = $1`, alpha); err != nil {
+			t.Fatalf("maintain %s before tenant deletion: %v", table, err)
+		}
 	}
 
 	if _, err := db.ExecContext(ctx,
@@ -280,7 +300,7 @@ func TestTenantDeleteIsBlockedByHistoryFamily(t *testing.T) {
 	defer cancel()
 	db := ownerDB(t)
 
-	const alpha = "aaaaaaaaaaaaaaaaaaaaaaaaaa"
+	alpha := scan.GenerateID()
 	seed := `
 		INSERT INTO tenants(id, slug, name) VALUES ('` + alpha + `', 'history-family', 'History Family');
 		INSERT INTO audit_events(tenant_id, actor_type, event_type, resource_type, resource_id)
@@ -379,7 +399,7 @@ func TestRestrictIsLoadBearing(t *testing.T) {
 	defer cancel()
 	db := ownerDB(t)
 
-	const alpha = "aaaaaaaaaaaaaaaaaaaaaaaaaa"
+	alpha := scan.GenerateID()
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -433,7 +453,7 @@ func TestCascadeIsLoadBearing(t *testing.T) {
 	defer cancel()
 	db := ownerDB(t)
 
-	const alpha = "aaaaaaaaaaaaaaaaaaaaaaaaaa"
+	alpha := scan.GenerateID()
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -457,7 +477,7 @@ func TestCascadeIsLoadBearing(t *testing.T) {
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO tenants(id, slug, name) VALUES ('`+alpha+`', 'cascade-proof', 'Cascade Proof');
 		INSERT INTO resource_groups(id, tenant_id, slug, name)
-		  VALUES (repeat('g', 26), '`+alpha+`', 'grp', 'Group');
+		  VALUES ('`+scan.GenerateID()+`', '`+alpha+`', 'grp', 'Group');
 	`); err != nil {
 		t.Fatalf("seed under mutation: %v", err)
 	}

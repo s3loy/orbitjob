@@ -18,14 +18,14 @@ func jobRunObjectWithCancel(t *testing.T, phase string, attempt int) (unstructur
 	spec := obj.Object["spec"].(map[string]any)
 	spec["cancelRequested"] = true
 	stored := jobrun.StoredRun{
-		ID: 11, RevisionID: 7, Phase: jobrun.Phase(phase), Attempt: attempt, MaxAttempts: 3, Epoch: 4,
+		ID: 11, RevisionID: 7, Phase: jobrun.Phase(phase), Attempt: attempt, AttemptUID: "k8s-uid-1", MaxAttempts: 3, Epoch: 4,
 	}
 	return obj, stored
 }
 
 func TestCancelWritesIntentThenConfirmsAfterJobIsGone(t *testing.T) {
 	obj, stored := jobRunObjectWithCancel(t, string(jobrun.Running), 1)
-	runs := &fakeRuns{found: true, stored: stored}
+	runs := &fakeRuns{found: true, stored: stored, reportPhaseChange: true}
 	jobs := &fakeJobs{}
 	rt := newRuntime(t, fakeDynamic(t, &obj), &fakeRevisions{}, runs, jobs)
 
@@ -53,7 +53,7 @@ func TestCancelWaitsWhileJobIsTerminating(t *testing.T) {
 	obj, stored := jobRunObjectWithCancel(t, string(jobrun.Running), 1)
 	// Deletion started moments ago: Kubernetes has not finished reclaiming the
 	// Pods, so the platform cannot yet claim the workload stopped.
-	runs := &fakeRuns{found: true, stored: stored}
+	runs := &fakeRuns{found: true, stored: stored, reportPhaseChange: true}
 	jobs := &fakeJobs{terminationGrace: time.Minute}
 	rt := newRuntime(t, fakeDynamic(t, &obj), &fakeRevisions{}, runs, jobs)
 
@@ -74,7 +74,7 @@ func TestCancelReportsUnknownWhenDeletionNeverCompletes(t *testing.T) {
 	obj, stored := jobRunObjectWithCancel(t, string(jobrun.CancelRequested), 1)
 	// Deletion has been in flight far longer than the confirmation timeout, so
 	// the platform admits it cannot prove the workload stopped.
-	runs := &fakeRuns{found: true, stored: stored}
+	runs := &fakeRuns{found: true, stored: stored, reportPhaseChange: true}
 	stuck := &fakeJobs{terminationGrace: 24 * time.Hour}
 	rt := newRuntime(t, fakeDynamic(t, &obj), &fakeRevisions{}, runs, stuck)
 
@@ -91,7 +91,7 @@ func TestCancelReportsUnknownWhenDeletionNeverCompletes(t *testing.T) {
 
 func TestCancelWithNoAttemptIsImmediatelyComplete(t *testing.T) {
 	obj, stored := jobRunObjectWithCancel(t, string(jobrun.Pending), 0)
-	runs := &fakeRuns{found: true, stored: stored}
+	runs := &fakeRuns{found: true, stored: stored, reportPhaseChange: true}
 	jobs := &fakeJobs{}
 	rt := newRuntime(t, fakeDynamic(t, &obj), &fakeRevisions{}, runs, jobs)
 
@@ -108,7 +108,7 @@ func TestCancelWithNoAttemptIsImmediatelyComplete(t *testing.T) {
 
 func TestCancelDoesNotStartAnotherAttempt(t *testing.T) {
 	obj, stored := jobRunObjectWithCancel(t, string(jobrun.RetryWaiting), 1)
-	runs := &fakeRuns{found: true, stored: stored}
+	runs := &fakeRuns{found: true, stored: stored, reportPhaseChange: true}
 	jobs := &fakeJobs{}
 	revisions := &fakeRevisions{}
 	rt := newRuntime(t, fakeDynamic(t, &obj), revisions, runs, jobs)
@@ -128,7 +128,7 @@ func TestCancelDoesNotStartAnotherAttempt(t *testing.T) {
 
 func TestCancelPropagatesDeleteFailure(t *testing.T) {
 	obj, stored := jobRunObjectWithCancel(t, string(jobrun.Running), 1)
-	runs := &fakeRuns{found: true, stored: stored}
+	runs := &fakeRuns{found: true, stored: stored, reportPhaseChange: true}
 	jobs := &fakeJobs{deleteErr: errors.New("api down")}
 	rt := newRuntime(t, fakeDynamic(t, &obj), &fakeRevisions{}, runs, jobs)
 
@@ -139,5 +139,26 @@ func TestCancelPropagatesDeleteFailure(t *testing.T) {
 		if write.phase == jobrun.Canceled {
 			t.Fatal("must not confirm a cancel whose delete failed")
 		}
+	}
+}
+
+func TestCancelUncertainCreationNeverInfersStoppedFromAbsence(t *testing.T) {
+	obj, stored := jobRunObjectWithCancel(t, string(jobrun.CreatingAttempt), 1)
+	stored.AttemptUID = ""
+	runs := &fakeRuns{found: true, stored: stored, reportPhaseChange: true}
+	rt := newRuntime(t, fakeDynamic(t, &obj), &fakeRevisions{}, runs, &fakeJobs{})
+	requeued := false
+	rt.EnqueueAfter = func(resource, ns, name string, after time.Duration) { requeued = true }
+	if err := rt.ReconcileJobRun(context.Background(), obj); err != nil {
+		t.Fatal(err)
+	}
+	for _, write := range runs.phases {
+		if write.phase == jobrun.Canceled {
+			t.Fatal("empty UID/absent Job does not prove a timed-out Create never committed")
+		}
+	}
+	last := runs.phases[len(runs.phases)-1]
+	if last.phase != jobrun.CancelUnknown || !requeued {
+		t.Fatalf("uncertain creation must remain observed: %+v requeued=%v", runs.phases, requeued)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"orbitjob/internal/platform/scan"
 	"testing"
 	"time"
 
@@ -12,6 +13,8 @@ import (
 	"orbitjob/internal/core/domain/function"
 	"orbitjob/internal/core/domain/revision"
 )
+
+var functionSyncTenant = scan.GenerateID()
 
 // The sync loop is the front half of the function surface: it turns active
 // definition rows into the revisions an invocation pins. The tests pin the
@@ -74,7 +77,7 @@ func newSync(functions FunctionSource, revisions RevisionWriter) *Sync {
 func TestSyncProjectsOneRevisionPerActiveFunction(t *testing.T) {
 	functions := &fakeFunctions{defs: []function.Definition{activeFunction(7, 1), activeFunction(9, 3)}}
 	revisions := &captureRevisions{}
-	synced, err := newSync(functions, revisions).RunTenant(context.Background(), Scope{TenantID: "tenant-a", Namespace: "finance"})
+	synced, err := newSync(functions, revisions).RunTenant(context.Background(), Scope{TenantID: functionSyncTenant, Namespace: "finance"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +85,7 @@ func TestSyncProjectsOneRevisionPerActiveFunction(t *testing.T) {
 		t.Fatalf("synced=%d revisions=%d, want 2/2", synced, len(revisions.revs))
 	}
 	for _, tenant := range revisions.tenants {
-		if tenant != "tenant-a" {
+		if tenant != functionSyncTenant {
 			t.Fatalf("revision written for tenant %q", tenant)
 		}
 	}
@@ -116,14 +119,14 @@ func TestSyncSpecRoundTripsThroughTheRunPipelineDecode(t *testing.T) {
 	def := activeFunction(7, 1)
 	// A group-carrying definition stamps the tier the definition was created
 	// under, the same inheritance a check-sourced revision does.
-	def.ResourceGroupID = "grp-tier-1"
+	def.ResourceGroupID = syncFixtureGroupID
 	revisions := &captureRevisions{}
 	if _, err := newSync(&fakeFunctions{defs: []function.Definition{def}}, revisions).
-		RunTenant(context.Background(), Scope{TenantID: "tenant-a", Namespace: "finance"}); err != nil {
+		RunTenant(context.Background(), Scope{TenantID: functionSyncTenant, Namespace: "finance"}); err != nil {
 		t.Fatal(err)
 	}
 	rev := revisions.revs[0]
-	if rev.ResourceGroupID != "grp-tier-1" {
+	if rev.ResourceGroupID != syncFixtureGroupID {
 		t.Errorf("resource group = %q", rev.ResourceGroupID)
 	}
 
@@ -154,7 +157,7 @@ func TestSyncSkipsAFailingDefinitionWithoutAbortingTheTick(t *testing.T) {
 	synced, err := newSync(
 		&fakeFunctions{defs: []function.Definition{activeFunction(7, 1), activeFunction(9, 1), activeFunction(11, 1)}},
 		revisions,
-	).RunTenant(context.Background(), Scope{TenantID: "tenant-a", Namespace: "finance"})
+	).RunTenant(context.Background(), Scope{TenantID: functionSyncTenant, Namespace: "finance"})
 	if err != nil {
 		t.Fatalf("one bad definition must not abort the tick: %v", err)
 	}
@@ -168,7 +171,7 @@ func TestSyncSkipsAFailingDefinitionWithoutAbortingTheTick(t *testing.T) {
 
 func TestSyncAbortsWhenFunctionsCannotBeListed(t *testing.T) {
 	synced, err := newSync(&fakeFunctions{err: errors.New("connection refused")}, &captureRevisions{}).
-		RunTenant(context.Background(), Scope{TenantID: "tenant-a", Namespace: "finance"})
+		RunTenant(context.Background(), Scope{TenantID: functionSyncTenant, Namespace: "finance"})
 	if err == nil {
 		t.Fatal("expected the list failure to abort the tick")
 	}
@@ -178,10 +181,12 @@ func TestSyncAbortsWhenFunctionsCannotBeListed(t *testing.T) {
 }
 
 func TestSyncRequiresDependencies(t *testing.T) {
-	if _, err := newSync(nil, &captureRevisions{}).RunTenant(context.Background(), Scope{TenantID: "t", Namespace: "ns"}); err == nil {
+	if _, err := newSync(nil, &captureRevisions{}).RunTenant(context.Background(), Scope{TenantID: functionSyncTenant, Namespace: "ns"}); err == nil {
 		t.Fatal("expected missing function source to be refused")
 	}
-	if _, err := newSync(&fakeFunctions{}, nil).RunTenant(context.Background(), Scope{TenantID: "t", Namespace: "ns"}); err == nil {
+	if _, err := newSync(&fakeFunctions{}, nil).RunTenant(context.Background(), Scope{TenantID: functionSyncTenant, Namespace: "ns"}); err == nil {
 		t.Fatal("expected missing revision writer to be refused")
 	}
 }
+
+var syncFixtureGroupID = scan.GenerateID()

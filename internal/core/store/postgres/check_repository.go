@@ -80,7 +80,7 @@ func (r *CheckRepository) Create(ctx context.Context, spec check.CreateSpec) (ch
 		) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16, $17)
 		RETURNING id, name, description, tenant_id, resource_group_id, status, check_type, check_config, assertion_rules,
 		          schedule_type, cron_expr, interval_sec, timezone, timeout_sec, retry_limit,
-		          priority, labels, next_run_at, version, created_at, updated_at
+		          priority, labels, next_run_at, version, created_at, updated_at, execution_policy_version
 	`, spec.Name, description, spec.TenantID, check.StatusActive, spec.CheckType,
 		checkConfigBytes, rulesBytes, spec.ScheduleType, cronExpr, intervalSec,
 		spec.Timezone, spec.TimeoutSec, spec.RetryLimit, spec.Priority, labelsBytes, nextRunAtParam,
@@ -89,7 +89,7 @@ func (r *CheckRepository) Create(ctx context.Context, spec check.CreateSpec) (ch
 		&snap.ID, &snap.Name, &snap.Description, &snap.TenantID, &resourceGroup, &snap.Status, &snap.CheckType,
 		&checkConfigRaw, &assertionRulesRaw, &snap.ScheduleType, &snap.CronExpr, &snap.IntervalSec,
 		&snap.Timezone, &snap.TimeoutSec, &snap.RetryLimit, &snap.Priority, &labelsRaw,
-		&nextRunAt, &snap.Version, &snap.CreatedAt, &snap.UpdatedAt,
+		&nextRunAt, &snap.Version, &snap.CreatedAt, &snap.UpdatedAt, &snap.ExecutionPolicyVersion,
 	)
 	if err != nil {
 		return check.Snapshot{}, fmt.Errorf("insert check: %w", err)
@@ -179,12 +179,12 @@ func (r *CheckRepository) ChangeStatus(ctx context.Context, tenantID, resourceGr
 		WHERE tenant_id = $2 AND id = $3 AND version = $4 AND deleted_at IS NULL
 		RETURNING id, name, description, tenant_id, resource_group_id, status, check_type, check_config, assertion_rules,
 		          schedule_type, cron_expr, interval_sec, timezone, timeout_sec, retry_limit,
-		          priority, labels, next_run_at, version, created_at, updated_at
+		          priority, labels, next_run_at, version, created_at, updated_at, execution_policy_version
 	`, nextStatus, tenantID, id, version).Scan(
 		&snap.ID, &snap.Name, &snap.Description, &snap.TenantID, &resourceGroup, &snap.Status, &snap.CheckType,
 		&checkConfigRaw, &assertionRulesRaw, &snap.ScheduleType, &snap.CronExpr, &snap.IntervalSec,
 		&snap.Timezone, &snap.TimeoutSec, &snap.RetryLimit, &snap.Priority, &labelsRaw,
-		&nextRunAt, &snap.Version, &snap.CreatedAt, &snap.UpdatedAt,
+		&nextRunAt, &snap.Version, &snap.CreatedAt, &snap.UpdatedAt, &snap.ExecutionPolicyVersion,
 	)
 	if len(checkConfigRaw) > 0 {
 		_ = json.Unmarshal(checkConfigRaw, &snap.CheckConfig)
@@ -312,7 +312,7 @@ func (r *CheckRepository) ListDue(ctx context.Context, tenantID string, now time
 	rows, err := tx.QueryContext(ctx, `
 		SELECT id, name, description, tenant_id, resource_group_id, status, check_type, check_config, assertion_rules,
 		       schedule_type, cron_expr, interval_sec, timezone, timeout_sec, retry_limit,
-		       priority, labels, next_run_at, version, created_at, updated_at
+		       priority, labels, next_run_at, version, created_at, updated_at, execution_policy_version
 		FROM checks
 		WHERE tenant_id = $1 AND status = 'active' AND next_run_at <= $2 AND deleted_at IS NULL
 		ORDER BY next_run_at ASC, priority DESC
@@ -333,7 +333,7 @@ func (r *CheckRepository) ListDue(ctx context.Context, tenantID string, now time
 			&snap.ID, &snap.Name, &snap.Description, &snap.TenantID, &resourceGroup, &snap.Status, &snap.CheckType,
 			&checkConfigRaw, &assertionRulesRaw, &snap.ScheduleType, &snap.CronExpr, &snap.IntervalSec,
 			&snap.Timezone, &snap.TimeoutSec, &snap.RetryLimit, &snap.Priority, &labelsRaw,
-			&nextRunAt, &snap.Version, &snap.CreatedAt, &snap.UpdatedAt,
+			&nextRunAt, &snap.Version, &snap.CreatedAt, &snap.UpdatedAt, &snap.ExecutionPolicyVersion,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan check: %w", err)
@@ -427,14 +427,14 @@ func (r *CheckRepository) GetByID(ctx context.Context, tenantID string, id int64
 	scanErr := tx.QueryRowContext(ctx, `
 		SELECT id, name, description, tenant_id, resource_group_id, status, check_type, check_config, assertion_rules,
 		       schedule_type, cron_expr, interval_sec, timezone, timeout_sec, retry_limit,
-		       priority, labels, next_run_at, version, created_at, updated_at
+		       priority, labels, next_run_at, version, created_at, updated_at, execution_policy_version
 		FROM checks
 		WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
 	`, tenantID, id).Scan(
 		&snap.ID, &snap.Name, &snap.Description, &snap.TenantID, &resourceGroup, &snap.Status, &snap.CheckType,
 		&checkConfigRaw, &assertionRulesRaw, &snap.ScheduleType, &snap.CronExpr, &snap.IntervalSec,
 		&snap.Timezone, &snap.TimeoutSec, &snap.RetryLimit, &snap.Priority, &labelsRaw,
-		&nextRunAt, &snap.Version, &snap.CreatedAt, &snap.UpdatedAt,
+		&nextRunAt, &snap.Version, &snap.CreatedAt, &snap.UpdatedAt, &snap.ExecutionPolicyVersion,
 	)
 	if scanErr == sql.ErrNoRows {
 		return check.Snapshot{}, &resource.NotFoundError{Resource: "check", ID: id}

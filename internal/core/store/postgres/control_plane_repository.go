@@ -40,9 +40,22 @@ var ErrNoAttempt = errors.New("no attempt owns kubernetes job")
 // object whose immutable UID does not match the attempt that owns the name.
 var ErrAttemptOwnership = errors.New("kubernetes job uid does not own attempt")
 
+// ErrRunChanged means the caller's attempt no longer matches the locked run.
+var ErrRunChanged = errors.New("run changed before attempt write")
+
+// ErrWorkflowStopped distinguishes durable parent stop intent from a transient
+// child race, so the runtime converges through cancellation instead of spinning.
+var ErrWorkflowStopped = fmt.Errorf("workflow no longer permits new work: %w", ErrRunChanged)
+
+// ErrWorkflowBlocked quarantines uncertain work without implying cancellation.
+var ErrWorkflowBlocked = fmt.Errorf("workflow execution is uncertain: %w", ErrRunChanged)
+
+// ErrStaleObservation means a newer or terminal attempt observation is stored.
+var ErrStaleObservation = errors.New("stale kubernetes job observation")
+
 // sourceModeKubernetes is the source a ScheduledJob CR is projected from.
 // Check definitions materialize under the check domain's SourceModeCheck; the
-// revision-sourced listings read both (see revisionSourceModes).
+// revision-sourced listings read each execution source (see revisionSourceModes).
 const sourceModeKubernetes = "kubernetes"
 
 // Audit vocabulary for the run ledger.
@@ -113,9 +126,8 @@ func validateActor(actor string) error {
 // insertControlPlaneAudit appends one ledger-change row using the caller's
 // transaction, so the change and its record commit together (ADR 0005).
 //
-// actor_type is 'system' because every writer of these tables is a control-plane
-// process. The identity that asked for the work travels in actor_id and, for a
-// run, in job_run_control_plane.actor.
+// Control-plane processes retain system attribution. A direct human request
+// carries verified user context; later operator writes retain their writer type.
 func insertControlPlaneAudit(
 	ctx context.Context, tx *sql.Tx,
 	tenantID, actor, eventType, resourceType, resourceID string, diff map[string]any,
@@ -127,11 +139,12 @@ func insertControlPlaneAudit(
 	if err != nil {
 		return fmt.Errorf("encode audit diff: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `
+	query := `
 		INSERT INTO audit_events
 			(tenant_id, actor_type, actor_id, event_type, resource_type, resource_id, diff)
 		VALUES ($1, 'system', NULLIF($2, ''), $3, $4, $5, $6::jsonb)
-	`, tenantID, actor, eventType, resourceType, resourceID, string(encoded)); err != nil {
+	`
+	if _, err := tx.ExecContext(ctx, query, tenantID, actor, eventType, resourceType, resourceID, string(encoded)); err != nil {
 		return fmt.Errorf("insert audit event: %w", err)
 	}
 	return nil
@@ -157,12 +170,17 @@ const selectRevisionIdentitySQL = `
 SELECT id, spec_hash FROM job_definition_revisions
 WHERE source_mode=$1 AND source_uid=$2 AND generation=$3 AND tenant_id=$4`
 
+const lockRevisionSQL = `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`
+
 const deactivateRevisionsSQL = `
 UPDATE job_definition_revisions SET is_active=false
-WHERE source_mode=$1 AND source_uid=$2 AND tenant_id=$3 AND is_active AND id <> $4`
+WHERE source_mode=$1 AND source_uid=$2 AND tenant_id=$3 AND is_active AND id <> $4
+ AND generation <= (SELECT generation FROM job_definition_revisions WHERE id=$4 AND tenant_id=$3)`
 
 const activateRevisionSQL = `
-UPDATE job_definition_revisions SET is_active=true WHERE id=$1 AND tenant_id=$2 AND NOT is_active`
+UPDATE job_definition_revisions r SET is_active=true,activated_at=COALESCE(activated_at,clock_timestamp()) WHERE id=$1 AND tenant_id=$2 AND NOT is_active
+ AND NOT EXISTS (SELECT 1 FROM job_definition_revisions newer
+ WHERE newer.tenant_id=r.tenant_id AND newer.source_mode=r.source_mode AND newer.source_uid=r.source_uid AND newer.generation>r.generation)`
 
 // ApplyRevisionForTenant projects one ScheduledJob generation into an immutable
 // revision and atomically switches the active pointer. Reprojecting the same
@@ -183,7 +201,19 @@ func (r *ControlPlaneRepository) ApplyRevisionForTenant(ctx context.Context, ten
 		id      int64
 		created bool
 	)
-	err := r.WithTenantTransaction(ctx, tenantID, func(ctx context.Context, tx *sql.Tx) error {
+	err := withAdmissionTx(ctx, r.db, tenantID, func(ctx context.Context, tx *sql.Tx) error {
+		// A definition can have no row yet. An advisory transaction lock also
+		// serializes that first generation against concurrent projections.
+		if _, err := tx.ExecContext(ctx, lockRevisionSQL, sourceLockKey(tenantID, rev.Identity.SourceMode, rev.Identity.SourceUID)); err != nil {
+			return err
+		}
+		control, _, err := readSourceControl(ctx, tx, tenantID, rev.Identity.SourceMode, rev.Identity.SourceUID)
+		if err != nil {
+			return err
+		}
+		if control.Tombstoned {
+			return &jobrun.AdmissionBlockedError{Reason: "source_deleted"}
+		}
 		insertErr := tx.QueryRowContext(ctx, applyRevisionSQL,
 			tenantID, rev.Identity.SourceMode, rev.Identity.SourceUID,
 			rev.Identity.Namespace, rev.Identity.Name, rev.Generation,
@@ -313,29 +343,31 @@ func (r *ControlPlaneRepository) ActiveRevision(ctx context.Context, tenantID, s
 // ActiveFunctionRevision reads the active revision a function invocation pins:
 // the job_definition_revisions row at (source_mode='function', source_uid,
 // is_active), which the operator's revision-sync loop materializes from the
-// function's current version. It returns the revision's id -- the identity the
-// JobRun custom resource requires before publish -- and the scheduling
-// namespace the object is published into. A definition whose sync has not run
+// function's current version. Identity and execution fields come from the same
+// immutable row, including the timeout when the current definition is newer.
+// A definition whose sync has not run
 // yet has no row: that is NotFoundError, the caller's "no active revision"
 // answer, and re-asking after the next sync tick is the designed recovery.
-func (r *ControlPlaneRepository) ActiveFunctionRevision(ctx context.Context, tenantID, sourceUID string) (revisionID int64, namespace string, err error) {
-	err = r.WithTenantTransaction(ctx, tenantID, func(ctx context.Context, tx *sql.Tx) error {
-		scanErr := tx.QueryRowContext(ctx, `
-			SELECT id, source_namespace FROM job_definition_revisions
-			WHERE source_mode=$1 AND source_uid=$2 AND tenant_id=$3 AND is_active
-		`, function.SourceModeFunction, sourceUID, tenantID).Scan(&revisionID, &namespace)
+func (r *ControlPlaneRepository) ActiveFunctionRevision(ctx context.Context, tenantID, sourceUID string) (revision.Revision, error) {
+	var out revision.Revision
+	err := r.WithTenantTransaction(ctx, tenantID, func(ctx context.Context, tx *sql.Tx) error {
+		rev, scanErr := scanRevision(tx.QueryRowContext(ctx,
+			`SELECT `+revisionColumns+` FROM job_definition_revisions
+			 WHERE source_mode=$1 AND source_uid=$2 AND tenant_id=$3 AND is_active`,
+			function.SourceModeFunction, sourceUID, tenantID))
 		if errors.Is(scanErr, sql.ErrNoRows) {
 			return &resource.NotFoundError{Resource: "function_definition_revision", ID: sourceUID}
 		}
 		if scanErr != nil {
 			return fmt.Errorf("active function revision for %s: %w", sourceUID, scanErr)
 		}
+		out = rev
 		return nil
 	})
 	if err != nil {
-		return 0, "", err
+		return revision.Revision{}, err
 	}
-	return revisionID, namespace, nil
+	return out, nil
 }
 
 const activeRevisionsSQL = `
@@ -344,13 +376,11 @@ FROM job_definition_revisions
 WHERE is_active AND source_mode = ANY($2) AND tenant_id=$1
 ORDER BY source_uid`
 
-// revisionSourceModes lists the sources active revisions are listed for. Both
-// the job scheduler and retention walk this list: a ScheduledJob revision
-// carries its schedule in the spec, and a check revision synthesizes an empty
-// one (its cursor is checks.next_run_at), which the job scheduler skips.
-// Retention reads both so check runs age out like every other run.
+// revisionSourceModes lists ordinary execution sources. Checks use their own
+// cursor and functions are invoke-only, so both have an empty cron schedule;
+// listing them allows run recovery and retention without scheduling new work.
 func revisionSourceModes() []string {
-	return []string{sourceModeKubernetes, check.SourceModeCheck}
+	return []string{sourceModeKubernetes, check.SourceModeCheck, function.SourceModeFunction}
 }
 
 // ActiveRevisions lists every definition the scheduler may fire for a tenant.
@@ -384,9 +414,8 @@ ORDER BY source_uid`
 
 // ActiveWorkflowRevisions lists the tenant's active workflow revisions -- the
 // one listing workflow-sourced rows in the store. ActiveRevisions deliberately
-// stops short of them because its result feeds the scheduler, and a scheduled
-// workflow firing is a separate future feature; retention needs the workflow
-// rows, so it reads this narrower source instead.
+// stops short of them because ordinary Job scheduling decodes a different
+// spec. Workflow scheduling and retention share this narrower source instead.
 func (r *ControlPlaneRepository) ActiveWorkflowRevisions(ctx context.Context, tenantID string) ([]revision.Revision, error) {
 	var out []revision.Revision
 	err := r.WithTenantTransaction(ctx, tenantID, func(ctx context.Context, tx *sql.Tx) error {
@@ -449,7 +478,11 @@ ON CONFLICT (source_uid, occurrence_key) DO NOTHING
 RETURNING id`
 
 const selectOccurrenceSQL = `
-SELECT id, revision_id, phase, attempt, max_attempts, scheduled_for
+SELECT id, revision_id, phase, attempt, max_attempts, scheduled_for,
+ COALESCE((SELECT a.kubernetes_job_uid FROM job_run_attempts_control_plane a
+ WHERE a.run_id=job_run_control_plane.id AND a.attempt_number=job_run_control_plane.attempt),''),
+ COALESCE((SELECT a.kubernetes_job_name FROM job_run_attempts_control_plane a
+ WHERE a.run_id=job_run_control_plane.id AND a.attempt_number=job_run_control_plane.attempt),'')
 FROM job_run_control_plane WHERE source_uid=$1 AND occurrence_key=$2 AND tenant_id=$3`
 
 func scanStoredRun(ctx context.Context, tx *sql.Tx, tenantID, sourceUID, occurrenceKey string) (jobrun.StoredRun, error) {
@@ -459,7 +492,7 @@ func scanStoredRun(ctx context.Context, tx *sql.Tx, tenantID, sourceUID, occurre
 		scheduledFor sql.NullTime
 	)
 	err := tx.QueryRowContext(ctx, selectOccurrenceSQL, sourceUID, occurrenceKey, tenantID).
-		Scan(&out.ID, &out.RevisionID, &phase, &out.Attempt, &out.MaxAttempts, &scheduledFor)
+		Scan(&out.ID, &out.RevisionID, &phase, &out.Attempt, &out.MaxAttempts, &scheduledFor, &out.AttemptUID, &out.AttemptJobName)
 	if err != nil {
 		return jobrun.StoredRun{}, err
 	}
@@ -484,6 +517,24 @@ func scanStoredRun(ctx context.Context, tx *sql.Tx, tenantID, sourceUID, occurre
 func (r *ControlPlaneRepository) CreateOccurrenceForTenant(
 	ctx context.Context, tenantID string, run jobrun.JobRun, maxAttempts int, actor string,
 ) (jobrun.StoredRun, bool, error) {
+	return r.createOccurrence(ctx, tenantID, run, maxAttempts, actor, false)
+}
+
+// CancelUnadmittedOccurrenceForTenant records only a verified never-executed
+// CR-first request. The caller must establish absence of execution. An existing
+// row is returned unchanged so its ordinary cancellation guards remain in force.
+func (r *ControlPlaneRepository) CancelUnadmittedOccurrenceForTenant(
+	ctx context.Context, tenantID string, run jobrun.JobRun, maxAttempts int, actor string,
+) (jobrun.StoredRun, bool, error) {
+	if run.Trigger != jobrun.Manual && run.Trigger != jobrun.Function {
+		return jobrun.StoredRun{}, false, fmt.Errorf("only CR-first requests can be canceled before admission")
+	}
+	return r.createOccurrence(ctx, tenantID, run, maxAttempts, actor, true)
+}
+
+func (r *ControlPlaneRepository) createOccurrence(
+	ctx context.Context, tenantID string, run jobrun.JobRun, maxAttempts int, actor string, canceled bool,
+) (jobrun.StoredRun, bool, error) {
 	if run.SourceUID == "" || run.OccurrenceKey == "" {
 		return jobrun.StoredRun{}, false, fmt.Errorf("run identity is required")
 	}
@@ -505,7 +556,37 @@ func (r *ControlPlaneRepository) CreateOccurrenceForTenant(
 		state   jobrun.StoredRun
 		created bool
 	)
-	err = r.WithTenantTransaction(ctx, tenantID, func(ctx context.Context, tx *sql.Tx) error {
+	err = withAdmissionTx(ctx, r.db, tenantID, func(ctx context.Context, tx *sql.Tx) error {
+		mode, lockErr := lockAdmissionSource(ctx, tx, tenantID, run.SourceUID, revisionID, "")
+		if lockErr != nil {
+			return lockErr
+		}
+		existing, findErr := scanStoredRun(ctx, tx, tenantID, run.SourceUID, run.OccurrenceKey)
+		if findErr == nil {
+			state = existing
+			return nil
+		}
+		if !errors.Is(findErr, sql.ErrNoRows) {
+			return findErr
+		}
+		if !canceled {
+			if err := checkSourceAdmission(ctx, tx, tenantID, mode, run.SourceUID, run.Trigger); err != nil {
+				return err
+			}
+			if !run.ScheduledFor.IsZero() {
+				var eligible bool
+				if err := tx.QueryRowContext(ctx, `SELECT is_active AND COALESCE(activated_at,created_at) <= $3 FROM job_definition_revisions WHERE id=$1 AND tenant_id=$2`, revisionID, tenantID, run.ScheduledFor.UTC()).Scan(&eligible); err != nil {
+					return err
+				}
+				if !eligible {
+					return &jobrun.AdmissionBlockedError{Reason: "before_revision_activation"}
+				}
+			}
+		}
+		phase := jobrun.Pending
+		if canceled {
+			phase = jobrun.Canceled
+		}
 		var scheduledFor any
 		if !run.ScheduledFor.IsZero() {
 			scheduledFor = run.ScheduledFor.UTC()
@@ -513,7 +594,7 @@ func (r *ControlPlaneRepository) CreateOccurrenceForTenant(
 		var id int64
 		insertErr := tx.QueryRowContext(ctx, insertOccurrenceSQL,
 			tenantID, run.SourceUID, revisionID, run.OccurrenceKey,
-			string(run.Trigger), actor, string(jobrun.Pending), maxAttempts,
+			string(run.Trigger), actor, string(phase), maxAttempts,
 			scheduledFor,
 			nil, // a plain occurrence is nobody's step: the pointer stays NULL
 		).Scan(&id)
@@ -542,6 +623,7 @@ func (r *ControlPlaneRepository) CreateOccurrenceForTenant(
 				"trigger":        string(run.Trigger),
 			})
 	})
+	recordAdmission(ctx, tenantID, run.SourceUID, created, err)
 	if err != nil {
 		return jobrun.StoredRun{}, false, err
 	}
@@ -585,10 +667,9 @@ func (r *ControlPlaneRepository) RunByOccurrence(
 // nothing deletes Job objects, so the informer re-delivers them and an unguarded
 // write would make the run oscillate with every resync.
 //
-// The statement writes when the phase or the attempt counter would change, and
-// only then. Skipping a true no-op keeps a resync from rewriting the row, but
-// the counter is still corrected when it lags the attempts table -- that lag is
-// what makes the next reconcile start an attempt for a Job already running.
+// The observation must belong to the current attempt and move forward. Only
+// CreateAttemptForTenant may advance the counter, in its attempt transaction.
+// Cancellation is authoritative over an old Job's ordinary observations.
 const updateRunPhaseSQL = `
 WITH prior AS (
   SELECT phase AS prior_phase, attempt AS prior_attempt, actor AS run_actor
@@ -602,12 +683,22 @@ FROM prior
 WHERE r.id=$1 AND r.tenant_id=$2
   AND (r.phase <> $3 OR r.attempt <> $4)
   AND NOT (r.phase = ANY($6))
+  AND r.attempt=$4
+  AND ($3 NOT IN ('Succeeded','Failed','RetryWaiting','Canceled') OR NOT EXISTS (
+    SELECT 1 FROM job_run_attempts_control_plane a WHERE a.tenant_id=r.tenant_id AND a.run_id=r.id
+    AND ` + pendingEvidenceSQL + `))
+  AND ((r.phase='Pending' AND ($3='CancelRequested' OR ($3='Canceled' AND r.attempt=0)))
+    OR (r.phase='CreatingAttempt' AND $3 IN ('Running','RetryWaiting','Succeeded','Failed','CancelRequested'))
+    OR (r.phase='Running' AND $3 IN ('RetryWaiting','Succeeded','Failed','CancelRequested'))
+    OR (r.phase='RetryWaiting' AND $3 IN ('Failed','CancelRequested'))
+    OR (r.phase='ExecutionUnknown' AND $3 IN ('Running','RetryWaiting','Succeeded','CancelRequested'))
+    OR (r.phase='CancelRequested' AND $3 IN ('Canceled','CancelUnknown'))
+    OR (r.phase='CancelUnknown' AND $3='Canceled'))
 RETURNING r.phase, prior.prior_phase, prior.prior_attempt, prior.run_actor`
 
 const selectRunProgressSQL = `SELECT phase, attempt FROM job_run_control_plane WHERE id=$1 AND tenant_id=$2`
 
-// UpdateRunPhase advances a run to a new phase and, in the same write, the
-// attempt counter the next reconcile reads. It reports whether this write
+// UpdateRunPhase advances the current attempt's run phase. It reports whether this write
 // changed the run's phase: a resync that observes what is already stored must
 // not re-fire the terminal-phase bookkeeping (the check read model, SLI
 // snapshots, metrics) that only a real transition earns.
@@ -620,6 +711,29 @@ func (r *ControlPlaneRepository) UpdateRunPhase(
 ) (bool, error) {
 	changed := false
 	err := r.WithTenantTransaction(ctx, tenantID, func(ctx context.Context, tx *sql.Tx) error {
+		var parent sql.NullInt64
+		finishing := attempt > 0 && (jobrun.Terminal(phase) || phase == jobrun.RetryWaiting)
+		if finishing || phase == jobrun.CancelUnknown {
+			var err error
+			parent, err = lockWorkflowParentForObservation(ctx, tx, tenantID, runID)
+			if err != nil {
+				return err
+			}
+		}
+		if finishing {
+			// Acquire the run before the phase statement takes its snapshot.
+			// Otherwise a pending proof committed while waiting for its lock
+			// could be invisible to that statement's retention predicate.
+			var lockedID int64
+			if err := tx.QueryRowContext(ctx, `SELECT id FROM job_run_control_plane WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, tenantID, runID).Scan(&lockedID); err != nil {
+				return err
+			}
+		}
+		if phase == jobrun.Canceled && attempt > 0 {
+			if err := requireCancellationEvidence(ctx, tx, tenantID, runID, attempt); err != nil {
+				return err
+			}
+		}
 		var (
 			newPhase     string
 			priorPhase   string
@@ -631,6 +745,11 @@ func (r *ControlPlaneRepository) UpdateRunPhase(
 		).Scan(&newPhase, &priorPhase, &priorAttempt, &runActor)
 		if scanErr == nil {
 			changed = priorPhase != newPhase
+			if phase == jobrun.CancelUnknown {
+				if err := isolateWorkflowForUnknown(ctx, tx, tenantID, parent, r.now().UTC()); err != nil {
+					return err
+				}
+			}
 			return insertControlPlaneAudit(ctx, tx, tenantID, runActor, auditEventRunStatusChanged,
 				auditResourceRun, strconv.FormatInt(runID, 10), map[string]any{
 					"from_phase":   priorPhase,
@@ -659,13 +778,20 @@ func (r *ControlPlaneRepository) UpdateRunPhase(
 			return readErr
 		}
 		if current == string(phase) && currentAttempt == attempt {
+			if phase == jobrun.CancelUnknown {
+				return isolateWorkflowForUnknown(ctx, tx, tenantID, parent, r.now().UTC())
+			}
 			return nil
 		}
 		if jobrun.Terminal(jobrun.Phase(current)) {
 			return jobrun.ErrRunTerminal
 		}
-		return fmt.Errorf("run %d phase write matched no row while in phase %s attempt %d",
-			runID, current, currentAttempt)
+		if attempt > currentAttempt {
+			return ErrRunChanged
+		}
+		// Older attempts and backward observations are an expected informer
+		// replay. They must not undo cancellation or a completed retry.
+		return nil
 	})
 	return changed, err
 }
@@ -686,7 +812,7 @@ func (r *ControlPlaneRepository) CountOpenRuns(ctx context.Context, tenantID, so
 }
 
 const openRunsSQL = `
-SELECT id, revision_id, occurrence_key, phase, scheduled_for
+SELECT id, revision_id, occurrence_key, phase, scheduled_for, trigger, actor
 FROM job_run_control_plane
 WHERE tenant_id=$1 AND source_uid=$2 AND phase <> ALL($3)
 ORDER BY id`
@@ -708,7 +834,7 @@ func (r *ControlPlaneRepository) OpenRuns(ctx context.Context, tenantID, sourceU
 				phase        string
 				scheduledFor sql.NullTime
 			)
-			if scanErr := rows.Scan(&run.ID, &run.RevisionID, &run.OccurrenceKey, &phase, &scheduledFor); scanErr != nil {
+			if scanErr := rows.Scan(&run.ID, &run.RevisionID, &run.OccurrenceKey, &phase, &scheduledFor, &run.Trigger, &run.Actor); scanErr != nil {
 				return scanErr
 			}
 			run.Phase = jobrun.Phase(phase)
@@ -735,21 +861,30 @@ func (r *ControlPlaneRepository) OpenRuns(ctx context.Context, tenantID, sourceU
 // under a live workflow. Steps age out through the workflow prune's
 // steps-then-row pass, which is the only writer allowed to delete them.
 const prunableRunsSQL = `
-SELECT id, occurrence_key, phase FROM (
-  SELECT id, occurrence_key, phase,
+SELECT id, occurrence_key, phase, revision_id, trigger FROM (
+  SELECT id, occurrence_key, phase, revision_id, trigger,
          row_number() OVER (PARTITION BY phase ORDER BY created_at DESC, id DESC) AS rank,
          CASE WHEN phase = $4 THEN $5::int ELSE $6::int END AS keep
   FROM job_run_control_plane
   WHERE tenant_id=$1 AND source_uid=$2 AND phase = ANY($3) AND workflow_run_id IS NULL
+    AND outcome_recorded_at IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM job_run_attempts_control_plane a
+      WHERE a.tenant_id=job_run_control_plane.tenant_id AND a.run_id=job_run_control_plane.id
+      AND ` + pendingEvidenceSQL + `)
+    AND (updated_at<now()-interval '15 days' OR EXISTS (
+      SELECT 1 FROM execution_log_archives e WHERE e.tenant_id=job_run_control_plane.tenant_id
+      AND e.run_id=job_run_control_plane.id AND e.state IN ('expired','deleted')))
+    AND NOT EXISTS (SELECT 1 FROM execution_log_archives e
+      WHERE e.tenant_id=job_run_control_plane.tenant_id AND e.run_id=job_run_control_plane.id
+      AND e.state NOT IN ('expired','deleted') AND (e.protected_until IS NULL OR e.protected_until>now()))
 ) ranked
 WHERE rank > keep
 ORDER BY id`
 
-// retentionPhases is the set retention may delete: the terminal phases plus
-// CancelUnknown, a stop the platform issued and never observed, which retention
-// resolves after the same window as the failures.
+// Only verified terminal outcomes can release their history and source slot.
+// Unknown execution or cancellation remains quarantined without a time limit.
 func retentionPhases() []string {
-	return append(terminalPhases(), string(jobrun.CancelUnknown))
+	return terminalPhases()
 }
 
 // PrunableRuns lists runs beyond the retained history for a definition. Rows are
@@ -757,10 +892,7 @@ func retentionPhases() []string {
 // and vice versa. Only phases in retentionPhases are eligible, and a run that
 // started executing between the scan and the delete is left alone by DeleteRun.
 //
-// retentionPhases includes CancelUnknown, which jobrun.Terminal does not call
-// terminal: a run whose stop was never observed may still be live, so pruning it
-// can orphan its Kubernetes Job. That is the retention policy handed down here,
-// not a decision this statement makes.
+// Cancellation uncertainty is not a failure-retention outcome.
 func (r *ControlPlaneRepository) PrunableRuns(
 	ctx context.Context, tenantID, sourceUID string, keepSuccessful, keepFailed int,
 ) ([]jobrun.PrunableRun, error) {
@@ -783,7 +915,7 @@ func (r *ControlPlaneRepository) PrunableRuns(
 				run   jobrun.PrunableRun
 				phase string
 			)
-			if scanErr := rows.Scan(&run.ID, &run.OccurrenceKey, &phase); scanErr != nil {
+			if scanErr := rows.Scan(&run.ID, &run.OccurrenceKey, &phase, &run.RevisionID, &run.Trigger); scanErr != nil {
 				return scanErr
 			}
 			run.Phase = jobrun.Phase(phase)
@@ -800,6 +932,16 @@ func (r *ControlPlaneRepository) PrunableRuns(
 const deleteRunSQL = `
 DELETE FROM job_run_control_plane
 WHERE id=$1 AND tenant_id=$2 AND phase = ANY($3) AND workflow_run_id IS NULL
+ AND outcome_recorded_at IS NOT NULL
+ AND NOT EXISTS (SELECT 1 FROM job_run_attempts_control_plane a
+   WHERE a.tenant_id=job_run_control_plane.tenant_id AND a.run_id=job_run_control_plane.id
+   AND ` + pendingEvidenceSQL + `)
+ AND (updated_at<now()-interval '15 days' OR EXISTS (
+   SELECT 1 FROM execution_log_archives e WHERE e.tenant_id=job_run_control_plane.tenant_id
+   AND e.run_id=job_run_control_plane.id AND e.state IN ('expired','deleted')))
+ AND NOT EXISTS (SELECT 1 FROM execution_log_archives e
+   WHERE e.tenant_id=job_run_control_plane.tenant_id AND e.run_id=job_run_control_plane.id
+   AND e.state NOT IN ('expired','deleted') AND (e.protected_until IS NULL OR e.protected_until>now()))
 RETURNING occurrence_key, phase, actor`
 
 // DeleteRun removes one pruned run and records the removal. The phase predicate
@@ -813,12 +955,20 @@ RETURNING occurrence_key, phase, actor`
 func (r *ControlPlaneRepository) DeleteRun(ctx context.Context, tenantID string, runID int64) (bool, error) {
 	var deleted bool
 	err := r.WithTenantTransaction(ctx, tenantID, func(ctx context.Context, tx *sql.Tx) error {
+		var lockedID int64
+		lockErr := tx.QueryRowContext(ctx, `SELECT id FROM job_run_control_plane WHERE id=$1 AND tenant_id=$2 FOR UPDATE`, runID, tenantID).Scan(&lockedID)
+		if errors.Is(lockErr, sql.ErrNoRows) {
+			return nil
+		}
+		if lockErr != nil {
+			return lockErr
+		}
 		var (
 			occurrenceKey string
 			phase         string
 			actor         string
 		)
-		scanErr := tx.QueryRowContext(ctx, deleteRunSQL, runID, tenantID, terminalPhases()).
+		scanErr := tx.QueryRowContext(ctx, deleteRunSQL, runID, tenantID, retentionPhases()).
 			Scan(&occurrenceKey, &phase, &actor)
 		if errors.Is(scanErr, sql.ErrNoRows) {
 			return nil
@@ -849,17 +999,23 @@ INSERT INTO job_run_attempts_control_plane
    kubernetes_job_uid, observed_resource_version, started_at)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 ON CONFLICT (run_id, attempt_number) DO UPDATE
-  SET observed_resource_version = COALESCE(NULLIF(EXCLUDED.observed_resource_version,''),
-                                     job_run_attempts_control_plane.observed_resource_version)
+  SET kubernetes_job_name = job_run_attempts_control_plane.kubernetes_job_name
   WHERE job_run_attempts_control_plane.kubernetes_job_name = EXCLUDED.kubernetes_job_name
-    AND job_run_attempts_control_plane.kubernetes_job_uid = EXCLUDED.kubernetes_job_uid
+    AND (EXCLUDED.kubernetes_job_uid='' OR job_run_attempts_control_plane.kubernetes_job_uid = EXCLUDED.kubernetes_job_uid)
 RETURNING id`
 
 const advanceRunForAttemptSQL = `
 UPDATE job_run_control_plane
-SET phase=$1, attempt=$2, updated_at=$3
+SET phase=CASE WHEN attempt=$2 THEN phase ELSE $1 END, attempt=$2, updated_at=$3
 WHERE id=$4 AND tenant_id=$5 AND NOT (phase = ANY($6))
+  AND NOT EXISTS (SELECT 1 FROM job_run_attempts_control_plane a
+    WHERE a.tenant_id=job_run_control_plane.tenant_id AND a.run_id=job_run_control_plane.id
+    AND ` + pendingEvidenceSQL + `)
+  AND ((phase IN ('Pending','RetryWaiting') AND attempt+1=$2 AND $2<=max_attempts)
+    OR (phase IN ('CreatingAttempt','Running') AND attempt=$2))
 RETURNING actor`
+
+const lockRunForAttemptSQL = `SELECT id FROM job_run_control_plane WHERE id=$1 AND tenant_id=$2 FOR UPDATE`
 
 // CreateAttemptForTenant records one platform attempt and advances its run in
 // the same transaction.
@@ -878,10 +1034,33 @@ RETURNING actor`
 func (r *ControlPlaneRepository) CreateAttemptForTenant(
 	ctx context.Context, tenantID string, runID int64, attempt jobrun.Attempt, runPhase jobrun.Phase,
 ) error {
-	if attempt.Number < 1 || attempt.KubernetesJobName == "" || attempt.KubernetesJobUID == "" {
+	return r.createAttemptForTenant(ctx, tenantID, runID, attempt, runPhase, false)
+}
+
+func (r *ControlPlaneRepository) createAttemptForTenant(ctx context.Context, tenantID string, runID int64, attempt jobrun.Attempt, runPhase jobrun.Phase, reservation bool) error {
+	if attempt.Number < 1 || attempt.KubernetesJobName == "" || (attempt.KubernetesJobUID == "" && !reservation) || (runPhase != jobrun.CreatingAttempt && runPhase != jobrun.Running) {
 		return fmt.Errorf("attempt identity is required")
 	}
 	return r.WithTenantTransaction(ctx, tenantID, func(ctx context.Context, tx *sql.Tx) error {
+		keys, stage, err := lockRunExecutionSources(ctx, tx, tenantID, runID)
+		if err != nil {
+			return err
+		}
+		if stage != jobrun.DispatchMayHaveStarted && stage != jobrun.DispatchBound {
+			if err := checkExecutionSources(ctx, tx, tenantID, keys); err != nil {
+				return err
+			}
+		}
+		if err := lockWorkflowParentForAttempt(ctx, tx, tenantID, runID); err != nil {
+			return err
+		}
+		// Recovery and cancellation lock run before attempt. A replayed INSERT
+		// can lock an existing attempt too, so acquire the run before that write
+		// rather than waiting until advanceRunForAttemptSQL to reverse the order.
+		var lockedRunID int64
+		if err := tx.QueryRowContext(ctx, lockRunForAttemptSQL, runID, tenantID).Scan(&lockedRunID); err != nil {
+			return err
+		}
 		var started any
 		if !attempt.StartedAt.IsZero() {
 			started = attempt.StartedAt.UTC()
@@ -900,14 +1079,32 @@ func (r *ControlPlaneRepository) CreateAttemptForTenant(
 		}
 
 		var runActor string
+		if attempt.OwnerRunUID != "" {
+			bound, err := tx.ExecContext(ctx, `UPDATE job_run_attempts_control_plane SET owner_run_uid=COALESCE(owner_run_uid,$1) WHERE id=$2 AND tenant_id=$3 AND (owner_run_uid IS NULL OR owner_run_uid=$1)`, attempt.OwnerRunUID, attemptID, tenantID)
+			if err != nil {
+				return err
+			}
+			count, err := bound.RowsAffected()
+			if err != nil {
+				return err
+			}
+			if count != 1 {
+				return ErrAttemptOwnership
+			}
+		}
 		if err := tx.QueryRowContext(ctx, advanceRunForAttemptSQL,
 			string(runPhase), attempt.Number, r.now().UTC(), runID, tenantID, terminalPhases(),
 		).Scan(&runActor); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				// The run reached a terminal phase between the caller's read and
-				// this write. Rolling back takes the attempt row with it, so the
-				// ledger never claims an attempt for a finished run.
-				return jobrun.ErrRunTerminal
+				var phase string
+				var number int
+				if readErr := tx.QueryRowContext(ctx, selectRunProgressSQL, runID, tenantID).Scan(&phase, &number); readErr != nil {
+					return readErr
+				}
+				if jobrun.Terminal(jobrun.Phase(phase)) {
+					return jobrun.ErrRunTerminal
+				}
+				return ErrRunChanged
 			}
 			return err
 		}
@@ -929,12 +1126,14 @@ func (r *ControlPlaneRepository) CreateAttemptForTenant(
 // the update is compared against; two observations of one Job arriving
 // concurrently cannot both record the same transition.
 //
-// $6 is jobrun.Terminal of the incoming phase rather than a phase list: the
-// domain predicate is the authority on what finished means, and passing it
-// removes a second copy of the terminal set from this statement.
+// $6 stamps completed_at for a finished attempt. RetryWaiting represents an
+// attempt that failed but whose logical run still has retries remaining.
+// Identity binding can record the Job's RV before its phase is observed, and
+// quarantine replaces the last observed phase without changing that RV. Only
+// these incomplete observations may advance phase at the same numeric RV.
 const updateAttemptPhaseSQL = `
 WITH prior AS (
-  SELECT id, run_id, attempt_number, phase AS prior_phase, kubernetes_job_uid
+  SELECT id, run_id, attempt_number, phase AS prior_phase, kubernetes_job_uid, observed_resource_version
   FROM job_run_attempts_control_plane
   WHERE kubernetes_job_name=$1 AND tenant_id=$2
   FOR UPDATE
@@ -946,8 +1145,18 @@ WITH prior AS (
                           THEN $7::timestamptz ELSE a.completed_at END
   FROM prior
   WHERE a.id=prior.id
+    AND (NOT $6 OR NOT (` + pendingEvidenceSQL + `))
     AND (($3='Canceled' AND $4='') OR
          (NULLIF($4,'') IS NOT NULL AND prior.kubernetes_job_uid=$4))
+    AND (prior.prior_phase=$3 OR prior.prior_phase NOT IN ('Succeeded','Failed','Canceled','RetryWaiting'))
+    AND NOT (prior.prior_phase='Running' AND $3='CreatingAttempt')
+    AND CASE WHEN $5 ~ '^[0-9]+$' AND prior.observed_resource_version ~ '^[0-9]+$'
+      THEN $5::numeric > prior.observed_resource_version::numeric
+        OR ($5::numeric = prior.observed_resource_version::numeric AND
+          (prior.prior_phase=$3 OR
+            (prior.prior_phase IN ('CreatingAttempt','ExecutionUnknown') AND
+              $3 IN ('CreatingAttempt','Running','Succeeded','Failed','Canceled','RetryWaiting'))))
+      ELSE TRUE END
   RETURNING a.id, a.run_id, a.attempt_number, prior.prior_phase, a.phase,
             (SELECT r.actor FROM job_run_control_plane r WHERE r.id = prior.run_id),
             TRUE AS ownership_match
@@ -955,15 +1164,16 @@ WITH prior AS (
 SELECT * FROM updated
 UNION ALL
 SELECT prior.id, prior.run_id, prior.attempt_number, prior.prior_phase,
-       prior.prior_phase,
+       NULL,
        (SELECT r.actor FROM job_run_control_plane r WHERE r.id = prior.run_id),
-       FALSE AS ownership_match
+       (($3='Canceled' AND $4='') OR (NULLIF($4,'') IS NOT NULL AND prior.kubernetes_job_uid=$4)) AS ownership_match
 FROM prior
 WHERE NOT EXISTS (SELECT 1 FROM updated)`
 
 // UpdateAttemptPhase writes an observed Kubernetes Job phase back onto the
 // attempt and reports which run and attempt it belongs to. Terminal phases stamp
-// completed_at exactly once. ErrNoAttempt is returned when no attempt owns that
+// completed_at exactly once, preserve terminal results and never turn an
+// observed Running attempt back into creation. ErrNoAttempt means no attempt owns that
 // Job name, so a Job left over from a previous installation is not mistaken for
 // this attempt's. ErrAttemptOwnership is returned when the name matches but the
 // observed immutable UID does not. The cancellation path is the sole exception:
@@ -982,13 +1192,13 @@ func (r *ControlPlaneRepository) UpdateAttemptPhase(
 		var (
 			attemptID   int64
 			priorPhase  string
-			newPhase    string
+			newPhase    sql.NullString
 			runActor    string
 			ownsAttempt bool
 		)
 		scanErr := tx.QueryRowContext(ctx, updateAttemptPhaseSQL,
 			jobName, tenantID, phase, jobUID, resourceVersion,
-			jobrun.Terminal(jobrun.Phase(phase)), r.now().UTC(),
+			jobrun.Terminal(jobrun.Phase(phase)) || phase == string(jobrun.RetryWaiting), r.now().UTC(),
 		).Scan(&attemptID, &runID, &attemptNumber, &priorPhase, &newPhase, &runActor, &ownsAttempt)
 		if errors.Is(scanErr, sql.ErrNoRows) {
 			return ErrNoAttempt
@@ -999,7 +1209,10 @@ func (r *ControlPlaneRepository) UpdateAttemptPhase(
 		if !ownsAttempt {
 			return ErrAttemptOwnership
 		}
-		if priorPhase == newPhase {
+		if !newPhase.Valid {
+			return ErrStaleObservation
+		}
+		if priorPhase == newPhase.String {
 			return nil
 		}
 		return insertControlPlaneAudit(ctx, tx, tenantID, runActor, auditEventAttemptStatusChanged,
@@ -1007,7 +1220,7 @@ func (r *ControlPlaneRepository) UpdateAttemptPhase(
 				"run_id":         runID,
 				"attempt_number": attemptNumber,
 				"from_phase":     priorPhase,
-				"to_phase":       newPhase,
+				"to_phase":       newPhase.String,
 			})
 	})
 	if err != nil {
@@ -1026,8 +1239,8 @@ func terminalPhases() []string {
 	}
 }
 
-const terminalOutcomeSQL = `
-SELECT r.source_uid, r.occurrence_key, r.scheduled_for, r.phase,
+const terminalOutcomeSelectSQL = `
+SELECT r.id, r.tenant_id, r.source_uid, r.occurrence_key, r.scheduled_for, r.created_at, r.phase, r.outcome_recorded_at,
        a.started_at, a.completed_at
 FROM job_run_control_plane r
 LEFT JOIN LATERAL (
@@ -1036,14 +1249,15 @@ LEFT JOIN LATERAL (
   WHERE a.run_id = r.id
   ORDER BY a.attempt_number DESC
   LIMIT 1
-) a ON true
-WHERE r.id = $1 AND r.tenant_id = $2`
+) a ON true`
+
+const terminalOutcomeSQL = `SELECT source_uid, occurrence_key, scheduled_for, created_at, phase, started_at, completed_at FROM (` + terminalOutcomeSelectSQL + `) r WHERE id=$1 AND tenant_id=$2`
 
 // TerminalOutcome reads everything a terminal run's bookkeeping needs in one
-// query: the definition it ran for, the occurrence it was for, when it was
-// scheduled, and the wall-clock span of its newest attempt. The read model and
-// SLI derivation are written outside the phase transition's transaction, so
-// this read is their consistent view of the fact the transition committed.
+// query: the definition it ran for, the occurrence it was for, its stable
+// ledger creation instant, when it was scheduled, and the wall-clock span of
+// its newest attempt. Derived bookkeeping is written outside the phase
+// transition's transaction, so this read is its consistent view of that fact.
 func (r *ControlPlaneRepository) TerminalOutcome(
 	ctx context.Context, tenantID string, runID int64,
 ) (controlplane.TerminalOutcome, error) {
@@ -1056,7 +1270,7 @@ func (r *ControlPlaneRepository) TerminalOutcome(
 	)
 	err := r.WithTenantTransaction(ctx, tenantID, func(ctx context.Context, tx *sql.Tx) error {
 		scanErr := tx.QueryRowContext(ctx, terminalOutcomeSQL, runID, tenantID).
-			Scan(&out.SourceUID, &out.OccurrenceKey, &scheduledFor, &phase, &startedAt, &completedAt)
+			Scan(&out.SourceUID, &out.OccurrenceKey, &scheduledFor, &out.CreatedAt, &phase, &startedAt, &completedAt)
 		if errors.Is(scanErr, sql.ErrNoRows) {
 			return &resource.NotFoundError{Resource: "job_run", ID: runID}
 		}

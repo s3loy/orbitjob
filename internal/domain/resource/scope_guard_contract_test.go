@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+
+	"orbitjob/internal/platform/scan"
 )
 
 // RequireUnscoped is the guard behind all five admin gates that face a scope a
@@ -29,7 +31,7 @@ func omittedGuardStub(_, _ string) error {
 
 // t3GuardScope stands in for a resource group id. It is never a tenant id:
 // scopes and tenants are different identifiers, and this file keeps them apart.
-const t3GuardScope = "01JBB0W9YRXG4SZV2QKM78N3PD"
+var t3GuardScope = scan.GenerateID()
 
 func TestRequireUnscopedFailsClosed(t *testing.T) {
 	// The only unscoped caller is the empty scope. Anything else -- including

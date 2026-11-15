@@ -42,9 +42,26 @@ func (r *SLORepository) Create(ctx context.Context, tenantID string, spec slo.Cr
 		return snap, fmt.Errorf("set tenant context: %w", err)
 	}
 
+	// Lock the referenced SLI in the writer's tenant and resource group. RLS
+	// alone covers tenants; PostgreSQL foreign-key checks do not enforce groups.
+	var parentID int64
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM slis
+WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL
+  AND ($3::text IS NULL OR resource_group_id=$3) FOR SHARE`,
+		tenantID, spec.SLIID, nullableGroup(spec.ResourceGroupID)).Scan(&parentID); err != nil {
+		if err == sql.ErrNoRows {
+			return snap, &resource.NotFoundError{Resource: "sli", ID: spec.SLIID}
+		}
+		return snap, fmt.Errorf("lock slo source: %w", err)
+	}
+
 	err = tx.QueryRowContext(ctx, `
 		INSERT INTO slos (tenant_id, name, description, sli_id, target, window_type, window_duration, alert_fast_burn_rate, alert_slow_burn_rate, resource_group_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text
+        FROM slis
+        WHERE id = $4 AND tenant_id = $1 AND deleted_at IS NULL
+          AND ($10::text IS NULL OR resource_group_id = $10)
+        FOR SHARE
 		RETURNING id, tenant_id, name, description, sli_id, target, window_type, window_duration,
 		          alert_fast_burn_rate, alert_slow_burn_rate, status, version, created_at, updated_at
 	`, tenantID, spec.Name, spec.Description, spec.SLIID, spec.Target, spec.WindowType,
@@ -54,6 +71,9 @@ func (r *SLORepository) Create(ctx context.Context, tenantID string, spec slo.Cr
 		&snap.WindowType, &windowSecs, &snap.AlertFastBurnRate, &snap.AlertSlowBurnRate,
 		&snap.Status, &snap.Version, &snap.CreatedAt, &snap.UpdatedAt,
 	)
+	if err == sql.ErrNoRows {
+		return snap, &resource.NotFoundError{Resource: "sli", ID: spec.SLIID}
+	}
 	if err != nil {
 		return snap, fmt.Errorf("insert slo: %w", err)
 	}

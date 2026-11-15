@@ -3,12 +3,16 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	v1alpha1 "orbitjob/api/kubernetes/workloads/v1alpha1"
 	"orbitjob/internal/core/domain/jobrun"
 	"orbitjob/internal/core/domain/revision"
 )
+
+// ErrObjectDeletionPending preserves the ledger while foreground GC progresses.
+var ErrObjectDeletionPending = errors.New("kubernetes object deletion is pending")
 
 // Default retention when a definition does not state one. Zero cannot mean
 // "keep nothing", so an unset policy resolves to these values here.
@@ -28,8 +32,8 @@ type RunRemover interface {
 	Remove(ctx context.Context, namespace, scheduledJobName, occurrenceKey string) error
 }
 
-// Retainer trims run history. It walks the same active revisions as the
-// scheduler but never touches a run that is not terminal.
+// Retainer trims terminal history using the latest revision of each source,
+// including inactive sources when the production retention reader is present.
 type Retainer struct {
 	Definitions RevisionSource
 	History     RunPruner
@@ -37,7 +41,7 @@ type Retainer struct {
 	Tenants     []string
 }
 
-// Sweep prunes history for every active definition and reports how many runs it
+// Sweep prunes history for every retained definition and reports how many runs it
 // removed.
 //
 // The Kubernetes object is removed before the row. Deleting the row first would
@@ -50,6 +54,11 @@ func (r Retainer) Sweep(ctx context.Context) (int, error) {
 	removed := 0
 	for _, tenant := range r.Tenants {
 		revisions, err := r.Definitions.ActiveRevisions(ctx, tenant)
+		if reader, ok := r.Definitions.(interface {
+			RetentionRevisions(context.Context, string) ([]revision.Revision, error)
+		}); ok {
+			revisions, err = reader.RetentionRevisions(ctx, tenant)
+		}
 		if err != nil {
 			return removed, fmt.Errorf("list active revisions for tenant %s: %w", tenant, err)
 		}
@@ -78,7 +87,18 @@ func (r Retainer) pruneDefinition(ctx context.Context, tenant string, rev revisi
 
 	removed := 0
 	for _, run := range prunable {
-		if err := r.Remover.Remove(ctx, rev.Identity.Namespace, rev.Identity.Name, run.OccurrenceKey); err != nil {
+		var removeErr error
+		if safe, ok := r.Remover.(interface {
+			RemoveIdentity(context.Context, string, string, v1alpha1.RunIdentity) error
+		}); ok {
+			removeErr = safe.RemoveIdentity(ctx, rev.Identity.Namespace, rev.Identity.Name, v1alpha1.RunIdentity{SourceUID: rev.Identity.SourceUID, OccurrenceKey: run.OccurrenceKey, RevisionID: run.RevisionID, Trigger: v1alpha1.Trigger(run.Trigger)})
+		} else {
+			removeErr = r.Remover.Remove(ctx, rev.Identity.Namespace, rev.Identity.Name, run.OccurrenceKey)
+		}
+		if errors.Is(removeErr, ErrObjectDeletionPending) {
+			continue
+		}
+		if err := removeErr; err != nil {
 			return removed, fmt.Errorf("remove job run for %s: %w", rev.Identity.Name, err)
 		}
 		deleted, err := r.History.DeleteRun(ctx, tenant, run.ID)

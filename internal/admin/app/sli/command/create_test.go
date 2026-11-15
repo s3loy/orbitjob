@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"orbitjob/internal/core/domain/sli"
+	"orbitjob/internal/platform/scan"
 )
 
 type stubSLIWriter struct {
@@ -37,11 +38,11 @@ func (s *stubSLIDeleter) Delete(_ context.Context, tenantID, _ string, id int64,
 func validSLIInput() CreateInput {
 	return CreateInput{
 		Name:     "sli-1",
-		TenantID: "t1",
+		TenantID: scan.GenerateID(),
 		SLIType:  sli.TypeAvailability, SourceType: sli.SourceTypeJobRun,
-		SourceConfig:      map[string]any{"source_uid": "check-1"},
+		SourceConfig:      map[string]any{"source_uid": scan.GenerateID()},
 		Aggregation:       sli.AggregationRatio,
-		GoodEventCriteria: map[string]any{"field": "status", "op": "eq", "value": "success"},
+		GoodEventCriteria: map[string]any{"status": "success"},
 	}
 }
 
@@ -92,11 +93,11 @@ func TestDeleteSLI_Success(t *testing.T) {
 	repo := &stubSLIDeleter{}
 	uc := NewDeleteSLIUseCase(repo)
 
-	if err := uc.Delete(context.Background(), DeleteInput{TenantID: "t1", ID: 5, Version: 2}); err != nil {
+	if err := uc.Delete(context.Background(), DeleteInput{TenantID: sliCreateFixtureTenantID, ID: 5, Version: 2}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if repo.lastTenantID != "t1" || repo.lastID != 5 || repo.lastVersion != 2 {
-		t.Fatalf("expected delete t1/5/2, got %s/%d/%d", repo.lastTenantID, repo.lastID, repo.lastVersion)
+	if repo.lastTenantID != sliCreateFixtureTenantID || repo.lastID != 5 || repo.lastVersion != 2 {
+		t.Fatalf("expected delete "+sliCreateFixtureTenantID+"/5/2, got %s/%d/%d", repo.lastTenantID, repo.lastID, repo.lastVersion)
 	}
 }
 
@@ -104,7 +105,7 @@ func TestDeleteSLI_RepoError(t *testing.T) {
 	repo := &stubSLIDeleter{err: errors.New("not found")}
 	uc := NewDeleteSLIUseCase(repo)
 
-	if err := uc.Delete(context.Background(), DeleteInput{TenantID: "t1", ID: 5, Version: 2}); err == nil {
+	if err := uc.Delete(context.Background(), DeleteInput{TenantID: sliCreateFixtureTenantID, ID: 5, Version: 2}); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -113,10 +114,12 @@ func TestDeleteSLI_InvalidID(t *testing.T) {
 	repo := &stubSLIDeleter{}
 	uc := NewDeleteSLIUseCase(repo)
 
-	if err := uc.Delete(context.Background(), DeleteInput{TenantID: "t1", ID: 0, Version: 2}); err == nil {
+	if err := uc.Delete(context.Background(), DeleteInput{TenantID: sliCreateFixtureTenantID, ID: 0, Version: 2}); err == nil {
 		t.Fatal("expected validation error for id<=0")
 	}
 	if repo.lastID != 0 {
 		t.Fatal("expected repo.Delete not called for invalid id")
 	}
 }
+
+var sliCreateFixtureTenantID = scan.GenerateID()

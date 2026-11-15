@@ -15,8 +15,10 @@ import (
 	"orbitjob/internal/core/app/controlplane"
 	"orbitjob/internal/core/app/execution"
 	"orbitjob/internal/core/app/projection"
+	"orbitjob/internal/core/domain/function"
 	"orbitjob/internal/core/domain/jobrun"
 	"orbitjob/internal/core/domain/revision"
+	corepostgres "orbitjob/internal/core/store/postgres"
 	"orbitjob/internal/platform/metrics"
 )
 
@@ -32,45 +34,43 @@ type RevisionStore interface {
 type RunStore interface {
 	CreateOccurrenceForTenant(ctx context.Context, tenantID string, run jobrun.JobRun, maxAttempts int, actor string) (jobrun.StoredRun, bool, error)
 	RunByOccurrence(ctx context.Context, tenantID, sourceUID, occurrenceKey string) (jobrun.StoredRun, bool, error)
-	// CreateAttemptForTenant records the attempt and advances the run to
-	// runPhase in one transaction, writing the audit row there too. The phase is
-	// the caller's because only the caller knows whether this is a first attempt
-	// or a retry.
-	CreateAttemptForTenant(ctx context.Context, tenantID string, runID int64, attempt jobrun.Attempt, runPhase jobrun.Phase) error
+	// CreateAttemptWithEnsure commits Prepared and possibly-sent stages before
+	// its one external call, then serializes binding against cancellation.
+	CreateAttemptWithEnsure(ctx context.Context, tenantID string, runID int64, attempt jobrun.Attempt, ensure func(context.Context) (jobrun.Attempt, error)) error
+	BindAttemptObservation(context.Context, string, int64, int, string, string, string) error
 	UpdateAttemptPhase(ctx context.Context, tenantID, jobName, phase, jobUID, resourceVersion string) (int64, int, error)
 	// UpdateRunPhase advances a run and reports whether the run's phase
-	// changed. Terminal-phase bookkeeping fires only on a real transition, so a
-	// resync that re-observes a finished run costs nothing downstream.
+	// changed. Transition-only bookkeeping uses this flag; derived Function
+	// history is independently idempotent and can be repaired on a replay.
 	UpdateRunPhase(ctx context.Context, tenantID string, runID int64, phase jobrun.Phase, attempt int) (bool, error)
 }
 
 // TerminalOutcomeRecorder receives the runs whose phase genuinely changed to a
-// terminal value. It is the one hook where the check read model, the SLI
-// snapshots and the check metrics are written, so all three describe the same
-// transition exactly once. Implementation is optional: a runtime without one
-// simply records no outcome bookkeeping.
+// terminal value. The check read model and SLI increments deduplicate durable
+// facts; an error keeps the ledger acknowledgement pending for replay.
 type TerminalOutcomeRecorder interface {
-	RecordTerminalPhase(ctx context.Context, tenantID string, runID int64, phase jobrun.Phase)
+	RecordTerminalPhaseOnce(ctx context.Context, tenantID string, runID int64, phase jobrun.Phase) error
 }
 
-// JobManager drives Kubernetes Jobs for the control plane. Ensure and Delete must
-// be idempotent: a reconcile that repeats after a crash has to converge on the
-// same cluster state rather than erroring.
+// JobManager drives Kubernetes Jobs for the control plane. Ensure is authorized
+// once by a committed dispatch marker; recovery only Get-observes that identity.
 type JobManager interface {
 	Ensure(ctx context.Context, desired *batchv1.Job) (*batchv1.Job, error)
 	Get(ctx context.Context, namespace, name string) (*batchv1.Job, bool, error)
-	Delete(ctx context.Context, namespace, name string) error
+	Delete(ctx context.Context, namespace, name string, uid ...string) error
+	Stopped(ctx context.Context, namespace, name string) (bool, error)
 }
 
 // Runtime is the composition root that turns watched Kubernetes objects into
 // platform state and back. Every handler is idempotent: it reads current stored
 // state, computes the desired action, and writes only what is missing.
 type Runtime struct {
-	Dynamic   dynamic.Interface
-	Jobs      JobManager
-	Revisions RevisionStore
-	Runs      RunStore
-	Tenants   TenantResolver
+	Dynamic      dynamic.Interface
+	Jobs         JobManager
+	Revisions    RevisionStore
+	Runs         RunStore
+	ArchivedJobs ArchivedJobSource
+	Tenants      TenantResolver
 	// Workflows, when set, is the workflow ledger the WorkflowRun reconcile
 	// materializes into and the workflow walker advances from. A runtime
 	// without one refuses workflow run reconciliation loudly rather than
@@ -86,14 +86,20 @@ type Runtime struct {
 	Outcomes TerminalOutcomeRecorder
 	// Functions, when set, maintains the function_runs read model from the
 	// same terminal transitions, routed by the function source-uid prefix.
-	Functions FunctionRunRecorder
-	Now       func() time.Time
+	Functions    FunctionRunRecorder
+	Enqueue      func(resource, namespace, name string)
+	EnqueueAfter func(resource, namespace, name string, after time.Duration)
+	Now          func() time.Time
+	// ExecutionRecoveryTenantBudget bounds one tenant's recovery slice. It is
+	// independent of workload startup or termination deadlines.
+	ExecutionRecoveryTenantBudget time.Duration
 }
 
 // Handlers renders the runtime as the callbacks the informer dispatcher expects.
 func (r Runtime) Handlers() DynamicHandler {
 	return DynamicHandler{
 		Client:                r.Dynamic,
+		ReconcileDeleted:      r.ReconcileDeleted,
 		ReconcileScheduledJob: r.ReconcileScheduledJob,
 		ReconcileJobRun:       r.ReconcileJobRun,
 		ReconcileJob:          r.ReconcileJob,
@@ -117,6 +123,14 @@ func (r Runtime) ReconcileScheduledJob(ctx context.Context, obj unstructured.Uns
 	if r.Revisions == nil || r.Tenants == nil {
 		return fmt.Errorf("scheduled job reconciliation is not configured")
 	}
+	live, exists, err := r.current(ctx, scheduledJobGVR, obj)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return r.ReconcileDeleted(ctx, scheduledJobGVR.Resource, obj.GetNamespace(), obj.GetName())
+	}
+	obj = live
 	typed, err := scheduledJobFromUnstructured(obj)
 	if err != nil {
 		return err
@@ -145,6 +159,14 @@ func (r Runtime) ReconcileWorkflowJob(ctx context.Context, obj unstructured.Unst
 	if r.Revisions == nil || r.Tenants == nil {
 		return fmt.Errorf("workflow job reconciliation is not configured")
 	}
+	live, exists, err := r.current(ctx, workflowJobGVR, obj)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return r.ReconcileDeleted(ctx, workflowJobGVR.Resource, obj.GetNamespace(), obj.GetName())
+	}
+	obj = live
 	typed, err := workflowJobFromUnstructured(obj)
 	if err != nil {
 		return err
@@ -176,6 +198,18 @@ func (r Runtime) ReconcileJobRun(ctx context.Context, obj unstructured.Unstructu
 	if err != nil {
 		return err
 	}
+	live, exists, liveErr := r.current(ctx, jobRunGVR, obj)
+	if liveErr != nil {
+		return liveErr
+	}
+	if !exists {
+		return nil
+	}
+	obj = live
+	spec, err = jobRunSpecFromUnstructured(obj)
+	if err != nil {
+		return err
+	}
 	tenant, err := r.Tenants.Resolve(obj)
 	if err != nil {
 		return err
@@ -187,6 +221,10 @@ func (r Runtime) ReconcileJobRun(ctx context.Context, obj unstructured.Unstructu
 	}
 	if !found {
 		stored, found, err = r.materializeManualRun(ctx, tenant, spec)
+		if errors.Is(err, jobrun.ErrAdmissionBlocked) {
+			r.requeueRun(obj)
+			return r.patchAdmissionBlocked(ctx, jobRunGVR, obj, err)
+		}
 		if err != nil {
 			return err
 		}
@@ -209,11 +247,15 @@ func (r Runtime) ReconcileJobRun(ctx context.Context, obj unstructured.Unstructu
 	// cancellation by a stale request flag, which would otherwise fail forever
 	// and pin the reconcile loop on an outcome that can never change.
 	if jobrun.Terminal(stored.Phase) {
-		return r.patchRunStatus(ctx, obj, stored)
+		var historyErr error
+		if _, isFunction := function.IDFromSourceUID(spec.ScheduledJobRef.UID); isFunction {
+			historyErr = r.recordFunctionOutcome(ctx, tenant, stored.ID, stored.Phase)
+		}
+		return errors.Join(historyErr, r.patchRunStatus(ctx, obj, stored))
 	}
 	// A cancel request is intent, not fact. Drive it to completion before any
 	// other branch: a run the user asked to stop must not start another attempt.
-	if stored.Phase == jobrun.CancelRequested || spec.CancelRequested {
+	if stored.Phase == jobrun.CancelRequested || stored.Phase == jobrun.CancelUnknown || spec.CancelRequested {
 		return r.reconcileCancellation(ctx, tenant, obj, stored, spec)
 	}
 	// One attempt at a time. The attempt's Job is live, so starting another would
@@ -221,10 +263,47 @@ func (r Runtime) ReconcileJobRun(ctx context.Context, obj unstructured.Unstructu
 	// result that has not happened yet. Wait for the Job observation to move the
 	// run; the status is still derived from stored state, so a drifted CR status
 	// is repaired here.
-	if stored.AttemptInFlight() {
+	resuming := stored.Phase == jobrun.CreatingAttempt && stored.Attempt > 0 && stored.AttemptUID == ""
+	if resuming {
+		if store, ok := r.Runs.(executionRecoveryStore); ok {
+			e, found, err := store.CurrentExecution(ctx, tenant, stored.ID)
+			if err != nil {
+				return err
+			}
+			if found && (e.DispatchStage != jobrun.DispatchPrepared || e.Run.OwnerRunUID == "" || e.Run.OwnerRunUID != string(obj.GetUID())) {
+				return r.recoverExecution(ctx, tenant, e)
+			}
+		}
+	}
+	if stored.AttemptInFlight() && !resuming {
+		if store, ok := r.Runs.(executionRecoveryStore); ok {
+			e, found, err := store.CurrentExecution(ctx, tenant, stored.ID)
+			if err != nil {
+				return err
+			}
+			if found {
+				return r.recoverExecution(ctx, tenant, e)
+			}
+		}
 		return r.patchRunStatus(ctx, obj, stored)
 	}
-	if !stored.CanStartAttempt() {
+	if stored.Phase == jobrun.ExecutionUnknown {
+		if store, ok := r.Runs.(executionRecoveryStore); ok {
+			e, found, err := store.CurrentExecution(ctx, tenant, stored.ID)
+			if err != nil {
+				return err
+			}
+			if found {
+				return r.recoverExecution(ctx, tenant, e)
+			}
+		}
+		return r.patchRunStatus(ctx, obj, stored)
+	}
+	suppressRetry, err := r.suppressOOMRetry(ctx, tenant, stored)
+	if err != nil {
+		return err
+	}
+	if suppressRetry || (!stored.CanStartAttempt() && !resuming) {
 		// No attempt is in flight and none may start: the attempt budget is spent.
 		// Record the outcome once and stop.
 		failed, err := jobrun.Transition(jobrun.JobRun{Phase: stored.Phase}, jobrun.Failed)
@@ -235,14 +314,26 @@ func (r Runtime) ReconcileJobRun(ctx context.Context, obj unstructured.Unstructu
 		if err != nil {
 			return err
 		}
+		if !phaseChanged {
+			return r.refreshRunStatus(ctx, tenant, obj, spec)
+		}
 		metrics.OperatorRunsFailedTotal.Inc()
-		r.recordOutcome(ctx, tenant, stored.ID, failed.Phase, phaseChanged)
-		r.recordFunctionOutcome(ctx, tenant, stored.ID, failed.Phase, phaseChanged)
+		if suppressRetry {
+			executionObservations.WithLabelValues("oom_retry_suppressed").Inc()
+		}
+		if phaseChanged {
+			if err := r.recordTerminal(ctx, tenant, stored.ID, failed.Phase); err != nil {
+				return err
+			}
+		}
 		stored.Phase = failed.Phase
 		return r.patchRunStatus(ctx, obj, stored)
 	}
 
 	attemptNumber := stored.NextAttempt()
+	if resuming {
+		attemptNumber = stored.Attempt
+	}
 	rev, err := r.Revisions.RevisionByID(ctx, tenant, stored.RevisionID)
 	if err != nil {
 		return err
@@ -258,54 +349,132 @@ func (r Runtime) ReconcileJobRun(ctx context.Context, obj unstructured.Unstructu
 		RevisionID: fmt.Sprint(rev.ID),
 		Attempt:    attemptNumber,
 	}
+	acceptedSnapshot := false
+	if spec.Trigger == v1alpha1.Workflow {
+		if snapshots, ok := r.Runs.(interface {
+			SnapshotWorkflowStep(context.Context, string, int64, int64) (bool, error)
+		}); ok {
+			acceptedSnapshot, err = snapshots.SnapshotWorkflowStep(ctx, tenant, stored.ID, stored.RevisionID)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	alive := acceptedSnapshot
+	if !acceptedSnapshot {
+		alive, err = r.SourceExists(ctx, rev)
+	}
+	if err != nil {
+		return err
+	}
+	if !alive {
+		return fmt.Errorf("source definition no longer exists")
+	}
+	if obj.GetUID() == "" {
+		return fmt.Errorf("job run UID required before creating a Kubernetes Job")
+	}
+	resources, err := execution.ResourceRequirements(declared.JobTemplate.Resources)
+	if err != nil {
+		return fmt.Errorf("pinned execution resources: %w", err)
+	}
 	desired := execution.BuildJob(identity, obj.GetNamespace(), execution.Template{
-		Image:                 declared.JobTemplate.Image,
-		Command:               declared.JobTemplate.Command,
-		Args:                  declared.JobTemplate.Args,
-		BackoffLimit:          declared.JobTemplate.BackoffLimit,
-		ActiveDeadlineSeconds: int64(spec.TimeoutSeconds),
+		ExecutionPolicyVersion: declared.ExecutionPolicyVersion,
+		Resources:              resources,
+		Image:                  declared.JobTemplate.Image,
+		Command:                declared.JobTemplate.Command,
+		Args:                   declared.JobTemplate.Args,
+		BackoffLimit:           declared.JobTemplate.BackoffLimit,
+		ActiveDeadlineSeconds:  int64(spec.TimeoutSeconds),
 	})
 
-	job, err := r.Jobs.Ensure(ctx, desired)
-	if err != nil {
-		metrics.OperatorJobCreationFailuresTotal.Inc()
-		return fmt.Errorf("ensure kubernetes job for run %s attempt %d: %w", identity.RunName, attemptNumber, err)
-	}
-	// Ensure is idempotent by namespace and name, so a Job that already carries
-	// this name is adopted. Name is not proof of ownership: a run name repeats
-	// when a ScheduledJob is deleted and recreated, and a Job from before that
-	// can still be there. Recording a foreign Job's UID would make this run
-	// drive a workload it does not own, so the labels are checked before the
-	// attempt row is written.
-	if err := execution.ValidateOwnership(job, identity); err != nil {
-		return fmt.Errorf("kubernetes job %s/%s: %w", job.Namespace, job.Name, err)
-	}
-	if job.UID == "" {
-		return fmt.Errorf("kubernetes job %s has no uid; refusing to record unverifiable ownership", job.Name)
+	if resuming && stored.AttemptJobName != "" {
+		desired.Name = stored.AttemptJobName
+	} else {
+		// Check the bounded historical candidate before reserving a new address.
+		for _, name := range execution.JobNameCandidates(identity) {
+			existing, found, err := r.Jobs.Get(ctx, desired.Namespace, name)
+			if err != nil {
+				return err
+			}
+			if !found {
+				continue
+			}
+			if err := execution.ValidateOwnership(existing, identity); err != nil {
+				if name == execution.JobName(identity) {
+					return err
+				}
+				continue
+			}
+			desired.Name = name
+			break
+		}
 	}
 
-	attempt := jobrun.Attempt{
-		Number:                  attemptNumber,
-		KubernetesJobName:       job.Name,
-		KubernetesJobUID:        string(job.UID),
-		ObservedResourceVersion: job.ResourceVersion,
-		Phase:                   jobrun.CreatingAttempt,
-		StartedAt:               r.now(),
-	}
-	// The attempt row, the run's advance to Running and the audit entry commit
-	// together inside the store, so a crash here cannot leave the attempts table
-	// ahead of the run counter and start a second Job for the same occurrence.
-	if err := r.Runs.CreateAttemptForTenant(ctx, tenant, stored.ID, attempt, jobrun.Running); err != nil {
-		if errors.Is(err, jobrun.ErrRunTerminal) {
-			// The run finished between the read above and this write; the store
-			// rolled the attempt back. The write that finished the run is what
-			// patches the CR status, so there is nothing left to do here.
-			return nil
+	reservation := jobrun.Attempt{Number: attemptNumber, KubernetesJobName: desired.Name, OwnerRunUID: identity.RunUID, StartedAt: r.now(), Phase: jobrun.CreatingAttempt}
+	err = r.Runs.CreateAttemptWithEnsure(ctx, tenant, stored.ID, reservation, func(ensureCtx context.Context) (jobrun.Attempt, error) {
+		job, err := r.Jobs.Ensure(ensureCtx, desired)
+		if err != nil {
+			metrics.OperatorJobCreationFailuresTotal.Inc()
+			return jobrun.Attempt{}, fmt.Errorf("ensure kubernetes job for run %s attempt %d: %w", identity.RunName, attemptNumber, err)
+		}
+		if err := execution.ValidateOwnership(job, identity); err != nil {
+			return jobrun.Attempt{}, fmt.Errorf("kubernetes job %s/%s: %w", job.Namespace, job.Name, err)
+		}
+		if job.UID == "" {
+			return jobrun.Attempt{}, fmt.Errorf("kubernetes job %s has no uid", job.Name)
+		}
+		return jobrun.Attempt{Number: attemptNumber, KubernetesJobName: job.Name, KubernetesJobUID: string(job.UID), ObservedResourceVersion: job.ResourceVersion, Phase: jobrun.CreatingAttempt, StartedAt: reservation.StartedAt}, nil
+	})
+	if errors.Is(err, jobrun.ErrDispatchMayHaveStarted) {
+		r.requeueRun(obj)
+		if store, ok := r.Runs.(executionRecoveryStore); ok {
+			e, found, readErr := store.CurrentExecution(ctx, tenant, stored.ID)
+			if readErr != nil || !found {
+				return readErr
+			}
+			return r.recoverExecution(ctx, tenant, e)
 		}
 		return err
 	}
+	if errors.Is(err, corepostgres.ErrWorkflowBlocked) {
+		if r.EnqueueAfter != nil {
+			r.EnqueueAfter("jobruns", obj.GetNamespace(), obj.GetName(), 5*time.Second)
+		}
+		return r.patchRunStatus(ctx, obj, stored)
+	}
+	if errors.Is(err, jobrun.ErrAdmissionBlocked) {
+		r.requeueRun(obj)
+		return r.patchAdmissionBlocked(ctx, jobRunGVR, obj, err)
+	}
+	if errors.Is(err, corepostgres.ErrWorkflowStopped) {
+		// A delayed step CR must honor its parent's committed stop even before
+		// the walker has patched cancelRequested. Reload after reservation: an
+		// uncertain intent may have committed, and attempt zero must not be
+		// mistaken for proof that no external request could have happened.
+		latest, found, readErr := r.Runs.RunByOccurrence(ctx, tenant, spec.ScheduledJobRef.UID, spec.OccurrenceKey)
+		if readErr != nil || !found {
+			return readErr
+		}
+		if jobrun.Terminal(latest.Phase) {
+			return r.patchRunStatus(ctx, obj, latest)
+		}
+		return r.reconcileCancellation(ctx, tenant, obj, latest, spec)
+	}
+	if errors.Is(err, jobrun.ErrRunTerminal) || errors.Is(err, corepostgres.ErrRunChanged) {
+		if r.Enqueue != nil {
+			r.Enqueue("jobruns", obj.GetNamespace(), obj.GetName())
+		}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
 	stored.Phase = jobrun.Running
 	stored.Attempt = attemptNumber
+	if r.Enqueue != nil {
+		r.Enqueue("jobs", desired.Namespace, desired.Name)
+	}
 	return r.patchRunStatus(ctx, obj, stored)
 }
 
@@ -355,7 +524,15 @@ func (r Runtime) materializeManualRun(ctx context.Context, tenant string, spec v
 	if err := json.Unmarshal([]byte(rev.NormalizedSpec), &declared); err != nil {
 		return jobrun.StoredRun{}, false, fmt.Errorf("decode pinned revision %d: %w", rev.ID, err)
 	}
-	stored, _, err := r.Runs.CreateOccurrenceForTenant(ctx, tenant, jobrun.JobRun{
+	create := r.Runs.CreateOccurrenceForTenant
+	if spec.CancelRequested {
+		if canceler, ok := r.Runs.(interface {
+			CancelUnadmittedOccurrenceForTenant(context.Context, string, jobrun.JobRun, int, string) (jobrun.StoredRun, bool, error)
+		}); ok {
+			create = canceler.CancelUnadmittedOccurrenceForTenant
+		}
+	}
+	stored, created, err := create(ctx, tenant, jobrun.JobRun{
 		SourceUID:     spec.ScheduledJobRef.UID,
 		RevisionID:    fmt.Sprint(spec.DefinitionRevision),
 		OccurrenceKey: spec.OccurrenceKey,
@@ -367,6 +544,8 @@ func (r Runtime) materializeManualRun(ctx context.Context, tenant string, spec v
 	// Only the CR-first triggers count here. A scheduled occurrence is created
 	// by the scheduler, and counting it would make this series say "triggered
 	// by a person" when nothing was.
-	metrics.OperatorRunsCreatedTotal.Inc()
+	if created {
+		metrics.OperatorRunsCreatedTotal.Inc()
+	}
 	return stored, true, nil
 }

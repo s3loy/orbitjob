@@ -12,13 +12,14 @@ import (
 )
 
 type fakeClient struct {
-	existing   *batchv1.Job
-	getErr     error
-	createErr  error
-	deleteErr  error
-	created    []*batchv1.Job
-	deleted    []string
-	createCall int
+	existing      *batchv1.Job
+	getErr        error
+	createErr     error
+	deleteErr     error
+	created       []*batchv1.Job
+	deleted       []string
+	createCall    int
+	deleteOptions metav1.DeleteOptions
 }
 
 func (f *fakeClient) Get(_ context.Context, _, _ string, _ metav1.GetOptions) (*batchv1.Job, error) {
@@ -40,10 +41,11 @@ func (f *fakeClient) Create(_ context.Context, job *batchv1.Job, _ metav1.Create
 	return job, nil
 }
 
-func (f *fakeClient) Delete(_ context.Context, _, name string, _ metav1.DeleteOptions) error {
+func (f *fakeClient) Delete(_ context.Context, _, name string, options metav1.DeleteOptions) error {
 	if f.deleteErr != nil {
 		return f.deleteErr
 	}
+	f.deleteOptions = options
 	f.deleted = append(f.deleted, name)
 	return nil
 }
@@ -172,6 +174,9 @@ func TestDeleteTreatsAbsenceAsSuccess(t *testing.T) {
 	client := &fakeClient{}
 	if err := (Adapter{Client: client}).Delete(context.Background(), "finance", "oj-run-1-1"); err != nil {
 		t.Fatalf("deleting an absent job must converge: %v", err)
+	}
+	if client.deleteOptions.PropagationPolicy == nil || *client.deleteOptions.PropagationPolicy != metav1.DeletePropagationForeground {
+		t.Fatal("cancellation must retain the Job until dependent Pods are gone")
 	}
 	if len(client.deleted) != 1 {
 		t.Fatalf("deleted = %v", client.deleted)

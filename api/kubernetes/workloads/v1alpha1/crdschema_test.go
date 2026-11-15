@@ -277,6 +277,9 @@ func TestCRDSchemaContractHoldsOnTheShippedCRD(t *testing.T) {
 func TestCRDActorWidthMatchesTheLedgerColumn(t *testing.T) {
 	crdWidth := crdActorMaxLength(t, loadCRDDoc(t, crdContractFile))
 	sqlWidth := ledgerActorColumnWidth(t, ledgerBaseline)
+	if crdWidth != RunActorMaxLength {
+		t.Fatalf("Go actor limit %d differs from CRD %d", RunActorMaxLength, crdWidth)
+	}
 	if crdWidth != sqlWidth {
 		t.Fatalf("CRD spec.actor.maxLength = %d but job_run_control_plane.actor is VARCHAR(%d): widen both or neither",
 			crdWidth, sqlWidth)

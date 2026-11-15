@@ -76,6 +76,12 @@ func newJobRunPublisher() (kube.JobRunPublisher, kube.WorkflowRunPublisher, erro
 
 func newRouter(handler *adminhttp.Handler, auth *middleware.Auth, rl *middleware.RateLimiter) *gin.Engine {
 	r := gin.Default()
+	r.Use(func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), adminRequestTimeout)
+		defer cancel()
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+	})
 	// Front of the chain so rejections by later middleware (401, 429) are
 	// still counted with the status the client received.
 	r.Use(middleware.RequestMetrics())
@@ -151,13 +157,7 @@ func main() {
 	if addr == ":" {
 		addr = ":8080"
 	}
-	srv := &http.Server{
-		Addr:         addr,
-		Handler:      newRouter(handler, auth, rl),
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  60 * time.Second,
-	}
+	srv := newHTTPServer(addr, newRouter(handler, auth, rl))
 
 	go func() {
 		slog.Info("admin-api listening", "addr", srv.Addr)
@@ -173,6 +173,15 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("admin-api shutdown error", "error", err)
 	}
+}
+
+// The outer deadline bounds auth, preparation and waiting. Socket writes retain
+// five additional seconds to deliver the reference after the handler returns.
+const adminRequestTimeout = time.Duration(functioninvoke.MaxInvokeWaitSeconds)*time.Second + 15*time.Second
+const adminWriteTimeout = adminRequestTimeout + 5*time.Second
+
+func newHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{Addr: addr, Handler: handler, ReadTimeout: 15 * time.Second, ReadHeaderTimeout: 5 * time.Second, MaxHeaderBytes: 16 * 1024, WriteTimeout: adminWriteTimeout, IdleTimeout: 60 * time.Second}
 }
 
 // buildHandler constructs every use case over its store and wires the result

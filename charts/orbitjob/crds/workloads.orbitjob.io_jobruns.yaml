@@ -73,7 +73,11 @@ spec:
               properties:
                 phase:
                   type: string
-                  enum: [Pending, CreatingAttempt, Running, RetryWaiting, Succeeded, Failed, CancelRequested, Canceled, CancelUnknown]
+                  enum: [Pending, CreatingAttempt, Running, RetryWaiting, Succeeded, Failed, CancelRequested, Canceled, CancelUnknown, ExecutionUnknown]
+                executionUnknownSince: {type: string, format: date-time}
+                executionUnknownReason:
+                  type: string
+                  enum: [JobNotFound, JobUIDMismatch, PodIdentityAmbiguous]
                 attempt: {type: integer, format: int32, minimum: 0}
                 kubernetesJobRef:
                   type: object

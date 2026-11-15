@@ -16,7 +16,7 @@ import (
 
 func walkerRun() workflow.Run {
 	return workflow.Run{
-		ID: 42, TenantID: "tenant-a", SourceUID: "wf-uid-1", RevisionID: 5,
+		ID: 42, TenantID: "tenant-a", ResourceUID: "wfr-original", SourceUID: "wf-uid-1", RevisionID: 5,
 		OccurrenceKey: "wocc-1", Trigger: "Manual", Actor: "principal-key-1",
 		Phase:     workflow.PhasePending,
 		CreatedAt: time.Unix(1699999000, 0).UTC(), UpdatedAt: time.Unix(1699999000, 0).UTC(),
@@ -68,13 +68,20 @@ func withIdentity(t *testing.T, rev revision.Revision, mode, uid, ns, name strin
 
 func newWalker(t *testing.T, runs *fakeWorkflowRuns, revs *fakeWorkflowRevisions, pub *fakeWorkflowPublisher) (*WorkflowWalker, *[]workflow.Run) {
 	t.Helper()
+	if revs.byID == nil {
+		revs.byID = map[int64]revision.Revision{}
+	}
+	for _, rev := range revs.active {
+		revs.byID[rev.ID] = rev
+	}
 	projected := &[]workflow.Run{}
 	walker := &WorkflowWalker{
-		Workflows: runs,
-		Revisions: revs,
-		Publisher: pub,
-		Tenants:   []string{"tenant-a"},
-		Now:       func() time.Time { return time.Unix(1700000000, 0).UTC() },
+		Workflows:       runs,
+		Revisions:       revs,
+		Publisher:       pub,
+		Tenants:         []string{executionTenant},
+		Now:             func() time.Time { return time.Unix(1700000000, 0).UTC() },
+		ObserveResource: func(context.Context, string, workflow.Run) (bool, error) { return false, nil },
 		ProjectStatus: func(_ context.Context, _ string, run workflow.Run) error {
 			*projected = append(*projected, run)
 			return nil
@@ -90,8 +97,12 @@ func stepKey(t *testing.T, task string) string {
 
 func stepFor(t *testing.T, task string, phase jobrun.Phase, attempt int) workflow.StepRun {
 	t.Helper()
+	revisionID := int64(10)
+	if task == "load" {
+		revisionID = 11
+	}
 	return workflow.StepRun{
-		ID: 1, WorkflowRunID: 42, SourceUID: task + "-job-uid", OccurrenceKey: stepKey(t, task),
+		ID: 1, WorkflowRunID: 42, RevisionID: revisionID, SourceUID: task + "-job-uid", OccurrenceKey: stepKey(t, task),
 		Trigger: jobrun.Workflow, Phase: phase, Attempt: attempt,
 	}
 }
@@ -155,7 +166,7 @@ func TestWorkflowWalkerWaitsForNonTerminalDependencies(t *testing.T) {
 	if created != 0 || len(runs.createdStep) != 0 {
 		t.Fatalf("created = %d (%+v), want 0: load's dependency is still in flight", created, runs.createdStep)
 	}
-	if len(runs.phases) != 0 || len(pub.published) != 0 {
+	if len(runs.phases) != 0 || len(pub.published) != 1 {
 		t.Fatalf("unexpected writes: phases=%+v published=%+v", runs.phases, pub.published)
 	}
 }

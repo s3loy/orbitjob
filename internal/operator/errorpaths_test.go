@@ -16,6 +16,7 @@ import (
 	k8stesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/util/workqueue"
 
+	"orbitjob/internal/core/app/execution"
 	"orbitjob/internal/core/domain/jobrun"
 	"orbitjob/internal/core/domain/revision"
 )
@@ -234,7 +235,7 @@ func TestCancelLeavesJobAloneUntilDeletionIsRegistered(t *testing.T) {
 	// declare the workload stopped.
 	obj, stored := jobRunObjectWithCancel(t, string(jobrun.Running), 1)
 	live := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
-		Name: "oj-nightly-report-1-1", Namespace: "finance",
+		Name: "oj-nightly-report-1-1", Namespace: "finance", UID: "job-uid", Labels: map[string]string{execution.LabelRunName: obj.GetName(), execution.LabelRunUID: string(obj.GetUID()), execution.LabelAttempt: "1"},
 	}}
 	runs := &fakeRuns{found: true, stored: stored}
 	jobs := &fakeJobs{job: live, deleteKeepsJob: true}

@@ -37,7 +37,7 @@ func TestReconcileJobHandsTerminalTransitionToOutcomes(t *testing.T) {
 		if err := rt.ReconcileJob(context.Background(), obj); err != nil {
 			t.Fatal(err)
 		}
-		if len(hook.calls) != 1 || hook.calls[0] != (outcomeCall{tenant: "tenant-a", runID: 11, phase: jobrun.Succeeded}) {
+		if len(hook.calls) != 1 || hook.calls[0] != (outcomeCall{tenant: executionTenant, runID: 11, phase: jobrun.Succeeded}) {
 			t.Fatalf("outcome calls = %+v, want one Succeeded handover", hook.calls)
 		}
 	})
@@ -71,4 +71,9 @@ func TestReconcileJobHandsTerminalTransitionToOutcomes(t *testing.T) {
 			t.Fatalf("outcome calls = %+v, want none until attempts are spent", hook.calls)
 		}
 	})
+}
+
+func (r *recordingOutcomes) RecordTerminalPhaseOnce(ctx context.Context, tenant string, id int64, phase jobrun.Phase) error {
+	r.RecordTerminalPhase(ctx, tenant, id, phase)
+	return nil
 }

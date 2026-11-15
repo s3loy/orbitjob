@@ -11,6 +11,8 @@ import (
 
 	v1alpha1 "orbitjob/api/kubernetes/workloads/v1alpha1"
 	"orbitjob/internal/core/domain/revision"
+
+	"orbitjob/internal/platform/scan"
 )
 
 type captureWriter struct {
@@ -44,11 +46,11 @@ func validScheduledJob() v1alpha1.ScheduledJob {
 
 func TestApplyScheduledJobProjectsFullSpec(t *testing.T) {
 	w := &captureWriter{}
-	id, err := (Service{Revisions: w}).ApplyScheduledJob(context.Background(), validScheduledJob(), "tenant-a", "operator")
+	id, err := (Service{Revisions: w}).ApplyScheduledJob(context.Background(), validScheduledJob(), serviceFixtureTenantID, "operator")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if id != 42 || w.calls != 1 || w.tenant != "tenant-a" {
+	if id != 42 || w.calls != 1 || w.tenant != serviceFixtureTenantID {
 		t.Fatalf("id=%d calls=%d tenant=%q", id, w.calls, w.tenant)
 	}
 	// The revision must carry everything a run needs to build its Job, not a
@@ -67,11 +69,11 @@ func TestApplyScheduledJobIsDeterministic(t *testing.T) {
 	first := &captureWriter{}
 	second := &captureWriter{}
 	svc := Service{Revisions: first}
-	if _, err := svc.ApplyScheduledJob(context.Background(), validScheduledJob(), "t", "op"); err != nil {
+	if _, err := svc.ApplyScheduledJob(context.Background(), validScheduledJob(), serviceFixtureOtherTenantID, "op"); err != nil {
 		t.Fatal(err)
 	}
 	svc2 := Service{Revisions: second}
-	if _, err := svc2.ApplyScheduledJob(context.Background(), validScheduledJob(), "t", "op"); err != nil {
+	if _, err := svc2.ApplyScheduledJob(context.Background(), validScheduledJob(), serviceFixtureOtherTenantID, "op"); err != nil {
 		t.Fatal(err)
 	}
 	if first.got.SpecHash != second.got.SpecHash {
@@ -82,8 +84,6 @@ func TestApplyScheduledJobIsDeterministic(t *testing.T) {
 func TestApplyScheduledJobRejectsIncompleteInput(t *testing.T) {
 	noImage := validScheduledJob()
 	noImage.Spec.JobTemplate.Image = ""
-	noSchedule := validScheduledJob()
-	noSchedule.Spec.Schedule = ""
 	noUID := validScheduledJob()
 	noUID.UID = ""
 	zeroGen := validScheduledJob()
@@ -96,11 +96,10 @@ func TestApplyScheduledJobRejectsIncompleteInput(t *testing.T) {
 		svc    Service
 	}{
 		{"missing tenant", validScheduledJob(), "", Service{Revisions: &captureWriter{}}},
-		{"missing writer", validScheduledJob(), "t", Service{}},
-		{"missing uid", noUID, "t", Service{Revisions: &captureWriter{}}},
-		{"zero generation", zeroGen, "t", Service{Revisions: &captureWriter{}}},
-		{"missing schedule", noSchedule, "t", Service{Revisions: &captureWriter{}}},
-		{"missing image", noImage, "t", Service{Revisions: &captureWriter{}}},
+		{"missing writer", validScheduledJob(), serviceFixtureOtherTenantID, Service{}},
+		{"missing uid", noUID, serviceFixtureOtherTenantID, Service{Revisions: &captureWriter{}}},
+		{"zero generation", zeroGen, serviceFixtureOtherTenantID, Service{Revisions: &captureWriter{}}},
+		{"missing image", noImage, serviceFixtureOtherTenantID, Service{Revisions: &captureWriter{}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -113,7 +112,7 @@ func TestApplyScheduledJobRejectsIncompleteInput(t *testing.T) {
 
 func TestApplyScheduledJobPropagatesWriterError(t *testing.T) {
 	w := &captureWriter{err: errors.New("conflict")}
-	if _, err := (Service{Revisions: w}).ApplyScheduledJob(context.Background(), validScheduledJob(), "t", "op"); err == nil {
+	if _, err := (Service{Revisions: w}).ApplyScheduledJob(context.Background(), validScheduledJob(), serviceFixtureOtherTenantID, "op"); err == nil {
 		t.Fatal("expected writer error to propagate")
 	}
 }
@@ -124,7 +123,7 @@ func TestApplyScheduledJobUsesInjectedClock(t *testing.T) {
 	fixed := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
 	w := &captureWriter{}
 	svc := Service{Revisions: w, Now: func() time.Time { return fixed }}
-	if _, err := svc.ApplyScheduledJob(context.Background(), validScheduledJob(), "t", "op"); err != nil {
+	if _, err := svc.ApplyScheduledJob(context.Background(), validScheduledJob(), serviceFixtureOtherTenantID, "op"); err != nil {
 		t.Fatal(err)
 	}
 	if !w.got.CreatedAt.Equal(fixed) {
@@ -133,7 +132,7 @@ func TestApplyScheduledJobUsesInjectedClock(t *testing.T) {
 
 	// With no clock injected the wall clock is used, and it must not be zero.
 	fallback := &captureWriter{}
-	if _, err := (Service{Revisions: fallback}).ApplyScheduledJob(context.Background(), validScheduledJob(), "t", "op"); err != nil {
+	if _, err := (Service{Revisions: fallback}).ApplyScheduledJob(context.Background(), validScheduledJob(), serviceFixtureOtherTenantID, "op"); err != nil {
 		t.Fatal(err)
 	}
 	if fallback.got.CreatedAt.IsZero() {
@@ -166,7 +165,7 @@ func TestNormalizeSpecIsLosslessAndDeterministic(t *testing.T) {
 }
 
 func TestApplyScheduledJobAcceptsMinimalValidSpec(t *testing.T) {
-	// Only schedule and image are required; every optional field must be
+	// Only the image is required; every optional field must be
 	// omittable without the projection refusing the definition.
 	w := &captureWriter{}
 	obj := validScheduledJob()
@@ -174,10 +173,26 @@ func TestApplyScheduledJobAcceptsMinimalValidSpec(t *testing.T) {
 		Schedule:    "0 2 * * *",
 		JobTemplate: v1alpha1.JobTemplateSpec{Image: "img"},
 	}
-	if _, err := (Service{Revisions: w}).ApplyScheduledJob(context.Background(), obj, "t", "op"); err != nil {
+	if _, err := (Service{Revisions: w}).ApplyScheduledJob(context.Background(), obj, serviceFixtureOtherTenantID, "op"); err != nil {
 		t.Fatal(err)
 	}
 	if w.got.SpecHash == "" {
 		t.Fatal("no spec hash recorded")
+	}
+}
+
+var serviceFixtureOtherTenantID = scan.GenerateID()
+
+var serviceFixtureTenantID = scan.GenerateID()
+
+func TestApplyScheduledJobAcceptsManualOnlyDefinition(t *testing.T) {
+	w := &captureWriter{}
+	obj := validScheduledJob()
+	obj.Spec.Schedule = ""
+	if _, err := (Service{Revisions: w}).ApplyScheduledJob(context.Background(), obj, serviceFixtureOtherTenantID, "op"); err != nil {
+		t.Fatalf("manual-only job must reach the existing manual trigger path: %v", err)
+	}
+	if !strings.Contains(w.got.NormalizedSpec, `"schedule":""`) {
+		t.Fatalf("manual-only intent was lost: %s", w.got.NormalizedSpec)
 	}
 }

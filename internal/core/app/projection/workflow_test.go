@@ -11,6 +11,8 @@ import (
 
 	v1alpha1 "orbitjob/api/kubernetes/workloads/v1alpha1"
 	"orbitjob/internal/core/domain/revision"
+
+	"orbitjob/internal/platform/scan"
 )
 
 // The workflow projection is the front half of the workflow surface: the CR
@@ -44,11 +46,11 @@ func TestApplyWorkflowJobProjectsRevisionForTheWalker(t *testing.T) {
 	w := &captureWriter{}
 	obj := validWorkflowJob()
 	id, err := (Service{Revisions: w, Now: func() time.Time { return time.Unix(3000, 0).UTC() }}).
-		ApplyWorkflowJob(context.Background(), obj, "tenant-a", "orbitjob-operator")
+		ApplyWorkflowJob(context.Background(), obj, workflowProjectionFixtureTenantID, "orbitjob-operator")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if id != 42 || w.calls != 1 || w.tenant != "tenant-a" {
+	if id != 42 || w.calls != 1 || w.tenant != workflowProjectionFixtureTenantID {
 		t.Fatalf("id=%d calls=%d tenant=%q", id, w.calls, w.tenant)
 	}
 
@@ -106,14 +108,14 @@ func TestApplyWorkflowJobRejectsIncompleteInput(t *testing.T) {
 		name string
 		mut  func(*v1alpha1.WorkflowJob)
 	}{
-		{"no schedule", func(o *v1alpha1.WorkflowJob) { o.Spec.Schedule = "" }},
+		{"invalid schedule", func(o *v1alpha1.WorkflowJob) { o.Spec.Schedule = "@daily" }},
 		{"no tasks", func(o *v1alpha1.WorkflowJob) { o.Spec.Tasks = nil }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			obj := validWorkflowJob()
 			tt.mut(&obj)
-			if _, err := (Service{Revisions: &captureWriter{}}).ApplyWorkflowJob(context.Background(), obj, "tenant-a", "orbitjob-operator"); err == nil {
+			if _, err := (Service{Revisions: &captureWriter{}}).ApplyWorkflowJob(context.Background(), obj, workflowProjectionFixtureTenantID, "orbitjob-operator"); err == nil {
 				t.Fatal("expected an incomplete spec to be refused")
 			}
 		})
@@ -122,14 +124,41 @@ func TestApplyWorkflowJobRejectsIncompleteInput(t *testing.T) {
 	if _, err := (Service{Revisions: &captureWriter{}}).ApplyWorkflowJob(context.Background(), validWorkflowJob(), "", "orbitjob-operator"); err == nil {
 		t.Fatal("expected an empty tenant to be refused")
 	}
-	if _, err := (Service{Revisions: nil}).ApplyWorkflowJob(context.Background(), validWorkflowJob(), "tenant-a", "orbitjob-operator"); err == nil {
+	if _, err := (Service{Revisions: nil}).ApplyWorkflowJob(context.Background(), validWorkflowJob(), workflowProjectionFixtureTenantID, "orbitjob-operator"); err == nil {
 		t.Fatal("expected a missing revision writer to be refused")
 	}
 }
 
 func TestApplyWorkflowJobSurfacesWriterError(t *testing.T) {
 	w := &captureWriter{err: revision.ErrInvalidIdentity}
-	if _, err := (Service{Revisions: w}).ApplyWorkflowJob(context.Background(), validWorkflowJob(), "tenant-a", "orbitjob-operator"); err == nil {
+	if _, err := (Service{Revisions: w}).ApplyWorkflowJob(context.Background(), validWorkflowJob(), workflowProjectionFixtureTenantID, "orbitjob-operator"); err == nil {
 		t.Fatal("expected the writer error to surface")
+	}
+}
+
+func TestWorkflowProjectionRefusesCycleBeforeWriting(t *testing.T) {
+	obj := validWorkflowJob()
+	obj.Spec.Tasks[0].DependsOn = []string{"load"}
+	writer := &captureWriter{}
+	if _, err := (Service{Revisions: writer}).ApplyWorkflowJob(context.Background(), obj, workflowProjectionFixtureTenantID, "operator"); err == nil {
+		t.Fatal("accepted cyclic workflow")
+	}
+	if writer.calls != 0 {
+		t.Fatal("invalid DAG reached immutable revision store")
+	}
+}
+
+var workflowProjectionFixtureTenantID = scan.GenerateID()
+
+func TestWorkflowTimezoneDefaultPreservesExistingRevisionHash(t *testing.T) {
+	spec := validWorkflowJob().Spec
+	before := normalizeWorkflowSpec(spec)
+	spec.TimeZone = "UTC"
+	if after := normalizeWorkflowSpec(spec); after != before {
+		t.Fatalf("CRD default changed an existing generation's normalized bytes: before=%s after=%s", before, after)
+	}
+	spec.TimeZone = "Asia/Shanghai"
+	if after := normalizeWorkflowSpec(spec); after == before || !strings.Contains(after, `"timeZone":"Asia/Shanghai"`) {
+		t.Fatalf("non-default timezone was lost: %s", after)
 	}
 }

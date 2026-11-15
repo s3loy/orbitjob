@@ -35,9 +35,15 @@ type alertWriter interface {
 
 // WindowAggregate holds aggregated SLI data for a time window.
 type WindowAggregate struct {
-	GoodEventsCount  int64
-	TotalEventsCount int64
-	SLIValue         float64
+	GoodEventsCount     int64
+	TotalEventsCount    int64
+	SLIValue            float64
+	LastEventAt         *time.Time
+	LastSampleAt        *time.Time
+	StatisticsSemantics string
+	SourceAvailable     *bool
+	MissingReason       string
+	FreshUntil          *time.Time
 }
 
 // AlertSnapshot represents a budget alert.
@@ -127,21 +133,32 @@ func (uc *EvaluateUseCase) evaluateSLO(ctx context.Context, tenantID string, s s
 	}
 
 	if aggregate.TotalEventsCount == 0 {
-		// No events yet, still update budget with zero consumption.
+		// An empty or disabled measurement source is unevaluated, not healthy.
 		budget := slo.Budget{
-			TenantID:        tenantID,
-			SLOID:           s.ID,
-			WindowStart:     window.Start,
-			WindowEnd:       window.End,
-			BudgetTotal:     0,
-			BudgetConsumed:  0,
-			BudgetRemaining: 0,
-			BurnRate:        0,
-			Status:          slo.BudgetHealthy,
+			TenantID:            tenantID,
+			SLOID:               s.ID,
+			WindowStart:         window.Start,
+			WindowEnd:           window.End,
+			BudgetTotal:         0,
+			BudgetConsumed:      0,
+			BudgetRemaining:     0,
+			BurnRate:            0,
+			Status:              slo.BudgetUnevaluated,
+			EvaluatedAt:         now,
+			LastEventAt:         aggregate.LastEventAt,
+			LastSampleAt:        aggregate.LastSampleAt,
+			StatisticsSemantics: aggregate.StatisticsSemantics,
+			EvaluationReason:    slo.ReasonNoSamples,
+		}
+		if aggregate.SourceAvailable != nil && !*aggregate.SourceAvailable {
+			budget.EvaluationReason = slo.ReasonSourceInactive
+		} else if aggregate.MissingReason == "task_timing_unavailable" {
+			budget.EvaluationReason = slo.ReasonMissingTiming
 		}
 		if _, err := uc.budgetWriter.Upsert(ctx, tenantID, budget); err != nil {
 			return fmt.Errorf("upsert budget: %w", err)
 		}
+		metrics.SLOBudgetStatus.WithLabelValues(tenantID, strconv.FormatInt(s.ID, 10)).Set(3)
 		return nil
 	}
 
@@ -161,18 +178,31 @@ func (uc *EvaluateUseCase) evaluateSLO(ctx context.Context, tenantID string, s s
 
 	// 6. Determine budget status.
 	status := slo.BudgetStatus(budgetRemaining, budgetTotal)
+	reason := ""
+	if aggregate.SourceAvailable != nil && !*aggregate.SourceAvailable {
+		status = slo.BudgetUnevaluated
+		reason = slo.ReasonSourceInactive
+	} else if aggregate.FreshUntil != nil && now.After(*aggregate.FreshUntil) {
+		status = slo.BudgetUnevaluated
+		reason = slo.ReasonStale
+	}
 
 	// 7. Persist budget.
 	budget := slo.Budget{
-		TenantID:        tenantID,
-		SLOID:           s.ID,
-		WindowStart:     window.Start,
-		WindowEnd:       window.End,
-		BudgetTotal:     budgetTotal,
-		BudgetConsumed:  budgetConsumed,
-		BudgetRemaining: budgetRemaining,
-		BurnRate:        burnRate,
-		Status:          status,
+		TenantID:            tenantID,
+		SLOID:               s.ID,
+		WindowStart:         window.Start,
+		WindowEnd:           window.End,
+		BudgetTotal:         budgetTotal,
+		BudgetConsumed:      budgetConsumed,
+		BudgetRemaining:     budgetRemaining,
+		BurnRate:            burnRate,
+		Status:              status,
+		EvaluatedAt:         now,
+		LastEventAt:         aggregate.LastEventAt,
+		LastSampleAt:        aggregate.LastSampleAt,
+		StatisticsSemantics: aggregate.StatisticsSemantics,
+		EvaluationReason:    reason,
 	}
 	budget, err = uc.budgetWriter.Upsert(ctx, tenantID, budget)
 	if err != nil {
@@ -184,12 +214,17 @@ func (uc *EvaluateUseCase) evaluateSLO(ctx context.Context, tenantID string, s s
 	metrics.SLOBudgetBurnRate.WithLabelValues(tenantID, sloIDStr).Set(burnRate)
 	statusValue := 0.0
 	switch status {
+	case slo.BudgetUnevaluated:
+		statusValue = 3.0
 	case slo.BudgetAtRisk:
 		statusValue = 1.0
 	case slo.BudgetExhausted:
 		statusValue = 2.0
 	}
 	metrics.SLOBudgetStatus.WithLabelValues(tenantID, sloIDStr).Set(statusValue)
+	if status == slo.BudgetUnevaluated {
+		return nil
+	}
 
 	// 8. Check burn rate thresholds and manage alerts.
 	if err := uc.manageAlerts(ctx, tenantID, s, budget); err != nil {
@@ -218,7 +253,8 @@ func (uc *EvaluateUseCase) manageAlerts(ctx context.Context, tenantID string, s 
 	}
 
 	// Check fast burn rate threshold.
-	if budget.BurnRate >= s.AlertFastBurnRate {
+	exhaustedZeroBudget := budget.BudgetTotal == 0 && budget.BudgetConsumed > 0
+	if exhaustedZeroBudget || budget.BurnRate >= s.AlertFastBurnRate {
 		if !hasFastBurn {
 			if err := uc.alertWriter.Create(ctx, tenantID, s.ID, budget.ID, "fast_burn", budget.BurnRate); err != nil {
 				return fmt.Errorf("create fast burn alert: %w", err)
@@ -238,7 +274,7 @@ func (uc *EvaluateUseCase) manageAlerts(ctx context.Context, tenantID string, s 
 	}
 
 	// Check slow burn rate threshold independently.
-	if budget.BurnRate >= s.AlertSlowBurnRate {
+	if exhaustedZeroBudget || budget.BurnRate >= s.AlertSlowBurnRate {
 		if !hasSlowBurn {
 			if err := uc.alertWriter.Create(ctx, tenantID, s.ID, budget.ID, "slow_burn", budget.BurnRate); err != nil {
 				return fmt.Errorf("create slow burn alert: %w", err)

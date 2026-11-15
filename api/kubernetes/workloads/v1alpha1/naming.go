@@ -1,16 +1,34 @@
 package v1alpha1
 
-// RunObjectName derives the JobRun object name for one occurrence: the owning
-// ScheduledJob's name plus the first eight characters of the occurrence key.
-// The occurrence key is a sha256 digest, so its first eight characters are
-// stable and form a valid object-name suffix; a malformed or legacy key falls
-// back to "unknown" rather than panicking a reconcile or schedule loop.
-//
-// Every writer of a JobRun (scheduler, manual trigger, cancel request) derives
-// the name through this one function, so a run stored in the ledger is
-// addressable in Kubernetes by any component that knows the definition name
-// and the occurrence key.
-func RunObjectName(scheduledJobName, occurrenceKey string) string {
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"strings"
+)
+
+// RunObjectName retains the full occurrence digest. The definition prefix is
+// descriptive only; uniqueness is established by the complete immutable spec.
+func RunObjectName(definitionName, occurrenceKey string) string {
+	digest := occurrenceKey
+	decoded, err := hex.DecodeString(digest)
+	if err != nil || len(decoded) != sha256.Size {
+		sum := sha256.Sum256([]byte(occurrenceKey))
+		digest = hex.EncodeToString(sum[:])
+	}
+	prefix := definitionName
+	if len(prefix) > 188 {
+		prefix = prefix[:188]
+	}
+	prefix = strings.Trim(prefix, "-.")
+	if prefix == "" {
+		prefix = "run"
+	}
+	return prefix + "-" + strings.ToLower(digest)
+}
+
+// LegacyRunObjectName is lookup-only compatibility for objects already returned
+// to callers. Existing objects are never renamed or replaced during a repair.
+func LegacyRunObjectName(definitionName, occurrenceKey string) string {
 	suffix := occurrenceKey
 	if len(suffix) > 8 {
 		suffix = suffix[:8]
@@ -18,17 +36,17 @@ func RunObjectName(scheduledJobName, occurrenceKey string) string {
 	if suffix == "" {
 		suffix = "unknown"
 	}
-	return scheduledJobName + "-" + suffix
+	return definitionName + "-" + suffix
 }
 
-// WorkflowRunObjectName derives the WorkflowRun object name for one manual
-// workflow run: the WorkflowJob's name plus the first eight characters of the
-// occurrence key, the same derivation as RunObjectName. The two kinds live in
-// separate resource namespaces, so a workflow run and a step run may share a
-// generated suffix without colliding. Every writer of a WorkflowRun derives
-// the name through this one function, so a run stored in the ledger is
-// addressable in Kubernetes by any component that knows the workflow name and
-// the occurrence key.
-func WorkflowRunObjectName(workflowJobName, occurrenceKey string) string {
-	return RunObjectName(workflowJobName, occurrenceKey)
+func RunNameCandidates(definitionName, occurrenceKey string) []string {
+	modern, legacy := RunObjectName(definitionName, occurrenceKey), LegacyRunObjectName(definitionName, occurrenceKey)
+	if modern == legacy || len(legacy) > 253 {
+		return []string{modern}
+	}
+	return []string{modern, legacy}
+}
+
+func WorkflowRunObjectName(definitionName, occurrenceKey string) string {
+	return RunObjectName(definitionName, occurrenceKey)
 }

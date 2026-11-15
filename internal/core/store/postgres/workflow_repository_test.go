@@ -13,6 +13,8 @@ import (
 	"orbitjob/internal/core/domain/jobrun"
 	"orbitjob/internal/core/domain/workflow"
 	"orbitjob/internal/domain/resource"
+
+	"orbitjob/internal/platform/scan"
 )
 
 // The workflow repository's writes are the same guarded moves the run ledger
@@ -46,8 +48,55 @@ func expectWorkflowTx(mock sqlmock.Sqlmock, tenantID string) {
 		WillReturnResult(sqlmock.NewResult(0, 0))
 }
 
+func expectWorkflowSourceLock(mock sqlmock.Sqlmock, tenantID, mode, uid string, revisionID int64) {
+	mock.ExpectQuery("SELECT source_mode, source_uid FROM job_definition_revisions").
+		WithArgs(revisionID, tenantID).
+		WillReturnRows(sqlmock.NewRows([]string{"source_mode", "source_uid"}).AddRow(mode, uid))
+	mock.ExpectExec("SELECT pg_advisory_xact_lock").
+		WithArgs(sourceLockKey(tenantID, mode, uid)).WillReturnResult(sqlmock.NewResult(0, 1))
+}
+
+func expectWorkflowAdmission(mock sqlmock.Sqlmock, step bool) {
+	mode, uid, revisionID := "workflow", "wf-nightly", int64(5)
+	columns, table := workflowRunScanColumns, "workflow_run_control_plane"
+	if step {
+		mode, uid, revisionID = "kubernetes", "nightly", 9
+		columns, table = workflowStepScanColumns, "job_run_control_plane"
+	}
+	if step {
+		expectWorkflowStepLocks(mock)
+	} else {
+		expectWorkflowSourceLock(mock, coreFixtureWorkflowRepositoryTenantID, mode, uid, revisionID)
+	}
+	mock.ExpectQuery("SELECT .+ FROM " + table + " WHERE source_uid").WillReturnRows(sqlmock.NewRows(columns))
+	if step {
+		mock.ExpectQuery("SELECT EXISTS \\(SELECT 1 FROM job_run_control_plane").
+			WithArgs(coreFixtureWorkflowRepositoryTenantID, int64(11)).
+			WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+		expectNoSourceControl(mock)
+	}
+	expectExecutionControlCheck(mock)
+	mock.ExpectQuery("SELECT normalized_spec::text FROM job_definition_revisions").
+		WithArgs(coreFixtureWorkflowRepositoryTenantID, mode, uid).
+		WillReturnRows(sqlmock.NewRows([]string{"normalized_spec"}).AddRow(`{"concurrencyPolicy":"Allow"}`))
+	if !step {
+		mock.ExpectQuery("SELECT source_namespace,normalized_spec::text FROM job_definition_revisions").
+			WithArgs(revisionID, coreFixtureWorkflowRepositoryTenantID).
+			WillReturnRows(sqlmock.NewRows([]string{"source_namespace", "normalized_spec"}).AddRow("finance", `{}`))
+	}
+}
+
+func expectWorkflowPhaseLock(mock sqlmock.Sqlmock, runID int64, phase string) {
+	rows := sqlmock.NewRows([]string{"phase"})
+	if phase != "" {
+		rows.AddRow(phase)
+	}
+	mock.ExpectQuery("SELECT phase FROM workflow_run_control_plane").
+		WithArgs(runID, coreFixtureWorkflowRepositoryTenantID).WillReturnRows(rows)
+}
+
 var (
-	workflowRunScanColumns   = strings.Fields("id, source_uid, revision_id, occurrence_key, trigger, actor, phase, task_decisions, created_at, updated_at")
+	workflowRunScanColumns   = strings.Fields("id, source_uid, revision_id, occurrence_key, trigger, actor, phase, task_decisions, created_at, updated_at, scheduled_for, rejection_reason, resource_uid, snapshot_version, task_snapshots")
 	workflowStepScanColumns  = strings.Fields("id, workflow_run_id, source_uid, revision_id, occurrence_key, trigger, phase, attempt, created_at, updated_at")
 	workflowPhaseScanColumns = []string{"phase", "task_decisions"}
 
@@ -58,18 +107,17 @@ var (
 // updateWorkflowPhaseSQL receive for "not yet finished": the SQL form of
 // workflow.Terminal, CancelUnknown deliberately absent.
 func workflowTerminalSet() []string {
-	return []string{"Succeeded", "Failed", "Canceled"}
+	return []string{"Succeeded", "Failed", "Canceled", "Rejected"}
 }
 
-// workflowPruneSet is what the retention statements receive: the terminal
-// phases plus CancelUnknown, matching the job-run ledger's retention set.
+// Unknown stops remain outside the ordinary history retention set.
 func workflowPruneSet() []string {
-	return []string{"Succeeded", "Failed", "Canceled", "CancelUnknown"}
+	return []string{"Succeeded", "Failed", "Canceled", "Rejected"}
 }
 
 func workflowRunRow(id int64, phase string, decisions string) *sqlmock.Rows {
 	return sqlmock.NewRows(workflowRunScanColumns).
-		AddRow(id, "wf-nightly", int64(5), "occ-1", "Schedule", "walker", phase, decisions, workflowRowTime, workflowRowTime)
+		AddRow(id, "wf-nightly", int64(5), "occ-1", "Schedule", "walker", phase, decisions, workflowRowTime, workflowRowTime, nil, "", "", 0, "{}")
 }
 
 func workflowStepRow(id int64) *sqlmock.Rows {
@@ -89,23 +137,23 @@ func TestWorkflowOperationsBindTheTenantGuc(t *testing.T) {
 	// exactly; a second call under another tenant must carry that other id.
 	repo, mock := newWorkflowRepoMock(t)
 
-	expectWorkflowTx(mock, "tenant-a")
+	expectWorkflowTx(mock, coreFixtureWorkflowRepositoryAlphaTenantID)
 	mock.ExpectQuery("SELECT .+ FROM workflow_run_control_plane WHERE id=\\$1 AND tenant_id=\\$2").
-		WithArgs(int64(11), "tenant-a").
+		WithArgs(int64(11), coreFixtureWorkflowRepositoryAlphaTenantID).
 		WillReturnRows(workflowRunRow(11, "Running", "{}"))
 	mock.ExpectCommit()
 
-	expectWorkflowTx(mock, "tenant-b")
+	expectWorkflowTx(mock, coreFixtureWorkflowRepositoryBetaTenantID)
 	mock.ExpectQuery("SELECT .+ FROM workflow_run_control_plane WHERE id=\\$1 AND tenant_id=\\$2").
-		WithArgs(int64(11), "tenant-b").
+		WithArgs(int64(11), coreFixtureWorkflowRepositoryBetaTenantID).
 		WillReturnRows(sqlmock.NewRows(workflowRunScanColumns))
 	mock.ExpectCommit()
 
-	if _, found, err := repo.RunByID(context.Background(), "tenant-a", 11); err != nil || !found {
-		t.Fatalf("tenant-a lookup: found=%v err=%v", found, err)
+	if _, found, err := repo.RunByID(context.Background(), coreFixtureWorkflowRepositoryAlphaTenantID, 11); err != nil || !found {
+		t.Fatalf(coreFixtureWorkflowRepositoryAlphaTenantID+" lookup: found=%v err=%v", found, err)
 	}
-	if _, found, err := repo.RunByID(context.Background(), "tenant-b", 11); err != nil || found {
-		t.Fatalf("tenant-b lookup must not find the row: found=%v err=%v", found, err)
+	if _, found, err := repo.RunByID(context.Background(), coreFixtureWorkflowRepositoryBetaTenantID, 11); err != nil || found {
+		t.Fatalf(coreFixtureWorkflowRepositoryBetaTenantID+" lookup must not find the row: found=%v err=%v", found, err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet expectations: %v", err)
@@ -115,17 +163,18 @@ func TestWorkflowOperationsBindTheTenantGuc(t *testing.T) {
 func TestCreateWorkflowRunForTenantCreatesAndAudits(t *testing.T) {
 	repo, mock := newWorkflowRepoMock(t)
 
-	expectWorkflowTx(mock, "default")
+	expectWorkflowTx(mock, coreFixtureWorkflowRepositoryTenantID)
+	expectWorkflowAdmission(mock, false)
 	mock.ExpectQuery("INSERT INTO workflow_run_control_plane").
-		WithArgs("default", "wf-nightly", int64(5), "occ-1", "Schedule", "walker", "Pending").
+		WithArgs(coreFixtureWorkflowRepositoryTenantID, "wf-nightly", int64(5), "occ-1", "Schedule", "walker", "Pending", nil, "", "", 0).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(11))
 	mock.ExpectQuery("SELECT .+ FROM workflow_run_control_plane WHERE source_uid=\\$1 AND occurrence_key=\\$2 AND tenant_id=\\$3").
-		WithArgs("wf-nightly", "occ-1", "default").
+		WithArgs("wf-nightly", "occ-1", coreFixtureWorkflowRepositoryTenantID).
 		WillReturnRows(workflowRunRow(11, "Pending", "{}"))
 	expectControlPlaneAudit(mock, "walker")
 	mock.ExpectCommit()
 
-	stored, created, err := repo.CreateRunForTenant(context.Background(), "default", workflowRun())
+	stored, created, err := repo.CreateRunForTenant(context.Background(), coreFixtureWorkflowRepositoryTenantID, workflowRun())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -149,16 +198,14 @@ func TestCreateWorkflowRunForTenantDedupConverges(t *testing.T) {
 	// The occurrence was recorded by another writer; the loser reads the
 	// winner's row back and reports created=false, and must not write an
 	// audit row for a run it did not create.
-	expectWorkflowTx(mock, "default")
-	mock.ExpectQuery("INSERT INTO workflow_run_control_plane").
-		WithArgs("default", "wf-nightly", int64(5), "occ-1", "Schedule", "walker", "Pending").
-		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	expectWorkflowTx(mock, coreFixtureWorkflowRepositoryTenantID)
+	expectWorkflowSourceLock(mock, coreFixtureWorkflowRepositoryTenantID, "workflow", "wf-nightly", 5)
 	mock.ExpectQuery("SELECT .+ FROM workflow_run_control_plane WHERE source_uid=\\$1 AND occurrence_key=\\$2 AND tenant_id=\\$3").
-		WithArgs("wf-nightly", "occ-1", "default").
+		WithArgs("wf-nightly", "occ-1", coreFixtureWorkflowRepositoryTenantID).
 		WillReturnRows(workflowRunRow(11, "Running", "{}"))
 	mock.ExpectCommit()
 
-	stored, created, err := repo.CreateRunForTenant(context.Background(), "default", workflowRun())
+	stored, created, err := repo.CreateRunForTenant(context.Background(), coreFixtureWorkflowRepositoryTenantID, workflowRun())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -179,7 +226,8 @@ func TestCreateWorkflowRunForTenantUniqueViolationIsTyped(t *testing.T) {
 	// A UNIQUE violation the ON CONFLICT clause does not cover -- a primary
 	// key after a sequence-desyncing restore, say -- surfaces as the typed
 	// conflict naming the constraint, never as a raw driver error.
-	expectWorkflowTx(mock, "default")
+	expectWorkflowTx(mock, coreFixtureWorkflowRepositoryTenantID)
+	expectWorkflowAdmission(mock, false)
 	mock.ExpectQuery("INSERT INTO workflow_run_control_plane").
 		WillReturnError(&pq.Error{
 			Code:       "23505",
@@ -187,7 +235,7 @@ func TestCreateWorkflowRunForTenantUniqueViolationIsTyped(t *testing.T) {
 		})
 	mock.ExpectRollback()
 
-	_, _, err := repo.CreateRunForTenant(context.Background(), "default", workflowRun())
+	_, _, err := repo.CreateRunForTenant(context.Background(), coreFixtureWorkflowRepositoryTenantID, workflowRun())
 	var conflict *resource.ConflictError
 	if !errors.As(err, &conflict) {
 		t.Fatalf("err = %v, want a typed ConflictError", err)
@@ -219,7 +267,7 @@ func TestCreateWorkflowRunForTenantRefusesBadInput(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, err := repo.CreateRunForTenant(context.Background(), "default", tc.run)
+			_, _, err := repo.CreateRunForTenant(context.Background(), coreFixtureWorkflowRepositoryTenantID, tc.run)
 			if err == nil {
 				t.Fatal("expected a refusal")
 			}
@@ -233,13 +281,13 @@ func TestCreateWorkflowRunForTenantRefusesBadInput(t *testing.T) {
 func TestWorkflowRunLookups(t *testing.T) {
 	t.Run("by occurrence found and the decision trail decodes", func(t *testing.T) {
 		repo, mock := newWorkflowRepoMock(t)
-		expectWorkflowTx(mock, "default")
+		expectWorkflowTx(mock, coreFixtureWorkflowRepositoryTenantID)
 		mock.ExpectQuery("SELECT .+ FROM workflow_run_control_plane WHERE source_uid=\\$1 AND occurrence_key=\\$2 AND tenant_id=\\$3").
-			WithArgs("wf-nightly", "occ-1", "default").
+			WithArgs("wf-nightly", "occ-1", coreFixtureWorkflowRepositoryTenantID).
 			WillReturnRows(workflowRunRow(11, "Running", `{"build":{"skipped":true,"reason":"fail_fast"}}`))
 		mock.ExpectCommit()
 
-		run, found, err := repo.RunByOccurrence(context.Background(), "default", "wf-nightly", "occ-1")
+		run, found, err := repo.RunByOccurrence(context.Background(), coreFixtureWorkflowRepositoryTenantID, "wf-nightly", "occ-1")
 		if err != nil || !found {
 			t.Fatalf("found=%v err=%v", found, err)
 		}
@@ -254,12 +302,12 @@ func TestWorkflowRunLookups(t *testing.T) {
 
 	t.Run("by occurrence not found is calm", func(t *testing.T) {
 		repo, mock := newWorkflowRepoMock(t)
-		expectWorkflowTx(mock, "default")
+		expectWorkflowTx(mock, coreFixtureWorkflowRepositoryTenantID)
 		mock.ExpectQuery("SELECT .+ FROM workflow_run_control_plane").
 			WillReturnRows(sqlmock.NewRows(workflowRunScanColumns))
 		mock.ExpectCommit()
 
-		if _, found, err := repo.RunByOccurrence(context.Background(), "default", "wf-nightly", "occ-1"); err != nil || found {
+		if _, found, err := repo.RunByOccurrence(context.Background(), coreFixtureWorkflowRepositoryTenantID, "wf-nightly", "occ-1"); err != nil || found {
 			t.Fatalf("found=%v err=%v, want a calm not-found", found, err)
 		}
 		if err := mock.ExpectationsWereMet(); err != nil {
@@ -269,13 +317,13 @@ func TestWorkflowRunLookups(t *testing.T) {
 
 	t.Run("by id database errors roll the transaction back", func(t *testing.T) {
 		repo, mock := newWorkflowRepoMock(t)
-		expectWorkflowTx(mock, "default")
+		expectWorkflowTx(mock, coreFixtureWorkflowRepositoryTenantID)
 		mock.ExpectQuery("SELECT .+ FROM workflow_run_control_plane WHERE id=\\$1 AND tenant_id=\\$2").
-			WithArgs(int64(11), "default").
+			WithArgs(int64(11), coreFixtureWorkflowRepositoryTenantID).
 			WillReturnError(errors.New("db down"))
 		mock.ExpectRollback()
 
-		if _, _, err := repo.RunByID(context.Background(), "default", 11); err == nil {
+		if _, _, err := repo.RunByID(context.Background(), coreFixtureWorkflowRepositoryTenantID, 11); err == nil {
 			t.Fatal("expected error")
 		}
 		if err := mock.ExpectationsWereMet(); err != nil {
@@ -290,13 +338,13 @@ func TestOpenWorkflowRunsCarriesTheTerminalPhaseSet(t *testing.T) {
 	// The second bind is the terminal set: exactly workflow.Terminal, so a
 	// CancelUnknown run stays open -- a stop nobody could confirm is not an
 	// outcome, and the walker must keep observing it.
-	expectWorkflowTx(mock, "default")
+	expectWorkflowTx(mock, coreFixtureWorkflowRepositoryTenantID)
 	mock.ExpectQuery("FROM workflow_run_control_plane WHERE tenant_id").
-		WithArgs("default", workflowTerminalSet()).
-		WillReturnRows(workflowRunRow(11, "Running", "{}").AddRow(12, "wf-nightly", int64(5), "occ-2", "Manual", "walker", "CancelUnknown", "{}", workflowRowTime, workflowRowTime))
+		WithArgs(coreFixtureWorkflowRepositoryTenantID, workflowTerminalSet()).
+		WillReturnRows(workflowRunRow(11, "Running", "{}").AddRow(12, "wf-nightly", int64(5), "occ-2", "Manual", "walker", "CancelUnknown", "{}", workflowRowTime, workflowRowTime, nil, "", "", 0, "{}"))
 	mock.ExpectCommit()
 
-	runs, err := repo.OpenRuns(context.Background(), "default")
+	runs, err := repo.OpenRuns(context.Background(), coreFixtureWorkflowRepositoryTenantID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -314,13 +362,13 @@ func TestOpenWorkflowRunsCarriesTheTerminalPhaseSet(t *testing.T) {
 func TestWorkflowStepsListedByRunOrderedByID(t *testing.T) {
 	repo, mock := newWorkflowRepoMock(t)
 
-	expectWorkflowTx(mock, "default")
+	expectWorkflowTx(mock, coreFixtureWorkflowRepositoryTenantID)
 	mock.ExpectQuery("FROM job_run_control_plane WHERE workflow_run_id=\\$1").
-		WithArgs(int64(11), "default").
+		WithArgs(int64(11), coreFixtureWorkflowRepositoryTenantID).
 		WillReturnRows(workflowStepRow(21).AddRow(22, int64(11), "nightly", int64(9), "stepkey-2", "Workflow", "Running", 1, workflowRowTime, workflowRowTime))
 	mock.ExpectCommit()
 
-	steps, err := repo.Steps(context.Background(), "default", 11)
+	steps, err := repo.Steps(context.Background(), coreFixtureWorkflowRepositoryTenantID, 11)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -341,25 +389,23 @@ func TestCreateWorkflowStepForTenantStampsTheGroupingPointer(t *testing.T) {
 	repo, mock := newWorkflowRepoMock(t)
 	step := workflow.StepRun{SourceUID: "nightly", RevisionID: 9, OccurrenceKey: "stepkey-1", Trigger: jobrun.Workflow}
 
-	expectWorkflowTx(mock, "default")
+	expectWorkflowTx(mock, coreFixtureWorkflowRepositoryTenantID)
 	// The grouping pointer must name one of this tenant's workflow runs: the
 	// FK alone would accept a foreign tenant's row, so the tenant-scoped read
 	// runs before the insert.
-	mock.ExpectQuery("SELECT id FROM workflow_run_control_plane").
-		WithArgs(int64(11), "default").
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(11))
 	// The tenth bind is the pointer itself: this is what makes the run a step,
 	// and plain occurrences pass NULL in its place.
+	expectWorkflowAdmission(mock, true)
 	mock.ExpectQuery("INSERT INTO job_run_control_plane").
-		WithArgs("default", "nightly", int64(9), "stepkey-1", "Workflow", "walker", "Pending", 3, nil, int64(11)).
+		WithArgs(coreFixtureWorkflowRepositoryTenantID, "nightly", int64(9), "stepkey-1", "Workflow", "walker", "Pending", 3, nil, int64(11)).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(21))
 	mock.ExpectQuery("SELECT .+ FROM job_run_control_plane WHERE source_uid=\\$1 AND occurrence_key=\\$2 AND tenant_id=\\$3").
-		WithArgs("nightly", "stepkey-1", "default").
+		WithArgs("nightly", "stepkey-1", coreFixtureWorkflowRepositoryTenantID).
 		WillReturnRows(workflowStepRow(21))
 	expectControlPlaneAudit(mock, "walker")
 	mock.ExpectCommit()
 
-	stored, created, err := repo.CreateStepForTenant(context.Background(), "default", 11, step, 3, "walker")
+	stored, created, err := repo.CreateStepForTenant(context.Background(), coreFixtureWorkflowRepositoryTenantID, 11, step, 3, "walker")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -378,20 +424,19 @@ func TestCreateWorkflowStepForTenantFloorsMaxAttemptsAtOne(t *testing.T) {
 	repo, mock := newWorkflowRepoMock(t)
 	step := workflow.StepRun{SourceUID: "nightly", RevisionID: 9, OccurrenceKey: "stepkey-1", Trigger: jobrun.Workflow}
 
-	expectWorkflowTx(mock, "default")
-	mock.ExpectQuery("SELECT id FROM workflow_run_control_plane").
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(11))
+	expectWorkflowTx(mock, coreFixtureWorkflowRepositoryTenantID)
 	// The step row's max_attempts column requires at least one, so a caller
 	// passing zero still gets the floor of 1.
+	expectWorkflowAdmission(mock, true)
 	mock.ExpectQuery("INSERT INTO job_run_control_plane").
-		WithArgs("default", "nightly", int64(9), "stepkey-1", "Workflow", "walker", "Pending", 1, nil, int64(11)).
+		WithArgs(coreFixtureWorkflowRepositoryTenantID, "nightly", int64(9), "stepkey-1", "Workflow", "walker", "Pending", 1, nil, int64(11)).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(21))
 	mock.ExpectQuery("SELECT .+ FROM job_run_control_plane").
 		WillReturnRows(workflowStepRow(21))
 	expectControlPlaneAudit(mock, "walker")
 	mock.ExpectCommit()
 
-	if _, _, err := repo.CreateStepForTenant(context.Background(), "default", 11, step, 0, "walker"); err != nil {
+	if _, _, err := repo.CreateStepForTenant(context.Background(), coreFixtureWorkflowRepositoryTenantID, 11, step, 0, "walker"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -406,16 +451,13 @@ func TestCreateWorkflowStepForTenantDedupConverges(t *testing.T) {
 	// A replayed tick finds the step already recorded: the winner's row comes
 	// back with created=false and no audit row for a step this writer did not
 	// create.
-	expectWorkflowTx(mock, "default")
-	mock.ExpectQuery("SELECT id FROM workflow_run_control_plane").
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(11))
-	mock.ExpectQuery("INSERT INTO job_run_control_plane").
-		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	expectWorkflowTx(mock, coreFixtureWorkflowRepositoryTenantID)
+	expectWorkflowStepLocks(mock)
 	mock.ExpectQuery("SELECT .+ FROM job_run_control_plane").
 		WillReturnRows(workflowStepRow(21))
 	mock.ExpectCommit()
 
-	stored, created, err := repo.CreateStepForTenant(context.Background(), "default", 11, step, 3, "walker")
+	stored, created, err := repo.CreateStepForTenant(context.Background(), coreFixtureWorkflowRepositoryTenantID, 11, step, 3, "walker")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -433,13 +475,13 @@ func TestCreateWorkflowStepForTenantDedupConverges(t *testing.T) {
 func TestCreateWorkflowStepForTenantRefusesAWorkflowRunOutsideTheTenant(t *testing.T) {
 	repo, mock := newWorkflowRepoMock(t)
 
-	expectWorkflowTx(mock, "default")
-	mock.ExpectQuery("SELECT id FROM workflow_run_control_plane").
-		WithArgs(int64(99), "default").
-		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	expectWorkflowTx(mock, coreFixtureWorkflowRepositoryTenantID)
+	mock.ExpectQuery("SELECT source_uid FROM workflow_run_control_plane").
+		WithArgs(int64(99), coreFixtureWorkflowRepositoryTenantID).
+		WillReturnRows(sqlmock.NewRows([]string{"phase"}))
 	mock.ExpectRollback()
 
-	_, _, err := repo.CreateStepForTenant(context.Background(), "default", 99, workflow.StepRun{
+	_, _, err := repo.CreateStepForTenant(context.Background(), coreFixtureWorkflowRepositoryTenantID, 99, workflow.StepRun{
 		SourceUID: "nightly", RevisionID: 9, OccurrenceKey: "stepkey-1", Trigger: jobrun.Workflow,
 	}, 3, "walker")
 	var notFound *resource.NotFoundError
@@ -454,14 +496,13 @@ func TestCreateWorkflowStepForTenantRefusesAWorkflowRunOutsideTheTenant(t *testi
 func TestCreateWorkflowStepForTenantUniqueViolationIsTyped(t *testing.T) {
 	repo, mock := newWorkflowRepoMock(t)
 
-	expectWorkflowTx(mock, "default")
-	mock.ExpectQuery("SELECT id FROM workflow_run_control_plane").
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(11))
+	expectWorkflowTx(mock, coreFixtureWorkflowRepositoryTenantID)
+	expectWorkflowAdmission(mock, true)
 	mock.ExpectQuery("INSERT INTO job_run_control_plane").
 		WillReturnError(&pq.Error{Code: "23505", Constraint: "job_run_control_plane_source_uid_occurrence_key_key"})
 	mock.ExpectRollback()
 
-	_, _, err := repo.CreateStepForTenant(context.Background(), "default", 11, workflow.StepRun{
+	_, _, err := repo.CreateStepForTenant(context.Background(), coreFixtureWorkflowRepositoryTenantID, 11, workflow.StepRun{
 		SourceUID: "nightly", RevisionID: 9, OccurrenceKey: "stepkey-1", Trigger: jobrun.Workflow,
 	}, 3, "walker")
 	var conflict *resource.ConflictError
@@ -497,7 +538,7 @@ func TestCreateWorkflowStepForTenantRefusesBadInput(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, err := repo.CreateStepForTenant(context.Background(), "default", tc.workflowRunID, tc.step, 3, tc.actor)
+			_, _, err := repo.CreateStepForTenant(context.Background(), coreFixtureWorkflowRepositoryTenantID, tc.workflowRunID, tc.step, 3, tc.actor)
 			if err == nil {
 				t.Fatal("expected a refusal")
 			}
@@ -511,18 +552,19 @@ func TestCreateWorkflowStepForTenantRefusesBadInput(t *testing.T) {
 func TestUpdateWorkflowPhaseAdvancesAndAudits(t *testing.T) {
 	repo, mock := newWorkflowRepoMock(t)
 
-	expectWorkflowTx(mock, "default")
+	expectWorkflowTx(mock, coreFixtureWorkflowRepositoryTenantID)
+	expectWorkflowPhaseLock(mock, 11, "Running")
 	// The write carries the locked row's guard rails: the terminal set that
 	// refuses finished runs, and the empty merge for a caller with no
 	// decisions to record.
 	mock.ExpectQuery("WITH prior").
-		WithArgs(int64(11), "default", "Succeeded", "{}", sqlmock.AnyArg(), workflowTerminalSet()).
+		WithArgs(int64(11), coreFixtureWorkflowRepositoryTenantID, "Succeeded", "{}", sqlmock.AnyArg(), workflowTerminalSet()).
 		WillReturnRows(sqlmock.NewRows([]string{"phase", "prior_phase", "prior_decisions", "run_actor"}).
 			AddRow("Succeeded", "Running", "{}", "walker"))
 	expectControlPlaneAudit(mock, "walker")
 	mock.ExpectCommit()
 
-	changed, err := repo.UpdatePhase(context.Background(), "default", 11, workflow.PhaseSucceeded, nil)
+	changed, err := repo.UpdatePhase(context.Background(), coreFixtureWorkflowRepositoryTenantID, 11, workflow.PhaseSucceeded, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -539,15 +581,16 @@ func TestUpdateWorkflowPhaseMergesDecisionsPerTask(t *testing.T) {
 
 	// The decision trail binds as jsonb with the task name as its key, so the
 	// statement concatenates it onto the stored trail instead of replacing it.
-	expectWorkflowTx(mock, "default")
+	expectWorkflowTx(mock, coreFixtureWorkflowRepositoryTenantID)
+	expectWorkflowPhaseLock(mock, 11, "Running")
 	mock.ExpectQuery("WITH prior").
-		WithArgs(int64(11), "default", "Running", `{"build":{"skipped":true,"reason":"fail_fast"}}`, sqlmock.AnyArg(), workflowTerminalSet()).
+		WithArgs(int64(11), coreFixtureWorkflowRepositoryTenantID, "Running", `{"build":{"skipped":true,"reason":"fail_fast"}}`, sqlmock.AnyArg(), workflowTerminalSet()).
 		WillReturnRows(sqlmock.NewRows([]string{"phase", "prior_phase", "prior_decisions", "run_actor"}).
 			AddRow("Running", "Running", "{}", "walker"))
 	// A decisions-only write changes the row but moves no phase: no audit row.
 	mock.ExpectCommit()
 
-	changed, err := repo.UpdatePhase(context.Background(), "default", 11, workflow.PhaseRunning, map[string]workflow.TaskDecision{
+	changed, err := repo.UpdatePhase(context.Background(), coreFixtureWorkflowRepositoryTenantID, 11, workflow.PhaseRunning, map[string]workflow.TaskDecision{
 		"build": {Skipped: true, Reason: workflow.ReasonFailFast},
 	})
 	if err != nil {
@@ -568,16 +611,17 @@ func TestUpdateWorkflowPhaseNoOpIsCalm(t *testing.T) {
 	// nothing; the read-back confirms the run already holds exactly the state
 	// the caller asked for and reports (false, nil), the same calm answer the
 	// job run's phase write gives a resync.
-	expectWorkflowTx(mock, "default")
+	expectWorkflowTx(mock, coreFixtureWorkflowRepositoryTenantID)
+	expectWorkflowPhaseLock(mock, 11, "Running")
 	mock.ExpectQuery("WITH prior").
-		WithArgs(int64(11), "default", "Running", "{}", sqlmock.AnyArg(), workflowTerminalSet()).
+		WithArgs(int64(11), coreFixtureWorkflowRepositoryTenantID, "Running", "{}", sqlmock.AnyArg(), workflowTerminalSet()).
 		WillReturnRows(sqlmock.NewRows([]string{"phase", "prior_phase", "prior_decisions", "run_actor"}))
 	mock.ExpectQuery("SELECT phase, task_decisions::text FROM workflow_run_control_plane").
-		WithArgs(int64(11), "default").
+		WithArgs(int64(11), coreFixtureWorkflowRepositoryTenantID).
 		WillReturnRows(sqlmock.NewRows(workflowPhaseScanColumns).AddRow("Running", "{}"))
 	mock.ExpectCommit()
 
-	changed, err := repo.UpdatePhase(context.Background(), "default", 11, workflow.PhaseRunning, nil)
+	changed, err := repo.UpdatePhase(context.Background(), coreFixtureWorkflowRepositoryTenantID, 11, workflow.PhaseRunning, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -596,16 +640,17 @@ func TestUpdateWorkflowPhaseRefusesAfterTerminal(t *testing.T) {
 	// Running with a fresh decision in hand. The write was refused by the
 	// terminal guard, and the refusal is typed: terminal workflow bookkeeping
 	// fires once, and a late observer must not re-fire it.
-	expectWorkflowTx(mock, "default")
+	expectWorkflowTx(mock, coreFixtureWorkflowRepositoryTenantID)
+	expectWorkflowPhaseLock(mock, 11, "Succeeded")
 	mock.ExpectQuery("WITH prior").
-		WithArgs(int64(11), "default", "Running", `{"deploy":{"skipped":true,"reason":"canceled"}}`, sqlmock.AnyArg(), workflowTerminalSet()).
+		WithArgs(int64(11), coreFixtureWorkflowRepositoryTenantID, "Running", `{"deploy":{"skipped":true,"reason":"canceled"}}`, sqlmock.AnyArg(), workflowTerminalSet()).
 		WillReturnRows(sqlmock.NewRows([]string{"phase", "prior_phase", "prior_decisions", "run_actor"}))
 	mock.ExpectQuery("SELECT phase, task_decisions::text FROM workflow_run_control_plane").
-		WithArgs(int64(11), "default").
+		WithArgs(int64(11), coreFixtureWorkflowRepositoryTenantID).
 		WillReturnRows(sqlmock.NewRows(workflowPhaseScanColumns).AddRow("Succeeded", "{}"))
 	mock.ExpectRollback()
 
-	_, err := repo.UpdatePhase(context.Background(), "default", 11, workflow.PhaseRunning, map[string]workflow.TaskDecision{
+	_, err := repo.UpdatePhase(context.Background(), coreFixtureWorkflowRepositoryTenantID, 11, workflow.PhaseRunning, map[string]workflow.TaskDecision{
 		"deploy": {Skipped: true, Reason: workflow.ReasonCanceled},
 	})
 	var conflict *resource.ConflictError
@@ -623,16 +668,17 @@ func TestUpdateWorkflowPhaseReReportingTerminalStateIsCalm(t *testing.T) {
 	// A writer that re-reports the exact terminal state -- same phase, no new
 	// decisions -- is not a refusal: it observed what is already stored, and
 	// the terminal bookkeeping must not treat it as one.
-	expectWorkflowTx(mock, "default")
+	expectWorkflowTx(mock, coreFixtureWorkflowRepositoryTenantID)
+	expectWorkflowPhaseLock(mock, 11, "Succeeded")
 	mock.ExpectQuery("WITH prior").
-		WithArgs(int64(11), "default", "Succeeded", "{}", sqlmock.AnyArg(), workflowTerminalSet()).
+		WithArgs(int64(11), coreFixtureWorkflowRepositoryTenantID, "Succeeded", "{}", sqlmock.AnyArg(), workflowTerminalSet()).
 		WillReturnRows(sqlmock.NewRows([]string{"phase", "prior_phase", "prior_decisions", "run_actor"}))
 	mock.ExpectQuery("SELECT phase, task_decisions::text FROM workflow_run_control_plane").
-		WithArgs(int64(11), "default").
+		WithArgs(int64(11), coreFixtureWorkflowRepositoryTenantID).
 		WillReturnRows(sqlmock.NewRows(workflowPhaseScanColumns).AddRow("Succeeded", "{}"))
 	mock.ExpectCommit()
 
-	changed, err := repo.UpdatePhase(context.Background(), "default", 11, workflow.PhaseSucceeded, nil)
+	changed, err := repo.UpdatePhase(context.Background(), coreFixtureWorkflowRepositoryTenantID, 11, workflow.PhaseSucceeded, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -647,15 +693,11 @@ func TestUpdateWorkflowPhaseReReportingTerminalStateIsCalm(t *testing.T) {
 func TestUpdateWorkflowPhaseRefusesAnUnknownRun(t *testing.T) {
 	repo, mock := newWorkflowRepoMock(t)
 
-	expectWorkflowTx(mock, "default")
-	mock.ExpectQuery("WITH prior").
-		WillReturnRows(sqlmock.NewRows([]string{"phase", "prior_phase", "prior_decisions", "run_actor"}))
-	mock.ExpectQuery("SELECT phase, task_decisions::text FROM workflow_run_control_plane").
-		WithArgs(int64(99), "default").
-		WillReturnRows(sqlmock.NewRows(workflowPhaseScanColumns))
+	expectWorkflowTx(mock, coreFixtureWorkflowRepositoryTenantID)
+	expectWorkflowPhaseLock(mock, 99, "")
 	mock.ExpectRollback()
 
-	_, err := repo.UpdatePhase(context.Background(), "default", 99, workflow.PhaseRunning, nil)
+	_, err := repo.UpdatePhase(context.Background(), coreFixtureWorkflowRepositoryTenantID, 99, workflow.PhaseRunning, nil)
 	var notFound *resource.NotFoundError
 	if !errors.As(err, &notFound) {
 		t.Fatalf("err = %v, want a typed NotFoundError", err)
@@ -667,7 +709,7 @@ func TestUpdateWorkflowPhaseRefusesAnUnknownRun(t *testing.T) {
 
 func TestUpdateWorkflowPhaseRefusesAnEmptyPhase(t *testing.T) {
 	repo, mock := newWorkflowRepoMock(t)
-	if _, err := repo.UpdatePhase(context.Background(), "default", 11, "", nil); err == nil {
+	if _, err := repo.UpdatePhase(context.Background(), coreFixtureWorkflowRepositoryTenantID, 11, "", nil); err == nil {
 		t.Fatal("expected a refusal")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -678,21 +720,21 @@ func TestUpdateWorkflowPhaseRefusesAnEmptyPhase(t *testing.T) {
 func TestPrunableWorkflowRunsRankedPerOutcome(t *testing.T) {
 	repo, mock := newWorkflowRepoMock(t)
 
-	// The binds pin the retention set (terminal plus CancelUnknown) and the
+	// The binds pin the verified terminal retention set and the
 	// per-outcome keep limits, the same ranked shape the job-run ledger uses.
-	expectWorkflowTx(mock, "default")
+	expectWorkflowTx(mock, coreFixtureWorkflowRepositoryTenantID)
 	mock.ExpectQuery("FROM workflow_run_control_plane").
-		WithArgs("default", "wf-nightly", workflowPruneSet(), "Succeeded", 3, 5).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "occurrence_key", "phase"}).
-			AddRow(81, "occ-3", "Failed").
-			AddRow(82, "occ-4", "CancelUnknown"))
+		WithArgs(coreFixtureWorkflowRepositoryTenantID, "wf-nightly", workflowPruneSet(), "Succeeded", 3, 5).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "occurrence_key", "phase", "revision_id", "trigger"}).
+			AddRow(81, "occ-3", "Failed", 11, "Schedule").
+			AddRow(82, "occ-4", "Rejected", 12, "Schedule"))
 	mock.ExpectCommit()
 
-	runs, err := repo.PrunableRuns(context.Background(), "default", "wf-nightly", 3, 5)
+	runs, err := repo.PrunableRuns(context.Background(), coreFixtureWorkflowRepositoryTenantID, "wf-nightly", 3, 5)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(runs) != 2 || runs[0].Phase != workflow.PhaseFailed || runs[1].Phase != workflow.PhaseCancelUnknown {
+	if len(runs) != 2 || runs[0].Phase != workflow.PhaseFailed || runs[1].Phase != workflow.PhaseRejected {
 		t.Fatalf("unexpected prunable runs: %+v", runs)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -703,13 +745,13 @@ func TestPrunableWorkflowRunsRankedPerOutcome(t *testing.T) {
 func TestPrunableWorkflowRunsFloorsNegativeKeepsAtZero(t *testing.T) {
 	repo, mock := newWorkflowRepoMock(t)
 
-	expectWorkflowTx(mock, "default")
+	expectWorkflowTx(mock, coreFixtureWorkflowRepositoryTenantID)
 	mock.ExpectQuery("FROM workflow_run_control_plane").
-		WithArgs("default", "wf-nightly", workflowPruneSet(), "Succeeded", 0, 0).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "occurrence_key", "phase"}))
+		WithArgs(coreFixtureWorkflowRepositoryTenantID, "wf-nightly", workflowPruneSet(), "Succeeded", 0, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "occurrence_key", "phase", "revision_id", "trigger"}))
 	mock.ExpectCommit()
 
-	if _, err := repo.PrunableRuns(context.Background(), "default", "wf-nightly", -1, -2); err != nil {
+	if _, err := repo.PrunableRuns(context.Background(), coreFixtureWorkflowRepositoryTenantID, "wf-nightly", -1, -2); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -720,16 +762,17 @@ func TestPrunableWorkflowRunsFloorsNegativeKeepsAtZero(t *testing.T) {
 func TestPruneRunDeletesStepsThenTheRow(t *testing.T) {
 	repo, mock := newWorkflowRepoMock(t)
 
-	expectWorkflowTx(mock, "default")
+	expectWorkflowTx(mock, coreFixtureWorkflowRepositoryTenantID)
 	// The row is locked and its phase re-checked in the same transaction, so
 	// eligibility is not trusted from the caller's listing.
 	mock.ExpectQuery("SELECT occurrence_key, phase, actor FROM workflow_run_control_plane").
-		WithArgs(int64(11), "default").
+		WithArgs(int64(11), coreFixtureWorkflowRepositoryTenantID).
 		WillReturnRows(sqlmock.NewRows([]string{"occurrence_key", "phase", "actor"}).AddRow("occ-1", "Succeeded", "walker"))
 	// Steps delete first; each removal is attributed before the grouping row
 	// that explains it goes away.
+	mock.ExpectQuery("SELECT EXISTS").WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectQuery("DELETE FROM job_run_control_plane").
-		WithArgs(int64(11), "default").
+		WithArgs(int64(11), coreFixtureWorkflowRepositoryTenantID).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "occurrence_key", "phase", "actor"}).
 			AddRow(21, "stepkey-1", "Succeeded", "walker").
 			AddRow(22, "stepkey-2", "Canceled", "walker"))
@@ -737,12 +780,12 @@ func TestPruneRunDeletesStepsThenTheRow(t *testing.T) {
 	expectControlPlaneAudit(mock, "walker")
 	// Then the workflow row, still phase-guarded in the statement itself.
 	mock.ExpectQuery("DELETE FROM workflow_run_control_plane").
-		WithArgs(int64(11), "default", workflowPruneSet()).
+		WithArgs(int64(11), coreFixtureWorkflowRepositoryTenantID, workflowPruneSet()).
 		WillReturnRows(sqlmock.NewRows([]string{"occurrence_key", "phase", "actor"}).AddRow("occ-1", "Succeeded", "walker"))
 	expectControlPlaneAudit(mock, "walker")
 	mock.ExpectCommit()
 
-	deleted, stepsDeleted, err := repo.PruneRun(context.Background(), "default", 11)
+	deleted, stepsDeleted, err := repo.PruneRun(context.Background(), coreFixtureWorkflowRepositoryTenantID, 11)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -760,13 +803,13 @@ func TestPruneRunDeletesStepsThenTheRow(t *testing.T) {
 func TestPruneRunLeavesUnknownRowsAlone(t *testing.T) {
 	t.Run("a run that does not exist is a calm not-deleted", func(t *testing.T) {
 		repo, mock := newWorkflowRepoMock(t)
-		expectWorkflowTx(mock, "default")
+		expectWorkflowTx(mock, coreFixtureWorkflowRepositoryTenantID)
 		mock.ExpectQuery("SELECT occurrence_key, phase, actor FROM workflow_run_control_plane").
-			WithArgs(int64(99), "default").
+			WithArgs(int64(99), coreFixtureWorkflowRepositoryTenantID).
 			WillReturnRows(sqlmock.NewRows([]string{"occurrence_key", "phase", "actor"}))
 		mock.ExpectCommit()
 
-		deleted, stepsDeleted, err := repo.PruneRun(context.Background(), "default", 99)
+		deleted, stepsDeleted, err := repo.PruneRun(context.Background(), coreFixtureWorkflowRepositoryTenantID, 99)
 		if err != nil || deleted || stepsDeleted != 0 {
 			t.Fatalf("deleted=%v steps=%d err=%v, want a calm not-deleted", deleted, stepsDeleted, err)
 		}
@@ -777,12 +820,12 @@ func TestPruneRunLeavesUnknownRowsAlone(t *testing.T) {
 
 	t.Run("a run outside the retention set is not pruned", func(t *testing.T) {
 		repo, mock := newWorkflowRepoMock(t)
-		expectWorkflowTx(mock, "default")
+		expectWorkflowTx(mock, coreFixtureWorkflowRepositoryTenantID)
 		mock.ExpectQuery("SELECT occurrence_key, phase, actor FROM workflow_run_control_plane").
 			WillReturnRows(sqlmock.NewRows([]string{"occurrence_key", "phase", "actor"}).AddRow("occ-1", "Running", "walker"))
 		mock.ExpectCommit()
 
-		deleted, stepsDeleted, err := repo.PruneRun(context.Background(), "default", 11)
+		deleted, stepsDeleted, err := repo.PruneRun(context.Background(), coreFixtureWorkflowRepositoryTenantID, 11)
 		if err != nil || deleted || stepsDeleted != 0 {
 			t.Fatalf("deleted=%v steps=%d err=%v, want an untouched in-flight run", deleted, stepsDeleted, err)
 		}
@@ -799,9 +842,10 @@ func TestPruneRunRefusesLoudlyWhenTheRowVanishesMidPrune(t *testing.T) {
 	// delete still matches nothing, something moved underneath the retention
 	// set. The error rolls the whole prune -- steps included -- back, which is
 	// the atomicity the steps-then-row order exists for.
-	expectWorkflowTx(mock, "default")
+	expectWorkflowTx(mock, coreFixtureWorkflowRepositoryTenantID)
 	mock.ExpectQuery("SELECT occurrence_key, phase, actor FROM workflow_run_control_plane").
 		WillReturnRows(sqlmock.NewRows([]string{"occurrence_key", "phase", "actor"}).AddRow("occ-1", "Succeeded", "walker"))
+	mock.ExpectQuery("SELECT EXISTS").WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectQuery("DELETE FROM job_run_control_plane").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "occurrence_key", "phase", "actor"}).
 			AddRow(21, "stepkey-1", "Succeeded", "walker"))
@@ -810,7 +854,7 @@ func TestPruneRunRefusesLoudlyWhenTheRowVanishesMidPrune(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"occurrence_key", "phase", "actor"}))
 	mock.ExpectRollback()
 
-	deleted, stepsDeleted, err := repo.PruneRun(context.Background(), "default", 11)
+	deleted, stepsDeleted, err := repo.PruneRun(context.Background(), coreFixtureWorkflowRepositoryTenantID, 11)
 	if err == nil {
 		t.Fatal("expected the vanished row to fail loudly")
 	}
@@ -889,3 +933,9 @@ func TestUniqueViolationClassifier(t *testing.T) {
 		t.Fatalf("violated=%v constraint=%q, want the 23505 classified with its constraint", violated, pqErr.Constraint)
 	}
 }
+
+var coreFixtureWorkflowRepositoryTenantID = scan.GenerateID()
+
+var coreFixtureWorkflowRepositoryAlphaTenantID = scan.GenerateID()
+
+var coreFixtureWorkflowRepositoryBetaTenantID = scan.GenerateID()

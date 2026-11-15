@@ -21,7 +21,7 @@ type runLocator interface {
 // spec.cancelRequested and nothing else: the operator observes the request,
 // deletes the Kubernetes Job, and owns every ledger write that follows.
 type runCanceller interface {
-	RequestCancel(ctx context.Context, namespace, name string) error
+	RequestCancel(ctx context.Context, namespace, definitionName string, identity v1alpha1.RunIdentity) (string, error)
 }
 
 // CancelRunUseCase turns a cancel request into a spec.cancelRequested patch on
@@ -109,7 +109,8 @@ func (uc *CancelRunUseCase) Cancel(ctx context.Context, in CancelInput) (CancelR
 		}, nil
 	}
 
-	if err := uc.canceller.RequestCancel(ctx, target.Namespace, name); err != nil {
+	name, err = uc.canceller.RequestCancel(ctx, target.Namespace, target.ScheduledJobName, v1alpha1.RunIdentity{SourceUID: target.SourceUID, RevisionID: target.RevisionID, OccurrenceKey: target.OccurrenceKey, Trigger: v1alpha1.Trigger(target.Trigger)})
+	if err != nil {
 		return CancelResult{}, fmt.Errorf("request cancel for run %d: %w", normalized.ID, err)
 	}
 	metrics.RunCancelRequestsTotal.Inc()

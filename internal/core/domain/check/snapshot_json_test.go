@@ -6,6 +6,8 @@ import (
 	"sort"
 	"testing"
 	"time"
+
+	"orbitjob/internal/platform/scan"
 )
 
 // snapshotJSONKeys marshals v and returns the set of top-level JSON keys.
@@ -35,30 +37,32 @@ func TestSnapshotJSONKeySetFull(t *testing.T) {
 	desc := "probe"
 	next := time.Date(2026, 1, 4, 9, 30, 0, 0, time.UTC)
 	snap := Snapshot{
-		ID:             7,
-		Name:           "api-health",
-		Description:    &desc,
-		TenantID:       "acme",
-		Status:         StatusActive,
-		CheckType:      CheckTypeHTTPHealth,
-		CheckConfig:    map[string]any{"url": "http://example.com"},
-		AssertionRules: []AssertionRule{{Metric: "status_code", Operator: "==", Threshold: 200, Severity: "warning"}},
-		ScheduleType:   ScheduleTypeCron,
-		CronExpr:       &cron,
-		IntervalSec:    &interval,
-		Timezone:       DefaultTimezone,
-		TimeoutSec:     30,
-		RetryLimit:     2,
-		Priority:       5,
-		Labels:         map[string]any{"team": "payments"},
-		NextRunAt:      &next,
-		Version:        3,
-		CreatedAt:      time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-		UpdatedAt:      time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
+		ExecutionPolicyVersion: 1,
+		ID:                     7,
+		Name:                   "api-health",
+		Description:            &desc,
+		TenantID:               checkSnapshotFixtureTenantID,
+		Status:                 StatusActive,
+		CheckType:              CheckTypeHTTPHealth,
+		CheckConfig:            map[string]any{"url": "http://example.com"},
+		AssertionRules:         []AssertionRule{{Metric: "status_code", Operator: "==", Threshold: 200, Severity: "warning"}},
+		ScheduleType:           ScheduleTypeCron,
+		CronExpr:               &cron,
+		IntervalSec:            &interval,
+		Timezone:               DefaultTimezone,
+		TimeoutSec:             30,
+		RetryLimit:             2,
+		Priority:               5,
+		Labels:                 map[string]any{"team": "payments"},
+		NextRunAt:              &next,
+		Version:                3,
+		CreatedAt:              time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		UpdatedAt:              time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 	}
 
 	want := map[string]struct{}{
-		"id": {}, "name": {}, "description": {}, "tenant_id": {}, "status": {},
+		"execution_policy_version": {},
+		"id":                       {}, "name": {}, "description": {}, "tenant_id": {}, "status": {},
 		"check_type": {}, "check_config": {}, "assertion_rules": {},
 		"schedule_type": {}, "cron_expr": {}, "interval_sec": {}, "timezone": {},
 		"timeout_sec": {}, "retry_limit": {}, "priority": {}, "labels": {},
@@ -77,13 +81,16 @@ func TestSnapshotJSONKeySetOmitsEmptyOptionals(t *testing.T) {
 	snap := Snapshot{
 		ID:        7,
 		Name:      "api-health",
-		TenantID:  "acme",
+		TenantID:  checkSnapshotFixtureTenantID,
 		Status:    StatusPaused,
 		CheckType: CheckTypeHTTPHealth,
 		Timezone:  DefaultTimezone,
 		Version:   1,
 		CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 		UpdatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	}
+	if _, present := snapshotJSONKeys(t, snap)["execution_policy_version"]; !present {
+		t.Fatal("legacy execution_policy_version must remain present when zero")
 	}
 	for _, key := range []string{"description", "cron_expr", "interval_sec", "next_run_at"} {
 		if _, present := snapshotJSONKeys(t, snap)[key]; present {
@@ -98,25 +105,26 @@ func TestSnapshotJSONRoundTrip(t *testing.T) {
 	desc := "probe"
 	next := time.Date(2026, 1, 4, 9, 30, 0, 0, time.UTC)
 	snap := Snapshot{
-		ID:             7,
-		Name:           "api-health",
-		Description:    &desc,
-		TenantID:       "acme",
-		Status:         StatusActive,
-		CheckType:      CheckTypeHTTPHealth,
-		CheckConfig:    map[string]any{"url": "http://example.com"},
-		AssertionRules: []AssertionRule{{Metric: "latency_ms", Operator: "<", Threshold: 800, Severity: "critical"}},
-		ScheduleType:   ScheduleTypeCron,
-		CronExpr:       strPtr("*/5 * * * *"),
-		Timezone:       DefaultTimezone,
-		TimeoutSec:     30,
-		RetryLimit:     2,
-		Priority:       5,
-		Labels:         map[string]any{"team": "payments"},
-		NextRunAt:      &next,
-		Version:        3,
-		CreatedAt:      time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
-		UpdatedAt:      time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC),
+		ExecutionPolicyVersion: 1,
+		ID:                     7,
+		Name:                   "api-health",
+		Description:            &desc,
+		TenantID:               checkSnapshotFixtureTenantID,
+		Status:                 StatusActive,
+		CheckType:              CheckTypeHTTPHealth,
+		CheckConfig:            map[string]any{"url": "http://example.com"},
+		AssertionRules:         []AssertionRule{{Metric: "latency_ms", Operator: "<", Threshold: 800, Severity: "critical"}},
+		ScheduleType:           ScheduleTypeCron,
+		CronExpr:               strPtr("*/5 * * * *"),
+		Timezone:               DefaultTimezone,
+		TimeoutSec:             30,
+		RetryLimit:             2,
+		Priority:               5,
+		Labels:                 map[string]any{"team": "payments"},
+		NextRunAt:              &next,
+		Version:                3,
+		CreatedAt:              time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
+		UpdatedAt:              time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC),
 	}
 
 	raw, err := json.Marshal(snap)
@@ -142,3 +150,5 @@ func sortedKeys(m map[string]struct{}) []string {
 	sort.Strings(out)
 	return out
 }
+
+var checkSnapshotFixtureTenantID = scan.GenerateID()

@@ -24,12 +24,16 @@ func FunctionJobSpec(def function.Definition) v1alpha1.ScheduledJobSpec {
 		timeout = function.DefaultTimeoutSeconds
 	}
 	return v1alpha1.ScheduledJobSpec{
-		TimeoutSeconds: int32(timeout),
-		RetryPolicy:    v1alpha1.RetryPolicy{MaxAttempts: int32(def.RetryLimit + 1)},
+		ExecutionPolicyVersion: def.ExecutionPolicyVersion,
+		RetrySafe:              def.RetrySafe,
+		TimeoutSeconds:         int32(timeout),
+		History:                v1alpha1.HistoryPolicy{SuccessfulRuns: int32(def.HistorySuccess), FailedRuns: int32(def.HistoryFailed)},
+		RetryPolicy:            v1alpha1.RetryPolicy{MaxAttempts: int32(def.RetryLimit + 1)},
 		JobTemplate: v1alpha1.JobTemplateSpec{
-			Image:   def.Image,
-			Command: def.Command,
-			Args:    def.Args,
+			Resources: def.Resources,
+			Image:     def.Image,
+			Command:   def.Command,
+			Args:      def.Args,
 		},
 	}
 }
@@ -58,6 +62,10 @@ func (s Service) ApplyFunction(ctx context.Context, def function.Definition, nam
 		return 0, fmt.Errorf("function id is required")
 	}
 	sourceUID := function.SourceUID(def.ID)
+	spec := FunctionJobSpec(def)
+	if err := spec.NormalizeExecutionPolicy(); err != nil {
+		return 0, fmt.Errorf("function execution policy: %w", err)
+	}
 	rev, err := revision.New(
 		revision.Identity{
 			SourceMode: function.SourceModeFunction,
@@ -66,7 +74,7 @@ func (s Service) ApplyFunction(ctx context.Context, def function.Definition, nam
 			Name:       sourceUID,
 		},
 		int64(def.Version),
-		normalizeSpec(FunctionJobSpec(def)),
+		normalizeSpec(spec),
 		actor,
 		def.ResourceGroupID,
 		// A revision is created now, not when the definition was: re-projecting

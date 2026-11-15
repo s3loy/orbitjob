@@ -10,6 +10,8 @@ import (
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
 
 	"orbitjob/internal/domain/resource"
+
+	"orbitjob/internal/platform/scan"
 )
 
 // The four admin-read capabilities the Functions/Workflows HTTP surface
@@ -114,14 +116,14 @@ func TestFunctionRunRepository_RunByRunIDDBErrorRollsBack(t *testing.T) {
 func TestWorkflowRunRepository_RunsForDefinitionListsNewestFirst(t *testing.T) {
 	repo, mock := newWorkflowRepoMock(t)
 
-	expectWorkflowTx(mock, "default")
+	expectWorkflowTx(mock, coreFixtureConvergenceReadsTenantID)
 	mock.ExpectQuery(`FROM workflow_run_control_plane WHERE tenant_id=\$1 AND source_uid=\$2`).
-		WithArgs("default", "wf-nightly", 25, 10).
+		WithArgs(coreFixtureConvergenceReadsTenantID, "wf-nightly", 25, 10).
 		WillReturnRows(workflowRunRow(31, "Failed", "{}").
-			AddRow(22, "wf-nightly", int64(5), "occ-2", "Manual", "walker", "Succeeded", "{}", workflowRowTime, workflowRowTime))
+			AddRow(22, "wf-nightly", int64(5), "occ-2", "Manual", "walker", "Succeeded", "{}", workflowRowTime, workflowRowTime, nil, "", "", 0, "{}"))
 	mock.ExpectCommit()
 
-	runs, err := repo.RunsForDefinition(context.Background(), "default", "wf-nightly", 25, 10)
+	runs, err := repo.RunsForDefinition(context.Background(), coreFixtureConvergenceReadsTenantID, "wf-nightly", 25, 10)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -144,13 +146,13 @@ func TestWorkflowRunRepository_RunsForDefinitionListsNewestFirst(t *testing.T) {
 func TestWorkflowRunRepository_RunsForDefinitionDefaultsThePage(t *testing.T) {
 	repo, mock := newWorkflowRepoMock(t)
 
-	expectWorkflowTx(mock, "default")
+	expectWorkflowTx(mock, coreFixtureConvergenceReadsTenantID)
 	mock.ExpectQuery(`FROM workflow_run_control_plane WHERE tenant_id=\$1 AND source_uid=\$2`).
-		WithArgs("default", "wf-nightly", defaultRunPage, 0).
+		WithArgs(coreFixtureConvergenceReadsTenantID, "wf-nightly", defaultRunPage, 0).
 		WillReturnRows(workflowRunRow(31, "Failed", "{}"))
 	mock.ExpectCommit()
 
-	runs, err := repo.RunsForDefinition(context.Background(), "default", "wf-nightly", 0, -3)
+	runs, err := repo.RunsForDefinition(context.Background(), coreFixtureConvergenceReadsTenantID, "wf-nightly", 0, -3)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -165,12 +167,12 @@ func TestWorkflowRunRepository_RunsForDefinitionDefaultsThePage(t *testing.T) {
 func TestWorkflowRunRepository_RunsForDefinitionDBErrorRollsBack(t *testing.T) {
 	repo, mock := newWorkflowRepoMock(t)
 
-	expectWorkflowTx(mock, "default")
+	expectWorkflowTx(mock, coreFixtureConvergenceReadsTenantID)
 	mock.ExpectQuery(`FROM workflow_run_control_plane WHERE tenant_id=\$1 AND source_uid=\$2`).
 		WillReturnError(errors.New("db down"))
 	mock.ExpectRollback()
 
-	if _, err := repo.RunsForDefinition(context.Background(), "default", "wf-nightly", 10, 0); err == nil {
+	if _, err := repo.RunsForDefinition(context.Background(), coreFixtureConvergenceReadsTenantID, "wf-nightly", 10, 0); err == nil {
 		t.Fatal("expected the database error to surface")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -182,22 +184,22 @@ func TestWorkflowRunRepository_RunsForDefinitionDBErrorRollsBack(t *testing.T) {
 // ControlPlaneRepository: ActiveFunctionRevision
 // ---------------------------------------------------------------------------
 
-func TestActiveFunctionRevisionReturnsIDAndNamespace(t *testing.T) {
+func TestActiveFunctionRevisionReturnsPinnedSpecAndIdentity(t *testing.T) {
 	repo, mock := newControlPlaneRepoMock(t)
 
 	expectControlPlaneTx(mock, tenantFixture())
 	mock.ExpectQuery(`FROM job_definition_revisions`).
 		WithArgs("function", "function-9", tenantFixture()).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "source_namespace"}).
-			AddRow(int64(14), "finance"))
+		WillReturnRows(sqlmock.NewRows(revisionScanColumns).
+			AddRow(int64(14), "function", "function-9", "finance", "function-9", 1, "hash", `{"timeoutSeconds":60}`, "operator", time.Now()))
 	mock.ExpectCommit()
 
-	id, namespace, err := repo.ActiveFunctionRevision(context.Background(), tenantFixture(), "function-9")
+	rev, err := repo.ActiveFunctionRevision(context.Background(), tenantFixture(), "function-9")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if id != 14 || namespace != "finance" {
-		t.Fatalf("id=%d namespace=%q, want 14/finance", id, namespace)
+	if rev.ID != 14 || rev.Identity.Namespace != "finance" || rev.NormalizedSpec != `{"timeoutSeconds":60}` {
+		t.Fatalf("revision=%+v, want 14/finance with pinned timeout", rev)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet expectations: %v", err)
@@ -216,7 +218,7 @@ func TestActiveFunctionRevisionRefusesAnUnsyncedDefinition(t *testing.T) {
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectRollback()
 
-	_, _, err := repo.ActiveFunctionRevision(context.Background(), tenantFixture(), "function-9")
+	_, err := repo.ActiveFunctionRevision(context.Background(), tenantFixture(), "function-9")
 	var nf *resource.NotFoundError
 	if !errors.As(err, &nf) {
 		t.Fatalf("got %v, want *resource.NotFoundError", err)
@@ -248,7 +250,7 @@ func TestWorkflowDefinitionRepository_ListsActiveNewestFirst(t *testing.T) {
 
 	gucExpectations(mock, tenantFixture())
 	mock.ExpectQuery(`FROM job_definition_revisions`).
-		WithArgs(tenantFixture(), "workflow", 50, 0).
+		WithArgs(tenantFixture(), "workflow", 50, 0, "").
 		WillReturnRows(workflowDefinitionRow(14).AddRow(9, "nightly-pipeline", "finance", "wf-uid-2", int64(2),
 			[]byte(`{"schedule":"*/5 * * * *","tasks":[{"name":"only","jobRef":{"name":"solo-job"}}]}`),
 			workflowRowTime))
@@ -277,7 +279,7 @@ func TestWorkflowDefinitionRepository_GetActiveDecodesTheDAG(t *testing.T) {
 
 	gucExpectations(mock, tenantFixture())
 	mock.ExpectQuery(`FROM job_definition_revisions`).
-		WithArgs(tenantFixture(), int64(14), "workflow").
+		WithArgs(tenantFixture(), int64(14), "workflow", true).
 		WillReturnRows(workflowDefinitionRow(14))
 	mock.ExpectCommit()
 
@@ -303,7 +305,7 @@ func TestWorkflowDefinitionRepository_GetActiveNotFound(t *testing.T) {
 	// revision is another surface's row. Both hide behind not found.
 	gucExpectations(mock, tenantFixture())
 	mock.ExpectQuery(`FROM job_definition_revisions`).
-		WithArgs(tenantFixture(), int64(99), "workflow").
+		WithArgs(tenantFixture(), int64(99), "workflow", true).
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectRollback()
 
@@ -317,5 +319,24 @@ func TestWorkflowDefinitionRepository_GetActiveNotFound(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+var coreFixtureConvergenceReadsTenantID = scan.GenerateID()
+
+func TestWorkflowDefinitionRepository_ImmutableRevisionIsTenantScoped(t *testing.T) {
+	repo, mock := newWorkflowDefinitionRepoMock(t)
+	gucExpectations(mock, tenantFixture())
+	mock.ExpectQuery(`WHERE tenant_id = \$1 AND id = \$2 AND source_mode = \$3 AND \(NOT \$4 OR is_active\)`).WithArgs(tenantFixture(), int64(14), "workflow", false).WillReturnRows(workflowDefinitionRow(14))
+	mock.ExpectCommit()
+	def, err := repo.WorkflowRevision(context.Background(), tenantFixture(), 14)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if def.ID != 14 {
+		t.Fatalf("wrong revision %+v", def)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 
+	"orbitjob/internal/core/domain/sli"
 	"orbitjob/internal/core/domain/slo"
 	"orbitjob/internal/domain/resource"
 )
@@ -36,9 +37,16 @@ func (r *BudgetRepository) Upsert(ctx context.Context, tenantID string, budget s
 	}
 
 	var id int64
+	var evaluated any
+	if !budget.EvaluatedAt.IsZero() {
+		evaluated = budget.EvaluatedAt
+	}
+	if budget.StatisticsSemantics == "" {
+		budget.StatisticsSemantics = sli.LegacyProcessing
+	}
 	err = tx.QueryRowContext(ctx, `
-		INSERT INTO budgets (tenant_id, slo_id, window_start, window_end, budget_total, budget_consumed, budget_remaining, burn_rate, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO budgets (tenant_id, slo_id, window_start, window_end, budget_total, budget_consumed, budget_remaining, burn_rate, status,evaluated_at,last_event_at,last_sample_at,statistics_semantics,evaluation_reason)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,$10,$11,$12,$13,$14)
 		ON CONFLICT (tenant_id, slo_id, window_start)
 		DO UPDATE SET
 			budget_total = EXCLUDED.budget_total,
@@ -46,12 +54,13 @@ func (r *BudgetRepository) Upsert(ctx context.Context, tenantID string, budget s
 			budget_remaining = EXCLUDED.budget_remaining,
 			burn_rate = EXCLUDED.burn_rate,
 			status = EXCLUDED.status,
+			evaluated_at=EXCLUDED.evaluated_at,last_event_at=EXCLUDED.last_event_at,last_sample_at=EXCLUDED.last_sample_at,statistics_semantics=EXCLUDED.statistics_semantics,evaluation_reason=EXCLUDED.evaluation_reason,
 			version = budgets.version + 1,
 			updated_at = now()
 		RETURNING id
 	`, tenantID, budget.SLOID, budget.WindowStart, budget.WindowEnd,
 		budget.BudgetTotal, budget.BudgetConsumed, budget.BudgetRemaining,
-		budget.BurnRate, budget.Status).Scan(&id)
+		budget.BurnRate, budget.Status, evaluated, budget.LastEventAt, budget.LastSampleAt, budget.StatisticsSemantics, budget.EvaluationReason).Scan(&id)
 	if err != nil {
 		return budget, fmt.Errorf("upsert budget: %w", err)
 	}
@@ -67,6 +76,7 @@ func (r *BudgetRepository) Upsert(ctx context.Context, tenantID string, budget s
 // GetCurrent returns the current budget for an SLO (most recent window).
 func (r *BudgetRepository) GetCurrent(ctx context.Context, tenantID string, sloID int64) (slo.Budget, error) {
 	var budget slo.Budget
+	var evaluated sql.NullTime
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -79,7 +89,7 @@ func (r *BudgetRepository) GetCurrent(ctx context.Context, tenantID string, sloI
 	}
 
 	err = tx.QueryRowContext(ctx, `
-		SELECT id, tenant_id, slo_id, window_start, window_end, budget_total, budget_consumed, budget_remaining, burn_rate, status, version
+		SELECT id, tenant_id, slo_id, window_start, window_end, budget_total, budget_consumed, budget_remaining, burn_rate, status, version,evaluated_at,last_event_at,last_sample_at,statistics_semantics,evaluation_reason
 		FROM budgets
 		WHERE tenant_id = $1 AND slo_id = $2
 		ORDER BY window_start DESC
@@ -87,7 +97,7 @@ func (r *BudgetRepository) GetCurrent(ctx context.Context, tenantID string, sloI
 	`, tenantID, sloID).Scan(
 		&budget.ID, &budget.TenantID, &budget.SLOID, &budget.WindowStart, &budget.WindowEnd,
 		&budget.BudgetTotal, &budget.BudgetConsumed, &budget.BudgetRemaining, &budget.BurnRate,
-		&budget.Status, &budget.Version,
+		&budget.Status, &budget.Version, &evaluated, &budget.LastEventAt, &budget.LastSampleAt, &budget.StatisticsSemantics, &budget.EvaluationReason,
 	)
 	if err == sql.ErrNoRows {
 		return budget, &resource.NotFoundError{Resource: "budget", ID: sloID}
@@ -100,5 +110,8 @@ func (r *BudgetRepository) GetCurrent(ctx context.Context, tenantID string, sloI
 		return budget, fmt.Errorf("commit get budget: %w", err)
 	}
 
+	if evaluated.Valid {
+		budget.EvaluatedAt = evaluated.Time
+	}
 	return budget, nil
 }

@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// maxJobNameLength is the Kubernetes DNS-1123 subdomain limit for object names.
+// maxJobNameLength keeps the Job controller's generated label value valid.
 const maxJobNameLength = 63
 
 // JobName derives the Kubernetes Job name for an attempt. The name is a pure
@@ -17,6 +17,31 @@ const maxJobNameLength = 63
 // the same name and adopts the existing Job instead of creating a second one.
 // Long names are hashed to stay inside the DNS limit.
 func JobName(identity Identity) string {
+	raw := "oj-" + identity.RunName + "-" + strconv.Itoa(identity.Attempt)
+	if len(raw) <= maxJobNameLength {
+		return raw
+	}
+	sum := sha256.Sum256([]byte(raw))
+	digest := strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(sum[:]))
+	suffix := "-" + strconv.Itoa(identity.Attempt)
+	keep := maxJobNameLength - len("oj-") - len(suffix)
+	if len(digest) > keep {
+		digest = digest[:keep]
+	}
+	return "oj-" + digest + suffix
+}
+
+// JobNameCandidates preserves actual historical workload addresses.
+func JobNameCandidates(identity Identity) []string {
+	modern, legacy := JobName(identity), LegacyJobName(identity)
+	if modern == legacy {
+		return []string{modern}
+	}
+	return []string{modern, legacy}
+}
+
+// LegacyJobName is lookup-only compatibility for already-created Jobs.
+func LegacyJobName(identity Identity) string {
 	raw := "oj-" + identity.RunName + "-" + strconv.Itoa(identity.Attempt)
 	if len(raw) <= maxJobNameLength {
 		return raw

@@ -6,7 +6,10 @@ package query
 // definition's name or namespace; those live on the revision row, so the store
 // joins to job_definition_revisions to assemble the full target.
 type CancelTarget struct {
-	Phase string
+	SourceUID  string
+	RevisionID int64
+	Trigger    string
+	Phase      string
 	// OccurrenceKey is the deduplication key the JobRun object name is derived
 	// from.
 	OccurrenceKey string

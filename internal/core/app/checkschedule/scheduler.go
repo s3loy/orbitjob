@@ -7,6 +7,7 @@ package checkschedule
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -51,6 +52,7 @@ type CheckSource interface {
 
 // RevisionWriter materializes the check's definition revision.
 type RevisionWriter interface {
+	RevisionByID(context.Context, string, int64) (revision.Revision, error)
 	ApplyRevisionForTenant(ctx context.Context, tenantID string, rev revision.Revision) (int64, error)
 }
 
@@ -168,11 +170,14 @@ func (uc *TickUseCase) fireCheck(ctx context.Context, scope Scope, c check.Snaps
 	// publish is idempotent, and a run whose CR was lost would otherwise be
 	// stranded by deduplication with nothing to execute it. Terminal history is
 	// skipped so a resync costs no API calls.
-	if !isNew && jobrun.Terminal(state.Phase) {
-		return 0, nil
-	}
-	if err := uc.publisher.Publish(ctx, uc.jobRunObject(scope, sourceUID, state, occurrenceKey, scheduledAt)); err != nil {
-		return 0, fmt.Errorf("publish run: %w", err)
+	if isNew || !jobrun.Terminal(state.Phase) {
+		spec, specErr := projection.CheckJobSpec(c)
+		if specErr != nil {
+			return 0, specErr
+		}
+		if err := uc.publisher.Publish(ctx, uc.jobRunObject(scope, sourceUID, state, occurrenceKey, scheduledAt, spec.TimeoutSeconds)); err != nil {
+			return 0, fmt.Errorf("publish run: %w", err)
+		}
 	}
 
 	next := nextRunAt(c, now)
@@ -196,9 +201,17 @@ func (uc *TickUseCase) repairOpenRuns(ctx context.Context, scope Scope, sourceUI
 		return fmt.Errorf("list open runs for %s: %w", sourceUID, err)
 	}
 	for _, run := range open {
+		rev, err := uc.revisions.RevisionByID(ctx, scope.TenantID, run.RevisionID)
+		if err != nil {
+			return err
+		}
+		var spec v1alpha1.ScheduledJobSpec
+		if err = json.Unmarshal([]byte(rev.NormalizedSpec), &spec); err != nil {
+			return err
+		}
 		obj := uc.jobRunObject(scope, sourceUID, jobrun.StoredRun{
 			ID: run.ID, RevisionID: run.RevisionID, Phase: run.Phase,
-		}, run.OccurrenceKey, run.ScheduledFor)
+		}, run.OccurrenceKey, run.ScheduledFor, spec.TimeoutSeconds)
 		if err := uc.publisher.Publish(ctx, obj); err != nil {
 			return fmt.Errorf("repair run %d for %s: %w", run.ID, sourceUID, err)
 		}
@@ -211,7 +224,11 @@ func (uc *TickUseCase) repairOpenRuns(ctx context.Context, scope Scope, sourceUI
 // naming an object that does not exist makes the garbage collector delete the
 // run it points at. Retention removes check runs explicitly, like every other
 // run.
-func (uc *TickUseCase) jobRunObject(scope Scope, sourceUID string, state jobrun.StoredRun, occurrenceKey string, scheduledAt time.Time) v1alpha1.JobRun {
+func (uc *TickUseCase) jobRunObject(scope Scope, sourceUID string, state jobrun.StoredRun, occurrenceKey string, scheduledAt time.Time, timeout ...int32) v1alpha1.JobRun {
+	var seconds int32
+	if len(timeout) > 0 {
+		seconds = timeout[0]
+	}
 	return v1alpha1.JobRun{
 		TypeMeta: metav1.TypeMeta{APIVersion: v1alpha1.GroupVersion.String(), Kind: "JobRun"},
 		ObjectMeta: metav1.ObjectMeta{
@@ -228,6 +245,7 @@ func (uc *TickUseCase) jobRunObject(scope Scope, sourceUID string, state jobrun.
 			DefinitionRevision: state.RevisionID,
 			Trigger:            v1alpha1.Check,
 			Actor:              ActorCheckScheduler,
+			TimeoutSeconds:     seconds,
 			OccurrenceKey:      occurrenceKey,
 		},
 	}
@@ -252,7 +270,11 @@ func nextRunAt(c check.Snapshot, now time.Time) time.Time {
 	if c.ScheduleType == check.ScheduleTypeCron && c.CronExpr != nil {
 		schedule, err := cron.ParseStandard(*c.CronExpr)
 		if err == nil {
-			return schedule.Next(now)
+			loc, err := time.LoadLocation(c.Timezone)
+			if err != nil {
+				loc = time.UTC
+			}
+			return schedule.Next(now.In(loc)).UTC()
 		}
 		slog.Error("check cron expression no longer parses; falling back to one minute",
 			"check_id", c.ID, "cron", *c.CronExpr, "error", err)

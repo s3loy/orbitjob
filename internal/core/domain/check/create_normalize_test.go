@@ -1,13 +1,14 @@
 package check
 
 import (
+	"orbitjob/internal/platform/scan"
 	"testing"
 	"time"
 )
 
 // validTenantID has the exact CHAR(26) ULID shape the schema requires, so the
 // fault tests below fail on the field they name rather than on tenant_id.
-const validTenantID = "00000000000000000000000001"
+var validTenantID = scan.GenerateID()
 
 func TestNormalizeCreate_Valid(t *testing.T) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)

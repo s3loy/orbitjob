@@ -3,11 +3,19 @@ package v1alpha1
 import (
 	"fmt"
 
+	"orbitjob/internal/domain/executionpolicy"
+	"orbitjob/internal/domain/workflowschedule"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// RunActorMaxLength matches the CRD and ledger actor column.
+const RunActorMaxLength = 255
+
 type ScheduledJobSpec struct {
-	Schedule string `json:"schedule"`
+	Schedule               string `json:"schedule"`
+	ExecutionPolicyVersion int32  `json:"executionPolicyVersion,omitempty"`
+	RetrySafe              bool   `json:"retrySafe,omitempty"`
 	// History limits how many terminal runs are retained, per outcome.
 	History           HistoryPolicy     `json:"history,omitempty"`
 	Suspend           bool              `json:"suspend,omitempty"`
@@ -21,10 +29,11 @@ type ScheduledJobSpec struct {
 	RetryPolicy    RetryPolicy     `json:"retryPolicy,omitempty"`
 }
 type JobTemplateSpec struct {
-	Image        string   `json:"image"`
-	Command      []string `json:"command,omitempty"`
-	Args         []string `json:"args,omitempty"`
-	BackoffLimit int32    `json:"backoffLimit,omitempty"`
+	Image        string                     `json:"image"`
+	Command      []string                   `json:"command,omitempty"`
+	Args         []string                   `json:"args,omitempty"`
+	BackoffLimit int32                      `json:"backoffLimit,omitempty"`
+	Resources    *executionpolicy.Resources `json:"resources,omitempty"`
 }
 type RetryPolicy struct {
 	MaxAttempts int32 `json:"maxAttempts,omitempty"`
@@ -136,12 +145,14 @@ type Condition struct {
 	LastTransitionTime *metav1.Time `json:"lastTransitionTime,omitempty"`
 }
 type JobRunStatus struct {
-	Phase            string           `json:"phase,omitempty"`
-	Conditions       []Condition      `json:"conditions,omitempty"`
-	KubernetesJobRef *ObjectReference `json:"kubernetesJobRef,omitempty"`
-	Attempt          int32            `json:"attempt,omitempty"`
-	StartedAt        *metav1.Time     `json:"startedAt,omitempty"`
-	CompletedAt      *metav1.Time     `json:"completedAt,omitempty"`
+	Phase                  string           `json:"phase,omitempty"`
+	Conditions             []Condition      `json:"conditions,omitempty"`
+	KubernetesJobRef       *ObjectReference `json:"kubernetesJobRef,omitempty"`
+	Attempt                int32            `json:"attempt,omitempty"`
+	StartedAt              *metav1.Time     `json:"startedAt,omitempty"`
+	CompletedAt            *metav1.Time     `json:"completedAt,omitempty"`
+	ExecutionUnknownSince  *metav1.Time     `json:"executionUnknownSince,omitempty"`
+	ExecutionUnknownReason string           `json:"executionUnknownReason,omitempty"`
 }
 type ScheduledJobStatus struct {
 	ObservedGeneration int64        `json:"observedGeneration,omitempty"`
@@ -261,7 +272,8 @@ type WorkflowConditionSpec struct {
 // WorkflowTaskSpec is one node of the workflow DAG. A task does not carry its
 // own image, timeout or retry budget: it names an existing ScheduledJob
 // definition in the same namespace, and every step of it runs that
-// definition's active revision with that definition's own budgets. Workflow
+// definition's revision with that definition's own budgets. Version 1 pins
+// the complete reference set when the parent run is accepted. Workflow
 // fields that would not be enforced by anything are deliberately absent.
 type WorkflowTaskSpec struct {
 	// Name identifies the task inside this workflow. It is the key conditions,
@@ -289,7 +301,11 @@ type WorkflowTaskJobRef struct {
 // deadline (which Kubernetes enforces as activeDeadlineSeconds): an operator
 // outage past the deadline goes unpunished.
 type WorkflowJobSpec struct {
-	Schedule string `json:"schedule"`
+	// ExecutionPolicyVersion 1 pins all task revisions before accepting a run.
+	// Omission preserves legacy task-by-task revision selection.
+	ExecutionPolicyVersion int32  `json:"executionPolicyVersion,omitempty"`
+	Schedule               string `json:"schedule,omitempty"`
+	TimeZone               string `json:"timeZone,omitempty"`
 	// History bounds retained workflow runs per outcome. Zero means the
 	// platform default, not unlimited, matching HistoryPolicy.
 	History           HistoryPolicy     `json:"history,omitempty"`
@@ -304,15 +320,21 @@ type WorkflowJobSpec struct {
 }
 
 // Validate checks the spec fields the CR shape can answer on its own: a
-// schedule, a non-empty task set with unique names, dependency references that
+// optional valid schedule, a non-empty task set with unique names, dependency references that
 // resolve, and conditions that only read declared dependencies with a closed
 // field and operator grammar. Cycle detection is deliberately not here: it is
 // the projection boundary's DAG validation (domain workflow ValidateDAG), which
 // runs when the CR is reconciled, the same split ScheduledJob uses (structural
 // typing from the CRD, semantic checks from the operator).
 func (s WorkflowJobSpec) Validate() error {
-	if s.Schedule == "" {
-		return fmt.Errorf("workflowJobSpec.schedule is required")
+	if s.ExecutionPolicyVersion != 0 && s.ExecutionPolicyVersion != 1 {
+		return fmt.Errorf("workflowJobSpec.executionPolicyVersion must be 0 or 1")
+	}
+	if err := workflowschedule.Validate(s.Schedule, s.TimeZone); err != nil {
+		return fmt.Errorf("workflowJobSpec: %w", err)
+	}
+	if s.ConcurrencyPolicy != "" && s.ConcurrencyPolicy != Allow && s.ConcurrencyPolicy != Forbid {
+		return fmt.Errorf("workflowJobSpec.concurrencyPolicy must be Allow or Forbid")
 	}
 	if len(s.Tasks) == 0 {
 		return fmt.Errorf("workflowJobSpec.tasks must have at least one task")
@@ -441,17 +463,18 @@ type WorkflowRunStatusStep struct {
 // WorkflowRunStatus is the operator-maintained view of one workflow execution.
 type WorkflowRunStatus struct {
 	// Phase is the workflow-level lifecycle: Pending, Running,
-	// CancelRequested, Succeeded, Failed, Canceled, CancelUnknown. A workflow
-	// with a CancelUnknown step stays CancelUnknown and non-terminal, exactly
-	// as its step does.
+	// CancelRequested, Succeeded, Failed, Canceled, CancelUnknown, ExecutionUnknown, Rejected. A workflow
+	// with a CancelUnknown or ExecutionUnknown step stays non-terminal; a
+	// missing workload is not proof that execution has stopped.
 	Phase       string                  `json:"phase,omitempty"`
+	Reason      string                  `json:"reason,omitempty"`
 	Conditions  []Condition             `json:"conditions,omitempty"`
 	Steps       []WorkflowRunStatusStep `json:"steps,omitempty"`
 	StartedAt   *metav1.Time            `json:"startedAt,omitempty"`
 	CompletedAt *metav1.Time            `json:"completedAt,omitempty"`
 }
 
-// WorkflowRunSpec publishes one manual workflow execution. It is the
+// WorkflowRunSpec transports manual runs and projects recorded scheduled runs. It is the
 // WorkflowRun trust boundary, mirrored from JobRun: the revision is required
 // and pinned before publish, the actor is the authenticated caller rather than
 // a client-supplied label, and the occurrence key makes a retried trigger
@@ -464,8 +487,7 @@ type WorkflowRunSpec struct {
 	// is required: the operator refuses a run whose revision it cannot load,
 	// so a forged or stale reference cannot invent work.
 	DefinitionRevision int64 `json:"definitionRevision"`
-	// Trigger is why this run exists. The WorkflowRun CR is the manual-trigger
-	// transport, and Manual is the only value the schema admits.
+	// Trigger distinguishes manual creation from row-first scheduled projection.
 	Trigger Trigger `json:"trigger"`
 	// Actor is who asked for this run, under the same discipline as JobRun's
 	// actor: the caller's credential, schema-required and non-empty, trusted
@@ -490,8 +512,8 @@ func (s WorkflowRunSpec) Validate() error {
 	if s.DefinitionRevision < 1 {
 		return fmt.Errorf("workflowRunSpec.definitionRevision must be at least 1: revision ids start at 1")
 	}
-	if s.Trigger != Manual {
-		return fmt.Errorf("workflowRunSpec.trigger must be %q: the WorkflowRun resource is the manual-trigger transport", Manual)
+	if s.Trigger != Manual && s.Trigger != Schedule {
+		return fmt.Errorf("workflowRunSpec.trigger must be Manual or Schedule")
 	}
 	if s.Actor == "" {
 		return fmt.Errorf("workflowRunSpec.actor is required")

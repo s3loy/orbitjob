@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
+
+	"orbitjob/internal/platform/scan"
 )
 
 var budgetAlertColumns = []string{"id", "alert_type", "status"}
@@ -24,13 +26,13 @@ func TestBudgetAlertRepository_Create(t *testing.T) {
 	repo, mock := newBudgetAlertRepoMock(t)
 
 	mock.ExpectBegin()
-	expectSetConfig(mock, "default")
+	expectSetConfig(mock, coreFixtureBudgetAlertRepositoryTenantID)
 	mock.ExpectExec("INSERT INTO budget_alerts").
-		WithArgs("default", int64(7), int64(42), "fast_burn", 14.4).
+		WithArgs(coreFixtureBudgetAlertRepositoryTenantID, int64(7), int64(42), "fast_burn", 14.4).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	if err := repo.Create(context.Background(), "default", 7, 42, "fast_burn", 14.4); err != nil {
+	if err := repo.Create(context.Background(), coreFixtureBudgetAlertRepositoryTenantID, 7, 42, "fast_burn", 14.4); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -42,7 +44,7 @@ func TestBudgetAlertRepository_Create_BeginTxError(t *testing.T) {
 	repo, mock := newBudgetAlertRepoMock(t)
 	mock.ExpectBegin().WillReturnError(errors.New("boom"))
 
-	if err := repo.Create(context.Background(), "default", 7, 42, "fast_burn", 14.4); err == nil {
+	if err := repo.Create(context.Background(), coreFixtureBudgetAlertRepositoryTenantID, 7, 42, "fast_burn", 14.4); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -51,13 +53,13 @@ func TestBudgetAlertRepository_Create_InsertError(t *testing.T) {
 	repo, mock := newBudgetAlertRepoMock(t)
 
 	mock.ExpectBegin()
-	expectSetConfig(mock, "default")
+	expectSetConfig(mock, coreFixtureBudgetAlertRepositoryTenantID)
 	mock.ExpectExec("INSERT INTO budget_alerts").
-		WithArgs("default", int64(7), int64(42), "fast_burn", 14.4).
+		WithArgs(coreFixtureBudgetAlertRepositoryTenantID, int64(7), int64(42), "fast_burn", 14.4).
 		WillReturnError(errors.New("insert failed"))
 	mock.ExpectRollback()
 
-	if err := repo.Create(context.Background(), "default", 7, 42, "fast_burn", 14.4); err == nil {
+	if err := repo.Create(context.Background(), coreFixtureBudgetAlertRepositoryTenantID, 7, 42, "fast_burn", 14.4); err == nil {
 		t.Fatal("expected error")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -69,13 +71,13 @@ func TestBudgetAlertRepository_ResolveBySLOAndType(t *testing.T) {
 	repo, mock := newBudgetAlertRepoMock(t)
 
 	mock.ExpectBegin()
-	expectSetConfig(mock, "default")
+	expectSetConfig(mock, coreFixtureBudgetAlertRepositoryTenantID)
 	mock.ExpectExec("UPDATE budget_alerts").
-		WithArgs("default", int64(7), "fast_burn").
+		WithArgs(coreFixtureBudgetAlertRepositoryTenantID, int64(7), "fast_burn").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	if err := repo.ResolveBySLOAndType(context.Background(), "default", 7, "fast_burn"); err != nil {
+	if err := repo.ResolveBySLOAndType(context.Background(), coreFixtureBudgetAlertRepositoryTenantID, 7, "fast_burn"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -87,13 +89,13 @@ func TestBudgetAlertRepository_ResolveBySLOAndType_DBError(t *testing.T) {
 	repo, mock := newBudgetAlertRepoMock(t)
 
 	mock.ExpectBegin()
-	expectSetConfig(mock, "default")
+	expectSetConfig(mock, coreFixtureBudgetAlertRepositoryTenantID)
 	mock.ExpectExec("UPDATE budget_alerts").
-		WithArgs("default", int64(7), "fast_burn").
+		WithArgs(coreFixtureBudgetAlertRepositoryTenantID, int64(7), "fast_burn").
 		WillReturnError(errors.New("update failed"))
 	mock.ExpectRollback()
 
-	if err := repo.ResolveBySLOAndType(context.Background(), "default", 7, "fast_burn"); err == nil {
+	if err := repo.ResolveBySLOAndType(context.Background(), coreFixtureBudgetAlertRepositoryTenantID, 7, "fast_burn"); err == nil {
 		t.Fatal("expected error")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -105,15 +107,15 @@ func TestBudgetAlertRepository_GetActiveBySLO(t *testing.T) {
 	repo, mock := newBudgetAlertRepoMock(t)
 
 	mock.ExpectBegin()
-	expectSetConfig(mock, "default")
+	expectSetConfig(mock, coreFixtureBudgetAlertRepositoryTenantID)
 	mock.ExpectQuery("SELECT id, alert_type, status FROM budget_alerts").
-		WithArgs("default", int64(7)).
+		WithArgs(coreFixtureBudgetAlertRepositoryTenantID, int64(7)).
 		WillReturnRows(sqlmock.NewRows(budgetAlertColumns).
 			AddRow(1, "fast_burn", "active").
 			AddRow(2, "slow_burn", "active"))
 	mock.ExpectCommit()
 
-	alerts, err := repo.GetActiveBySLO(context.Background(), "default", 7)
+	alerts, err := repo.GetActiveBySLO(context.Background(), coreFixtureBudgetAlertRepositoryTenantID, 7)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -135,13 +137,13 @@ func TestBudgetAlertRepository_GetActiveBySLO_Empty(t *testing.T) {
 	repo, mock := newBudgetAlertRepoMock(t)
 
 	mock.ExpectBegin()
-	expectSetConfig(mock, "default")
+	expectSetConfig(mock, coreFixtureBudgetAlertRepositoryTenantID)
 	mock.ExpectQuery("SELECT id, alert_type, status FROM budget_alerts").
-		WithArgs("default", int64(7)).
+		WithArgs(coreFixtureBudgetAlertRepositoryTenantID, int64(7)).
 		WillReturnRows(sqlmock.NewRows(budgetAlertColumns))
 	mock.ExpectCommit()
 
-	alerts, err := repo.GetActiveBySLO(context.Background(), "default", 7)
+	alerts, err := repo.GetActiveBySLO(context.Background(), coreFixtureBudgetAlertRepositoryTenantID, 7)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -154,7 +156,9 @@ func TestBudgetAlertRepository_GetActiveBySLO_BeginTxError(t *testing.T) {
 	repo, mock := newBudgetAlertRepoMock(t)
 	mock.ExpectBegin().WillReturnError(errors.New("boom"))
 
-	if _, err := repo.GetActiveBySLO(context.Background(), "default", 7); err == nil {
+	if _, err := repo.GetActiveBySLO(context.Background(), coreFixtureBudgetAlertRepositoryTenantID, 7); err == nil {
 		t.Fatal("expected error")
 	}
 }
+
+var coreFixtureBudgetAlertRepositoryTenantID = scan.GenerateID()

@@ -2,7 +2,9 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"regexp"
 	"testing"
 	"time"
 
@@ -10,6 +12,8 @@ import (
 
 	"orbitjob/internal/core/domain/sli"
 	"orbitjob/internal/domain/resource"
+
+	"orbitjob/internal/platform/scan"
 )
 
 // sliColumns is the RETURNING/SELECT projection of the slis queries, in the
@@ -19,6 +23,8 @@ var sliColumns = []string{
 	"source_config", "aggregation", "good_event_criteria", "version",
 	"created_at", "updated_at",
 }
+
+const sliDeleteSourceQuery = `SELECT COALESCE(source_config->>'source_uid','') FROM slis WHERE tenant_id=$1 AND id=$2 AND version=$3 AND deleted_at IS NULL AND ($4::text IS NULL OR resource_group_id=$4)`
 
 func newSLIRepoMock(t *testing.T) (*SLIRepository, sqlmock.Sqlmock) {
 	t.Helper()
@@ -38,30 +44,32 @@ func TestSLIRepository_Create(t *testing.T) {
 		Name:              "checkout-availability",
 		Description:       &description,
 		SLIType:           "availability",
-		SourceType:        "check_run",
-		SourceConfig:      map[string]any{"check_id": 7},
+		SourceType:        "job_run",
+		SourceConfig:      map[string]any{"source_uid": "check-7"},
 		Aggregation:       "ratio",
 		GoodEventCriteria: map[string]any{"status": "success"},
 	}
 
 	mock.ExpectBegin()
-	expectSetConfig(mock, "default")
+	expectSetConfig(mock, coreFixtureSliRepositoryTenantID)
+	mock.ExpectExec(`SELECT orbitjob_lock_sli_source\(\$1,\$2\)`).
+		WithArgs(coreFixtureSliRepositoryTenantID, "check-7").WillReturnResult(sqlmock.NewResult(0, 0))
 	// The insert carries the marshaled JSON documents and a NULL group for an
 	// unscoped creator; the RETURNING list is scanned positionally.
 	mock.ExpectQuery("INSERT INTO slis").
 		WithArgs(
-			"default", "checkout-availability", &description, "availability",
-			"check_run", []byte(`{"check_id":7}`), "ratio",
+			coreFixtureSliRepositoryTenantID, "checkout-availability", &description, "availability",
+			"job_run", []byte(`{"source_uid":"check-7"}`), "ratio",
 			[]byte(`{"status":"success"}`), nil,
 		).
 		WillReturnRows(sqlmock.NewRows(sliColumns).AddRow(
-			1, "default", "checkout-availability", &description, "availability",
-			"check_run", []byte(`{"check_id":7}`), "ratio",
+			1, coreFixtureSliRepositoryTenantID, "checkout-availability", &description, "availability",
+			"job_run", []byte(`{"source_uid":"check-7"}`), "ratio",
 			[]byte(`{"status":"success"}`), 1, now, now,
 		))
 	mock.ExpectCommit()
 
-	snap, err := repo.Create(context.Background(), "default", spec)
+	snap, err := repo.Create(context.Background(), coreFixtureSliRepositoryTenantID, spec)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -71,14 +79,17 @@ func TestSLIRepository_Create(t *testing.T) {
 	if snap.Name != "checkout-availability" {
 		t.Errorf("name = %q, want checkout-availability", snap.Name)
 	}
-	if snap.SourceConfig["check_id"] != float64(7) {
-		t.Errorf("source_config[check_id] = %v, want 7", snap.SourceConfig["check_id"])
+	if snap.SourceConfig["source_uid"] != "check-7" {
+		t.Errorf("source_config[source_uid] = %v, want check-7", snap.SourceConfig["source_uid"])
 	}
 	if snap.GoodEventCriteria["status"] != "success" {
 		t.Errorf("good_event_criteria[status] = %v, want success", snap.GoodEventCriteria["status"])
 	}
 	if snap.Version != 1 {
 		t.Errorf("version = %d, want 1", snap.Version)
+	}
+	if snap.ConfigurationVersion != 1 || snap.StatisticsSemantics != sli.EventTime || !snap.ActiveFrom.Equal(now) {
+		t.Fatalf("new SLI lost its configuration boundary: %+v", snap)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unmet expectations: %v", err)
@@ -89,22 +100,28 @@ func TestSLIRepository_Create_BeginTxError(t *testing.T) {
 	repo, mock := newSLIRepoMock(t)
 	mock.ExpectBegin().WillReturnError(errors.New("boom"))
 
-	if _, err := repo.Create(context.Background(), "default", sli.CreateSpec{}); err == nil {
+	if _, err := repo.Create(context.Background(), coreFixtureSliRepositoryTenantID, sli.CreateSpec{}); err == nil {
 		t.Fatal("expected error")
 	}
 }
 
 func TestSLIRepository_Delete(t *testing.T) {
 	repo, mock := newSLIRepoMock(t)
+	group := scan.GenerateID()
 
 	mock.ExpectBegin()
-	expectSetConfig(mock, "default")
+	expectSetConfig(mock, coreFixtureSliRepositoryTenantID)
+	mock.ExpectQuery(regexp.QuoteMeta(sliDeleteSourceQuery)).
+		WithArgs(coreFixtureSliRepositoryTenantID, int64(1), 2, group).
+		WillReturnRows(sqlmock.NewRows([]string{"source_uid"}).AddRow("check-7"))
+	mock.ExpectExec(`SELECT orbitjob_lock_sli_source\(\$1,\$2\)`).
+		WithArgs(coreFixtureSliRepositoryTenantID, "check-7").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("UPDATE slis SET deleted_at").
-		WithArgs("default", int64(1), 2, nil).
+		WithArgs(coreFixtureSliRepositoryTenantID, int64(1), 2, group).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	if err := repo.Delete(context.Background(), "default", "", 1, 2); err != nil {
+	if err := repo.Delete(context.Background(), coreFixtureSliRepositoryTenantID, group, 1, 2); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -116,17 +133,13 @@ func TestSLIRepository_Delete_NotFound(t *testing.T) {
 	repo, mock := newSLIRepoMock(t)
 
 	mock.ExpectBegin()
-	expectSetConfig(mock, "default")
-	mock.ExpectExec("UPDATE slis SET deleted_at").
-		WithArgs("default", int64(99), 1, nil).
-		WillReturnResult(sqlmock.NewResult(0, 0))
-	// The zero-rows path returns the not-found error without assigning the
-	// outer err that the old conditional rollback was keyed on; the rollback
-	// is now unconditional, so it fires here too. Pinned in detail by
-	// TestSLIRepository_Delete_NotFound_RollsBack.
+	expectSetConfig(mock, coreFixtureSliRepositoryTenantID)
+	mock.ExpectQuery(regexp.QuoteMeta(sliDeleteSourceQuery)).
+		WithArgs(coreFixtureSliRepositoryTenantID, int64(99), 1, nil).
+		WillReturnError(sql.ErrNoRows)
 	mock.ExpectRollback()
 
-	err := repo.Delete(context.Background(), "default", "", 99, 1)
+	err := repo.Delete(context.Background(), coreFixtureSliRepositoryTenantID, "", 99, 1)
 	var notFound *resource.NotFoundError
 	if !errors.As(err, &notFound) {
 		t.Fatalf("expected *resource.NotFoundError, got %T: %v", err, err)
@@ -143,13 +156,18 @@ func TestSLIRepository_Delete_DBError(t *testing.T) {
 	repo, mock := newSLIRepoMock(t)
 
 	mock.ExpectBegin()
-	expectSetConfig(mock, "default")
+	expectSetConfig(mock, coreFixtureSliRepositoryTenantID)
+	mock.ExpectQuery(regexp.QuoteMeta(sliDeleteSourceQuery)).
+		WithArgs(coreFixtureSliRepositoryTenantID, int64(1), 2, nil).
+		WillReturnRows(sqlmock.NewRows([]string{"source_uid"}).AddRow("check-7"))
+	mock.ExpectExec(`SELECT orbitjob_lock_sli_source\(\$1,\$2\)`).
+		WithArgs(coreFixtureSliRepositoryTenantID, "check-7").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("UPDATE slis SET deleted_at").
-		WithArgs("default", int64(1), 2, nil).
+		WithArgs(coreFixtureSliRepositoryTenantID, int64(1), 2, nil).
 		WillReturnError(errors.New("delete failed"))
 	mock.ExpectRollback()
 
-	if err := repo.Delete(context.Background(), "default", "", 1, 2); err == nil {
+	if err := repo.Delete(context.Background(), coreFixtureSliRepositoryTenantID, "", 1, 2); err == nil {
 		t.Fatal("expected error")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -162,17 +180,17 @@ func TestSLIRepository_FindBySourceUID(t *testing.T) {
 	now := time.Now()
 
 	mock.ExpectBegin()
-	expectSetConfig(mock, "default")
+	expectSetConfig(mock, coreFixtureSliRepositoryTenantID)
 	mock.ExpectQuery("SELECT (.+) FROM slis WHERE tenant_id = \\$1 AND deleted_at IS NULL").
-		WithArgs("default", "check-42").
+		WithArgs(coreFixtureSliRepositoryTenantID, "check-42").
 		WillReturnRows(sqlmock.NewRows(sliColumns).AddRow(
-			3, "default", "checkout-availability", nil, "availability",
+			3, coreFixtureSliRepositoryTenantID, "checkout-availability", nil, "availability",
 			"job_run", []byte(`{"source_uid":"check-42"}`), "ratio",
 			[]byte(`{"status":"success"}`), 1, now, now,
 		))
 	mock.ExpectCommit()
 
-	slis, err := repo.FindBySourceUID(context.Background(), "default", "check-42")
+	slis, err := repo.FindBySourceUID(context.Background(), coreFixtureSliRepositoryTenantID, "check-42")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -194,16 +212,18 @@ func TestSLIRepository_FindBySourceUID_DBError(t *testing.T) {
 	repo, mock := newSLIRepoMock(t)
 
 	mock.ExpectBegin()
-	expectSetConfig(mock, "default")
+	expectSetConfig(mock, coreFixtureSliRepositoryTenantID)
 	mock.ExpectQuery("SELECT (.+) FROM slis").
-		WithArgs("default", "check-42").
+		WithArgs(coreFixtureSliRepositoryTenantID, "check-42").
 		WillReturnError(errors.New("query failed"))
 	mock.ExpectRollback()
 
-	if _, err := repo.FindBySourceUID(context.Background(), "default", "check-42"); err == nil {
+	if _, err := repo.FindBySourceUID(context.Background(), coreFixtureSliRepositoryTenantID, "check-42"); err == nil {
 		t.Fatal("expected error")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unmet expectations: %v", err)
 	}
 }
+
+var coreFixtureSliRepositoryTenantID = scan.GenerateID()

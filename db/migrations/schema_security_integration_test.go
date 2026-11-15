@@ -8,7 +8,12 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"orbitjob/internal/platform/scan"
 )
+
+var migrationAlphaID = scan.GenerateID()
+var migrationBetaID = scan.GenerateID()
 
 // These tests connect as the deployment roles and observe the schema's effect on
 // real rows. The catalog tests say RLS is enabled; these say what it does.
@@ -22,7 +27,7 @@ func ctx30(t *testing.T) context.Context {
 
 // seedTenantIDs creates tenants rows for the given ids. Since the tenant_id
 // unification every tenant-owned row references tenants(id), so a fixture
-// seeding 'alpha' or 'beta' rows needs the tenant to exist first or the
+// seeding either generated tenant needs the tenant to exist first or the
 // foreign key rejects the seed.
 func seedTenantIDs(t *testing.T, ctx context.Context, owner *sql.DB, ids ...string) {
 	t.Helper()
@@ -41,12 +46,12 @@ func seedTenantIDs(t *testing.T, ctx context.Context, owner *sql.DB, ids ...stri
 // through the owner connection, which bypasses RLS.
 func seedAuditRows(t *testing.T, ctx context.Context, owner *sql.DB) {
 	t.Helper()
-	seedTenantIDs(t, ctx, owner, "alpha", "beta")
+	seedTenantIDs(t, ctx, owner, migrationAlphaID, migrationBetaID)
 	if _, err := owner.ExecContext(ctx, `
 		INSERT INTO audit_events(tenant_id,actor_type,event_type,resource_type,resource_id)
-		SELECT 'alpha','system','create','tenant','a'||g FROM generate_series(1,3) g;
+		SELECT '`+migrationAlphaID+`','system','create','tenant','a'||g FROM generate_series(1,3) g;
 		INSERT INTO audit_events(tenant_id,actor_type,event_type,resource_type,resource_id)
-		SELECT 'beta','system','create','tenant','b'||g FROM generate_series(1,5) g;
+		SELECT '`+migrationBetaID+`','system','create','tenant','b'||g FROM generate_series(1,5) g;
 	`); err != nil {
 		t.Fatalf("seed audit rows: %v", err)
 	}
@@ -82,7 +87,7 @@ func TestTenantIsolationThroughParentAndPartition(t *testing.T) {
 	}
 
 	withRoleConn(t, "orbitjob_admin", func(ctx context.Context, conn *sql.Conn) {
-		if _, err := conn.ExecContext(ctx, `SET app.tenant_id = 'alpha'`); err != nil {
+		if _, err := conn.ExecContext(ctx, `SET app.tenant_id = '`+migrationAlphaID+`'`); err != nil {
 			t.Fatalf("set tenant context: %v", err)
 		}
 
@@ -92,10 +97,10 @@ func TestTenantIsolationThroughParentAndPartition(t *testing.T) {
 		if n := countAs(t, ctx, conn, `SELECT count(*) FROM audit_events_default`); n != 3 {
 			t.Errorf("alpha sees %d rows through the partition, want 3", n)
 		}
-		if n := countAs(t, ctx, conn, `SELECT count(*) FROM audit_events WHERE tenant_id = 'beta'`); n != 0 {
+		if n := countAs(t, ctx, conn, `SELECT count(*) FROM audit_events WHERE tenant_id = '`+migrationBetaID+`'`); n != 0 {
 			t.Errorf("alpha reads %d of beta's rows through the parent, want 0", n)
 		}
-		if n := countAs(t, ctx, conn, `SELECT count(*) FROM audit_events_default WHERE tenant_id = 'beta'`); n != 0 {
+		if n := countAs(t, ctx, conn, `SELECT count(*) FROM audit_events_default WHERE tenant_id = '`+migrationBetaID+`'`); n != 0 {
 			t.Errorf("alpha reads %d of beta's rows through the partition, want 0", n)
 		}
 
@@ -117,24 +122,24 @@ func TestTenantIsolationThroughParentAndPartition(t *testing.T) {
 // but not writes lets a tenant insert rows other tenants will read.
 func TestCrossTenantWriteIsRejected(t *testing.T) {
 	applyAllMigrations(t)
-	seedTenantIDs(t, ctx30(t), ownerDB(t), "alpha", "beta")
+	seedTenantIDs(t, ctx30(t), ownerDB(t), migrationAlphaID, migrationBetaID)
 
 	withRoleConn(t, "orbitjob_admin", func(ctx context.Context, conn *sql.Conn) {
-		if _, err := conn.ExecContext(ctx, `SET app.tenant_id = 'alpha'`); err != nil {
+		if _, err := conn.ExecContext(ctx, `SET app.tenant_id = '`+migrationAlphaID+`'`); err != nil {
 			t.Fatalf("set tenant context: %v", err)
 		}
 
 		// Positive control: writing into the caller's own tenant succeeds.
 		if _, err := conn.ExecContext(ctx, `
 			INSERT INTO checks (name, tenant_id, check_type, schedule_type, cron_expr)
-			VALUES ('own', 'alpha', 'http_health', 'cron', '* * * * *')
+			VALUES ('own', '`+migrationAlphaID+`', 'http_health', 'cron', '* * * * *')
 		`); err != nil {
 			t.Fatalf("alpha could not write its own row: %v", err)
 		}
 
 		if _, err := conn.ExecContext(ctx, `
 			INSERT INTO checks (name, tenant_id, check_type, schedule_type, cron_expr)
-			VALUES ('forged', 'beta', 'http_health', 'cron', '* * * * *')
+			VALUES ('forged', '`+migrationBetaID+`', 'http_health', 'cron', '* * * * *')
 		`); err == nil {
 			t.Error("alpha wrote a row for beta; WITH CHECK did not apply")
 		}
@@ -146,7 +151,7 @@ func TestCrossTenantWriteIsRejected(t *testing.T) {
 		}
 		if _, err := conn.ExecContext(ctx, `
 			INSERT INTO checks (name, tenant_id, check_type, schedule_type, cron_expr)
-			VALUES ('unattributed', 'alpha', 'http_health', 'cron', '* * * * *')
+			VALUES ('unattributed', '`+migrationAlphaID+`', 'http_health', 'cron', '* * * * *')
 		`); err == nil {
 			t.Error("a write with no tenant context was accepted")
 		}
@@ -160,7 +165,7 @@ func TestPlatformPresetsAreReadOnlyAcrossTenants(t *testing.T) {
 	applyAllMigrations(t)
 
 	withRoleConn(t, "orbitjob_admin", func(ctx context.Context, conn *sql.Conn) {
-		if _, err := conn.ExecContext(ctx, `SET app.tenant_id = 'alpha'`); err != nil {
+		if _, err := conn.ExecContext(ctx, `SET app.tenant_id = '`+migrationAlphaID+`'`); err != nil {
 			t.Fatalf("set tenant context: %v", err)
 		}
 
@@ -247,7 +252,7 @@ func TestAdminCannotWriteRunLedger(t *testing.T) {
 	applyAllMigrations(t)
 
 	withRoleConn(t, "orbitjob_admin", func(ctx context.Context, conn *sql.Conn) {
-		if _, err := conn.ExecContext(ctx, `SET app.tenant_id = 'alpha'`); err != nil {
+		if _, err := conn.ExecContext(ctx, `SET app.tenant_id = '`+migrationAlphaID+`'`); err != nil {
 			t.Fatalf("set tenant context: %v", err)
 		}
 		// The read the API is allowed to do must work, so the insert failure is
@@ -258,7 +263,7 @@ func TestAdminCannotWriteRunLedger(t *testing.T) {
 		_, err := conn.ExecContext(ctx, `
 			INSERT INTO job_run_control_plane
 			  (tenant_id, source_uid, revision_id, occurrence_key, trigger, actor, phase)
-			VALUES ('alpha', 'u1', 1, repeat('x',64), 'manual', 'someone', 'Pending')
+			VALUES ('`+migrationAlphaID+`', 'u1', 1, repeat('x',64), 'manual', 'someone', 'Pending')
 		`)
 		if err == nil {
 			t.Fatal("orbitjob_admin inserted a run row; the ledger is writable by the HTTP identity")
@@ -275,14 +280,14 @@ func TestRunActorIsRequiredAndNonEmpty(t *testing.T) {
 	applyAllMigrations(t)
 	ctx := ctx30(t)
 	db := ownerDB(t)
-	seedTenantIDs(t, ctx, db, "alpha")
+	seedTenantIDs(t, ctx, db, migrationAlphaID)
 
 	var revisionID int64
 	if err := db.QueryRowContext(ctx, `
 		INSERT INTO job_definition_revisions
 		  (tenant_id, source_mode, source_uid, source_namespace, source_name,
 		   generation, spec_hash, normalized_spec, actor)
-		VALUES ('alpha','k8s','uid-1','ns','name',1,repeat('a',64),'{}','operator')
+		VALUES ('`+migrationAlphaID+`','k8s','uid-1','ns','name',1,repeat('a',64),'{}','operator')
 		RETURNING id
 	`).Scan(&revisionID); err != nil {
 		t.Fatalf("seed revision: %v", err)
@@ -292,7 +297,7 @@ func TestRunActorIsRequiredAndNonEmpty(t *testing.T) {
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO job_run_control_plane
 		  (tenant_id, source_uid, revision_id, occurrence_key, trigger, actor, phase)
-		VALUES ('alpha','uid-1',$1,repeat('o',64),'manual','scheduler@cluster','Pending')
+		VALUES ('`+migrationAlphaID+`','uid-1',$1,repeat('o',64),'manual','scheduler@cluster','Pending')
 	`, revisionID); err != nil {
 		t.Fatalf("a run with a valid actor was rejected: %v", err)
 	}
@@ -301,7 +306,7 @@ func TestRunActorIsRequiredAndNonEmpty(t *testing.T) {
 		_, err := db.ExecContext(ctx, `
 			INSERT INTO job_run_control_plane
 			  (tenant_id, source_uid, revision_id, occurrence_key, trigger, actor, phase)
-			VALUES ('alpha','uid-1',$1,repeat('z',64),'manual',`+actor+`,'Pending')
+			VALUES ('`+migrationAlphaID+`','uid-1',$1,repeat('z',64),'manual',`+actor+`,'Pending')
 		`, revisionID)
 		if err == nil {
 			t.Errorf("job_run_control_plane accepted actor=%s", actor)
@@ -319,14 +324,14 @@ func TestRevisionActorIsRequiredAndNonEmpty(t *testing.T) {
 	applyAllMigrations(t)
 	ctx := ctx30(t)
 	db := ownerDB(t)
-	seedTenantIDs(t, ctx, db, "alpha")
+	seedTenantIDs(t, ctx, db, migrationAlphaID)
 
 	// Positive control: a revision with a real actor is accepted.
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO job_definition_revisions
 		  (tenant_id, source_mode, source_uid, source_namespace, source_name,
 		   generation, spec_hash, normalized_spec, actor)
-		VALUES ('alpha','k8s','uid-ok','ns','name',1,repeat('a',64),'{}','operator')
+		VALUES ('`+migrationAlphaID+`','k8s','uid-ok','ns','name',1,repeat('a',64),'{}','operator')
 	`); err != nil {
 		t.Fatalf("a revision with a valid actor was rejected: %v", err)
 	}
@@ -335,7 +340,7 @@ func TestRevisionActorIsRequiredAndNonEmpty(t *testing.T) {
 		INSERT INTO job_definition_revisions
 		  (tenant_id, source_mode, source_uid, source_namespace, source_name,
 		   generation, spec_hash, normalized_spec, actor)
-		VALUES ('alpha','k8s','uid-empty','ns','name',1,repeat('e',64),'{}','')
+		VALUES ('`+migrationAlphaID+`','k8s','uid-empty','ns','name',1,repeat('e',64),'{}','')
 	`); err == nil {
 		t.Error("job_definition_revisions accepted an empty actor; `actor` is NOT NULL with a non-empty CHECK on both ledger tables (schema-strategy.md G1)")
 	}
@@ -344,7 +349,7 @@ func TestRevisionActorIsRequiredAndNonEmpty(t *testing.T) {
 		INSERT INTO job_definition_revisions
 		  (tenant_id, source_mode, source_uid, source_namespace, source_name,
 		   generation, spec_hash, normalized_spec)
-		VALUES ('alpha','k8s','uid-omitted','ns','name',1,repeat('o',64),'{}')
+		VALUES ('`+migrationAlphaID+`','k8s','uid-omitted','ns','name',1,repeat('o',64),'{}')
 	`); err == nil {
 		t.Error("job_definition_revisions accepted a row with actor omitted; DEFAULT '' silently stores an empty actor (schema-strategy.md G1)")
 	}

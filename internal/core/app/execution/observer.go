@@ -24,6 +24,8 @@ func ValidateOwnership(job *batchv1.Job, identity Identity) error {
 		return fmt.Errorf("%w: run name %q", ErrForeignJob, job.Labels[LabelRunName])
 	case identity.RunUID != "" && job.Labels[LabelRunUID] != identity.RunUID:
 		return fmt.Errorf("%w: run uid %q", ErrForeignJob, job.Labels[LabelRunUID])
+	case identity.RevisionID != "" && job.Labels[LabelRevisionID] != identity.RevisionID:
+		return fmt.Errorf("%w: revision %q", ErrForeignJob, job.Labels[LabelRevisionID])
 	case job.Labels[LabelAttempt] != itoa(identity.Attempt):
 		return fmt.Errorf("%w: attempt %q", ErrForeignJob, job.Labels[LabelAttempt])
 	}

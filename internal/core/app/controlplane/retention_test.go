@@ -76,7 +76,7 @@ func TestSweepRemovesKubernetesObjectBeforeRow(t *testing.T) {
 			order:    &order,
 		},
 		Remover: &fakeRemover{order: &order},
-		Tenants: []string{"tenant-a"},
+		Tenants: []string{controlplaneTenant},
 	}
 
 	removed, err := rt.Sweep(context.Background())
@@ -97,7 +97,7 @@ func TestSweepUsesDefaultHistoryWhenUnset(t *testing.T) {
 		Definitions: &fakeRevisions{revisions: []revision.Revision{retentionRevision(t, v1alpha1.HistoryPolicy{})}},
 		History:     pruner,
 		Remover:     &fakeRemover{},
-		Tenants:     []string{"tenant-a"},
+		Tenants:     []string{controlplaneTenant},
 	}
 	if _, err := rt.Sweep(context.Background()); err != nil {
 		t.Fatal(err)
@@ -113,7 +113,7 @@ func TestSweepStopsBeforeDeletingWhenObjectRemovalFails(t *testing.T) {
 		Definitions: &fakeRevisions{revisions: []revision.Revision{retentionRevision(t, v1alpha1.HistoryPolicy{})}},
 		History:     pruner,
 		Remover:     &fakeRemover{err: errors.New("api down")},
-		Tenants:     []string{"tenant-a"},
+		Tenants:     []string{controlplaneTenant},
 	}
 	if _, err := rt.Sweep(context.Background()); err == nil {
 		t.Fatal("expected removal failure to surface")
@@ -132,7 +132,7 @@ func TestSweepCountsOnlyRowsActuallyDeleted(t *testing.T) {
 		Definitions: &fakeRevisions{revisions: []revision.Revision{retentionRevision(t, v1alpha1.HistoryPolicy{})}},
 		History:     pruner,
 		Remover:     &fakeRemover{},
-		Tenants:     []string{"tenant-a"},
+		Tenants:     []string{controlplaneTenant},
 	}
 	removed, err := rt.Sweep(context.Background())
 	if err != nil {
@@ -150,7 +150,7 @@ func TestSweepPropagatesErrors(t *testing.T) {
 		Definitions: &fakeRevisions{revisions: []revision.Revision{retentionRevision(t, v1alpha1.HistoryPolicy{})}},
 		History:     &fakePruner{},
 		Remover:     &fakeRemover{},
-		Tenants:     []string{"tenant-a"},
+		Tenants:     []string{controlplaneTenant},
 	}
 
 	listFailure := base
@@ -186,5 +186,22 @@ func TestSweepPropagatesErrors(t *testing.T) {
 func TestRetainerRequiresDependencies(t *testing.T) {
 	if _, err := (Retainer{}).Sweep(context.Background()); err == nil {
 		t.Fatal("expected missing dependencies to be rejected")
+	}
+}
+
+type pendingObjectRemover struct{}
+
+func (pendingObjectRemover) Remove(_ context.Context, _, _, key string) error {
+	if key == "deleting" {
+		return ErrObjectDeletionPending
+	}
+	return nil
+}
+func TestPendingGarbageCollectionDoesNotStarveOtherHistory(t *testing.T) {
+	history := &fakePruner{prunable: []jobrun.PrunableRun{{ID: 1, OccurrenceKey: "deleting", Phase: jobrun.Succeeded}, {ID: 2, OccurrenceKey: "gone", Phase: jobrun.Succeeded}}}
+	retainer := Retainer{Definitions: &fakeRevisions{revisions: []revision.Revision{retentionRevision(t, v1alpha1.HistoryPolicy{})}}, History: history, Remover: pendingObjectRemover{}, Tenants: []string{controlplaneTenant}}
+	n, err := retainer.Sweep(context.Background())
+	if err != nil || n != 1 || len(history.deletedIDs) != 1 || history.deletedIDs[0] != 2 {
+		t.Fatalf("slow foreground deletion starved other history: n=%d deleted=%v error=%v", n, history.deletedIDs, err)
 	}
 }

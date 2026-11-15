@@ -1,3 +1,26 @@
+admission:
+  enabled: true
+  replicas: 2
+  image: {repository: orbitjob-admission, tag: "", pullPolicy: ""}
+  # Native writers are trusted administrators with their own review process.
+  # Ordinary clients use the checked definition API.
+  nativeWriters: []
+  resources:
+    requests: {cpu: 100m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+
+executionNetwork:
+  enabled: true
+  profile: development
+  # This declaration must follow a real allowed/denied connectivity test.
+  # Helm cannot establish whether the installed CNI enforces NetworkPolicy.
+  enforcementVerified: false
+  dnsNamespace: kube-system
+  dnsPodLabels: {k8s-app: kube-dns}
+  # Each entry grants only the listed CIDRs and destination ports in one
+  # managed execution namespace. No external/business access is implicit.
+  allowedEgress: []
+
 global:
   # Image registry prefix. Defaults to GHCR; override for Docker Hub or a mirror.
   imageRegistry: ghcr.io/s3loy

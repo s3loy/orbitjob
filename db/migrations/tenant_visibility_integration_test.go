@@ -6,6 +6,8 @@ import (
 	"context"
 	"database/sql"
 	"testing"
+
+	"orbitjob/internal/platform/scan"
 )
 
 // Tenant scoping, observed on real rows in every tenant-owned relation. The
@@ -19,10 +21,10 @@ import (
 // what makes it able to seed both tenants. Every observation runs as
 // orbitjob_admin on its own connection with app.tenant_id set.
 
-const (
-	visAlphaID = "aaaaaaaaaaaaaaaaaaaaaaaaaa"
-	visBetaID  = "bbbbbbbbbbbbbbbbbbbbbbbbbb"
+var visAlphaID = scan.GenerateID()
+var visBetaID = scan.GenerateID()
 
+const (
 	// The preset key_policies binds to; the baseline seeds three platform
 	// policies with fixed CHAR(26) ids.
 	visAdminPolicyID = "00000000000000000000000010"
@@ -30,22 +32,22 @@ const (
 
 // seedVisibilityFixtures creates tenant alpha and tenant beta with one row in
 // every tenant-owned relation, through the owner connection, committed. Ids
-// are built from each tenant's letter so the two tenants never collide and
-// every table's row is attributable at a glance.
+// use the production generator; the letter only labels human-readable names.
 func seedVisibilityFixtures(t *testing.T, ctx context.Context, db *sql.DB, ch, tenantID string) {
 	t.Helper()
+	groupID, policyID, keyID := scan.GenerateID(), scan.GenerateID(), scan.GenerateID()
 	seed := `
 		INSERT INTO tenants(id, slug, name) VALUES ('` + tenantID + `', 'vis-` + ch + `', 'Tenant ` + ch + `');
 
 		INSERT INTO resource_groups(id, tenant_id, slug, name)
-		  VALUES (repeat('` + ch + `', 23)||'grp', '` + tenantID + `', 'grp-` + ch + `', 'Group ` + ch + `');
+		  VALUES ('` + groupID + `', '` + tenantID + `', 'grp-` + ch + `', 'Group ` + ch + `');
 
 		INSERT INTO policies(id, tenant_id, name, document)
-		  VALUES (repeat('` + ch + `', 23)||'pol', '` + tenantID + `', 'policy-` + ch + `', '{}');
+		  VALUES ('` + policyID + `', '` + tenantID + `', 'policy-` + ch + `', '{}');
 
 		WITH k AS (
 			INSERT INTO api_keys(id, tenant_id, kind, key_hash, key_prefix)
-			  VALUES (repeat('` + ch + `', 23)||'key', '` + tenantID + `', 'tenant',
+			  VALUES ('` + keyID + `', '` + tenantID + `', 'tenant',
 			          'hash-` + ch + `', '` + ch + `pref')
 			  RETURNING id
 		)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -31,7 +32,8 @@ func (r Runtime) ReconcileJob(ctx context.Context, obj unstructured.Unstructured
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.Object, &job); err != nil {
 		return fmt.Errorf("decode kubernetes job: %w", err)
 	}
-	if _, err := execution.IdentityFromJob(&job); err != nil {
+	identity, identityErr := execution.IdentityFromJob(&job)
+	if identityErr != nil {
 		// An unmanaged Job in a watched namespace is not an error; the operator
 		// shares the cluster with everything else.
 		return nil
@@ -40,11 +42,38 @@ func (r Runtime) ReconcileJob(ctx context.Context, obj unstructured.Unstructured
 	if err != nil {
 		return err
 	}
+	settled, err := r.settleObservedJob(ctx, tenant, &job, identity)
+	if err != nil || !settled {
+		return err
+	}
 
-	phase := executionMapToRunPhase(execution.Phase(job))
+	observed := execution.Phase(job)
+	if execution.StopBoundary(&job) != "" && observed != execution.PhaseSucceeded && observed != execution.PhaseFailed {
+		// Releasing evidence can unblock Kubernetes's final condition. Its
+		// preterminal stop signal must not move the ledger back to Pending.
+		return nil
+	}
+	phase := executionMapToRunPhase(observed)
+	attemptPhase := phase
+	if observed == execution.PhaseFailed {
+		// This execution finished even when the logical run can retry.
+		attemptPhase = jobrun.Failed
+	}
 	runID, attemptNumber, err := r.Runs.UpdateAttemptPhase(
-		ctx, tenant, job.Name, string(phase), string(job.UID), job.ResourceVersion,
+		ctx, tenant, job.Name, string(attemptPhase), string(job.UID), job.ResourceVersion,
 	)
+	if errors.Is(err, corepostgres.ErrAttemptOwnership) && r.Dynamic != nil {
+		if bindErr := r.bindObservedAttempt(ctx, tenant, &job, identity); bindErr != nil {
+			return bindErr
+		}
+		runID, attemptNumber, err = r.Runs.UpdateAttemptPhase(ctx, tenant, job.Name, string(attemptPhase), string(job.UID), job.ResourceVersion)
+		if r.Enqueue != nil {
+			r.Enqueue("jobruns", job.Namespace, identity.RunName)
+		}
+	}
+	if errors.Is(err, corepostgres.ErrStaleObservation) {
+		return nil
+	}
 	if errors.Is(err, corepostgres.ErrNoAttempt) {
 		// No attempt row owns this Job name, and no future event will create
 		// one: the row was pruned by retention, wiped by a loadtest reset, or
@@ -63,7 +92,7 @@ func (r Runtime) ReconcileJob(ctx context.Context, obj unstructured.Unstructured
 		return fmt.Errorf("record job %s phase %s: %w", job.Name, phase, err)
 	}
 	phaseChanged, err := r.Runs.UpdateRunPhase(ctx, tenant, runID, phase, attemptNumber)
-	if errors.Is(err, jobrun.ErrRunTerminal) {
+	if errors.Is(err, jobrun.ErrRunTerminal) || errors.Is(err, corepostgres.ErrRunChanged) {
 		// The run finished before this observation landed. Kubernetes Jobs are not
 		// deleted with their run and the informer re-delivers them, so a late
 		// observation is normal: the store refused the write to keep the finished
@@ -73,22 +102,13 @@ func (r Runtime) ReconcileJob(ctx context.Context, obj unstructured.Unstructured
 	if err != nil {
 		return err
 	}
-	r.recordOutcome(ctx, tenant, runID, phase, phaseChanged)
-	r.recordFunctionOutcome(ctx, tenant, runID, phase, phaseChanged)
+	if phaseChanged && r.Enqueue != nil {
+		r.Enqueue("jobruns", job.Namespace, identity.RunName)
+	}
+	if phaseChanged {
+		return r.recordTerminal(ctx, tenant, runID, phase)
+	}
 	return nil
-}
-
-// recordOutcome hands a genuine terminal transition to the outcome bookkeeping.
-// Canceled is deliberately not handed over: a stop is a human decision, not an
-// execution outcome, and the check read model has no such status to record.
-func (r Runtime) recordOutcome(ctx context.Context, tenant string, runID int64, phase jobrun.Phase, phaseChanged bool) {
-	if r.Outcomes == nil || !phaseChanged {
-		return
-	}
-	if phase != jobrun.Succeeded && phase != jobrun.Failed {
-		return
-	}
-	r.Outcomes.RecordTerminalPhase(ctx, tenant, runID, phase)
 }
 
 // executionMapToRunPhase maps an observed Job phase onto the run lifecycle.
@@ -129,10 +149,18 @@ func (r Runtime) patchStatus(ctx context.Context, gvr schema.GroupVersionResourc
 // patchRunStatus projects stored run progress onto the JobRun CR. The CR is a
 // read model: it is derived from stored state, never the input to it.
 func (r Runtime) patchRunStatus(ctx context.Context, obj unstructured.Unstructured, stored jobrun.StoredRun) error {
-	return r.patchStatus(ctx, jobRunGVR, obj, map[string]any{
-		"phase":   string(stored.Phase),
-		"attempt": int32(stored.Attempt),
-	})
+	status := map[string]any{
+		"conditions":             r.admissionConditions(obj, false, ""),
+		"phase":                  string(stored.Phase),
+		"attempt":                int32(stored.Attempt),
+		"executionUnknownSince":  nil,
+		"executionUnknownReason": nil,
+	}
+	if stored.UnknownSince != nil {
+		status["executionUnknownSince"] = stored.UnknownSince.UTC().Format(time.RFC3339Nano)
+		status["executionUnknownReason"] = stored.UnknownReason
+	}
+	return r.patchStatus(ctx, jobRunGVR, obj, status)
 }
 
 // jobRunSpecFromUnstructured decodes only the spec, so a status write by another
@@ -162,4 +190,31 @@ func jobRunSpecFromUnstructured(obj unstructured.Unstructured) (v1alpha1.JobRunS
 		return spec, fmt.Errorf("job run %s/%s has no actor", obj.GetNamespace(), obj.GetName())
 	}
 	return spec, nil
+}
+
+// bindObservedAttempt recovers an Ensure response lost after API acceptance.
+// Full live CR ownership and the reserved ledger attempt must agree first.
+func (r Runtime) bindObservedAttempt(ctx context.Context, tenant string, job *batchv1.Job, id execution.Identity) error {
+	obj, err := r.Dynamic.Resource(jobRunGVR).Namespace(job.Namespace).Get(ctx, id.RunName, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+	if obj.GetUID() == "" || string(obj.GetUID()) != id.RunUID {
+		return corepostgres.ErrAttemptOwnership
+	}
+	spec, err := jobRunSpecFromUnstructured(*obj)
+	if err != nil {
+		return err
+	}
+	stored, found, err := r.Runs.RunByOccurrence(ctx, tenant, spec.ScheduledJobRef.UID, spec.OccurrenceKey)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return corepostgres.ErrNoAttempt
+	}
+	if err := execution.ValidateOwnership(job, execution.Identity{RunName: obj.GetName(), RunUID: string(obj.GetUID()), RevisionID: fmt.Sprint(stored.RevisionID), Attempt: stored.Attempt}); err != nil {
+		return err
+	}
+	return r.Runs.BindAttemptObservation(ctx, tenant, stored.ID, stored.Attempt, job.Name, string(job.UID), job.ResourceVersion)
 }

@@ -65,9 +65,9 @@ func TestFunctionsAreTenantIsolated(t *testing.T) {
 	applyAllMigrations(t)
 	ctx := ctx30(t)
 	owner := ownerDB(t)
-	seedTenantIDs(t, ctx, owner, "alpha", "beta")
-	seedFunctions(t, ctx, owner, "alpha", "fn-a1", "fn-a2")
-	betaFn := seedFunctions(t, ctx, owner, "beta", "fn-b1", "fn-b2", "fn-b3")
+	seedTenantIDs(t, ctx, owner, migrationAlphaID, migrationBetaID)
+	seedFunctions(t, ctx, owner, migrationAlphaID, "fn-a1", "fn-a2")
+	betaFn := seedFunctions(t, ctx, owner, migrationBetaID, "fn-b1", "fn-b2", "fn-b3")
 
 	// Positive control: without a tenant identity all five rows exist. If this
 	// is wrong the isolation checks below prove nothing.
@@ -80,7 +80,7 @@ func TestFunctionsAreTenantIsolated(t *testing.T) {
 	}
 
 	withRoleConn(t, "orbitjob_admin", func(ctx context.Context, conn *sql.Conn) {
-		if _, err := conn.ExecContext(ctx, `SET app.tenant_id = 'alpha'`); err != nil {
+		if _, err := conn.ExecContext(ctx, `SET app.tenant_id = '`+migrationAlphaID+`'`); err != nil {
 			t.Fatalf("set tenant context: %v", err)
 		}
 
@@ -88,13 +88,13 @@ func TestFunctionsAreTenantIsolated(t *testing.T) {
 			t.Fatalf("alpha sees %d function row(s), want 2; the positive control failed "+
 				"so the isolation assertions below prove nothing", n)
 		}
-		if n := countAs(t, ctx, conn, `SELECT count(*) FROM functions WHERE tenant_id = 'beta'`); n != 0 {
+		if n := countAs(t, ctx, conn, `SELECT count(*) FROM functions WHERE tenant_id = '`+migrationBetaID+`'`); n != 0 {
 			t.Errorf("alpha reads %d of beta's function rows, want 0", n)
 		}
 
 		// Positive control: updating its own row succeeds.
 		res, err := conn.ExecContext(ctx, `
-			UPDATE functions SET name = 'fn-a1-renamed' WHERE tenant_id = 'alpha' AND name = 'fn-a1'
+			UPDATE functions SET name = 'fn-a1-renamed' WHERE tenant_id = '`+migrationAlphaID+`' AND name = 'fn-a1'
 		`)
 		if err != nil {
 			t.Fatalf("alpha could not update its own function: %v", err)
@@ -106,14 +106,14 @@ func TestFunctionsAreTenantIsolated(t *testing.T) {
 		// A cross-tenant INSERT violates WITH CHECK.
 		if _, err := conn.ExecContext(ctx, `
 			INSERT INTO functions (name, tenant_id, image)
-			VALUES ('fn-hijack', 'beta', 'registry.example/hijack:1')
+			VALUES ('fn-hijack', '`+migrationBetaID+`', 'registry.example/hijack:1')
 		`); err == nil {
 			t.Error("alpha inserted a function for beta; WITH CHECK did not apply")
 		}
 
 		// Cross-tenant UPDATE by tenant predicate and by primary key: both must
 		// affect zero rows, invisibly rather than by denial.
-		res, err = conn.ExecContext(ctx, `UPDATE functions SET name = 'hijacked' WHERE tenant_id = 'beta'`)
+		res, err = conn.ExecContext(ctx, `UPDATE functions SET name = 'hijacked' WHERE tenant_id = '`+migrationBetaID+`'`)
 		if err != nil {
 			t.Errorf("cross-tenant update by tenant_id errored instead of filtering: %v", err)
 		} else if n, _ := res.RowsAffected(); n != 0 {
@@ -154,20 +154,20 @@ func TestFunctionRunsAreTenantIsolated(t *testing.T) {
 	applyAllMigrations(t)
 	ctx := ctx30(t)
 	owner := ownerDB(t)
-	seedTenantIDs(t, ctx, owner, "alpha", "beta")
-	alphaFn := seedFunctions(t, ctx, owner, "alpha", "fn-runs-a")
-	betaFn := seedFunctions(t, ctx, owner, "beta", "fn-runs-b")
-	seedFunctionRuns(t, ctx, owner, "alpha", alphaFn, 2)
-	seedFunctionRuns(t, ctx, owner, "beta", betaFn, 3)
+	seedTenantIDs(t, ctx, owner, migrationAlphaID, migrationBetaID)
+	alphaFn := seedFunctions(t, ctx, owner, migrationAlphaID, "fn-runs-a")
+	betaFn := seedFunctions(t, ctx, owner, migrationBetaID, "fn-runs-b")
+	seedFunctionRuns(t, ctx, owner, migrationAlphaID, alphaFn, 2)
+	seedFunctionRuns(t, ctx, owner, migrationBetaID, betaFn, 3)
 
 	withRoleConn(t, "orbitjob_admin", func(ctx context.Context, conn *sql.Conn) {
-		if _, err := conn.ExecContext(ctx, `SET app.tenant_id = 'alpha'`); err != nil {
+		if _, err := conn.ExecContext(ctx, `SET app.tenant_id = '`+migrationAlphaID+`'`); err != nil {
 			t.Fatalf("set tenant context: %v", err)
 		}
 		if n := countAs(t, ctx, conn, `SELECT count(*) FROM function_runs`); n != 2 {
 			t.Fatalf("alpha sees %d function_run row(s), want 2", n)
 		}
-		if n := countAs(t, ctx, conn, `SELECT count(*) FROM function_runs WHERE tenant_id = 'beta'`); n != 0 {
+		if n := countAs(t, ctx, conn, `SELECT count(*) FROM function_runs WHERE tenant_id = '`+migrationBetaID+`'`); n != 0 {
 			t.Errorf("alpha reads %d of beta's function runs, want 0", n)
 		}
 		if _, err := conn.ExecContext(ctx, `RESET app.tenant_id`); err != nil {
@@ -179,14 +179,14 @@ func TestFunctionRunsAreTenantIsolated(t *testing.T) {
 	})
 
 	withRoleConn(t, "orbitjob_runtime", func(ctx context.Context, conn *sql.Conn) {
-		if _, err := conn.ExecContext(ctx, `SET app.tenant_id = 'alpha'`); err != nil {
+		if _, err := conn.ExecContext(ctx, `SET app.tenant_id = '`+migrationAlphaID+`'`); err != nil {
 			t.Fatalf("set tenant context: %v", err)
 		}
 
 		// Positive control: the writer records a terminal run for its own tenant.
 		if _, err := conn.ExecContext(ctx, `
 			INSERT INTO function_runs (tenant_id, function_id, status, triggered_at, started_at, finished_at)
-			VALUES ('alpha', $1, 'success', now(), now(), now())
+			VALUES ('`+migrationAlphaID+`', $1, 'success', now(), now(), now())
 		`, alphaFn); err != nil {
 			t.Fatalf("runtime could not record alpha's own function run: %v", err)
 		}
@@ -195,13 +195,13 @@ func TestFunctionRunsAreTenantIsolated(t *testing.T) {
 		// satisfied and WITH CHECK is what rejects the row.
 		if _, err := conn.ExecContext(ctx, `
 			INSERT INTO function_runs (tenant_id, function_id, status, triggered_at, started_at, finished_at)
-			VALUES ('beta', $1, 'success', now(), now(), now())
+			VALUES ('`+migrationBetaID+`', $1, 'success', now(), now(), now())
 		`, betaFn); err == nil {
 			t.Error("runtime recorded a function run for beta under alpha's context; WITH CHECK did not apply")
 		}
 
 		res, err := conn.ExecContext(ctx,
-			`UPDATE function_runs SET duration_ms = 0 WHERE tenant_id = 'beta'`)
+			`UPDATE function_runs SET duration_ms = 0 WHERE tenant_id = '`+migrationBetaID+`'`)
 		if err != nil {
 			t.Errorf("cross-tenant update errored instead of filtering: %v", err)
 		} else if n, _ := res.RowsAffected(); n != 0 {
@@ -213,7 +213,7 @@ func TestFunctionRunsAreTenantIsolated(t *testing.T) {
 		}
 		if _, err := conn.ExecContext(ctx, `
 			INSERT INTO function_runs (tenant_id, function_id, status, triggered_at, started_at, finished_at)
-			VALUES ('alpha', $1, 'success', now(), now(), now())
+			VALUES ('`+migrationAlphaID+`', $1, 'success', now(), now(), now())
 		`, alphaFn); err == nil {
 			t.Error("a function run was recorded with no tenant context")
 		}

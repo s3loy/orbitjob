@@ -82,11 +82,11 @@ func TestWorkflowRunActorIsRequiredAndNonEmpty(t *testing.T) {
 	applyAllMigrations(t)
 	ctx := ctx30(t)
 	db := ownerDB(t)
-	seedTenantIDs(t, ctx, db, "alpha")
-	revisionID := seedWorkflowRevision(t, ctx, db, "alpha", "wf-actor")
+	seedTenantIDs(t, ctx, db, migrationAlphaID)
+	revisionID := seedWorkflowRevision(t, ctx, db, migrationAlphaID, "wf-actor")
 
 	// Positive control: a run with a real actor is accepted.
-	seedWorkflowRun(t, ctx, db, "alpha", revisionID,
+	seedWorkflowRun(t, ctx, db, migrationAlphaID, revisionID,
 		"wf-actor", strings.Repeat("a", 64), "workflow-walker", "Pending")
 
 	// An omitted actor is a NOT NULL violation: the column has no DEFAULT, so
@@ -94,7 +94,7 @@ func TestWorkflowRunActorIsRequiredAndNonEmpty(t *testing.T) {
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO workflow_run_control_plane
 		  (tenant_id, source_uid, revision_id, occurrence_key, trigger, phase)
-		VALUES ('alpha', 'wf-actor', $1, $2, 'Manual', 'Pending')
+		VALUES ('`+migrationAlphaID+`', 'wf-actor', $1, $2, 'Manual', 'Pending')
 	`, revisionID, strings.Repeat("w", 64)); err != nil {
 		if got := pqCode(t, err); got != "23502" {
 			t.Errorf("omitted actor failed with %s, want not_null_violation 23502", got)
@@ -106,7 +106,7 @@ func TestWorkflowRunActorIsRequiredAndNonEmpty(t *testing.T) {
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO workflow_run_control_plane
 		  (tenant_id, source_uid, revision_id, occurrence_key, trigger, actor, phase)
-		VALUES ('alpha', 'wf-actor', $1, $2, 'Manual', '', 'Pending')
+		VALUES ('`+migrationAlphaID+`', 'wf-actor', $1, $2, 'Manual', '', 'Pending')
 	`, revisionID, strings.Repeat("z", 64)); err != nil {
 		if got := pqCode(t, err); got != "23514" {
 			t.Errorf("empty actor failed with %s, want check_violation 23514 (chk_workflow_run_actor_non_empty)", got)
@@ -118,7 +118,7 @@ func TestWorkflowRunActorIsRequiredAndNonEmpty(t *testing.T) {
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO workflow_run_control_plane
 		  (tenant_id, source_uid, revision_id, occurrence_key, trigger, actor, phase)
-		VALUES ('alpha', 'wf-actor', $1, $2, 'Manual', '   ', 'Pending')
+		VALUES ('`+migrationAlphaID+`', 'wf-actor', $1, $2, 'Manual', '   ', 'Pending')
 	`, revisionID, strings.Repeat("y", 64)); err != nil {
 		if got := pqCode(t, err); got != "23514" {
 			t.Errorf("whitespace actor failed with %s, want check_violation 23514 (chk_workflow_run_actor_non_empty)", got)
@@ -137,17 +137,17 @@ func TestWorkflowRunOccurrenceKeyDedups(t *testing.T) {
 	applyAllMigrations(t)
 	ctx := ctx30(t)
 	db := ownerDB(t)
-	seedTenantIDs(t, ctx, db, "alpha")
-	revisionID := seedWorkflowRevision(t, ctx, db, "alpha", "wf-dedup")
+	seedTenantIDs(t, ctx, db, migrationAlphaID)
+	revisionID := seedWorkflowRevision(t, ctx, db, migrationAlphaID, "wf-dedup")
 
 	key := strings.Repeat("d", 64)
-	seedWorkflowRun(t, ctx, db, "alpha", revisionID,
+	seedWorkflowRun(t, ctx, db, migrationAlphaID, revisionID,
 		"wf-dedup", key, "workflow-walker", "Pending")
 
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO workflow_run_control_plane
 		  (tenant_id, source_uid, revision_id, occurrence_key, trigger, actor, phase)
-		VALUES ('alpha', 'wf-dedup', $1, $2, 'Manual', 'workflow-walker', 'Pending')
+		VALUES ('`+migrationAlphaID+`', 'wf-dedup', $1, $2, 'Manual', 'workflow-walker', 'Pending')
 	`, revisionID, key)
 	if err == nil {
 		t.Fatal("the same occurrence fired twice and both rows were stored")
@@ -157,11 +157,11 @@ func TestWorkflowRunOccurrenceKeyDedups(t *testing.T) {
 	}
 
 	// A genuinely new occurrence of the same workflow is a new row.
-	seedWorkflowRun(t, ctx, db, "alpha", revisionID,
+	seedWorkflowRun(t, ctx, db, migrationAlphaID, revisionID,
 		"wf-dedup", strings.Repeat("e", 64), "workflow-walker", "Pending")
 
 	// The same key material under a different workflow is a different run.
-	seedWorkflowRun(t, ctx, db, "alpha", revisionID,
+	seedWorkflowRun(t, ctx, db, migrationAlphaID, revisionID,
 		"wf-other", key, "workflow-walker", "Pending")
 
 	var n int
@@ -182,11 +182,11 @@ func TestWorkflowRunDeleteWaitsForItsSteps(t *testing.T) {
 	applyAllMigrations(t)
 	ctx := ctx30(t)
 	db := ownerDB(t)
-	seedTenantIDs(t, ctx, db, "alpha")
-	revisionID := seedWorkflowRevision(t, ctx, db, "alpha", "wf-prune")
-	workflowID := seedWorkflowRun(t, ctx, db, "alpha", revisionID,
+	seedTenantIDs(t, ctx, db, migrationAlphaID)
+	revisionID := seedWorkflowRevision(t, ctx, db, migrationAlphaID, "wf-prune")
+	workflowID := seedWorkflowRun(t, ctx, db, migrationAlphaID, revisionID,
 		"wf-prune", strings.Repeat("p", 64), "workflow-walker", "Succeeded")
-	stepID := seedWorkflowStep(t, ctx, db, "alpha", revisionID, workflowID,
+	stepID := seedWorkflowStep(t, ctx, db, migrationAlphaID, revisionID, workflowID,
 		"wf-prune-step-def", strings.Repeat("s", 64))
 
 	_, err := db.ExecContext(ctx,
@@ -231,13 +231,13 @@ func TestWorkflowRunIdIsNullableAndIndexed(t *testing.T) {
 	applyAllMigrations(t)
 	ctx := ctx30(t)
 	db := ownerDB(t)
-	seedTenantIDs(t, ctx, db, "alpha")
-	revisionID := seedWorkflowRevision(t, ctx, db, "alpha", "wf-plain")
+	seedTenantIDs(t, ctx, db, migrationAlphaID)
+	revisionID := seedWorkflowRevision(t, ctx, db, migrationAlphaID, "wf-plain")
 
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO job_run_control_plane
 		  (tenant_id, source_uid, revision_id, occurrence_key, trigger, actor, phase)
-		VALUES ('alpha', 'wf-plain', $1, $2, 'manual', 'scheduler@cluster', 'Pending')
+		VALUES ('`+migrationAlphaID+`', 'wf-plain', $1, $2, 'manual', 'scheduler@cluster', 'Pending')
 	`, revisionID, strings.Repeat("n", 64)); err != nil {
 		t.Fatalf("a plain run without workflow_run_id was rejected: %v", err)
 	}
@@ -293,20 +293,20 @@ func TestWorkflowStepsAreTenantVisible(t *testing.T) {
 	applyAllMigrations(t)
 	ctx := ctx30(t)
 	owner := ownerDB(t)
-	seedTenantIDs(t, ctx, owner, "alpha", "beta")
-	alphaRev := seedWorkflowRevision(t, ctx, owner, "alpha", "wf-vis-a")
-	betaRev := seedWorkflowRevision(t, ctx, owner, "beta", "wf-vis-b")
-	alphaWf := seedWorkflowRun(t, ctx, owner, "alpha", alphaRev,
+	seedTenantIDs(t, ctx, owner, migrationAlphaID, migrationBetaID)
+	alphaRev := seedWorkflowRevision(t, ctx, owner, migrationAlphaID, "wf-vis-a")
+	betaRev := seedWorkflowRevision(t, ctx, owner, migrationBetaID, "wf-vis-b")
+	alphaWf := seedWorkflowRun(t, ctx, owner, migrationAlphaID, alphaRev,
 		"wf-vis-a", strings.Repeat("a", 64), "workflow-walker", "Running")
-	betaWf := seedWorkflowRun(t, ctx, owner, "beta", betaRev,
+	betaWf := seedWorkflowRun(t, ctx, owner, migrationBetaID, betaRev,
 		"wf-vis-b", strings.Repeat("b", 64), "workflow-walker", "Running")
-	seedWorkflowStep(t, ctx, owner, "alpha", alphaRev, alphaWf,
+	seedWorkflowStep(t, ctx, owner, migrationAlphaID, alphaRev, alphaWf,
 		"wf-vis-a-def", strings.Repeat("x", 64))
-	seedWorkflowStep(t, ctx, owner, "beta", betaRev, betaWf,
+	seedWorkflowStep(t, ctx, owner, migrationBetaID, betaRev, betaWf,
 		"wf-vis-b-def", strings.Repeat("x", 64))
 
 	withRoleConn(t, "orbitjob_admin", func(ctx context.Context, conn *sql.Conn) {
-		if _, err := conn.ExecContext(ctx, `SET app.tenant_id = 'alpha'`); err != nil {
+		if _, err := conn.ExecContext(ctx, `SET app.tenant_id = '`+migrationAlphaID+`'`); err != nil {
 			t.Fatalf("set tenant context: %v", err)
 		}
 		if n := countAs(t, ctx, conn, `SELECT count(*) FROM workflow_run_control_plane`); n != 1 {
@@ -316,11 +316,11 @@ func TestWorkflowStepsAreTenantVisible(t *testing.T) {
 			t.Fatalf("alpha sees %d run row(s), want 1", n)
 		}
 		if n := countAs(t, ctx, conn,
-			`SELECT count(*) FROM workflow_run_control_plane WHERE tenant_id = 'beta'`); n != 0 {
+			`SELECT count(*) FROM workflow_run_control_plane WHERE tenant_id = '`+migrationBetaID+`'`); n != 0 {
 			t.Errorf("alpha reads %d of beta's workflow rows, want 0", n)
 		}
 		if n := countAs(t, ctx, conn,
-			`SELECT count(*) FROM job_run_control_plane WHERE tenant_id = 'beta'`); n != 0 {
+			`SELECT count(*) FROM job_run_control_plane WHERE tenant_id = '`+migrationBetaID+`'`); n != 0 {
 			t.Errorf("alpha reads %d of beta's steps, want 0", n)
 		}
 		if n := countAs(t, ctx, conn, `

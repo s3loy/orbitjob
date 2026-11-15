@@ -48,8 +48,11 @@ func (s Service) ApplyScheduledJob(ctx context.Context, obj v1alpha1.ScheduledJo
 	// Only the fields this projection is responsible for. Identity and
 	// generation are validated by revision.New, so they are not re-checked
 	// here where the two could drift apart.
-	if obj.Spec.Schedule == "" || obj.Spec.JobTemplate.Image == "" {
-		return 0, fmt.Errorf("schedule and job template image are required")
+	if obj.Spec.JobTemplate.Image == "" {
+		return 0, fmt.Errorf("job template image is required")
+	}
+	if err := obj.Spec.NormalizeExecutionPolicy(); err != nil {
+		return 0, fmt.Errorf("execution policy: %w", err)
 	}
 
 	rev, err := revision.New(

@@ -96,14 +96,19 @@ func uniqueViolation(err error) (*pq.Error, bool) {
 // starts empty; decisions arrive through UpdatePhase's merge.
 const insertWorkflowRunSQL = `
 INSERT INTO workflow_run_control_plane
-  (tenant_id, source_uid, revision_id, occurrence_key, trigger, actor, phase)
-VALUES ($1,$2,$3,$4,$5,$6,$7)
+  (tenant_id, source_uid, revision_id, occurrence_key, trigger, actor, phase, scheduled_for, rejection_reason, resource_uid, snapshot_version)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 ON CONFLICT (source_uid, occurrence_key) DO NOTHING
 RETURNING id`
 
 const workflowRunProjection = `
 id, source_uid, revision_id, occurrence_key, trigger, actor, phase,
-task_decisions, created_at, updated_at`
+task_decisions, created_at, updated_at, scheduled_for, rejection_reason, resource_uid,
+snapshot_version, COALESCE((SELECT jsonb_object_agg(s.task_name, jsonb_build_object(
+  'source_uid',s.source_uid,'revision_id',s.revision_id,'namespace',r.source_namespace,
+  'name',r.source_name,'image',r.normalized_spec->'jobTemplate'->>'image'))
+  FROM workflow_task_snapshots s JOIN job_definition_revisions r ON r.id=s.revision_id AND r.tenant_id=s.tenant_id
+  WHERE s.workflow_run_id=workflow_run_control_plane.id AND s.tenant_id=workflow_run_control_plane.tenant_id),'{}'::jsonb)`
 
 const selectWorkflowRunByOccurrenceSQL = `SELECT ` + workflowRunProjection + `
 FROM workflow_run_control_plane WHERE source_uid=$1 AND occurrence_key=$2 AND tenant_id=$3`
@@ -128,14 +133,37 @@ LIMIT $3 OFFSET $4`
 func (r *WorkflowRunRepository) CreateRunForTenant(
 	ctx context.Context, tenantID string, run workflow.Run,
 ) (workflow.Run, bool, error) {
+	return r.createRunForTenant(ctx, tenantID, run, false)
+}
+
+// CancelUnadmittedRunForTenant persists a never-executed manual cancellation.
+// Existing occurrences are returned unchanged so the normal cancel path wins.
+func (r *WorkflowRunRepository) CancelUnadmittedRunForTenant(
+	ctx context.Context, tenantID string, run workflow.Run,
+) (workflow.Run, bool, error) {
+	if run.Trigger != jobrun.Manual {
+		return workflow.Run{}, false, fmt.Errorf("only a manual workflow request can be canceled before admission")
+	}
+	return r.createRunForTenant(ctx, tenantID, run, true)
+}
+
+func (r *WorkflowRunRepository) createRunForTenant(
+	ctx context.Context, tenantID string, run workflow.Run, canceled bool,
+) (workflow.Run, bool, error) {
 	if run.SourceUID == "" || run.OccurrenceKey == "" {
 		return workflow.Run{}, false, fmt.Errorf("workflow run identity is required")
 	}
-	if run.Trigger == "" {
-		return workflow.Run{}, false, fmt.Errorf("workflow run trigger is required")
+	if run.Trigger != jobrun.Manual && run.Trigger != jobrun.Schedule {
+		return workflow.Run{}, false, fmt.Errorf("workflow run trigger must be Manual or Schedule")
 	}
 	if run.Phase != "" && run.Phase != workflow.PhasePending {
 		return workflow.Run{}, false, fmt.Errorf("a workflow run is created in %s, not %s", workflow.PhasePending, run.Phase)
+	}
+	if run.ConcurrencyPolicy != "" && run.ConcurrencyPolicy != "Allow" && run.ConcurrencyPolicy != "Forbid" {
+		return workflow.Run{}, false, fmt.Errorf("workflow concurrency policy must be Allow or Forbid")
+	}
+	if run.ScheduledFor != nil && run.Trigger != jobrun.Schedule {
+		return workflow.Run{}, false, fmt.Errorf("only a scheduled run has a planned time")
 	}
 	if err := validateActor(run.Actor); err != nil {
 		return workflow.Run{}, false, err
@@ -145,11 +173,50 @@ func (r *WorkflowRunRepository) CreateRunForTenant(
 		stored  workflow.Run
 		created bool
 	)
-	err := r.withTenantTx(ctx, tenantID, func(ctx context.Context, tx *sql.Tx) error {
+	err := withAdmissionTx(ctx, r.db, tenantID, func(ctx context.Context, tx *sql.Tx) error {
+		mode, err := lockAdmissionSource(ctx, tx, tenantID, run.SourceUID, run.RevisionID, workflow.SourceModeWorkflow)
+		if err != nil {
+			return err
+		}
+		existing, err := scanWorkflowRunRow(tx.QueryRowContext(ctx,
+			selectWorkflowRunByOccurrenceSQL, run.SourceUID, run.OccurrenceKey, tenantID))
+		if err == nil {
+			stored = existing
+			return nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		phase := workflow.PhasePending
+		rejectionReason := ""
+		if !canceled {
+			if err := guardNewWorkflowRun(ctx, tx, tenantID, run); err != nil {
+				return err
+			}
+			if err := checkSourceAdmission(ctx, tx, tenantID, mode, run.SourceUID, run.Trigger); err != nil {
+				var blocked *jobrun.AdmissionBlockedError
+				if run.Trigger != jobrun.Schedule || !errors.As(err, &blocked) || blocked.Policy != "Forbid" || blocked.Reason != "concurrency" {
+					return err
+				}
+				// Cron skips retain receipts without occupying execution slots.
+				phase, rejectionReason = workflow.PhaseRejected, "concurrency_forbid"
+			}
+		}
+		if canceled {
+			phase = workflow.PhaseCanceled
+		}
+		version := 0
+		var snapshots map[string]workflow.TaskSnapshot
+		if phase == workflow.PhasePending {
+			version, snapshots, err = prepareWorkflowSnapshot(ctx, tx, tenantID, run)
+			if err != nil {
+				return err
+			}
+		}
 		var id int64
 		insertErr := tx.QueryRowContext(ctx, insertWorkflowRunSQL,
 			tenantID, run.SourceUID, run.RevisionID, run.OccurrenceKey,
-			string(run.Trigger), run.Actor, string(workflow.PhasePending),
+			string(run.Trigger), run.Actor, string(phase), run.ScheduledFor, rejectionReason, run.ResourceUID, version,
 		).Scan(&id)
 		switch {
 		case errors.Is(insertErr, sql.ErrNoRows):
@@ -167,6 +234,11 @@ func (r *WorkflowRunRepository) CreateRunForTenant(
 		default:
 			created = true
 		}
+		if created && version == 1 {
+			if err := insertWorkflowSnapshots(ctx, tx, tenantID, id, run, snapshots); err != nil {
+				return err
+			}
+		}
 
 		out, scanErr := scanWorkflowRunRow(tx.QueryRowContext(ctx,
 			selectWorkflowRunByOccurrenceSQL, run.SourceUID, run.OccurrenceKey, tenantID))
@@ -179,12 +251,21 @@ func (r *WorkflowRunRepository) CreateRunForTenant(
 		}
 		return insertControlPlaneAudit(ctx, tx, tenantID, run.Actor, auditEventWorkflowRunCreated,
 			auditResourceWorkflowRun, strconv.FormatInt(stored.ID, 10), map[string]any{
-				"source_uid":     run.SourceUID,
-				"revision_id":    run.RevisionID,
-				"occurrence_key": run.OccurrenceKey,
-				"trigger":        string(run.Trigger),
+				"source_uid":                run.SourceUID,
+				"revision_id":               run.RevisionID,
+				"occurrence_key":            run.OccurrenceKey,
+				"trigger":                   string(run.Trigger),
+				"phase":                     string(phase),
+				"canceled_before_admission": canceled,
+				"resource_uid":              run.ResourceUID, "reason": rejectionReason,
+				"snapshot_version": stored.SnapshotVersion,
 			})
 	})
+	if err == nil && created && stored.Phase == workflow.PhaseRejected {
+		admissionOutcomes.WithLabelValues("rejected").Inc()
+	} else {
+		recordAdmission(ctx, tenantID, run.SourceUID, created, err)
+	}
 	if err != nil {
 		return workflow.Run{}, false, err
 	}
@@ -200,10 +281,12 @@ func scanWorkflowRunRow(row interface{ Scan(dest ...any) error }) (workflow.Run,
 		trigger      string
 		phase        string
 		decisionsRaw []byte
+		snapshotsRaw []byte
 	)
 	if err := row.Scan(
 		&out.ID, &out.SourceUID, &out.RevisionID, &out.OccurrenceKey,
-		&trigger, &out.Actor, &phase, &decisionsRaw, &out.CreatedAt, &out.UpdatedAt,
+		&trigger, &out.Actor, &phase, &decisionsRaw, &out.CreatedAt, &out.UpdatedAt, &out.ScheduledFor, &out.Reason, &out.ResourceUID,
+		&out.SnapshotVersion, &snapshotsRaw,
 	); err != nil {
 		return workflow.Run{}, err
 	}
@@ -214,6 +297,9 @@ func scanWorkflowRunRow(row interface{ Scan(dest ...any) error }) (workflow.Run,
 		return workflow.Run{}, err
 	}
 	out.TaskDecisions = decisions
+	if err := json.Unmarshal(snapshotsRaw, &out.TaskSnapshots); err != nil {
+		return workflow.Run{}, fmt.Errorf("decode workflow task snapshots: %w", err)
+	}
 	return out, nil
 }
 
@@ -375,21 +461,21 @@ func (r *WorkflowRunRepository) RunsForDefinition(ctx context.Context, tenantID,
 	return out, nil
 }
 
+// RunsForDefinitionWindow applies a created_at interval before paging.
+
 // terminalWorkflowPhases is the SQL form of workflow.Terminal, which stays the
 // authority on what a finished workflow is. The values match the job-run
 // terminal set textually, but each domain names its own.
 func terminalWorkflowPhases() []string {
 	return []string{
-		string(workflow.PhaseSucceeded), string(workflow.PhaseFailed), string(workflow.PhaseCanceled),
+		string(workflow.PhaseSucceeded), string(workflow.PhaseFailed), string(workflow.PhaseCanceled), string(workflow.PhaseRejected),
 	}
 }
 
-// workflowRetentionPhases is the set the workflow prune may delete: the
-// terminal phases plus CancelUnknown, the same vocabulary the job-run ledger's
-// retentionPhases carries. Whether the retainer's window makes pruning an
-// unconfirmed stop acceptable is the retainer's policy, not this statement's.
+// Rejected scheduled receipts are terminal, but uncertain execution or stops
+// remain open and must never release a source slot through history pruning.
 func workflowRetentionPhases() []string {
-	return append(terminalWorkflowPhases(), string(workflow.PhaseCancelUnknown))
+	return terminalWorkflowPhases()
 }
 
 // ---------------------------------------------------------------------------
@@ -407,7 +493,11 @@ const listWorkflowStepsSQL = `SELECT ` + workflowStepProjection + `
 FROM job_run_control_plane WHERE workflow_run_id=$1 AND tenant_id=$2
 ORDER BY id`
 
-const selectWorkflowRunIDSQL = `SELECT id FROM workflow_run_control_plane WHERE id=$1 AND tenant_id=$2`
+const lockWorkflowRunForStepSQL = `SELECT phase FROM workflow_run_control_plane WHERE id=$1 AND tenant_id=$2 FOR UPDATE`
+
+func workflowAcceptsNewSteps(phase string) bool {
+	return phase == string(workflow.PhasePending) || phase == string(workflow.PhaseRunning)
+}
 
 // Steps lists the step runs grouped under one workflow run, ordered by id so a
 // walker's decisions are reproducible across ticks.
@@ -484,13 +574,54 @@ func (r *WorkflowRunRepository) CreateStepForTenant(
 		stored  workflow.StepRun
 		created bool
 	)
-	err := r.withTenantTx(ctx, tenantID, func(ctx context.Context, tx *sql.Tx) error {
-		var knownID int64
-		if err := tx.QueryRowContext(ctx, selectWorkflowRunIDSQL, workflowRunID, tenantID).Scan(&knownID); err != nil {
+	err := withAdmissionTx(ctx, r.db, tenantID, func(ctx context.Context, tx *sql.Tx) error {
+		var parentSource string
+		if err := tx.QueryRowContext(ctx, `SELECT source_uid FROM workflow_run_control_plane WHERE id=$1 AND tenant_id=$2`, workflowRunID, tenantID).Scan(&parentSource); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return &resource.NotFoundError{Resource: auditResourceWorkflowRun, ID: workflowRunID}
+			}
+			return err
+		}
+		mode, err := lockAdmissionSource(ctx, tx, tenantID, step.SourceUID, step.RevisionID, sourceModeKubernetes)
+		if err != nil {
+			return err
+		}
+		if err := lockSource(ctx, tx, tenantID, workflow.SourceModeWorkflow, parentSource); err != nil {
+			return err
+		}
+		var parentPhase string
+		if err := tx.QueryRowContext(ctx, lockWorkflowRunForStepSQL, workflowRunID, tenantID).Scan(&parentPhase); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return &resource.NotFoundError{Resource: auditResourceWorkflowRun, ID: workflowRunID}
 			}
 			return fmt.Errorf("read workflow run %d: %w", workflowRunID, err)
+		}
+		existing, err := scanWorkflowStepRow(tx.QueryRowContext(ctx, selectWorkflowStepSQL,
+			step.SourceUID, step.OccurrenceKey, tenantID))
+		if err == nil {
+			if existing.WorkflowRunID != workflowRunID || existing.Trigger != jobrun.Workflow {
+				return &resource.ConflictError{Resource: auditResourceRun, ID: existing.ID, Message: "step occurrence belongs to another workflow"}
+			}
+			stored = existing
+			return nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if parentPhase == string(workflow.PhaseExecutionUnknown) {
+			return ErrWorkflowBlocked
+		}
+		if !workflowAcceptsNewSteps(parentPhase) {
+			return fmt.Errorf("workflow run %d no longer accepts new steps: %w", workflowRunID, ErrRunChanged)
+		}
+		if err := requireWorkflowExecutionKnown(ctx, tx, tenantID, workflowRunID); err != nil {
+			return err
+		}
+		if err := checkSourceControls(ctx, tx, tenantID, workflow.SourceModeWorkflow, parentSource, jobrun.Workflow, false); err != nil {
+			return err
+		}
+		if err := checkWorkflowStepAdmission(ctx, tx, tenantID, workflowRunID, mode, step); err != nil {
+			return err
 		}
 
 		// A step has no scheduled instant of its own; the pointer is the only
@@ -541,10 +672,18 @@ func (r *WorkflowRunRepository) CreateStepForTenant(
 				"workflow_run_id": workflowRunID,
 			})
 	})
+	recordAdmission(ctx, tenantID, step.SourceUID, created, err)
 	if err != nil {
 		return workflow.StepRun{}, false, err
 	}
 	return stored, created, nil
+}
+
+func scanWorkflowStepRow(row interface{ Scan(...any) error }) (workflow.StepRun, error) {
+	var step workflow.StepRun
+	err := row.Scan(&step.ID, &step.WorkflowRunID, &step.SourceUID, &step.RevisionID,
+		&step.OccurrenceKey, &step.Trigger, &step.Phase, &step.Attempt, &step.CreatedAt, &step.UpdatedAt)
+	return step, err
 }
 
 // ---------------------------------------------------------------------------
@@ -576,6 +715,20 @@ SET phase=$3,
 FROM prior
 WHERE w.id=$1 AND w.tenant_id=$2
   AND NOT (w.phase = ANY($6))
+  AND CASE w.phase
+    WHEN 'Pending' THEN $3 IN ('Pending','Running','ExecutionUnknown','CancelRequested','CancelUnknown','Succeeded','Failed','Canceled')
+    WHEN 'Running' THEN $3 IN ('Running','ExecutionUnknown','CancelRequested','CancelUnknown','Succeeded','Failed','Canceled')
+    WHEN 'ExecutionUnknown' THEN $3 IN ('ExecutionUnknown','Running','CancelRequested','CancelUnknown','Succeeded','Failed','Canceled')
+    WHEN 'CancelRequested' THEN $3 IN ('CancelRequested','CancelUnknown','Canceled')
+    WHEN 'CancelUnknown' THEN $3 IN ('CancelUnknown','Canceled')
+    ELSE FALSE END
+  AND ($3 NOT IN ('Running','Succeeded','Failed','Canceled') OR NOT EXISTS (
+    SELECT 1 FROM job_run_control_plane child
+    WHERE child.tenant_id=$2 AND child.workflow_run_id=w.id AND child.phase IN ('ExecutionUnknown','CancelUnknown')))
+  AND ($3 NOT IN ('Succeeded','Failed','Canceled') OR NOT EXISTS (
+    SELECT 1 FROM job_run_control_plane child
+    WHERE child.tenant_id=$2 AND child.workflow_run_id=w.id
+      AND child.phase NOT IN ('Succeeded','Failed','Canceled')))
   AND (w.phase <> $3 OR w.task_decisions <> (w.task_decisions || $4::jsonb))
 RETURNING w.phase, prior.prior_phase, prior.prior_decisions::text, prior.run_actor`
 
@@ -607,7 +760,16 @@ func (r *WorkflowRunRepository) UpdatePhase(
 	}
 
 	changed := false
-	err = r.withTenantTx(ctx, tenantID, func(ctx context.Context, tx *sql.Tx) error {
+	err = withAdmissionTx(ctx, r.db, tenantID, func(ctx context.Context, tx *sql.Tx) error {
+		// Acquire the parent in a separate statement before the child predicate.
+		// The next READ COMMITTED statement must see a prior lock holder's facts.
+		var lockedPhase string
+		if err := tx.QueryRowContext(ctx, lockWorkflowRunForStepSQL, runID, tenantID).Scan(&lockedPhase); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return &resource.NotFoundError{Resource: auditResourceWorkflowRun, ID: runID}
+			}
+			return err
+		}
 		var (
 			newPhase     string
 			priorPhase   string
@@ -669,6 +831,19 @@ func (r *WorkflowRunRepository) UpdatePhase(
 					runID, current),
 			}
 		}
+		if (current == string(workflow.PhaseCancelRequested) || current == string(workflow.PhaseCancelUnknown)) &&
+			(phase == workflow.PhasePending || phase == workflow.PhaseRunning || phase == workflow.PhaseExecutionUnknown || phase == workflow.PhaseSucceeded || phase == workflow.PhaseFailed ||
+				(current == string(workflow.PhaseCancelUnknown) && phase == workflow.PhaseCancelRequested)) {
+			return nil // a stale walker must not erase a committed stop
+		}
+		if current == string(workflow.PhaseRunning) && phase == workflow.PhasePending {
+			return nil
+		}
+		if phase == workflow.PhaseRunning || workflow.Terminal(phase) {
+			// An observed child still occupies the workflow; stale roll-up is a
+			// harmless refusal, and the next walker pass reads current facts.
+			return nil
+		}
 		return fmt.Errorf("workflow run %d phase write matched no row while in phase %s", runID, current)
 	})
 	if err != nil {
@@ -688,6 +863,8 @@ type PrunableWorkflowRun struct {
 	ID            int64
 	OccurrenceKey string
 	Phase         workflow.Phase
+	RevisionID    int64
+	Trigger       jobrun.Trigger
 }
 
 // prunableWorkflowRunsSQL ranks workflow runs per outcome in one pass, the
@@ -695,12 +872,20 @@ type PrunableWorkflowRun struct {
 // history is decided by the database and the two keep limits can differ
 // without the caller issuing a query per outcome.
 const prunableWorkflowRunsSQL = `
-SELECT id, occurrence_key, phase FROM (
-  SELECT id, occurrence_key, phase,
+SELECT id, occurrence_key, phase, revision_id, trigger FROM (
+  SELECT id, occurrence_key, phase, revision_id, trigger,
          row_number() OVER (PARTITION BY phase ORDER BY created_at DESC, id DESC) AS rank,
          CASE WHEN phase = $4 THEN $5::int ELSE $6::int END AS keep
-  FROM workflow_run_control_plane
+  FROM workflow_run_control_plane w
   WHERE tenant_id=$1 AND source_uid=$2 AND phase = ANY($3)
+   AND w.updated_at<now()-interval '15 days'
+   AND NOT EXISTS (SELECT 1 FROM job_run_control_plane child
+     JOIN job_run_attempts_control_plane a ON a.tenant_id=child.tenant_id AND a.run_id=child.id
+     WHERE child.workflow_run_id=w.id AND ` + pendingEvidenceSQL + `)
+      AND NOT EXISTS (SELECT 1 FROM job_run_control_plane child JOIN execution_log_archives e ON e.tenant_id=child.tenant_id AND e.run_id=child.id
+     WHERE child.workflow_run_id=w.id AND e.state NOT IN ('expired','deleted') AND (e.protected_until IS NULL OR e.protected_until>now()))
+   AND NOT EXISTS (SELECT 1 FROM job_run_control_plane step WHERE step.workflow_run_id=w.id
+     AND (step.phase NOT IN ('Succeeded','Failed','Canceled') OR step.outcome_recorded_at IS NULL))
 ) ranked
 WHERE rank > keep
 ORDER BY id`
@@ -732,7 +917,7 @@ func (r *WorkflowRunRepository) PrunableRuns(
 				run   PrunableWorkflowRun
 				phase string
 			)
-			if scanErr := rows.Scan(&run.ID, &run.OccurrenceKey, &phase); scanErr != nil {
+			if scanErr := rows.Scan(&run.ID, &run.OccurrenceKey, &phase, &run.RevisionID, &run.Trigger); scanErr != nil {
 				return scanErr
 			}
 			run.Phase = workflow.Phase(phase)
@@ -779,8 +964,16 @@ func (r *WorkflowRunRepository) PruneRun(
 			actor         string
 		)
 		lockErr := tx.QueryRowContext(ctx, `
-			SELECT occurrence_key, phase, actor FROM workflow_run_control_plane
+			SELECT occurrence_key, phase, actor FROM workflow_run_control_plane w
 			WHERE id=$1 AND tenant_id=$2
+             AND w.updated_at<now()-interval '15 days'
+   AND NOT EXISTS (SELECT 1 FROM job_run_control_plane child
+     JOIN job_run_attempts_control_plane a ON a.tenant_id=child.tenant_id AND a.run_id=child.id
+     WHERE child.workflow_run_id=w.id AND `+pendingEvidenceSQL+`)
+                AND NOT EXISTS (SELECT 1 FROM job_run_control_plane child JOIN execution_log_archives e ON e.tenant_id=child.tenant_id AND e.run_id=child.id
+               WHERE child.workflow_run_id=w.id AND e.state NOT IN ('expired','deleted') AND (e.protected_until IS NULL OR e.protected_until>now()))
+             AND NOT EXISTS (SELECT 1 FROM job_run_control_plane step WHERE step.workflow_run_id=w.id
+               AND (step.phase NOT IN ('Succeeded','Failed','Canceled') OR step.outcome_recorded_at IS NULL))
 			FOR UPDATE`, runID, tenantID,
 		).Scan(&occurrenceKey, &phase, &actor)
 		if errors.Is(lockErr, sql.ErrNoRows) {
@@ -794,6 +987,17 @@ func (r *WorkflowRunRepository) PruneRun(
 		if !workflowRetentionPhasesContains(phase) {
 			return nil
 		}
+		// Refresh the hold predicate after acquiring the parent lock. An
+		// evidence writer may have committed while this transaction waited.
+		var pending bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM job_run_control_plane child
+ JOIN job_run_attempts_control_plane a ON a.tenant_id=child.tenant_id AND a.run_id=child.id
+ WHERE child.tenant_id=$1 AND child.workflow_run_id=$2 AND `+pendingEvidenceSQL+`)`, tenantID, runID).Scan(&pending); err != nil {
+			return err
+		}
+		if pending {
+			return nil
+		}
 
 		// Steps first. The delete takes the attempts rows with it (the
 		// attempt FK is CASCADE), and each removed step is attributed before
@@ -802,28 +1006,18 @@ func (r *WorkflowRunRepository) PruneRun(
 		if queryErr != nil {
 			return queryErr
 		}
-		var steps int64
+		type prunedStep struct {
+			id                int64
+			key, phase, actor string
+		}
+		var removed []prunedStep
 		for stepRows.Next() {
-			var (
-				stepID    int64
-				stepKey   string
-				stepPhase string
-				stepActor string
-			)
-			if scanErr := stepRows.Scan(&stepID, &stepKey, &stepPhase, &stepActor); scanErr != nil {
+			var step prunedStep
+			if scanErr := stepRows.Scan(&step.id, &step.key, &step.phase, &step.actor); scanErr != nil {
 				_ = stepRows.Close()
 				return scanErr
 			}
-			if auditErr := insertControlPlaneAudit(ctx, tx, tenantID, stepActor, auditEventRunPruned,
-				auditResourceRun, strconv.FormatInt(stepID, 10), map[string]any{
-					"occurrence_key":  stepKey,
-					"phase":           stepPhase,
-					"workflow_run_id": runID,
-				}); auditErr != nil {
-				_ = stepRows.Close()
-				return auditErr
-			}
-			steps++
+			removed = append(removed, step)
 		}
 		if err := stepRows.Err(); err != nil {
 			_ = stepRows.Close()
@@ -831,7 +1025,18 @@ func (r *WorkflowRunRepository) PruneRun(
 		}
 		// The rows are drained; the next statement in this transaction needs
 		// the connection back before it can run.
-		_ = stepRows.Close()
+		if err := stepRows.Close(); err != nil {
+			return err
+		}
+		for _, step := range removed {
+			if err := insertControlPlaneAudit(ctx, tx, tenantID, step.actor, auditEventRunPruned,
+				auditResourceRun, strconv.FormatInt(step.id, 10), map[string]any{
+					"occurrence_key": step.key, "phase": step.phase, "workflow_run_id": runID,
+				}); err != nil {
+				return err
+			}
+		}
+		steps := int64(len(removed))
 
 		// Then the row. We hold its lock and re-checked the phase above, so a
 		// miss here means the row moved underneath the retention set's feet --

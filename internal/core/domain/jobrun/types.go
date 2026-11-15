@@ -6,20 +6,21 @@ import (
 )
 
 // Phase is the lifecycle state of one logical run. Terminal phases are
-// Succeeded, Failed and Canceled; CancelUnknown is terminal but undecided,
-// meaning the platform issued a stop it could not confirm.
+// Succeeded, Failed and Canceled. CancelUnknown and ExecutionUnknown remain
+// nonterminal because the platform has no verified final outcome.
 type Phase string
 
 const (
-	Pending         Phase = "Pending"
-	CreatingAttempt Phase = "CreatingAttempt"
-	Running         Phase = "Running"
-	RetryWaiting    Phase = "RetryWaiting"
-	Succeeded       Phase = "Succeeded"
-	Failed          Phase = "Failed"
-	CancelRequested Phase = "CancelRequested"
-	Canceled        Phase = "Canceled"
-	CancelUnknown   Phase = "CancelUnknown"
+	Pending          Phase = "Pending"
+	CreatingAttempt  Phase = "CreatingAttempt"
+	Running          Phase = "Running"
+	RetryWaiting     Phase = "RetryWaiting"
+	Succeeded        Phase = "Succeeded"
+	Failed           Phase = "Failed"
+	CancelRequested  Phase = "CancelRequested"
+	Canceled         Phase = "Canceled"
+	CancelUnknown    Phase = "CancelUnknown"
+	ExecutionUnknown Phase = "ExecutionUnknown"
 )
 
 // Trigger records why a run exists. Schedule and Manual runs are deduplicated by
@@ -59,6 +60,7 @@ type JobRun struct {
 type Attempt struct {
 	ID, JobRunID, KubernetesJobName, KubernetesJobUID string
 	ObservedResourceVersion                           string
+	OwnerRunUID                                       string
 	Number                                            int
 	Phase                                             Phase
 	StartedAt                                         time.Time
@@ -84,9 +86,11 @@ func CanTransition(from, to Phase) bool {
 	case Pending:
 		return to == CreatingAttempt || to == CancelRequested
 	case CreatingAttempt:
-		return to == Running || to == CancelRequested
+		return to == Running || to == CancelRequested || to == ExecutionUnknown
 	case Running:
-		return to == RetryWaiting || to == Succeeded || to == Failed || to == CancelRequested
+		return to == RetryWaiting || to == Succeeded || to == Failed || to == CancelRequested || to == ExecutionUnknown
+	case ExecutionUnknown:
+		return to == Running || to == RetryWaiting || to == Succeeded || to == CancelRequested
 	case RetryWaiting:
 		// Failed is reachable from here because a run whose attempts are all
 		// spent stops retrying and records the outcome; without this edge the
@@ -94,11 +98,14 @@ func CanTransition(from, to Phase) bool {
 		return to == CreatingAttempt || to == CancelRequested || to == Failed
 	case CancelRequested:
 		return to == Canceled || to == CancelUnknown
+	case CancelUnknown:
+		return to == Canceled
 	}
 	return false
 }
 
-// Terminal reports whether no further transition is possible without a new run.
+// Terminal identifies confirmed execution outcomes. CancelUnknown has no
+// confirmation and remains retained for inspection rather than normal retention.
 func Terminal(p Phase) bool {
 	return p == Succeeded || p == Failed || p == Canceled
 }

@@ -3,6 +3,7 @@ package checkobserve
 import (
 	"context"
 	"errors"
+	"orbitjob/internal/platform/scan"
 	"testing"
 	"time"
 
@@ -16,7 +17,7 @@ import (
 	"orbitjob/internal/platform/metrics"
 )
 
-var testTenant = "00000000000000000000000001"
+var testTenant = scan.GenerateID()
 
 type stubOutcomes struct{ outcome controlplane.TerminalOutcome }
 
@@ -324,4 +325,13 @@ func TestOccurrenceRunIDIsDeterministic(t *testing.T) {
 	if occurrenceRunID("short") == occurrenceRunID("short2") {
 		t.Fatal("distinct malformed keys must not collide")
 	}
+}
+
+func (s *stubReadModel) RecordCompletedOnce(ctx context.Context, tenant string, record checkrun.CompletedRecord) (bool, error) {
+	err := s.RecordCompleted(ctx, tenant, record)
+	return err == nil, err
+}
+func (s *stubSnapshots) IncrementSnapshotForRun(ctx context.Context, tenant string, _ int64, sliID int64, window time.Time, good bool) (bool, error) {
+	err := s.IncrementSnapshot(ctx, tenant, sliID, window, good)
+	return err == nil, err
 }

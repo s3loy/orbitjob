@@ -14,6 +14,7 @@ import (
 	"orbitjob/internal/domain/resource"
 	"orbitjob/internal/platform/migrate"
 	"orbitjob/internal/platform/postgrestest"
+	"orbitjob/internal/platform/scan"
 )
 
 // SLORepository used to be the only core repository that ran without the
@@ -31,9 +32,9 @@ import (
 
 // rlsTenantAlpha/Beta are CHAR(26) tenant ids seeded as owner rows; the admin
 // connection must never see beta's.
-const (
-	rlsTenantAlpha = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-	rlsTenantBeta  = "01ARZ3NDEKTSV4RRFFQ69G5FW"
+var (
+	rlsTenantAlpha = scan.GenerateID()
+	rlsTenantBeta  = scan.GenerateID()
 )
 
 // rlsRolePasswords matches the password map the db/migrations integration

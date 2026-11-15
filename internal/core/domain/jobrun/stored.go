@@ -6,12 +6,19 @@ import "time"
 // the JobRun controller need in order to decide the next action without trusting
 // the CR's status subresource, which any writer with status permission can edit.
 type StoredRun struct {
-	ID          int64
-	RevisionID  int64
-	Phase       Phase
-	Attempt     int
-	MaxAttempts int
-	Epoch       int64
+	ID                  int64
+	RevisionID          int64
+	Phase               Phase
+	Attempt             int
+	AttemptUID          string
+	AttemptJobName      string
+	AttemptPhase        Phase
+	OwnerRunUID         string
+	UnknownSince        *time.Time
+	UnknownReason       string
+	TerminationEvidence []byte
+	MaxAttempts         int
+	Epoch               int64
 	// ScheduledFor is the civil-time occurrence the scheduler recorded at row
 	// creation; zero means the run had no scheduled instant (manual trigger or
 	// a row written before the column existed).
@@ -58,6 +65,8 @@ func (s StoredRun) CanStartAttempt() bool {
 // domain so the store and the retention policy agree on one shape rather than
 // each declaring a structurally identical type that will not interchange.
 type PrunableRun struct {
+	RevisionID    int64
+	Trigger       Trigger
 	ID            int64
 	OccurrenceKey string
 	Phase         Phase
@@ -69,6 +78,8 @@ type PrunableRun struct {
 // the definition's current one, and the occurrence's civil time so the repaired
 // object keeps its scheduled-at annotation.
 type OpenRun struct {
+	Trigger       Trigger
+	Actor         string
 	ID            int64
 	RevisionID    int64
 	OccurrenceKey string

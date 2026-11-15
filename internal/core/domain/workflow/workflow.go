@@ -25,13 +25,15 @@ const SourceModeWorkflow = "workflow"
 type Phase string
 
 const (
-	PhasePending         Phase = "Pending"
-	PhaseRunning         Phase = "Running"
-	PhaseCancelRequested Phase = "CancelRequested"
-	PhaseSucceeded       Phase = "Succeeded"
-	PhaseFailed          Phase = "Failed"
-	PhaseCanceled        Phase = "Canceled"
-	PhaseCancelUnknown   Phase = "CancelUnknown"
+	PhasePending          Phase = "Pending"
+	PhaseRejected         Phase = "Rejected"
+	PhaseRunning          Phase = "Running"
+	PhaseCancelRequested  Phase = "CancelRequested"
+	PhaseSucceeded        Phase = "Succeeded"
+	PhaseFailed           Phase = "Failed"
+	PhaseCanceled         Phase = "Canceled"
+	PhaseCancelUnknown    Phase = "CancelUnknown"
+	PhaseExecutionUnknown Phase = "ExecutionUnknown"
 )
 
 // Terminal reports whether a workflow phase is final. CancelUnknown is
@@ -39,7 +41,7 @@ const (
 // not confirm is not an outcome, and a workflow whose step sits in
 // CancelUnknown stays non-terminal so nothing downstream treats it as done.
 func Terminal(p Phase) bool {
-	return p == PhaseSucceeded || p == PhaseFailed || p == PhaseCanceled
+	return p == PhaseSucceeded || p == PhaseFailed || p == PhaseCanceled || p == PhaseRejected
 }
 
 // FailPolicy decides what a terminally failed step means for the rest of the
@@ -65,6 +67,8 @@ const (
 	// ReasonDeadline: the workflow-level deadline passed before the task was
 	// created.
 	ReasonDeadline = "deadline"
+	// ReasonMissingJob: the referenced same-namespace ScheduledJob is unavailable.
+	ReasonMissingJob = "missing_job_reference"
 )
 
 // TaskDecision is one task's skip verdict, stored in the workflow run row's
@@ -85,6 +89,12 @@ type Run struct {
 	SourceUID     string
 	RevisionID    int64
 	OccurrenceKey string
+	// ScheduledFor is the planned UTC instant; CreatedAt is actual acceptance.
+	ScheduledFor *time.Time
+	ResourceUID  string
+	Reason       string
+	// ConcurrencyPolicy is an insertion guard, not persisted execution state.
+	ConcurrencyPolicy string
 	// Trigger is why the workflow run exists: Schedule for a cron firing,
 	// Manual for a run materialized from a WorkflowRun CR. The column is
 	// free text exactly like job_run_control_plane.trigger; these are the
@@ -95,8 +105,22 @@ type Run struct {
 	// TaskDecisions maps task name to skip verdict for every task the walker
 	// decided not to create. Empty when every created task got a run.
 	TaskDecisions map[string]TaskDecision
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	// SnapshotVersion 0 identifies legacy late binding, never a reconstructed
+	// historical snapshot. Version 1 requires every task's immutable revision.
+	SnapshotVersion int
+	TaskSnapshots   map[string]TaskSnapshot
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+// TaskSnapshot is an accepted workflow task's immutable definition identity.
+// Image is the digest reference recorded by that revision, not a live tag.
+type TaskSnapshot struct {
+	SourceUID  string `json:"source_uid"`
+	RevisionID int64  `json:"revision_id"`
+	Namespace  string `json:"namespace"`
+	Name       string `json:"name"`
+	Image      string `json:"image"`
 }
 
 // StepRun is the workflow view of one job_run_control_plane row whose

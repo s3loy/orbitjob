@@ -29,6 +29,9 @@ func (e outcomeEvent) durationMs() float64 { return float64(e.Duration.Milliseco
 // no probe output in v1, so criteria referencing them are configuration errors
 // that skip the snapshot rather than silently counting every event as good.
 func isGoodEvent(event outcomeEvent, s sli.Snapshot) (bool, error) {
+	if err := sli.ValidateCriteria(s.SLIType, s.GoodEventCriteria); err != nil {
+		return false, err
+	}
 	switch s.SLIType {
 	case sli.TypeAvailability:
 		// Default: a successful probe is the good event.
@@ -95,23 +98,9 @@ func evaluateCriteria(event outcomeEvent, criteria map[string]any) (bool, error)
 // evaluateNumericCondition evaluates a numeric condition like
 // {"op": "<=", "value": 1000} against an actual value.
 func evaluateNumericCondition(actual float64, condition any) (bool, error) {
-	cond, ok := condition.(map[string]any)
-	if !ok {
-		// Simple equality.
-		threshold, err := toFloat64(condition)
-		if err != nil {
-			return false, fmt.Errorf("numeric condition: %w", err)
-		}
-		return actual == threshold, nil
-	}
-
-	op, ok := cond["op"].(string)
-	if !ok {
-		return false, fmt.Errorf("numeric condition missing 'op' field")
-	}
-	threshold, err := toFloat64(cond["value"])
+	op, threshold, err := sli.NumericCondition(condition)
 	if err != nil {
-		return false, fmt.Errorf("numeric condition 'value': %w", err)
+		return false, err
 	}
 
 	switch op {
@@ -129,27 +118,6 @@ func evaluateNumericCondition(actual float64, condition any) (bool, error) {
 		return actual != threshold, nil
 	default:
 		return false, fmt.Errorf("unsupported numeric operator: %q", op)
-	}
-}
-
-func toFloat64(v any) (float64, error) {
-	switch n := v.(type) {
-	case float64:
-		return n, nil
-	case float32:
-		return float64(n), nil
-	case int:
-		return float64(n), nil
-	case int64:
-		return float64(n), nil
-	case int32:
-		return float64(n), nil
-	case uint:
-		return float64(n), nil
-	case uint64:
-		return float64(n), nil
-	default:
-		return 0, fmt.Errorf("cannot convert %T to float64", v)
 	}
 }
 

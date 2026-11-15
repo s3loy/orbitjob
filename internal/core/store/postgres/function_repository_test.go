@@ -13,6 +13,7 @@ import (
 	"orbitjob/internal/domain/resource"
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
+	"orbitjob/internal/platform/scan"
 )
 
 // sqlNullString mirrors what nullableText/nullableGroup hand the driver: an
@@ -35,16 +36,16 @@ func functionRowColumns() []string {
 	return []string{
 		"id", "name", "description", "tenant_id", "resource_group_id", "status",
 		"image", "command", "args", "timeout_seconds", "retry_limit",
-		"history_success", "history_failed", "labels", "version", "created_at", "updated_at",
+		"history_success", "history_failed", "labels", "version", "created_at", "updated_at", "execution_policy_version", "retry_safe", "resources",
 	}
 }
 
 func functionRow(id int64, overrides map[string]any) []driver.Value {
 	row := []driver.Value{
-		id, "charge", "greet the caller", "tenant26chars0000000000000", "group26chars000000000000", "active",
+		id, "charge", "greet the caller", tenantFixture(), functionGroupID, "active",
 		"registry.example/app@sha256:0123456789abcdef", []byte(`["/app"]`), []byte(`["--once"]`),
 		60, 2, 3, 3, []byte(`{"team":"edge"}`), 4,
-		time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC), time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC),
+		time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC), time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC), 0, false, nil,
 	}
 	for i, col := range functionRowColumns() {
 		if v, ok := overrides[col]; ok {
@@ -55,7 +56,10 @@ func functionRow(id int64, overrides map[string]any) []driver.Value {
 }
 
 // tenantFixture is the 26-character tenant id every test scopes to.
-func tenantFixture() string { return "tenant26chars0000000000000" }
+var functionTenantID = scan.GenerateID()
+var functionGroupID = scan.GenerateID()
+
+func tenantFixture() string { return functionTenantID }
 
 func gucExpectations(mock sqlmock.Sqlmock, tenant string) {
 	mock.ExpectBegin()
@@ -74,9 +78,9 @@ func TestFunctionRepository_CreateReturnsAssignedIdentity(t *testing.T) {
 
 	gucExpectations(mock, tenantFixture())
 	mock.ExpectQuery(`INSERT INTO functions`).
-		WithArgs("charge", sqlNullString(""), tenantFixture(), sqlNullString("group26chars000000000000"),
+		WithArgs("charge", sqlNullString(""), tenantFixture(), sqlNullString(functionGroupID),
 			"active", "registry.example/app@sha256:0123456789abcdef",
-			[]byte(`["/app"]`), []byte(`["--once"]`), 60, 2, 3, 3, []byte(`{"team":"edge"}`), 1).
+			[]byte(`["/app"]`), []byte(`["--once"]`), 60, 2, 3, 3, []byte(`{"team":"edge"}`), 1, int32(0), false, nil).
 		WillReturnRows(sqlmock.NewRows(functionRowColumns()).AddRows(functionRow(9, map[string]any{
 			"version": 1, "created_at": created, "updated_at": created,
 		})))
@@ -85,7 +89,7 @@ func TestFunctionRepository_CreateReturnsAssignedIdentity(t *testing.T) {
 	def := function.Definition{
 		Name:            "charge",
 		TenantID:        tenantFixture(),
-		ResourceGroupID: "group26chars000000000000",
+		ResourceGroupID: functionGroupID,
 		Image:           "registry.example/app@sha256:0123456789abcdef",
 		Command:         []string{"/app"},
 		Args:            []string{"--once"},
@@ -105,7 +109,7 @@ func TestFunctionRepository_CreateReturnsAssignedIdentity(t *testing.T) {
 	if got.Status != "active" || got.Image == "" {
 		t.Fatalf("returned definition lost its status or image: %+v", got)
 	}
-	if got.ResourceGroupID != "group26chars000000000000" {
+	if got.ResourceGroupID != functionGroupID {
 		t.Fatalf("resource group = %q, want the saved group", got.ResourceGroupID)
 	}
 	if len(got.Command) != 1 || got.Command[0] != "/app" || len(got.Args) != 1 || got.Args[0] != "--once" {
@@ -129,7 +133,7 @@ func TestFunctionRepository_CreateDefaultsBlankStatusToActive(t *testing.T) {
 	// for a caller that skipped boundary validation.
 	mock.ExpectQuery(`INSERT INTO functions`).
 		WithArgs("charge", sqlNullString(""), tenantFixture(), sqlNullString(""),
-			"active", "img", []byte(`[]`), []byte(`[]`), 0, 0, 0, 0, []byte(`{}`), 1).
+			"active", "img", []byte(`[]`), []byte(`[]`), 0, 0, 0, 0, []byte(`{}`), 1, int32(0), false, nil).
 		WillReturnRows(sqlmock.NewRows(functionRowColumns()).AddRows(functionRow(9, map[string]any{
 			"status": "active", "description": nil, "resource_group_id": nil,
 			"image": "img", "command": []byte(`[]`), "args": []byte(`[]`), "labels": []byte(`{}`),
@@ -173,7 +177,7 @@ func TestFunctionRepository_UpdateBumpsVersionAgainstPinnedOne(t *testing.T) {
 	gucExpectations(mock, tenantFixture())
 	mock.ExpectQuery(`UPDATE functions SET`).
 		WithArgs(tenantFixture(), int64(9), "charge", sqlNullString("updated"), "paused", "img2",
-			[]byte(`["/app","-v"]`), []byte(`[]`), 120, 1, 5, 5, []byte(`{}`), 4).
+			[]byte(`["/app","-v"]`), []byte(`[]`), 120, 1, 5, 5, []byte(`{}`), 4, int32(0), false, nil).
 		WillReturnRows(sqlmock.NewRows(functionRowColumns()).AddRows(functionRow(9, map[string]any{
 			"version": 5, "description": "updated", "status": "paused", "image": "img2",
 			"command": []byte(`["/app","-v"]`), "args": []byte(`[]`), "timeout_seconds": 120,
@@ -299,7 +303,7 @@ func TestFunctionRepository_ListScopesToLiveRows(t *testing.T) {
 
 	gucExpectations(mock, tenantFixture())
 	// The plain list must not carry the active-status predicate.
-	mock.ExpectQuery(`FROM functions\s+WHERE tenant_id = \$1 AND deleted_at IS NULL\s+ORDER BY id ASC`).
+	mock.ExpectQuery(`FROM functions\s+WHERE tenant_id = \$1 AND deleted_at IS NULL\s+ORDER BY created_at DESC, id DESC`).
 		WillReturnRows(sqlmock.NewRows(functionRowColumns()).
 			AddRows(functionRow(9, nil)).
 			AddRows(functionRow(10, map[string]any{"status": "paused"})))
@@ -343,11 +347,12 @@ func TestFunctionRepository_ActiveAddsTheStatusPredicate(t *testing.T) {
 
 func TestFunctionRepository_ListScanErrorRollsBack(t *testing.T) {
 	repo, _, mock := newFunctionRepoMock(t)
+	invalid := functionRow(9, nil)
+	invalid[0] = "not-an-int"
 
 	gucExpectations(mock, tenantFixture())
 	mock.ExpectQuery(`FROM functions`).
-		WillReturnRows(sqlmock.NewRows(functionRowColumns()).AddRow("not-an-int", nil, nil, nil, nil, nil,
-			nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil))
+		WillReturnRows(sqlmock.NewRows(functionRowColumns()).AddRow(invalid...))
 	mock.ExpectRollback()
 
 	if _, err := repo.ListForTenant(context.Background(), tenantFixture()); err == nil {
@@ -437,6 +442,23 @@ func TestFunctionRunRepository_RecordsCompletedWithUpsertGuard(t *testing.T) {
 	_ = repo
 }
 
+func TestFunctionRunRepository_ReplayedCompletionIsSuccessfulNoop(t *testing.T) {
+	_, fnRuns, mock := newFunctionRepoMock(t)
+	rec := completedFunctionRecord()
+	gucExpectations(mock, tenantFixture())
+	mock.ExpectQuery(`INSERT INTO function_runs[\s\S]*ON CONFLICT \(run_id\) DO NOTHING`).
+		WithArgs(rec.RunID, tenantFixture(), rec.FunctionID, rec.Status,
+			rec.TriggeredAt, rec.StartedAt, rec.FinishedAt, rec.DurationMs).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectCommit()
+	if err := fnRuns.RecordCompleted(context.Background(), tenantFixture(), rec); err != nil {
+		t.Fatalf("an existing deterministic run ID must be an idempotent success: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
 func TestFunctionRunRepository_RecordsCanceledWithoutAStart(t *testing.T) {
 	_, fnRuns, mock := newFunctionRepoMock(t)
 	rec := completedFunctionRecord()
@@ -447,8 +469,29 @@ func TestFunctionRunRepository_RecordsCanceledWithoutAStart(t *testing.T) {
 	gucExpectations(mock, tenantFixture())
 	mock.ExpectQuery(`INSERT INTO function_runs`).
 		WithArgs(rec.RunID, tenantFixture(), rec.FunctionID, rec.Status,
-			rec.TriggeredAt, time.Time{}, rec.FinishedAt, 0).
+			rec.TriggeredAt, nil, rec.FinishedAt, nil).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(78))
+	mock.ExpectCommit()
+
+	if err := fnRuns.RecordCompleted(context.Background(), tenantFixture(), rec); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestFunctionRunRepository_CanceledAfterStartKeepsRecordedZeroDuration(t *testing.T) {
+	_, fnRuns, mock := newFunctionRepoMock(t)
+	rec := completedFunctionRecord()
+	rec.Status = function.StatusCanceled
+	rec.DurationMs = 0
+
+	gucExpectations(mock, tenantFixture())
+	mock.ExpectQuery(`INSERT INTO function_runs`).
+		WithArgs(rec.RunID, tenantFixture(), rec.FunctionID, rec.Status,
+			rec.TriggeredAt, rec.StartedAt, rec.FinishedAt, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(79))
 	mock.ExpectCommit()
 
 	if err := fnRuns.RecordCompleted(context.Background(), tenantFixture(), rec); err != nil {

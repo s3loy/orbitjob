@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
+
+	"orbitjob/internal/platform/scan"
 )
 
 func newSchedulerRepoMock(t *testing.T) (*SchedulerRepository, sqlmock.Sqlmock) {
@@ -22,7 +24,7 @@ func TestSchedulerRepository_ListActiveTenantIDs(t *testing.T) {
 	repo, mock := newSchedulerRepoMock(t)
 
 	mock.ExpectQuery("SELECT id FROM orbitjob_list_active_tenant_ids\\(\\)").
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("tenant-a").AddRow("tenant-b"))
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(coreFixtureSchedulerAlphaTenantID).AddRow(coreFixtureSchedulerBetaTenantID))
 
 	ids, err := repo.ListActiveTenantIDs(context.Background())
 	if err != nil {
@@ -31,8 +33,8 @@ func TestSchedulerRepository_ListActiveTenantIDs(t *testing.T) {
 	if len(ids) != 2 {
 		t.Fatalf("expected 2 ids, got %d", len(ids))
 	}
-	if ids[0] != "tenant-a" || ids[1] != "tenant-b" {
-		t.Errorf("ids = %v, want [tenant-a tenant-b]", ids)
+	if ids[0] != coreFixtureSchedulerAlphaTenantID || ids[1] != coreFixtureSchedulerBetaTenantID {
+		t.Errorf("ids = %v, want ["+coreFixtureSchedulerAlphaTenantID+" "+coreFixtureSchedulerBetaTenantID+"]", ids)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unmet expectations: %v", err)
@@ -67,3 +69,7 @@ func TestSchedulerRepository_ListActiveTenantIDs_DBError(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+var coreFixtureSchedulerAlphaTenantID = scan.GenerateID()
+
+var coreFixtureSchedulerBetaTenantID = scan.GenerateID()

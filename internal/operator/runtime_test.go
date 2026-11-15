@@ -3,10 +3,12 @@ package operator
 import (
 	"context"
 	"errors"
+	"orbitjob/internal/platform/scan"
 	"testing"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -16,6 +18,10 @@ import (
 	"orbitjob/internal/core/domain/jobrun"
 	"orbitjob/internal/core/domain/revision"
 )
+
+var executionTenant = scan.GenerateID()
+var executionTenantB = scan.GenerateID()
+var executionActorKeyID = scan.GenerateID()
 
 // --- fakes -----------------------------------------------------------------
 
@@ -58,17 +64,18 @@ type runPhaseWrite struct {
 }
 
 type fakeRuns struct {
-	stored      jobrun.StoredRun
-	found       bool
-	lookupErr   error
-	createdRuns []jobrun.JobRun
-	attempts    []attemptWrite
-	phases      []runPhaseWrite
-	attemptErr  error
-	phaseErr    error
-	observedRun int64
-	observedNum int
-	observedErr error
+	stored         jobrun.StoredRun
+	found          bool
+	lookupErr      error
+	createdRuns    []jobrun.JobRun
+	attempts       []attemptWrite
+	phases         []runPhaseWrite
+	attemptErr     error
+	phaseErr       error
+	observedRun    int64
+	observedNum    int
+	observedErr    error
+	observedPhases []string
 	// reportPhaseChange is what UpdateRunPhase reports: true models a real
 	// transition, false a resync replay of already-stored state.
 	reportPhaseChange bool
@@ -96,7 +103,7 @@ func (f *fakeRuns) UpdateAttemptPhase(_ context.Context, _, jobName, phase, _, _
 		return 0, 0, f.observedErr
 	}
 	_ = jobName
-	_ = phase
+	f.observedPhases = append(f.observedPhases, phase)
 	return f.observedRun, f.observedNum, nil
 }
 
@@ -150,7 +157,7 @@ func (f *fakeJobs) Get(_ context.Context, _, name string) (*batchv1.Job, bool, e
 	return nil, false, nil
 }
 
-func (f *fakeJobs) Delete(_ context.Context, _, name string) error {
+func (f *fakeJobs) Delete(_ context.Context, _, name string, _ ...string) error {
 	if f.deleteErr != nil {
 		return f.deleteErr
 	}
@@ -222,7 +229,7 @@ func jobRunObject(t *testing.T) unstructured.Unstructured {
 			"scheduledJobRef":    map[string]any{"name": "nightly-report", "uid": "uid-1"},
 			"definitionRevision": int64(7),
 			"trigger":            "Schedule",
-			"actor":              "principal-key-1",
+			"actor":              executionActorKeyID,
 			"occurrenceKey":      "occ-1",
 		},
 	}}
@@ -239,12 +246,21 @@ func (f *fakeJobs) lastCreated() *batchv1.Job {
 
 func newRuntime(t *testing.T, dyn dynamic.Interface, revisions RevisionStore, runs RunStore, jobs JobManager) Runtime {
 	t.Helper()
+	if dyn != nil {
+		source := scheduledJobObject(t)
+		_, err := dyn.Resource(scheduledJobGVR).Namespace(source.GetNamespace()).Get(context.Background(), source.GetName(), metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			if _, err := dyn.Resource(scheduledJobGVR).Namespace(source.GetNamespace()).Create(context.Background(), &source, metav1.CreateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	return Runtime{
 		Dynamic:   dyn,
 		Jobs:      jobs,
 		Revisions: revisions,
 		Runs:      runs,
-		Tenants:   NamespaceTenantResolver{Tenants: map[string]string{"finance": "tenant-a"}},
+		Tenants:   NamespaceTenantResolver{Tenants: map[string]string{"finance": executionTenant}},
 		Now:       func() time.Time { return time.Unix(1700000000, 0).UTC() },
 	}
 }
@@ -264,4 +280,24 @@ func revisionFor(t *testing.T, id int64, spec string) revision.Revision {
 	}
 	rev.ID = id
 	return rev
+}
+
+func (f *fakeJobs) Stopped(ctx context.Context, ns, name string) (bool, error) {
+	_, found, err := f.Get(ctx, ns, name)
+	return !found, err
+}
+
+func (f *fakeRuns) CreateAttemptWithEnsure(ctx context.Context, tenant string, runID int64, attempt jobrun.Attempt, ensure func(context.Context) (jobrun.Attempt, error)) error {
+	if f.attemptErr != nil {
+		return f.attemptErr
+	}
+	actual, err := ensure(ctx)
+	if err != nil {
+		return err
+	}
+	return f.CreateAttemptForTenant(ctx, tenant, runID, actual, jobrun.Running)
+}
+
+func (f *fakeRuns) BindAttemptObservation(context.Context, string, int64, int, string, string, string) error {
+	return nil
 }

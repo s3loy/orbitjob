@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
+
+	"orbitjob/internal/platform/scan"
 )
 
 // newTenantTxMock returns a mock handle for driving WithTenant and
@@ -23,7 +25,7 @@ func newTenantTxMock(t *testing.T) (*sql.DB, sqlmock.Sqlmock, *ControlPlaneRepos
 }
 
 func TestWithTenant_RejectsANilTransaction(t *testing.T) {
-	if err := WithTenant(context.Background(), nil, "default"); err == nil {
+	if err := WithTenant(context.Background(), nil, coreFixtureTenantTransactionTenantID); err == nil {
 		t.Fatal("expected error for a nil transaction")
 	}
 }
@@ -49,7 +51,7 @@ func TestWithTenant_SetsTheTransactionScopedGUC(t *testing.T) {
 	// The GUC name is bound to what the RLS policies read; the third
 	// set_config argument (local = true) is a literal in the statement.
 	mock.ExpectExec(`SELECT set_config\(\$1, \$2, true\)`).
-		WithArgs("app.tenant_id", "tenant-a").
+		WithArgs("app.tenant_id", coreFixtureTenantTransactionSubjectTenantID).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	tx, err := db.BeginTx(context.Background(), nil)
@@ -57,7 +59,7 @@ func TestWithTenant_SetsTheTransactionScopedGUC(t *testing.T) {
 		t.Fatalf("begin: %v", err)
 	}
 
-	if err := WithTenant(context.Background(), tx, "tenant-a"); err != nil {
+	if err := WithTenant(context.Background(), tx, coreFixtureTenantTransactionSubjectTenantID); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -71,7 +73,7 @@ func TestWithTenant_PropagatesTheDriverError(t *testing.T) {
 	db, mock, _ := newTenantTxMock(t)
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\(\$1, \$2, true\)`).
-		WithArgs("app.tenant_id", "tenant-a").
+		WithArgs("app.tenant_id", coreFixtureTenantTransactionSubjectTenantID).
 		WillReturnError(errors.New("set_config failed"))
 	mock.ExpectRollback()
 
@@ -81,7 +83,7 @@ func TestWithTenant_PropagatesTheDriverError(t *testing.T) {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if err := WithTenant(context.Background(), tx, "tenant-a"); err == nil {
+	if err := WithTenant(context.Background(), tx, coreFixtureTenantTransactionSubjectTenantID); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -90,17 +92,17 @@ func TestWithTenantTransaction_CommitsWhenFnSucceeds(t *testing.T) {
 	_, mock, repo := newTenantTxMock(t)
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\(\$1, \$2, true\)`).
-		WithArgs("app.tenant_id", "tenant-a").
+		WithArgs("app.tenant_id", coreFixtureTenantTransactionSubjectTenantID).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("UPDATE something").
-		WithArgs("tenant-a").
+		WithArgs(coreFixtureTenantTransactionSubjectTenantID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
 	ran := false
-	err := repo.WithTenantTransaction(context.Background(), "tenant-a", func(_ context.Context, tx *sql.Tx) error {
+	err := repo.WithTenantTransaction(context.Background(), coreFixtureTenantTransactionSubjectTenantID, func(_ context.Context, tx *sql.Tx) error {
 		ran = true
-		_, err := tx.ExecContext(context.Background(), "UPDATE something SET x = 1 WHERE tenant_id = $1", "tenant-a")
+		_, err := tx.ExecContext(context.Background(), "UPDATE something SET x = 1 WHERE tenant_id = $1", coreFixtureTenantTransactionSubjectTenantID)
 		return err
 	})
 	if err != nil {
@@ -118,12 +120,12 @@ func TestWithTenantTransaction_RollsBackWhenFnFails(t *testing.T) {
 	_, mock, repo := newTenantTxMock(t)
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\(\$1, \$2, true\)`).
-		WithArgs("app.tenant_id", "tenant-a").
+		WithArgs("app.tenant_id", coreFixtureTenantTransactionSubjectTenantID).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectRollback()
 
 	fnErr := errors.New("fn failed")
-	err := repo.WithTenantTransaction(context.Background(), "tenant-a", func(context.Context, *sql.Tx) error {
+	err := repo.WithTenantTransaction(context.Background(), coreFixtureTenantTransactionSubjectTenantID, func(context.Context, *sql.Tx) error {
 		return fnErr
 	})
 	if !errors.Is(err, fnErr) {
@@ -138,11 +140,11 @@ func TestWithTenantTransaction_RollsBackWhenTheGUCCannotBeSet(t *testing.T) {
 	_, mock, repo := newTenantTxMock(t)
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\(\$1, \$2, true\)`).
-		WithArgs("app.tenant_id", "tenant-a").
+		WithArgs("app.tenant_id", coreFixtureTenantTransactionSubjectTenantID).
 		WillReturnError(errors.New("set_config failed"))
 	mock.ExpectRollback()
 
-	err := repo.WithTenantTransaction(context.Background(), "tenant-a", func(context.Context, *sql.Tx) error {
+	err := repo.WithTenantTransaction(context.Background(), coreFixtureTenantTransactionSubjectTenantID, func(context.Context, *sql.Tx) error {
 		t.Fatal("fn must not run when the tenant GUC cannot be set")
 		return nil
 	})
@@ -158,7 +160,7 @@ func TestWithTenantTransaction_BeginError(t *testing.T) {
 	_, mock, repo := newTenantTxMock(t)
 	mock.ExpectBegin().WillReturnError(errors.New("boom"))
 
-	if err := repo.WithTenantTransaction(context.Background(), "tenant-a", func(context.Context, *sql.Tx) error {
+	if err := repo.WithTenantTransaction(context.Background(), coreFixtureTenantTransactionSubjectTenantID, func(context.Context, *sql.Tx) error {
 		t.Fatal("fn must not run when the transaction cannot begin")
 		return nil
 	}); err == nil {
@@ -167,16 +169,20 @@ func TestWithTenantTransaction_BeginError(t *testing.T) {
 }
 
 func TestWithTenantTransaction_RejectsANilDatabase(t *testing.T) {
-	if err := (&ControlPlaneRepository{}).WithTenantTransaction(context.Background(), "tenant-a", func(context.Context, *sql.Tx) error {
+	if err := (&ControlPlaneRepository{}).WithTenantTransaction(context.Background(), coreFixtureTenantTransactionSubjectTenantID, func(context.Context, *sql.Tx) error {
 		return nil
 	}); err == nil || !strings.Contains(err.Error(), "nil database") {
 		t.Fatalf("err = %v, want the nil-database refusal", err)
 	}
 
 	var nilRepo *ControlPlaneRepository
-	if err := nilRepo.WithTenantTransaction(context.Background(), "tenant-a", func(context.Context, *sql.Tx) error {
+	if err := nilRepo.WithTenantTransaction(context.Background(), coreFixtureTenantTransactionSubjectTenantID, func(context.Context, *sql.Tx) error {
 		return nil
 	}); err == nil {
 		t.Fatal("expected error for a nil repository")
 	}
 }
+
+var coreFixtureTenantTransactionTenantID = scan.GenerateID()
+
+var coreFixtureTenantTransactionSubjectTenantID = scan.GenerateID()

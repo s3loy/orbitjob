@@ -28,6 +28,14 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w" -o /out/log-archive ./cmd/log-archive/
 
+FROM go-source AS build-admission
+ARG TARGETOS=linux
+ARG TARGETARCH
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o /out/admission ./cmd/admission/
+
 FROM base AS build-admin
 ARG TARGETOS=linux
 ARG TARGETARCH
@@ -131,3 +139,10 @@ COPY --from=build-log-archive /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=build-log-archive /out/log-archive /log-archive
 USER 65534:65534
 ENTRYPOINT ["/log-archive"]
+
+FROM scratch AS admission
+COPY --from=build-admission /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=build-admission /etc/passwd /etc/passwd
+COPY --from=build-admission /out/admission /admission
+USER 65534:65534
+ENTRYPOINT ["/admission"]

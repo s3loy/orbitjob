@@ -1,0 +1,94 @@
+{{- if and .Values.admission.enabled .Values.operator.enabled }}
+{{- $existing := lookup "v1" "Secret" .Release.Namespace "orbitjob-admission-tls" }}
+{{- $caCert := "" }}
+{{- $serverCert := "" }}
+{{- $serverKey := "" }}
+{{- if $existing }}
+{{- $caCert = index $existing.data "ca.crt" }}
+{{- $serverCert = index $existing.data "server.crt" }}
+{{- $serverKey = index $existing.data "server.key" }}
+{{- else }}
+{{- $ca := genCA "orbitjob-admission" 3650 }}
+{{- $cert := genSignedCert "orbitjob-admission" nil (list "orbitjob-admission" (printf "orbitjob-admission.%s.svc" .Release.Namespace) (printf "orbitjob-admission.%s.svc.cluster.local" .Release.Namespace)) 365 $ca }}
+{{- $caCert = $ca.Cert | b64enc }}
+{{- $serverCert = $cert.Cert | b64enc }}
+{{- $serverKey = $cert.Key | b64enc }}
+{{- end }}
+apiVersion: v1
+kind: Secret
+metadata: {name: orbitjob-admission-tls, namespace: {{ .Release.Namespace }}}
+type: Opaque
+data:
+  ca.crt: {{ $caCert }}
+  server.crt: {{ $serverCert }}
+  server.key: {{ $serverKey }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: orbitjob-admission, namespace: {{ .Release.Namespace }}}
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: Service
+metadata: {name: orbitjob-admission, namespace: {{ .Release.Namespace }}}
+spec:
+  selector: {app.kubernetes.io/name: orbitjob-admission}
+  ports: [{name: admission, port: 443, targetPort: admission}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: orbitjob-admission, namespace: {{ .Release.Namespace }}}
+spec:
+  replicas: {{ .Values.admission.replicas }}
+  selector: {matchLabels: {app.kubernetes.io/name: orbitjob-admission}}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: orbitjob-admission}
+    spec:
+      serviceAccountName: orbitjob-admission
+      automountServiceAccountToken: false
+      securityContext:
+{{ include "orbitjob.podSecurityContext" . | indent 8 }}
+        fsGroup: 65534
+      containers:
+        - name: admission
+          image: {{ include "orbitjob.image" (dict "root" . "image" .Values.admission.image) | quote }}
+          imagePullPolicy: {{ include "orbitjob.imagePullPolicy" (dict "root" . "image" .Values.admission.image) }}
+          securityContext:
+{{ include "orbitjob.securityContext" . | indent 12 }}
+          env:
+            - name: RUNTIME_DSN
+              valueFrom: {secretKeyRef: {name: {{ .Values.database.secretName }}, key: {{ .Values.database.keys.runtime }}}}
+            - {name: OPERATOR_NAMESPACE_TENANTS, value: {{ include "orbitjob.operatorNamespaceTenants" . | quote }}}
+            - {name: POD_NAMESPACE, value: {{ .Release.Namespace | quote }}}
+            - {name: ADMISSION_NATIVE_WRITERS, value: {{ join "," .Values.admission.nativeWriters | quote }}}
+          ports: [{name: admission, containerPort: 8443}, {name: health, containerPort: 8084}]
+          readinessProbe: {httpGet: {path: /readyz, port: health}, periodSeconds: 5}
+          livenessProbe: {httpGet: {path: /healthz, port: health}, periodSeconds: 15}
+          resources:
+{{ toYaml .Values.admission.resources | indent 12 }}
+          volumeMounts: [{name: tls, mountPath: /tls, readOnly: true}]
+      volumes:
+        - name: tls
+          secret: {secretName: orbitjob-admission-tls, defaultMode: 0440}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata: {name: orbitjob-definitions-{{ .Release.Namespace }}}
+webhooks:
+  - name: definitions.{{ .Release.Namespace }}.orbitjob.io
+    admissionReviewVersions: [v1]
+    sideEffects: NoneOnDryRun
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+    timeoutSeconds: 5
+    clientConfig:
+      service: {name: orbitjob-admission, namespace: {{ .Release.Namespace }}, path: /, port: 443}
+      caBundle: {{ $caCert }}
+    rules:
+      - apiGroups: [workloads.orbitjob.io]
+        apiVersions: [v1alpha1]
+        operations: [CREATE, UPDATE]
+        resources: [scheduledjobs, workflowjobs]
+        scope: Namespaced
+{{- end }}

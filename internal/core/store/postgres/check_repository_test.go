@@ -11,13 +11,15 @@ import (
 
 	"orbitjob/internal/core/domain/check"
 	"orbitjob/internal/domain/resource"
+
+	"orbitjob/internal/platform/scan"
 )
 
 var checkColumns = []string{
 	"id", "name", "description", "tenant_id", "resource_group_id", "status", "check_type",
 	"check_config", "assertion_rules", "schedule_type", "cron_expr",
 	"interval_sec", "timezone", "timeout_sec", "retry_limit",
-	"priority", "labels", "next_run_at", "version", "created_at", "updated_at",
+	"priority", "labels", "next_run_at", "version", "created_at", "updated_at", "execution_policy_version",
 }
 
 func newCheckRepoMock(t *testing.T) (*CheckRepository, sqlmock.Sqlmock) {
@@ -49,24 +51,24 @@ func TestCheckRepository_Create(t *testing.T) {
 	cron := "*/5 * * * *"
 
 	mock.ExpectBegin()
-	expectSetConfig(mock, "default")
+	expectSetConfig(mock, coreFixtureCheckRepositoryTenantID)
 	mock.ExpectQuery("INSERT INTO checks").
 		WithArgs(
-			"test-check", sqlmock.AnyArg(), "default", "active", "http_health",
+			"test-check", sqlmock.AnyArg(), coreFixtureCheckRepositoryTenantID, "active", "http_health",
 			sqlmock.AnyArg(), sqlmock.AnyArg(), "cron", cron, sqlmock.AnyArg(),
 			"UTC", 30, 2, 5, sqlmock.AnyArg(), sqlmock.AnyArg(), nil,
 		).
 		WillReturnRows(sqlmock.NewRows(checkColumns).AddRow(
-			1, "test-check", nil, "default", nil, "active", "http_health",
+			1, "test-check", nil, coreFixtureCheckRepositoryTenantID, nil, "active", "http_health",
 			[]byte("{}"), []byte("[]"), "cron", cron, nil,
-			"UTC", 30, 2, 5, []byte("{}"), nil, 1, now, now,
+			"UTC", 30, 2, 5, []byte("{}"), nil, 1, now, now, 1,
 		))
 	expectAuditInsert(mock)
 	mock.ExpectCommit()
 
 	snap, err := repo.Create(context.Background(), check.CreateSpec{
 		Name:         "test-check",
-		TenantID:     "default",
+		TenantID:     coreFixtureCheckRepositoryTenantID,
 		CheckType:    "http_health",
 		ScheduleType: "cron",
 		CronExpr:     &cron,
@@ -81,6 +83,9 @@ func TestCheckRepository_Create(t *testing.T) {
 	if snap.ID != 1 {
 		t.Errorf("id = %d, want 1", snap.ID)
 	}
+	if snap.ExecutionPolicyVersion != 1 {
+		t.Errorf("new check execution policy = %d, want 1", snap.ExecutionPolicyVersion)
+	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unmet expectations: %v", err)
 	}
@@ -92,7 +97,7 @@ func TestCheckRepository_Create_BeginTxError(t *testing.T) {
 
 	_, err := repo.Create(context.Background(), check.CreateSpec{
 		Name:         "test",
-		TenantID:     "default",
+		TenantID:     coreFixtureCheckRepositoryTenantID,
 		CheckType:    "http_health",
 		ScheduleType: "cron",
 	})
@@ -105,61 +110,75 @@ func TestCheckRepository_ChangeStatus_Pause(t *testing.T) {
 	repo, mock := newCheckRepoMock(t)
 
 	mock.ExpectBegin()
-	expectSetConfig(mock, "default")
+	expectSetConfig(mock, coreFixtureCheckRepositoryTenantID)
 	mock.ExpectQuery("SELECT status FROM checks").
-		WithArgs("default", int64(1), nil).
+		WithArgs(coreFixtureCheckRepositoryTenantID, int64(1), nil).
 		WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow("active"))
 	mock.ExpectQuery("UPDATE checks").
-		WithArgs("paused", "default", int64(1), 1).
+		WithArgs("paused", coreFixtureCheckRepositoryTenantID, int64(1), 1).
 		WillReturnRows(sqlmock.NewRows(checkColumns).AddRow(
-			1, "test", nil, "default", nil, "paused", "http_health",
+			1, "test", nil, coreFixtureCheckRepositoryTenantID, nil, "paused", "http_health",
 			nil, nil, "cron", nil, nil, "UTC", 30, 2, 5, nil, nil, 2,
-			time.Now(), time.Now(),
+			time.Now(), time.Now(), 0,
 		))
 	expectAuditInsert(mock)
 	mock.ExpectCommit()
 
-	snap, err := repo.ChangeStatus(context.Background(), "default", "", 1, 1, "pause")
+	snap, err := repo.ChangeStatus(context.Background(), coreFixtureCheckRepositoryTenantID, "", 1, 1, "pause")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if snap.Status != "paused" {
 		t.Errorf("status = %q, want paused", snap.Status)
 	}
+	if snap.ExecutionPolicyVersion != 0 {
+		t.Errorf("pausing a legacy check changed its execution policy: %d", snap.ExecutionPolicyVersion)
+	}
 }
 
 func TestCheckRepository_ChangeStatus_NotFound(t *testing.T) {
 	repo, mock := newCheckRepoMock(t)
+	mock.ExpectBegin()
 
-	expectSetConfig(mock, "default")
+	expectSetConfig(mock, coreFixtureCheckRepositoryTenantID)
 	mock.ExpectQuery("SELECT status FROM checks").
-		WithArgs("default", int64(99), nil).
+		WithArgs(coreFixtureCheckRepositoryTenantID, int64(99), nil).
 		WillReturnError(sql.ErrNoRows)
 
-	_, err := repo.ChangeStatus(context.Background(), "default", "", 99, 1, "pause")
-	if err == nil {
-		t.Fatal("expected error")
+	mock.ExpectRollback()
+	_, err := repo.ChangeStatus(context.Background(), coreFixtureCheckRepositoryTenantID, "", 99, 1, "pause")
+	var expected *resource.NotFoundError
+	if !errors.As(err, &expected) {
+		t.Fatalf("expected *resource.NotFoundError, got %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 
 func TestCheckRepository_ChangeStatus_VersionConflict(t *testing.T) {
 	repo, mock := newCheckRepoMock(t)
+	mock.ExpectBegin()
 
-	expectSetConfig(mock, "default")
+	expectSetConfig(mock, coreFixtureCheckRepositoryTenantID)
 	mock.ExpectQuery("SELECT status FROM checks").
-		WithArgs("default", int64(1), nil).
+		WithArgs(coreFixtureCheckRepositoryTenantID, int64(1), nil).
 		WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow("active"))
 	mock.ExpectQuery("UPDATE checks").
-		WithArgs("paused", "default", int64(1), 1).
+		WithArgs("paused", coreFixtureCheckRepositoryTenantID, int64(1), 1).
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectQuery("SELECT id FROM checks").
-		WithArgs("default", int64(1), nil).
+		WithArgs(coreFixtureCheckRepositoryTenantID, int64(1), nil).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
 	mock.ExpectRollback()
 
-	_, err := repo.ChangeStatus(context.Background(), "default", "", 1, 1, "pause")
-	if err == nil {
-		t.Fatal("expected error")
+	_, err := repo.ChangeStatus(context.Background(), coreFixtureCheckRepositoryTenantID, "", 1, 1, "pause")
+	var expected *resource.ConflictError
+	if !errors.As(err, &expected) {
+		t.Fatalf("expected *resource.ConflictError, got %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -167,33 +186,38 @@ func TestCheckRepository_Delete(t *testing.T) {
 	repo, mock := newCheckRepoMock(t)
 
 	mock.ExpectBegin()
-	expectSetConfig(mock, "default")
+	expectSetConfig(mock, coreFixtureCheckRepositoryTenantID)
 	mock.ExpectQuery("UPDATE checks SET deleted_at").
-		WithArgs("default", int64(1), 1, nil).
+		WithArgs(coreFixtureCheckRepositoryTenantID, int64(1), 1, nil).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
 	expectAuditInsert(mock)
 	mock.ExpectCommit()
 
-	if err := repo.Delete(context.Background(), "default", "", 1, 1); err != nil {
+	if err := repo.Delete(context.Background(), coreFixtureCheckRepositoryTenantID, "", 1, 1); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
 func TestCheckRepository_Delete_NotFound(t *testing.T) {
 	repo, mock := newCheckRepoMock(t)
+	mock.ExpectBegin()
 
-	expectSetConfig(mock, "default")
+	expectSetConfig(mock, coreFixtureCheckRepositoryTenantID)
 	mock.ExpectQuery("UPDATE checks SET deleted_at").
-		WithArgs("default", int64(99), 1, nil).
+		WithArgs(coreFixtureCheckRepositoryTenantID, int64(99), 1, nil).
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectQuery("SELECT id FROM checks").
-		WithArgs("default", int64(99), nil).
+		WithArgs(coreFixtureCheckRepositoryTenantID, int64(99), nil).
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectRollback()
 
-	err := repo.Delete(context.Background(), "default", "", 99, 1)
-	if err == nil {
-		t.Fatal("expected error")
+	err := repo.Delete(context.Background(), coreFixtureCheckRepositoryTenantID, "", 99, 1)
+	var expected *resource.NotFoundError
+	if !errors.As(err, &expected) {
+		t.Fatalf("expected *resource.NotFoundError, got %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -205,31 +229,34 @@ func TestCheckRepository_ListDue(t *testing.T) {
 	// unless app.tenant_id is set on the session.
 	mock.ExpectBegin()
 	mock.ExpectExec("SELECT set_config").
-		WithArgs("default").
+		WithArgs(coreFixtureCheckRepositoryTenantID).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	rows := sqlmock.NewRows(checkColumns)
 	rows.AddRow(
-		1, "health", nil, "default", "01JBGROUP0000000000000000RG", "active", "http_health",
-		nil, nil, "cron", "*/5 * * * *", nil, "UTC", 30, 2, 5, nil, nil, 1, now, now,
+		1, "health", nil, coreFixtureCheckRepositoryTenantID, coreFixtureCheckReadGroupID, "active", "http_health",
+		nil, nil, "cron", "*/5 * * * *", nil, "UTC", 30, 2, 5, nil, nil, 1, now, now, 1,
 	)
 	mock.ExpectQuery("SELECT .+ FROM checks WHERE tenant_id").
-		WithArgs("default", sqlmock.AnyArg(), 50).
+		WithArgs(coreFixtureCheckRepositoryTenantID, sqlmock.AnyArg(), 50).
 		WillReturnRows(rows)
 	mock.ExpectCommit()
 
-	checks, err := repo.ListDue(context.Background(), "default", now, 50)
+	checks, err := repo.ListDue(context.Background(), coreFixtureCheckRepositoryTenantID, now, 50)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(checks) != 1 {
 		t.Fatalf("expected 1 check, got %d", len(checks))
 	}
+	if checks[0].ExecutionPolicyVersion != 1 {
+		t.Errorf("execution policy = %d, want 1", checks[0].ExecutionPolicyVersion)
+	}
 	if checks[0].Name != "health" {
 		t.Errorf("name = %q, want health", checks[0].Name)
 	}
 	// The group rides with the snapshot: the check scheduler passes it to the
 	// revision materializer, which stamps it on the check's ledger revision.
-	if checks[0].ResourceGroupID != "01JBGROUP0000000000000000RG" {
+	if checks[0].ResourceGroupID != coreFixtureCheckReadGroupID {
 		t.Errorf("resource_group_id = %q, want the check row's group", checks[0].ResourceGroupID)
 	}
 }
@@ -240,14 +267,14 @@ func TestCheckRepository_ListDue_Empty(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectExec("SELECT set_config").
-		WithArgs("default").
+		WithArgs(coreFixtureCheckRepositoryTenantID).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery("SELECT .+ FROM checks WHERE tenant_id").
-		WithArgs("default", sqlmock.AnyArg(), 50).
+		WithArgs(coreFixtureCheckRepositoryTenantID, sqlmock.AnyArg(), 50).
 		WillReturnRows(sqlmock.NewRows(checkColumns))
 	mock.ExpectCommit()
 
-	checks, err := repo.ListDue(context.Background(), "default", now, 50)
+	checks, err := repo.ListDue(context.Background(), coreFixtureCheckRepositoryTenantID, now, 50)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -262,14 +289,14 @@ func TestCheckRepository_UpdateNextRunAt(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectExec("SELECT set_config").
-		WithArgs("default").
+		WithArgs(coreFixtureCheckRepositoryTenantID).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("UPDATE checks SET next_run_at").
-		WithArgs(next, "default", int64(1)).
+		WithArgs(next, coreFixtureCheckRepositoryTenantID, int64(1)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	if err := repo.UpdateNextRunAt(context.Background(), "default", 1, next); err != nil {
+	if err := repo.UpdateNextRunAt(context.Background(), coreFixtureCheckRepositoryTenantID, 1, next); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -282,14 +309,14 @@ func TestCheckRepository_UpdateNextRunAt_MissingCheck(t *testing.T) {
 	// that silently did nothing would make the check fire again next tick.
 	mock.ExpectBegin()
 	mock.ExpectExec("SELECT set_config").
-		WithArgs("default").
+		WithArgs(coreFixtureCheckRepositoryTenantID).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("UPDATE checks SET next_run_at").
-		WithArgs(next, "default", int64(1)).
+		WithArgs(next, coreFixtureCheckRepositoryTenantID, int64(1)).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectRollback()
 
-	if err := repo.UpdateNextRunAt(context.Background(), "default", 1, next); err == nil {
+	if err := repo.UpdateNextRunAt(context.Background(), coreFixtureCheckRepositoryTenantID, 1, next); err == nil {
 		t.Fatal("expected not-found for a check the update did not touch")
 	}
 }
@@ -302,19 +329,22 @@ func TestCheckRepository_GetByID(t *testing.T) {
 	// RLS policy binds; the set_config expectation pins that.
 	mock.ExpectBegin()
 	mock.ExpectExec("SELECT set_config").
-		WithArgs("default").
+		WithArgs(coreFixtureCheckRepositoryTenantID).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery("SELECT .+ FROM checks WHERE tenant_id").
-		WithArgs("default", int64(1)).
+		WithArgs(coreFixtureCheckRepositoryTenantID, int64(1)).
 		WillReturnRows(sqlmock.NewRows(checkColumns).AddRow(
-			1, "health", nil, "default", nil, "active", "http_health",
-			nil, nil, "cron", nil, nil, "UTC", 30, 2, 5, nil, nil, 1, now, now,
+			1, "health", nil, coreFixtureCheckRepositoryTenantID, nil, "active", "http_health",
+			nil, nil, "cron", nil, nil, "UTC", 30, 2, 5, nil, nil, 1, now, now, 0,
 		))
 	mock.ExpectCommit()
 
-	snap, err := repo.GetByID(context.Background(), "default", 1)
+	snap, err := repo.GetByID(context.Background(), coreFixtureCheckRepositoryTenantID, 1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if snap.ExecutionPolicyVersion != 0 {
+		t.Errorf("legacy execution policy = %d, want 0", snap.ExecutionPolicyVersion)
 	}
 	if snap.ID != 1 {
 		t.Errorf("id = %d, want 1", snap.ID)
@@ -326,10 +356,10 @@ func TestCheckRepository_GetByID_NotFound(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectExec("SELECT set_config").
-		WithArgs("default").
+		WithArgs(coreFixtureCheckRepositoryTenantID).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery("SELECT .+ FROM checks WHERE tenant_id").
-		WithArgs("default", int64(99)).
+		WithArgs(coreFixtureCheckRepositoryTenantID, int64(99)).
 		WillReturnError(sql.ErrNoRows)
 	// The not-found path returns the scanErr rather than the outer err the old
 	// conditional rollback was keyed on; the rollback is now unconditional, so
@@ -337,7 +367,7 @@ func TestCheckRepository_GetByID_NotFound(t *testing.T) {
 	// TestCheckRepository_GetByID_NotFound_RollsBack.
 	mock.ExpectRollback()
 
-	_, err := repo.GetByID(context.Background(), "default", 99)
+	_, err := repo.GetByID(context.Background(), coreFixtureCheckRepositoryTenantID, 99)
 	var notFound *resource.NotFoundError
 	if !errors.As(err, &notFound) {
 		t.Fatalf("expected *resource.NotFoundError, got %T: %v", err, err)
@@ -349,3 +379,7 @@ func TestCheckRepository_GetByID_NotFound(t *testing.T) {
 		t.Errorf("unmet expectations: %v", err)
 	}
 }
+
+var coreFixtureCheckRepositoryTenantID = scan.GenerateID()
+
+var coreFixtureCheckReadGroupID = scan.GenerateID()

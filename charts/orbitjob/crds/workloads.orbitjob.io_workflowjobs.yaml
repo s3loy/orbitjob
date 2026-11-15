@@ -21,9 +21,11 @@ spec:
           properties:
             spec:
               type: object
-              required: [schedule, tasks]
+              required: [tasks]
               properties:
-                schedule: {type: string, minLength: 1}
+                executionPolicyVersion: {type: integer, format: int32, enum: [0, 1]}
+                schedule: {type: string, maxLength: 256}
+                timeZone: {type: string, default: UTC, minLength: 1, maxLength: 128}
                 # Zero means the platform default rather than unlimited, matching
                 # the ScheduledJob history semantics.
                 history:

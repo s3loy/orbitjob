@@ -9,6 +9,9 @@ import (
 	"sync"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"orbitjob/internal/core/app/execution"
+	"orbitjob/internal/core/domain/jobrun"
 	"orbitjob/internal/platform/metrics"
 
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -73,14 +76,12 @@ type Controller struct {
 	// doing no work.
 	Reconcile ReconcileHandler
 	Log       *slog.Logger
+	Queue     workqueue.TypedRateLimitingInterface[string]
 }
 
-// objectCache serves the last state the informers observed, keyed by the
-// resource prefix of the reconcile key. Reads hit the local store, so the
-// reconcile hot path pays no apiserver round trip per event -- under a burst
-// that round trip is what leaves the queue draining slower than it fills,
-// starving the keys enqueued last. A miss (the object was deleted while
-// queued, or the resource is not watched) sends the handler to the API server.
+// objectCache serves informer state for dispatch. Before performing an action,
+// the runtime verifies that the live custom resource still exists with the
+// expected UID; a queued stale object must not recreate pruned execution state.
 type objectCache struct {
 	byResource map[string]cache.SharedIndexInformer
 }
@@ -127,9 +128,11 @@ func (c Controller) Run(ctx context.Context) error {
 
 	// Per-item exponential backoff: a reconcile that fails for a persistent
 	// reason backs off instead of spinning.
-	queue := workqueue.NewTypedRateLimitingQueue(
-		workqueue.DefaultTypedControllerRateLimiter[string](),
-	)
+	queue := c.Queue
+	if queue == nil {
+		queue = NewQueue()
+	}
+	defer queue.ShutDown()
 
 	namespaces := c.Config.Namespaces
 	if len(namespaces) == 0 {
@@ -260,6 +263,20 @@ func (c Controller) reconcileOne(ctx context.Context, queue workqueue.TypedRateL
 		// Drop the backoff history so the next failure starts from the shortest
 		// delay.
 		queue.Forget(key)
+		if resource == jobGVR.Resource && cached {
+			// The parent must read after this observation commits. Enqueueing
+			// only in the informer callback races parallel reconcile workers.
+			enqueueParentRun(queue, &obj)
+		}
+		if resource == jobRunGVR.Resource && cached {
+			requested, _, _ := unstructured.NestedBool(obj.Object, "spec", "cancelRequested")
+			phase, _, _ := unstructured.NestedString(obj.Object, "status", "phase")
+			if requested && phase != string(jobrun.CancelUnknown) && !jobrun.Terminal(jobrun.Phase(phase)) {
+				// A stuck foreground deletion may emit no more Job events.
+				// Recheck the bounded confirmation timeout without waiting for resync.
+				queue.AddAfter(key, 2*time.Second)
+			}
+		}
 	case shutdown:
 		// Shutting down: do not requeue, the work is retried on next start. Not
 		// counted as a reconcile error -- the pass did not fail, it was stopped.
@@ -289,4 +306,28 @@ func enqueue(queue workqueue.TypedRateLimitingInterface[string], gvr schema.Grou
 		}
 	}
 	queue.Add(gvr.Resource + ":" + object.GetNamespace() + "/" + object.GetName())
+	if gvr == jobGVR {
+		// Delete tombstones retain the link even after the informer cache loses
+		// the Job; that event completes foreground cancellation observation.
+		enqueueParentRun(queue, object)
+	}
+}
+
+func enqueueParentRun(queue workqueue.TypedRateLimitingInterface[string], object metav1.Object) {
+	labels := object.GetLabels()
+	name := labels[execution.LabelRunName]
+	if full := object.GetAnnotations()[execution.AnnotationRunName]; full != "" {
+		if execution.RunLabel(full) != name {
+			return
+		}
+		name = full
+	}
+	if name != "" && labels[execution.LabelRunUID] != "" && object.GetNamespace() != "" {
+		queue.Add(jobRunGVR.Resource + ":" + object.GetNamespace() + "/" + name)
+	}
+}
+
+// NewQueue provides the shared rate-limited queue used by informer and ledger events.
+func NewQueue() workqueue.TypedRateLimitingInterface[string] {
+	return workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]())
 }

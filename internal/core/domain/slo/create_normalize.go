@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 	"strings"
-	"time"
 
 	"orbitjob/internal/domain/validation"
 )
@@ -35,13 +34,11 @@ func NormalizeCreate(in CreateInput) (CreateSpec, error) {
 		return CreateSpec{}, validation.New("window_type", fmt.Sprintf("unsupported window_type: %s", windowType))
 	}
 
-	const maxWindowDuration = 8760 * time.Hour // 1 year
-
 	windowDuration := in.WindowDuration
 	if windowDuration <= 0 {
 		return CreateSpec{}, validation.New("window_duration", "window_duration must be positive")
 	}
-	if windowDuration > maxWindowDuration {
+	if windowDuration > MaxWindowDuration {
 		return CreateSpec{}, validation.New("window_duration", "window_duration must be at most 1 year")
 	}
 

@@ -14,6 +14,7 @@ import (
 
 type DynamicHandler struct {
 	Client                dynamic.Interface
+	ReconcileDeleted      func(context.Context, string, string, string) error
 	ReconcileScheduledJob func(context.Context, unstructured.Unstructured) error
 	ReconcileJobRun       func(context.Context, unstructured.Unstructured) error
 	ReconcileJob          func(context.Context, unstructured.Unstructured) error
@@ -62,6 +63,9 @@ func (h DynamicHandler) Handle(ctx context.Context, key string, obj unstructured
 	}
 	current, err := h.Client.Resource(gvr).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
+		if h.ReconcileDeleted != nil {
+			return h.ReconcileDeleted(ctx, resource, namespace, name)
+		}
 		return nil
 	}
 	if err != nil {

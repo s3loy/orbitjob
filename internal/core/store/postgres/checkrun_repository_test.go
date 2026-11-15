@@ -10,6 +10,8 @@ import (
 	"orbitjob/internal/core/domain/checkrun"
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
+
+	"orbitjob/internal/platform/scan"
 )
 
 func newCheckRunRepoMock(t *testing.T) (*CheckRunRepository, sqlmock.Sqlmock) {
@@ -44,15 +46,15 @@ func TestCheckRunRepository_RecordsCompleted(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectExec("SELECT set_config").
-		WithArgs("default").
+		WithArgs(coreFixtureCheckrunRepositoryTenantID).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery("INSERT INTO check_runs").
-		WithArgs(rec.RunID, "default", rec.CheckID, rec.Status,
+		WithArgs(rec.RunID, coreFixtureCheckrunRepositoryTenantID, rec.CheckID, rec.Status,
 			rec.ScheduledAt, rec.StartedAt, rec.FinishedAt, rec.DurationMs).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(99))
 	mock.ExpectCommit()
 
-	if err := repo.RecordCompleted(context.Background(), "default", rec); err != nil {
+	if err := repo.RecordCompleted(context.Background(), coreFixtureCheckrunRepositoryTenantID, rec); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -69,13 +71,13 @@ func TestCheckRunRepository_RecordsFailure(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectExec("SELECT set_config").
-		WithArgs("default").
+		WithArgs(coreFixtureCheckrunRepositoryTenantID).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery("INSERT INTO check_runs").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(100))
 	mock.ExpectCommit()
 
-	if err := repo.RecordCompleted(context.Background(), "default", rec); err != nil {
+	if err := repo.RecordCompleted(context.Background(), coreFixtureCheckrunRepositoryTenantID, rec); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -91,7 +93,7 @@ func TestCheckRunRepository_RejectsNonTerminalStatus(t *testing.T) {
 	for _, status := range []string{checkrun.StatusPending, checkrun.StatusRunning, "canceled"} {
 		rec := completedRecord()
 		rec.Status = status
-		if err := repo.RecordCompleted(context.Background(), "default", rec); err == nil {
+		if err := repo.RecordCompleted(context.Background(), coreFixtureCheckrunRepositoryTenantID, rec); err == nil {
 			t.Fatalf("status %q accepted", status)
 		}
 	}
@@ -104,7 +106,7 @@ func TestCheckRunRepository_RejectsBlankRunID(t *testing.T) {
 	repo, _ := newCheckRunRepoMock(t)
 	rec := completedRecord()
 	rec.RunID = ""
-	if err := repo.RecordCompleted(context.Background(), "default", rec); err == nil {
+	if err := repo.RecordCompleted(context.Background(), coreFixtureCheckrunRepositoryTenantID, rec); err == nil {
 		t.Fatal("expected a blank run id to be refused")
 	}
 }
@@ -115,13 +117,13 @@ func TestCheckRunRepository_DBError(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectExec("SELECT set_config").
-		WithArgs("default").
+		WithArgs(coreFixtureCheckrunRepositoryTenantID).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery("INSERT INTO check_runs").
 		WillReturnError(errors.New("db down"))
 	mock.ExpectRollback()
 
-	err := repo.RecordCompleted(context.Background(), "default", rec)
+	err := repo.RecordCompleted(context.Background(), coreFixtureCheckrunRepositoryTenantID, rec)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -129,3 +131,5 @@ func TestCheckRunRepository_DBError(t *testing.T) {
 		t.Fatalf("error lost the cause: %v", err)
 	}
 }
+
+var coreFixtureCheckrunRepositoryTenantID = scan.GenerateID()

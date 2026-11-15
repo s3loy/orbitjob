@@ -31,14 +31,14 @@ func (r *RunRepository) GetCancelTarget(ctx context.Context, in runquery.GetInpu
 	defer func() { _ = tx.Rollback() }()
 
 	row := tx.QueryRowContext(ctx, `
-		SELECT r.phase, rtrim(r.occurrence_key), d.source_name, d.source_namespace
+		SELECT r.phase, rtrim(r.occurrence_key), d.source_name, d.source_namespace, r.source_uid, r.revision_id, r.trigger
 		FROM job_run_control_plane r
-		JOIN job_definition_revisions d ON d.id = r.revision_id
+		JOIN job_definition_revisions d ON d.id = r.revision_id AND d.tenant_id = r.tenant_id
 		WHERE r.tenant_id = $1 AND r.id = $2
 	`, in.TenantID, in.ID)
 
 	var out runquery.CancelTarget
-	if err := row.Scan(&out.Phase, &out.OccurrenceKey, &out.ScheduledJobName, &out.Namespace); err != nil {
+	if err := row.Scan(&out.Phase, &out.OccurrenceKey, &out.ScheduledJobName, &out.Namespace, &out.SourceUID, &out.RevisionID, &out.Trigger); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return runquery.CancelTarget{}, &resource.NotFoundError{Resource: "run", ID: in.ID}
 		}

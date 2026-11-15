@@ -71,6 +71,11 @@ func scanWorkflowDefinition(row interface{ Scan(dest ...any) error }) (WorkflowD
 // per source_uid, so each workflow is listed exactly once. A non-positive
 // limit means the default run page; a negative offset is treated as zero.
 func (r *WorkflowDefinitionRepository) ListActiveWorkflowDefinitions(ctx context.Context, tenantID string, limit, offset int) ([]WorkflowDefinitionRow, error) {
+	return r.SearchActiveWorkflowDefinitions(ctx, tenantID, limit, offset, "")
+}
+
+// SearchActiveWorkflowDefinitions applies literal name/namespace matching before paging.
+func (r *WorkflowDefinitionRepository) SearchActiveWorkflowDefinitions(ctx context.Context, tenantID string, limit, offset int, search string) ([]WorkflowDefinitionRow, error) {
 	if limit < 1 {
 		limit = defaultRunPage
 	}
@@ -91,9 +96,10 @@ func (r *WorkflowDefinitionRepository) ListActiveWorkflowDefinitions(ctx context
 		SELECT `+workflowDefinitionColumns+`
 		FROM job_definition_revisions
 		WHERE tenant_id = $1 AND source_mode = $2 AND is_active
+ AND ($5='' OR strpos(lower(source_name),lower($5))>0 OR strpos(lower(source_namespace),lower($5))>0)
 		ORDER BY created_at DESC, id DESC
 		LIMIT $3 OFFSET $4
-	`, tenantID, workflow.SourceModeWorkflow, limit, offset)
+	`, tenantID, workflow.SourceModeWorkflow, limit, offset, search)
 	if err != nil {
 		return nil, fmt.Errorf("list workflow definitions: %w", err)
 	}
@@ -124,6 +130,16 @@ func (r *WorkflowDefinitionRepository) ListActiveWorkflowDefinitions(ctx context
 // purpose, because saying which would leak the tenant's or the definition's
 // history through the route's own prefix.
 func (r *WorkflowDefinitionRepository) ActiveWorkflowDefinition(ctx context.Context, tenantID string, id int64) (WorkflowDefinitionRow, error) {
+	return r.workflowRevision(ctx, tenantID, id, true)
+}
+
+// WorkflowRevision reads exactly the pinned immutable revision, including inactive
+// history. Tenant and source-mode predicates remain mandatory alongside RLS.
+func (r *WorkflowDefinitionRepository) WorkflowRevision(ctx context.Context, tenantID string, id int64) (WorkflowDefinitionRow, error) {
+	return r.workflowRevision(ctx, tenantID, id, false)
+}
+
+func (r *WorkflowDefinitionRepository) workflowRevision(ctx context.Context, tenantID string, id int64, active bool) (WorkflowDefinitionRow, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return WorkflowDefinitionRow{}, fmt.Errorf("begin workflow definition get tx: %w", err)
@@ -137,8 +153,8 @@ func (r *WorkflowDefinitionRepository) ActiveWorkflowDefinition(ctx context.Cont
 	def, scanErr := scanWorkflowDefinition(tx.QueryRowContext(ctx, `
 		SELECT `+workflowDefinitionColumns+`
 		FROM job_definition_revisions
-		WHERE tenant_id = $1 AND id = $2 AND source_mode = $3 AND is_active
-	`, tenantID, id, workflow.SourceModeWorkflow))
+		WHERE tenant_id = $1 AND id = $2 AND source_mode = $3 AND (NOT $4 OR is_active)
+	`, tenantID, id, workflow.SourceModeWorkflow, active))
 	if errors.Is(scanErr, sql.ErrNoRows) {
 		return WorkflowDefinitionRow{}, &resource.NotFoundError{Resource: "workflow", ID: id}
 	}

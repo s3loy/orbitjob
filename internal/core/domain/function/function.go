@@ -8,6 +8,7 @@
 package function
 
 import (
+	"orbitjob/internal/domain/executionpolicy"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +25,12 @@ const SourceModeFunction = "function"
 // defaults the column to 60 and its CHECK refuses lower than 1, so this only
 // covers a zero from a row written before the column existed.
 const DefaultTimeoutSeconds = 60
+
+// DefaultHistorySuccess and DefaultHistoryFailed match the functions table.
+const (
+	DefaultHistorySuccess = 3
+	DefaultHistoryFailed  = 3
+)
 
 // Definition statuses. Paused is the suspended-definition state: invoking a
 // paused function is a conflict, not an error.
@@ -87,7 +94,10 @@ type Definition struct {
 	TimeoutSeconds int
 	// RetryLimit is the number of retries after the first attempt; the
 	// rendered retry budget is RetryLimit+1, matching the checks convention.
-	RetryLimit int
+	RetryLimit             int
+	ExecutionPolicyVersion int32
+	RetrySafe              bool
+	Resources              *executionpolicy.Resources
 	// HistorySuccess and HistoryFailed bound retained invocations per
 	// outcome, defaulting to the platform's 3/3, so retention sweeps function
 	// runs like every other run.
@@ -95,8 +105,8 @@ type Definition struct {
 	HistoryFailed  int
 	Labels         map[string]any
 	// Version is the optimistic-concurrency counter and the revision
-	// generation: saving a function bumps it and flips the active revision
-	// pointer in the same transaction.
+	// generation: saving bumps it; Operator projection advances the active
+	// revision asynchronously.
 	Version   int
 	CreatedAt time.Time
 	UpdatedAt time.Time

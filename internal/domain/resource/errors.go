@@ -1,5 +1,20 @@
 package resource
 
+// UnavailableError identifies a dependency failure without invalidating identity.
+type UnavailableError struct {
+	Resource string
+	Message  string
+	Cause    error
+}
+
+func (e *UnavailableError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	return e.Resource + " is temporarily unavailable"
+}
+func (e *UnavailableError) Unwrap() error { return e.Cause }
+
 // NotFoundError indicates a requested resource does not exist.
 type NotFoundError struct {
 	Resource string

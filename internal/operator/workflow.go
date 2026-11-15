@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -29,6 +30,7 @@ import (
 // the only ledger writer — the admin API holds SELECT — so every state
 // transition of a workflow run goes through these methods.
 type WorkflowRunStore interface {
+	BindResource(context.Context, string, int64, string) error
 	// CreateRunForTenant inserts one workflow run for the pinned revision,
 	// deduplicating on (source_uid, occurrence_key). created is false when the
 	// occurrence already exists, which is what makes a re-delivered CR
@@ -70,17 +72,16 @@ type WorkflowHistoryPruner interface {
 }
 
 // FunctionRunRecorder maintains the function_runs read model: one row per
-// terminal function invocation, upserted by the operator's terminal-phase
-// bookkeeping — the hook pattern the check read model and the SLI snapshots
-// share.
+// terminal function invocation. RecordCompleted must be idempotent: terminal
+// reconciliation replays it to recover a failed write or an operator restart.
 type FunctionRunRecorder interface {
-	RecordCompleted(ctx context.Context, tenantID string, record function.CompletedRecord) error
+	RecordCompletedOnce(ctx context.Context, tenantID string, record function.CompletedRecord) (bool, error)
 }
 
 // workflowRunSpecFromUnstructured decodes only the spec, mirroring
 // jobRunSpecFromUnstructured: a status write by another writer cannot
 // influence how this operator interprets the run. The CR shape's own Validate
-// answers every structural question (workflowRef, pinned revision, Manual
+// answers every structural question (workflowRef, pinned revision, supported
 // trigger, actor, occurrence key), so a spec the schema would have refused is
 // refused here too, not silently driven.
 func workflowRunSpecFromUnstructured(obj unstructured.Unstructured) (v1alpha1.WorkflowRunSpec, error) {
@@ -108,9 +109,9 @@ func workflowRunSpecFromUnstructured(obj unstructured.Unstructured) (v1alpha1.Wo
 // ReconcileWorkflowRun materializes a WorkflowRun CR into the workflow ledger
 // and projects stored state back onto the CR's status.
 //
-// The CR is the manual-trigger transport and the operator is the ledger's only
-// writer, so the first reconcile of a CR creates its workflow_run_control_plane
-// row — the CR-first flow materializeManualRun established for JobRuns. A
+// The Operator creates rows from Manual resources and only observes Schedule
+// resources after their row is committed. A Manual first reconcile creates its
+// workflow_run_control_plane row, following the CR-first JobRun flow. A
 // re-delivered CR finds the row by (source_uid, occurrence_key) and skips the
 // insert, so redelivery and resync are idempotent. After that the CR behaves
 // like every read model in this package: the ledger is the state, the status
@@ -120,6 +121,18 @@ func (r Runtime) ReconcileWorkflowRun(ctx context.Context, obj unstructured.Unst
 		return fmt.Errorf("workflow run reconciliation is not configured")
 	}
 	spec, err := workflowRunSpecFromUnstructured(obj)
+	if err != nil {
+		return err
+	}
+	live, exists, liveErr := r.current(ctx, workflowRunGVR, obj)
+	if liveErr != nil {
+		return liveErr
+	}
+	if !exists {
+		return nil
+	}
+	obj = live
+	spec, err = workflowRunSpecFromUnstructured(obj)
 	if err != nil {
 		return err
 	}
@@ -133,17 +146,44 @@ func (r Runtime) ReconcileWorkflowRun(ctx context.Context, obj unstructured.Unst
 		return err
 	}
 	if !found {
-		stored, found, err = r.materializeWorkflowRun(ctx, tenant, spec)
+		stored, found, err = r.materializeWorkflowRun(ctx, tenant, spec, string(obj.GetUID()))
+		if errors.Is(err, jobrun.ErrAdmissionBlocked) {
+			if r.EnqueueAfter != nil {
+				r.EnqueueAfter("workflowruns", obj.GetNamespace(), obj.GetName(), 5*time.Second)
+			}
+			return r.patchAdmissionBlocked(ctx, workflowRunGVR, obj, err)
+		}
 		if err != nil {
 			return err
 		}
 		if !found {
-			// materializeWorkflowRun refuses only a non-Manual trigger, and the
-			// spec gate above already refused those. Reaching this point means a
-			// gate changed without the other following; refusing loudly keeps an
-			// unmaterializable CR from spinning silently.
+			// Schedule resources require their existing row; refuse orphan resources.
 			return fmt.Errorf("no stored workflow run for occurrence %s", spec.OccurrenceKey)
 		}
+	}
+
+	recordedRevision, readErr := r.Revisions.RevisionByID(ctx, tenant, stored.RevisionID)
+	if readErr != nil {
+		return readErr
+	}
+	if recordedRevision.Identity.SourceMode != workflow.SourceModeWorkflow || recordedRevision.Identity.SourceUID != stored.SourceUID || recordedRevision.Identity.Namespace != obj.GetNamespace() || recordedRevision.Identity.Name != spec.WorkflowRef.Name {
+		return fmt.Errorf("workflow resource namespace or definition identity differs from its pinned revision")
+	}
+
+	if (spec.Trigger == v1alpha1.Schedule || stored.ResourceUID != "") && (stored.RevisionID != spec.DefinitionRevision || string(stored.Trigger) != string(spec.Trigger) || stored.Actor != spec.Actor) {
+		return fmt.Errorf("workflow run resource does not match its recorded occurrence")
+	}
+
+	if stored.ResourceUID != "" && stored.ResourceUID != string(obj.GetUID()) {
+		return fmt.Errorf("workflow run resource UID differs from recorded instance")
+	}
+	// Bind only open historical rows encountered by the live reconciler. Old
+	// terminal rows without an original UID remain conservatively retained.
+	if stored.ResourceUID == "" && !workflow.Terminal(stored.Phase) {
+		if err := r.Workflows.BindResource(ctx, tenant, stored.ID, string(obj.GetUID())); err != nil {
+			return err
+		}
+		stored.ResourceUID = string(obj.GetUID())
 	}
 
 	// A cancel request is intent; the ledger row must carry it before anything
@@ -177,11 +217,9 @@ func (r Runtime) ReconcileWorkflowRun(ctx context.Context, obj unstructured.Unst
 // run). CreateRunForTenant deduplicates on (source_uid, occurrence_key), so a
 // repeated materialization — a retried trigger, a resync redelivery — lands on
 // the stored row unchanged.
-func (r Runtime) materializeWorkflowRun(ctx context.Context, tenant string, spec v1alpha1.WorkflowRunSpec) (workflow.Run, bool, error) {
-	// The WorkflowRun resource is the manual-trigger transport; the CRD's
-	// trigger enum admits only Manual and the spec gate enforces it. This is
-	// the belt to that suspenders: a scheduled workflow run is row-first with
-	// no CR, and nothing else may materialize one.
+func (r Runtime) materializeWorkflowRun(ctx context.Context, tenant string, spec v1alpha1.WorkflowRunSpec, resourceUID string) (workflow.Run, bool, error) {
+	// A row is created here only for Manual. A Schedule resource projects an
+	// already committed occurrence and can never invent ledger work.
 	if spec.Trigger != v1alpha1.Manual {
 		return workflow.Run{}, false, nil
 	}
@@ -201,16 +239,30 @@ func (r Runtime) materializeWorkflowRun(ctx context.Context, tenant string, spec
 	if err := workflow.ValidateDAG(workflow.DAGFromSpec(declared)); err != nil {
 		return workflow.Run{}, false, fmt.Errorf("workflow %s revision %d is not a valid DAG: %w", rev.Identity.Name, rev.ID, err)
 	}
-	stored, _, err := r.Workflows.CreateRunForTenant(ctx, tenant, workflow.Run{
-		SourceUID:     spec.WorkflowRef.UID,
-		RevisionID:    spec.DefinitionRevision,
-		OccurrenceKey: spec.OccurrenceKey,
-		Trigger:       jobrun.Manual,
-		Actor:         spec.Actor,
-		Phase:         workflow.PhasePending,
+	create := r.Workflows.CreateRunForTenant
+	if spec.CancelRequested {
+		if canceler, ok := r.Workflows.(interface {
+			CancelUnadmittedRunForTenant(context.Context, string, workflow.Run) (workflow.Run, bool, error)
+		}); ok {
+			create = canceler.CancelUnadmittedRunForTenant
+		}
+	}
+	stored, created, err := create(ctx, tenant, workflow.Run{
+		SourceUID:         spec.WorkflowRef.UID,
+		RevisionID:        spec.DefinitionRevision,
+		OccurrenceKey:     spec.OccurrenceKey,
+		Trigger:           jobrun.Manual,
+		Actor:             spec.Actor,
+		Phase:             workflow.PhasePending,
+		ConcurrencyPolicy: string(declared.ConcurrencyPolicy),
+		ResourceUID:       resourceUID,
 	})
 	if err != nil {
 		return workflow.Run{}, false, fmt.Errorf("create workflow run for occurrence %s: %w", spec.OccurrenceKey, err)
+	}
+	if created && stored.Phase == workflow.PhaseRejected {
+		workflowScheduleDecisions.WithLabelValues("manual_rejected").Inc()
+		slog.InfoContext(ctx, "manual workflow start rejected", "tenant", tenant, "workflow_run_id", stored.ID, "reason", stored.Reason)
 	}
 	return stored, true, nil
 }
@@ -223,8 +275,10 @@ func (r Runtime) materializeWorkflowRun(ctx context.Context, tenant string, spec
 // is the row's last write once terminal; per-attempt timing lives on the step
 // rows and is deliberately not approximated here.
 func (r Runtime) workflowStatus(ctx context.Context, tenant string, row workflow.Run) (v1alpha1.WorkflowRunStatus, error) {
-	status := v1alpha1.WorkflowRunStatus{Phase: string(row.Phase)}
-	status.StartedAt = &metav1.Time{Time: row.CreatedAt}
+	status := v1alpha1.WorkflowRunStatus{Phase: string(row.Phase), Reason: row.Reason}
+	if row.Phase != workflow.PhaseRejected {
+		status.StartedAt = &metav1.Time{Time: row.CreatedAt}
+	}
 	if workflow.Terminal(row.Phase) {
 		status.CompletedAt = &metav1.Time{Time: row.UpdatedAt}
 	}
@@ -278,14 +332,14 @@ func (r Runtime) patchWorkflowStatus(ctx context.Context, obj unstructured.Unstr
 	if err != nil {
 		return err
 	}
+	fragment["conditions"] = r.admissionConditions(obj, false, "")
 	return r.patchStatus(ctx, workflowRunGVR, obj, fragment)
 }
 
 // patchWorkflowStatusByName is the walker's projection path: it addresses the
 // CR by the pinned revision's identity, the same derivation every writer of a
-// WorkflowRun uses. NotFound is success — a scheduled run has no CR — while
-// any other failure is returned: a read model that silently stops projecting
-// is a lie with a delay. Exported because the walker consumes it through the
+// WorkflowRun uses. Missing projections are left to publication repair; other
+// failures are returned. A bound instance UID prevents replacement adoption. Exported because the walker consumes it through the
 // composition root's ProjectStatus closure.
 func (r Runtime) PatchWorkflowStatusByName(ctx context.Context, tenant string, row workflow.Run) error {
 	if r.Dynamic == nil {
@@ -299,11 +353,20 @@ func (r Runtime) PatchWorkflowStatusByName(ctx context.Context, tenant string, r
 	if err != nil {
 		return err
 	}
-	payload, err := json.Marshal(map[string]any{"status": fragment})
+	resource := r.Dynamic.Resource(workflowRunGVR).Namespace(rev.Identity.Namespace)
+	obj, found, err := v1alpha1.ResolveRun(ctx, resource, v1alpha1.RunNameCandidates(rev.Identity.Name, row.OccurrenceKey), v1alpha1.RunIdentity{SourceUID: row.SourceUID, OccurrenceKey: row.OccurrenceKey, RevisionID: row.RevisionID, Trigger: v1alpha1.Trigger(row.Trigger), Workflow: true})
+	if err != nil || !found {
+		return err
+	}
+	name := obj.GetName()
+	fragment["conditions"] = r.admissionConditions(*obj, false, "")
+	if row.ResourceUID != "" && string(obj.GetUID()) != row.ResourceUID {
+		return fmt.Errorf("workflow status projection refuses replacement resource")
+	}
+	payload, err := json.Marshal(map[string]any{"metadata": map[string]any{"uid": obj.GetUID(), "resourceVersion": obj.GetResourceVersion()}, "status": fragment})
 	if err != nil {
 		return err
 	}
-	name := v1alpha1.WorkflowRunObjectName(rev.Identity.Name, row.OccurrenceKey)
 	_, err = r.Dynamic.Resource(workflowRunGVR).Namespace(rev.Identity.Namespace).
 		Patch(ctx, name, types.MergePatchType, payload, metav1.PatchOptions{}, "status")
 	if apierrors.IsNotFound(err) {
@@ -349,55 +412,56 @@ func functionRunID(occurrenceKey string) string {
 }
 
 // functionTriggeredAt resolves the read model's triggered_at: the instant the
-// invocation was created. The terminal-outcome read carries the newest
-// attempt's instants but not the row's created_at, so a started invocation
-// reports its start and one canceled before starting reports now — the closest
-// honest answer available from this hook's inputs.
+// ledger occurrence was created, independent of execution or history retries.
+// Readers without CreatedAt retain the legacy attempt-start/clock fallback.
 func functionTriggeredAt(outcome controlplane.TerminalOutcome, now time.Time) time.Time {
+	if !outcome.CreatedAt.IsZero() {
+		return outcome.CreatedAt
+	}
 	if !outcome.StartedAt.IsZero() {
 		return outcome.StartedAt
 	}
 	return now
 }
 
-// recordFunctionOutcome upserts the function_runs read model when a terminal
-// transition belongs to a function invocation — the checkobserve pattern
-// applied to the serverless surface: one hook, fired only on a real
-// transition, keyed by the deterministic run id so a replay lands on the same
-// row. A run whose source_uid does not carry the function prefix is someone
-// else's outcome and is left alone. Like the check recorder, a failed read
-// model write is logged, not returned: the phase write is the fact, and
-// failing the reconcile would requeue into a run that can never transition
-// again.
-func (r Runtime) recordFunctionOutcome(ctx context.Context, tenant string, runID int64, phase jobrun.Phase, phaseChanged bool) {
-	if r.Functions == nil || r.OutcomeReader == nil || !phaseChanged {
-		return
+// recordFunctionOutcome repairs the derived function history from durable facts.
+func (r Runtime) recordFunctionOutcome(ctx context.Context, tenant string, runID int64, phase jobrun.Phase, changed ...bool) error {
+	if len(changed) > 0 && !changed[0] {
+		return nil
+	}
+	return r.recordFunctionOutcomeOnce(ctx, tenant, runID, phase)
+}
+
+func (r Runtime) recordFunctionOutcomeOnce(ctx context.Context, tenant string, runID int64, phase jobrun.Phase) error {
+	if r.Functions == nil {
+		return nil
 	}
 	status, ok := function.ReadModelStatus(phase)
 	if !ok {
-		return
+		return nil
+	}
+	if r.OutcomeReader == nil {
+		return fmt.Errorf("function outcome reader required")
 	}
 	outcome, err := r.OutcomeReader.TerminalOutcome(ctx, tenant, runID)
 	if err != nil {
-		slog.Error("read terminal outcome for function run failed", "tenant_id", tenant, "run_id", runID, "error", err)
-		return
+		return err
 	}
 	functionID, ok := function.IDFromSourceUID(outcome.SourceUID)
 	if !ok {
-		return
+		return nil
 	}
-	record := function.CompletedRecord{
-		RunID:       functionRunID(outcome.OccurrenceKey),
-		FunctionID:  functionID,
-		Status:      status,
-		TriggeredAt: functionTriggeredAt(outcome, r.now()),
-		StartedAt:   outcome.StartedAt,
-		FinishedAt:  outcome.CompletedAt,
+	if outcome.Phase != "" {
+		var valid bool
+		status, valid = function.ReadModelStatus(outcome.Phase)
+		if !valid {
+			return fmt.Errorf("function run %d has no recorded terminal phase", runID)
+		}
 	}
+	record := function.CompletedRecord{RunID: functionRunID(outcome.OccurrenceKey), FunctionID: functionID, Status: status, TriggeredAt: functionTriggeredAt(outcome, r.now()), StartedAt: outcome.StartedAt, FinishedAt: outcome.CompletedAt}
 	if !outcome.StartedAt.IsZero() && !outcome.CompletedAt.IsZero() {
 		record.DurationMs = int(outcome.CompletedAt.Sub(outcome.StartedAt).Milliseconds())
 	}
-	if err := r.Functions.RecordCompleted(ctx, tenant, record); err != nil {
-		slog.Error("record function run read model failed", "tenant_id", tenant, "run_id", runID, "error", err)
-	}
+	_, err = r.Functions.RecordCompletedOnce(ctx, tenant, record)
+	return err
 }

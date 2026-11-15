@@ -10,17 +10,22 @@ const MaxBurnRate = 999999.0
 
 // Budget represents the error budget for an SLO within a time window.
 type Budget struct {
-	ID              int64
-	TenantID        string
-	SLOID           int64
-	WindowStart     time.Time
-	WindowEnd       time.Time
-	BudgetTotal     float64
-	BudgetConsumed  float64
-	BudgetRemaining float64
-	BurnRate        float64
-	Status          string
-	Version         int
+	ID                  int64
+	TenantID            string
+	SLOID               int64
+	WindowStart         time.Time
+	WindowEnd           time.Time
+	BudgetTotal         float64
+	BudgetConsumed      float64
+	BudgetRemaining     float64
+	BurnRate            float64
+	Status              string
+	Version             int
+	EvaluatedAt         time.Time
+	LastEventAt         *time.Time
+	LastSampleAt        *time.Time
+	StatisticsSemantics string
+	EvaluationReason    string
 }
 
 // CalculateBurnRate computes the burn rate given budget consumption and elapsed time.

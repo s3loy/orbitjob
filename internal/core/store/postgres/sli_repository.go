@@ -4,10 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/lib/pq"
 
+	"orbitjob/internal/core/domain/check"
 	"orbitjob/internal/core/domain/sli"
 	"orbitjob/internal/domain/resource"
+	"orbitjob/internal/domain/validation"
 )
 
 // SLIRepository provides write-side access to slis table.
@@ -37,6 +41,15 @@ func (r *SLIRepository) Create(ctx context.Context, tenantID string, spec sli.Cr
 	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID); err != nil {
 		return snap, fmt.Errorf("set tenant context: %w", err)
 	}
+	if sourceUID, ok := spec.SourceConfig["source_uid"].(string); ok && sourceUID != "" {
+		if _, err = tx.ExecContext(ctx, `SELECT orbitjob_lock_sli_source($1,$2)`, tenantID, sourceUID); err != nil {
+			return snap, fmt.Errorf("lock SLI event source: %w", err)
+		}
+	}
+
+	if err := lockScopedSLISource(ctx, tx, tenantID, spec); err != nil {
+		return snap, err
+	}
 
 	sourceConfigBytes, err := json.Marshal(spec.SourceConfig)
 	if err != nil {
@@ -59,6 +72,10 @@ func (r *SLIRepository) Create(ctx context.Context, tenantID string, spec sli.Cr
 		&sourceConfigRaw, &snap.Aggregation, &goodEventRaw, &snap.Version, &snap.CreatedAt, &snap.UpdatedAt,
 	)
 	if err != nil {
+		var pgErr *pq.Error
+		if errors.As(err, &pgErr) && pgErr.Constraint == "slis_source_capacity" {
+			return snap, validation.New("source_config", "an execution source supports at most 256 active SLIs")
+		}
 		return snap, fmt.Errorf("insert sli: %w", err)
 	}
 
@@ -76,6 +93,9 @@ func (r *SLIRepository) Create(ctx context.Context, tenantID string, spec sli.Cr
 	if err = tx.Commit(); err != nil {
 		return snap, fmt.Errorf("commit create sli: %w", err)
 	}
+	snap.ConfigurationVersion = 1
+	snap.ActiveFrom = snap.CreatedAt
+	snap.StatisticsSemantics = sli.EventTime
 
 	return snap, nil
 }
@@ -92,6 +112,15 @@ func (r *SLIRepository) Delete(ctx context.Context, tenantID, resourceGroupID st
 
 	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID); err != nil {
 		return fmt.Errorf("set tenant context: %w", err)
+	}
+	var sourceUID string
+	if err = tx.QueryRowContext(ctx, `SELECT COALESCE(source_config->>'source_uid','') FROM slis WHERE tenant_id=$1 AND id=$2 AND version=$3 AND deleted_at IS NULL AND ($4::text IS NULL OR resource_group_id=$4)`, tenantID, id, version, nullableGroup(resourceGroupID)).Scan(&sourceUID); errors.Is(err, sql.ErrNoRows) {
+		return &resource.NotFoundError{Resource: "sli", ID: id}
+	} else if err != nil {
+		return fmt.Errorf("read SLI source for deletion: %w", err)
+	}
+	if _, err = tx.ExecContext(ctx, `SELECT orbitjob_lock_sli_source($1,$2)`, tenantID, sourceUID); err != nil {
+		return fmt.Errorf("lock SLI event source: %w", err)
 	}
 
 	result, err := tx.ExecContext(ctx, `
@@ -189,4 +218,33 @@ func (r *SLIRepository) scanSLIs(rows *sql.Rows) ([]sli.Snapshot, error) {
 		return nil, fmt.Errorf("iterate slis: %w", err)
 	}
 	return slis, nil
+}
+
+// An unscoped tenant creator can describe a future source. A scoped creator
+// must prove that the source belongs to its group before storing the link.
+func lockScopedSLISource(ctx context.Context, tx *sql.Tx, tenantID string, spec sli.CreateSpec) error {
+	if spec.ResourceGroupID == "" {
+		return nil
+	}
+	uid, _ := spec.SourceConfig["source_uid"].(string)
+	var id int64
+	var err error
+	if checkID, ok := check.CheckIDFromSourceUID(uid); ok {
+		err = tx.QueryRowContext(ctx, `SELECT id FROM checks
+WHERE tenant_id=$1 AND id=$2 AND resource_group_id=$3 AND deleted_at IS NULL FOR SHARE`,
+			tenantID, checkID, spec.ResourceGroupID).Scan(&id)
+	} else {
+		// The revision's group is immutable. A plain read preserves the
+		// admin role's SELECT-only ledger grant; row locks require UPDATE.
+		err = tx.QueryRowContext(ctx, `SELECT id FROM job_definition_revisions
+WHERE tenant_id=$1 AND source_uid=$2 AND resource_group_id=$3 AND is_active
+ORDER BY generation DESC LIMIT 1`, tenantID, uid, spec.ResourceGroupID).Scan(&id)
+	}
+	if err == sql.ErrNoRows {
+		return &resource.NotFoundError{Resource: "sli_source", ID: uid}
+	}
+	if err != nil {
+		return fmt.Errorf("lock sli source: %w", err)
+	}
+	return nil
 }

@@ -8,6 +8,8 @@ import (
 	v1alpha1 "orbitjob/api/kubernetes/workloads/v1alpha1"
 	domainworkflow "orbitjob/internal/core/domain/workflow"
 	"orbitjob/internal/domain/resource"
+
+	"orbitjob/internal/platform/scan"
 )
 
 // Use-case coverage for the workflow surface: the scope-first refusals, the
@@ -77,12 +79,13 @@ func (f *fakeWorkflowPublisher) Create(ctx context.Context, run v1alpha1.Workflo
 	return run, f.createdFlag, nil
 }
 
-func (f *fakeWorkflowPublisher) RequestCancel(ctx context.Context, namespace, name string) error {
+func (f *fakeWorkflowPublisher) RequestCancel(ctx context.Context, namespace, definitionName string, identity v1alpha1.RunIdentity) (string, error) {
 	if f.cancelErr != nil {
-		return f.cancelErr
+		return "", f.cancelErr
 	}
+	name := v1alpha1.WorkflowRunObjectName(definitionName, identity.OccurrenceKey)
 	f.canceled = append(f.canceled, namespace+"/"+name)
-	return nil
+	return name, nil
 }
 
 func workflowTestDef() WorkflowDefinition {
@@ -106,7 +109,7 @@ func TestListWorkflowsUseCase_ScopedCallerRefused(t *testing.T) {
 	// A workflow revision has no resource group to be limited by, so a scoped
 	// caller is refused outright instead of being served a wider view.
 	_, err := (&ListWorkflowsUseCase{definitions: defs}).List(context.Background(),
-		WorkflowListInput{TenantID: usecaseTestTenant, ResourceGroupID: "group-9"})
+		WorkflowListInput{TenantID: usecaseTestTenant, ResourceGroupID: workflowUseCaseIdentityGroupID})
 	var scope *resource.ScopeError
 	if !errors.As(err, &scope) {
 		t.Fatalf("expected a scope refusal, got %v", err)
@@ -134,7 +137,7 @@ func TestTriggerWorkflowUseCase_PublishesWorkflowRunCR(t *testing.T) {
 	uc := &TriggerWorkflowUseCase{definitions: defs, publisher: publisher}
 
 	out, err := uc.Trigger(context.Background(), WorkflowTriggerInput{
-		WorkflowID: 5, TenantID: usecaseTestTenant, ActorID: "key-123",
+		WorkflowID: 5, TenantID: usecaseTestTenant, ActorID: workflowUseCaseIdentityActorID,
 	})
 	if err != nil {
 		t.Fatalf("trigger: %v", err)
@@ -150,7 +153,7 @@ func TestTriggerWorkflowUseCase_PublishesWorkflowRunCR(t *testing.T) {
 	if run.Spec.Trigger != v1alpha1.Manual {
 		t.Errorf("trigger = %q, want %q -- the WorkflowRun resource is the manual-trigger transport", run.Spec.Trigger, v1alpha1.Manual)
 	}
-	if run.Spec.Actor != "key-123" {
+	if run.Spec.Actor != workflowUseCaseIdentityActorID {
 		t.Errorf("actor = %q, want the authenticated key", run.Spec.Actor)
 	}
 	if run.Spec.WorkflowRef.Name != "nightly-dag" || run.Spec.WorkflowRef.UID != "wf-uid-nightly" {
@@ -170,17 +173,17 @@ func TestTriggerWorkflowUseCase_PublishesWorkflowRunCR(t *testing.T) {
 	}
 }
 
-func TestTriggerWorkflowUseCase_SuspendedWorkflowIsConflict(t *testing.T) {
+func TestTriggerWorkflowUseCase_PausedScheduleAllowsManualRun(t *testing.T) {
 	def := workflowTestDef()
 	def.Spec.Suspend = true
 	defs := &fakeWorkflowDefinitions{}
 	defs.seed(def)
 
-	_, err := (&TriggerWorkflowUseCase{definitions: defs, publisher: &fakeWorkflowPublisher{}}).
-		Trigger(context.Background(), WorkflowTriggerInput{WorkflowID: 5, TenantID: usecaseTestTenant, ActorID: "key-123"})
-	var conflict *resource.ConflictError
-	if !errors.As(err, &conflict) {
-		t.Fatalf("expected a conflict for a suspended workflow, got %v", err)
+	publisher := &fakeWorkflowPublisher{}
+	_, err := (&TriggerWorkflowUseCase{definitions: defs, publisher: publisher}).
+		Trigger(context.Background(), WorkflowTriggerInput{WorkflowID: 5, TenantID: usecaseTestTenant, ActorID: workflowUseCaseIdentityActorID})
+	if err != nil || len(publisher.created) != 1 {
+		t.Fatalf("paused schedule blocked manual run: %v", err)
 	}
 }
 
@@ -190,7 +193,7 @@ func TestTriggerWorkflowUseCase_ScopedCallerRefused(t *testing.T) {
 
 	_, err := (&TriggerWorkflowUseCase{definitions: defs, publisher: &fakeWorkflowPublisher{}}).
 		Trigger(context.Background(), WorkflowTriggerInput{
-			WorkflowID: 5, TenantID: usecaseTestTenant, ActorID: "key-123", ResourceGroupID: "group-9",
+			WorkflowID: 5, TenantID: usecaseTestTenant, ActorID: workflowUseCaseIdentityActorID, ResourceGroupID: workflowUseCaseIdentityGroupID,
 		})
 	var scope *resource.ScopeError
 	if !errors.As(err, &scope) {
@@ -205,13 +208,13 @@ func TestTriggerWorkflowUseCase_IdempotencyKeyStable(t *testing.T) {
 	uc := &TriggerWorkflowUseCase{definitions: defs, publisher: publisher}
 
 	first, err := uc.Trigger(context.Background(), WorkflowTriggerInput{
-		WorkflowID: 5, TenantID: usecaseTestTenant, ActorID: "key-123", IdempotencyKey: "idem-1",
+		WorkflowID: 5, TenantID: usecaseTestTenant, ActorID: workflowUseCaseIdentityActorID, IdempotencyKey: "idem-1",
 	})
 	if err != nil {
 		t.Fatalf("first trigger: %v", err)
 	}
 	second, err := uc.Trigger(context.Background(), WorkflowTriggerInput{
-		WorkflowID: 5, TenantID: usecaseTestTenant, ActorID: "key-123", IdempotencyKey: "idem-1",
+		WorkflowID: 5, TenantID: usecaseTestTenant, ActorID: workflowUseCaseIdentityActorID, IdempotencyKey: "idem-1",
 	})
 	if err != nil {
 		t.Fatalf("replayed trigger: %v", err)
@@ -342,3 +345,7 @@ func TestCancelWorkflowRunUseCase_MissingCRIsConflict(t *testing.T) {
 		t.Fatalf("expected a conflict for a missing custom resource, got %v", err)
 	}
 }
+
+var workflowUseCaseIdentityGroupID = scan.GenerateID()
+
+var workflowUseCaseIdentityActorID = scan.GenerateID()

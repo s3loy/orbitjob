@@ -1,6 +1,7 @@
 package check
 
 import (
+	"orbitjob/internal/platform/scan"
 	"strconv"
 	"strings"
 	"testing"
@@ -15,7 +16,7 @@ func boundsBaseInput() CreateInput {
 	cron := "*/5 * * * *"
 	return CreateInput{
 		Name:         "check",
-		TenantID:     "00000000000000000000000001",
+		TenantID:     validTenantID,
 		CheckType:    CheckTypeHTTPHealth,
 		CheckConfig:  map[string]any{"url": "http://api.local/health"},
 		ScheduleType: ScheduleTypeCron,
@@ -177,6 +178,7 @@ func TestNormalizeCreateFieldFaults(t *testing.T) {
 // input: trims, defaults, and the empty-collection guarantees the store relies
 // on when it marshals JSONB columns.
 func TestNormalizeCreateNormalizesValues(t *testing.T) {
+	trimmedGroupID := scan.GenerateID()
 	tests := []struct {
 		name     string
 		override func(in *CreateInput)
@@ -214,20 +216,20 @@ func TestNormalizeCreateNormalizesValues(t *testing.T) {
 				t.Fatalf("description length = %v, want 512", spec.Description)
 			}
 		}},
-		{"tenant id is trimmed", func(in *CreateInput) { in.TenantID = "  00000000000000000000000001  " },
+		{"tenant id is trimmed", func(in *CreateInput) { in.TenantID = "  " + validTenantID + "  " },
 			func(t *testing.T, spec CreateSpec) {
-				assertEquals(t, "tenant_id", spec.TenantID, "00000000000000000000000001")
+				assertEquals(t, "tenant_id", spec.TenantID, validTenantID)
 			}},
 		{"tenant id at required length passes", func(in *CreateInput) {
-			in.TenantID = strings.Repeat("t", TenantIDLength)
+			in.TenantID = validTenantID
 		}, func(t *testing.T, spec CreateSpec) {
 			if len(spec.TenantID) != TenantIDLength {
 				t.Fatalf("tenant id length = %d, want %d", len(spec.TenantID), TenantIDLength)
 			}
 		}},
-		{"resource group id is trimmed", func(in *CreateInput) { in.ResourceGroupID = "  rg-1  " },
+		{"resource group id is trimmed", func(in *CreateInput) { in.ResourceGroupID = "  " + trimmedGroupID + "  " },
 			func(t *testing.T, spec CreateSpec) {
-				assertEquals(t, "resource_group_id", spec.ResourceGroupID, "rg-1")
+				assertEquals(t, "resource_group_id", spec.ResourceGroupID, trimmedGroupID)
 			}},
 		{"empty timezone falls back to UTC", func(in *CreateInput) { in.Timezone = "" },
 			func(t *testing.T, spec CreateSpec) { assertEquals(t, "timezone", spec.Timezone, DefaultTimezone) }},

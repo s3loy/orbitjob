@@ -85,22 +85,23 @@ func NormalizeCreate(now time.Time, in CreateInput) (CreateSpec, error) {
 	}
 
 	return CreateSpec{
-		Name:            name,
-		Description:     description,
-		TenantID:        tenantID,
-		ResourceGroupID: strings.TrimSpace(in.ResourceGroupID),
-		CheckType:       checkType,
-		CheckConfig:     checkConfig,
-		AssertionRules:  assertionRules,
-		ScheduleType:    scheduleType,
-		CronExpr:        cronExpr,
-		IntervalSec:     intervalSec,
-		Timezone:        timezone,
-		TimeoutSec:      timeoutSec,
-		RetryLimit:      retryLimit,
-		Priority:        priority,
-		Labels:          labels,
-		NextRunAt:       nextRunAt,
+		ExecutionPolicyVersion: 1,
+		Name:                   name,
+		Description:            description,
+		TenantID:               tenantID,
+		ResourceGroupID:        strings.TrimSpace(in.ResourceGroupID),
+		CheckType:              checkType,
+		CheckConfig:            checkConfig,
+		AssertionRules:         assertionRules,
+		ScheduleType:           scheduleType,
+		CronExpr:               cronExpr,
+		IntervalSec:            intervalSec,
+		Timezone:               timezone,
+		TimeoutSec:             timeoutSec,
+		RetryLimit:             retryLimit,
+		Priority:               priority,
+		Labels:                 labels,
+		NextRunAt:              nextRunAt,
 	}, nil
 }
 
@@ -249,8 +250,8 @@ func normalizeTimeoutSec(in int) (int, error) {
 }
 
 func normalizeRetryLimit(in int) (int, error) {
-	if in < 0 {
-		return 0, validationError("retry_limit", "must be >= 0")
+	if in < 0 || in > 10 {
+		return 0, validationError("retry_limit", "must be between 0 and 10")
 	}
 	if in == 0 {
 		in = DefaultRetryLimit

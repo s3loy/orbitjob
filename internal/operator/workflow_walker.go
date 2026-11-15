@@ -3,6 +3,7 @@ package operator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"orbitjob/internal/core/domain/jobrun"
 	"orbitjob/internal/core/domain/revision"
 	"orbitjob/internal/core/domain/workflow"
+	corepostgres "orbitjob/internal/core/store/postgres"
 )
 
 // ActorWorkflowWalker names the walker in the ledger when it creates a step.
@@ -28,7 +30,7 @@ const ActorWorkflowWalker = "orbitjob-workflow-walker"
 // walker from reaching for the dynamic client itself.
 type WorkflowPublisher interface {
 	Publish(ctx context.Context, run v1alpha1.JobRun) error
-	RequestCancel(ctx context.Context, namespace, name string) error
+	RequestCancel(ctx context.Context, namespace, name string, identity ...v1alpha1.RunIdentity) error
 }
 
 // WorkflowWalker advances open workflow runs: it creates ready tasks as
@@ -50,9 +52,11 @@ type WorkflowWalker struct {
 	Workflows WorkflowRunStore
 	Revisions WorkflowRevisionSource
 	Publisher WorkflowPublisher
+	// ObserveResource verifies the bound live CR and reads its cancel intent.
+	ObserveResource func(context.Context, string, workflow.Run) (bool, error)
 	// Outcomes, when set, supplies a terminal step's attempt timing so
 	// duration_ms conditions evaluate against the same fact the read models
-	// see. Without it those rules read a zero duration.
+	// see. A duration rule without a reader is refused.
 	Outcomes controlplane.OutcomeReader
 	Tenants  []string
 	// Actor is the identity recorded against every step this walker creates.
@@ -74,7 +78,7 @@ type WorkflowWalker struct {
 // wedged workflow cannot stop the others; only a failure to list a tenant's
 // runs aborts the tick.
 func (w WorkflowWalker) Tick(ctx context.Context) (int, error) {
-	if w.Workflows == nil || w.Revisions == nil || w.Publisher == nil {
+	if w.Workflows == nil || w.Revisions == nil || w.Publisher == nil || w.ObserveResource == nil {
 		return 0, fmt.Errorf("workflow walker dependencies are required")
 	}
 	created := 0
@@ -109,10 +113,22 @@ func (w WorkflowWalker) Tick(ctx context.Context) (int, error) {
 // A task names its definition, a step row carries only the definition's uid;
 // the active-revision list answers both directions in one read per tick.
 func definitionIndex(defs []revision.Revision) map[string]revision.Revision {
-	index := make(map[string]revision.Revision, 2*len(defs))
+	index := make(map[string]revision.Revision, len(defs))
 	for _, rev := range defs {
-		index["name:"+rev.Identity.Name] = rev
 		index["uid:"+rev.Identity.SourceUID] = rev
+	}
+	return index
+}
+
+// workflowNamespaceIndex prevents a same-name definition of another namespace or
+// workload kind from entering a task's execution path.
+func workflowNamespaceIndex(all map[string]revision.Revision, namespace string) map[string]revision.Revision {
+	index := make(map[string]revision.Revision)
+	for _, rev := range all {
+		if rev.Identity.SourceMode == "kubernetes" && rev.Identity.Namespace == namespace {
+			index["name:"+rev.Identity.Name] = rev
+			index["uid:"+rev.Identity.SourceUID] = rev
+		}
 	}
 	return index
 }
@@ -141,28 +157,67 @@ func (w WorkflowWalker) now() time.Time {
 // write is idempotent or refused-and-harmless on replay, so a repeated pass
 // lands on the same state.
 func (w WorkflowWalker) advanceRun(ctx context.Context, tenant string, run workflow.Run, index map[string]revision.Revision) (int, error) {
-	dag, err := w.pinnedDAG(ctx, tenant, run)
+	if run.ResourceUID == "" {
+		workflowScheduleDecisions.WithLabelValues("waiting_publication").Inc()
+		return 0, nil
+	}
+	cancel, err := w.ObserveResource(ctx, tenant, run)
+	if err != nil {
+		return 0, err
+	}
+	if cancel && run.Phase != workflow.PhaseCancelRequested && run.Phase != workflow.PhaseCancelUnknown && !workflow.Terminal(run.Phase) {
+		if _, err := w.Workflows.UpdatePhase(ctx, tenant, run.ID, workflow.PhaseCancelRequested, nil); err != nil {
+			return 0, err
+		}
+		run.Phase = workflow.PhaseCancelRequested
+	}
+	dag, namespace, err := w.pinnedDAG(ctx, tenant, run)
 	if err != nil {
 		return 0, err
 	}
 
+	index = workflowNamespaceIndex(index, namespace)
+	if run.SnapshotVersion != 0 {
+		index, err = w.snapshotDefinitions(ctx, tenant, run, dag, namespace)
+		if err != nil {
+			return 0, err
+		}
+	}
 	steps, err := w.Workflows.Steps(ctx, tenant, run.ID)
 	if err != nil {
 		return 0, fmt.Errorf("list steps for workflow run %d: %w", run.ID, err)
 	}
-	stepByTask, states := w.stepFacts(ctx, tenant, run, dag, steps)
+	if err := w.repairStepObjects(ctx, tenant, namespace, run, steps, index); err != nil {
+		return 0, err
+	}
+	stepByTask, states, err := w.stepFacts(ctx, tenant, run, dag, steps)
+	if err != nil {
+		return 0, err
+	}
 
-	// A stopping run creates no new steps. CancelRequested is a user's stop;
-	// CancelUnknown is a stop the platform could not confirm, whose workflow
-	// can never complete — a CancelUnknown step has no transition out — so
-	// creating more work under either would be pretending the stop did not
-	// happen. FailFast stops on the first terminally failed step; in-flight
+	// A stopping run creates no new steps. CancelUnknown retains unresolved
+	// stop intent; retained trusted evidence may later confirm cancellation,
+	// but uncertainty never permits more work. FailFast stops on the first
+	// terminally failed step; in-flight
 	// steps are respected, not preempted. The deadline is the workflow's own
 	// wall clock: past it the run stops creating steps and asks the in-flight
 	// ones to stop, the same mechanics a cancel fans out.
 	canceling := run.Phase == workflow.PhaseCancelRequested || run.Phase == workflow.PhaseCancelUnknown
 	failFastTripped := dag.FailPolicy == workflow.FailPolicyFailFast && anyStepFailed(steps)
+	if dag.FailPolicy == workflow.FailPolicyFailFast {
+		for _, decision := range run.TaskDecisions {
+			if decision.Skipped && (decision.Reason == workflow.ReasonMissingJob || decision.Reason == workflow.ReasonDeadline) {
+				failFastTripped = true
+			}
+		}
+	}
 	deadlinePassed := dag.TimeoutSeconds > 0 && w.now().Sub(run.CreatedAt) > time.Duration(dag.TimeoutSeconds)*time.Second
+	uncertain := run.Phase == workflow.PhaseExecutionUnknown
+	for _, step := range steps {
+		if step.Phase == jobrun.ExecutionUnknown || step.Phase == jobrun.CancelUnknown {
+			uncertain = true
+		}
+	}
 
 	order, err := workflow.TopologicalSort(dag)
 	if err != nil {
@@ -181,6 +236,9 @@ func (w WorkflowWalker) advanceRun(ctx context.Context, tenant string, run workf
 		if _, decided := run.TaskDecisions[taskName]; decided {
 			continue
 		}
+		if uncertain && !canceling && !deadlinePassed {
+			continue
+		}
 		task, err := dagTask(dag, taskName)
 		if err != nil {
 			return created, err
@@ -193,19 +251,34 @@ func (w WorkflowWalker) advanceRun(ctx context.Context, tenant string, run workf
 			continue
 		}
 
-		reason := sweepStopReason(canceling, failFastTripped, deadlinePassed)
+		reason := sweepStopReason(canceling, failFastTripped, false)
 		if reason == "" {
 			reason, err = taskSkipReason(task, states, run.TaskDecisions, decisions, run)
 			if err != nil {
 				return created, err
 			}
 		}
+		if reason == "" && deadlinePassed {
+			reason = workflow.ReasonDeadline
+		}
 		if reason != "" {
 			decisions[taskName] = workflow.TaskDecision{Skipped: true, Reason: reason}
 			continue
 		}
 
+		if _, found := index["name:"+task.JobRef]; !found {
+			decisions[taskName] = workflow.TaskDecision{Skipped: true, Reason: workflow.ReasonMissingJob}
+			workflowScheduleDecisions.WithLabelValues("missing_job_reference").Inc()
+			slog.Warn("workflow task references an unavailable ScheduledJob", "tenant_id", tenant, "workflow_run_id", run.ID, "namespace", namespace, "task", task.Name, "job_ref", task.JobRef)
+			if dag.FailPolicy == workflow.FailPolicyFailFast {
+				failFastTripped = true
+			}
+			continue
+		}
 		if err := w.createStep(ctx, tenant, run, task, index); err != nil {
+			if errors.Is(err, jobrun.ErrAdmissionBlocked) || errors.Is(err, corepostgres.ErrWorkflowBlocked) {
+				continue
+			}
 			return created, err
 		}
 		created++
@@ -218,20 +291,23 @@ func (w WorkflowWalker) advanceRun(ctx context.Context, tenant string, run workf
 // walker's view. The revision — not the WorkflowJob's current spec — is what a
 // run executes, so editing the definition cannot reshape a run already in
 // flight.
-func (w WorkflowWalker) pinnedDAG(ctx context.Context, tenant string, run workflow.Run) (workflow.DAG, error) {
+func (w WorkflowWalker) pinnedDAG(ctx context.Context, tenant string, run workflow.Run) (workflow.DAG, string, error) {
 	rev, err := w.Revisions.RevisionByID(ctx, tenant, run.RevisionID)
 	if err != nil {
-		return workflow.DAG{}, fmt.Errorf("load pinned revision %d for workflow run %d: %w", run.RevisionID, run.ID, err)
+		return workflow.DAG{}, "", fmt.Errorf("load pinned revision %d for workflow run %d: %w", run.RevisionID, run.ID, err)
+	}
+	if rev.Identity.SourceMode != workflow.SourceModeWorkflow || rev.Identity.SourceUID != run.SourceUID {
+		return workflow.DAG{}, "", fmt.Errorf("workflow run %d pinned identity mismatch", run.ID)
 	}
 	var declared v1alpha1.WorkflowJobSpec
 	if err := json.Unmarshal([]byte(rev.NormalizedSpec), &declared); err != nil {
-		return workflow.DAG{}, fmt.Errorf("decode pinned revision %d: %w", rev.ID, err)
+		return workflow.DAG{}, "", fmt.Errorf("decode pinned revision %d: %w", rev.ID, err)
 	}
 	dag := workflow.DAGFromSpec(declared)
 	if err := workflow.ValidateDAG(dag); err != nil {
-		return workflow.DAG{}, fmt.Errorf("workflow revision %d is not a valid DAG: %w", rev.ID, err)
+		return workflow.DAG{}, "", fmt.Errorf("workflow revision %d is not a valid DAG: %w", rev.ID, err)
 	}
-	return dag, nil
+	return dag, rev.Identity.Namespace, nil
 }
 
 // stepFacts maps step rows back to their tasks — the ledger row does not carry
@@ -243,12 +319,15 @@ func (w WorkflowWalker) pinnedDAG(ctx context.Context, tenant string, run workfl
 // the workflow Running. A resolved step's attempt timing is not on its row, so
 // duration_ms operands are enriched from the same terminal-outcome read the
 // read models use, only when the walker was wired with a reader.
-func (w WorkflowWalker) stepFacts(ctx context.Context, tenant string, run workflow.Run, dag workflow.DAG, steps []workflow.StepRun) (map[string]workflow.StepRun, map[string]workflow.StepState) {
+func (w WorkflowWalker) stepFacts(ctx context.Context, tenant string, run workflow.Run, dag workflow.DAG, steps []workflow.StepRun) (map[string]workflow.StepRun, map[string]workflow.StepState, error) {
 	byKey := make(map[string]workflow.StepRun, len(steps))
 	for _, step := range steps {
 		byKey[step.OccurrenceKey] = step
 	}
-	needDurations := dagHasDurationRules(dag) && w.Outcomes != nil
+	needDurations := dagHasDurationRules(dag)
+	if needDurations && w.Outcomes == nil {
+		return nil, nil, fmt.Errorf("workflow duration rules require outcome reader")
+	}
 
 	stepByTask := make(map[string]workflow.StepRun, len(steps))
 	states := make(map[string]workflow.StepState, len(steps))
@@ -258,19 +337,25 @@ func (w WorkflowWalker) stepFacts(ctx context.Context, tenant string, run workfl
 			continue
 		}
 		stepByTask[task.Name] = step
-		if !jobrun.Terminal(step.Phase) && step.Phase != jobrun.CancelUnknown {
+		if !jobrun.Terminal(step.Phase) && step.Phase != jobrun.CancelUnknown && step.Phase != jobrun.ExecutionUnknown {
 			continue
 		}
 		state := workflow.StepState{Phase: step.Phase, Attempt: step.Attempt}
 		if needDurations && jobrun.Terminal(step.Phase) {
 			outcome, err := w.Outcomes.TerminalOutcome(ctx, tenant, step.ID)
-			if err == nil && !outcome.StartedAt.IsZero() && !outcome.CompletedAt.IsZero() {
+			if err != nil {
+				return nil, nil, err
+			}
+			if outcome.StartedAt.IsZero() || outcome.CompletedAt.IsZero() {
+				return nil, nil, fmt.Errorf("terminal step %d has no measured duration", step.ID)
+			}
+			if !outcome.StartedAt.IsZero() && !outcome.CompletedAt.IsZero() {
 				state.DurationMs = outcome.CompletedAt.Sub(outcome.StartedAt).Milliseconds()
 			}
 		}
 		states[task.Name] = state
 	}
-	return stepByTask, states
+	return stepByTask, states, nil
 }
 
 // sweepStopReason decides whether a sweep-level stop applies to a task that
@@ -300,7 +385,7 @@ func dependenciesResolved(
 	passDecisions map[string]workflow.TaskDecision,
 ) bool {
 	for _, dep := range task.DependsOn {
-		if _, resolved := states[dep]; resolved {
+		if state, resolved := states[dep]; resolved && jobrun.Terminal(state.Phase) {
 			continue
 		}
 		if decision, decided := storedDecisions[dep]; decided && decision.Skipped {
@@ -357,8 +442,12 @@ func taskSkipReason(
 // without it, so a crash between the two leaves a row the next tick
 // re-publishes for — never a CR the ledger does not know.
 func (w WorkflowWalker) createStep(ctx context.Context, tenant string, run workflow.Run, task workflow.Task, index map[string]revision.Revision) error {
+	wfRevision, err := w.Revisions.RevisionByID(ctx, tenant, run.RevisionID)
+	if err != nil {
+		return err
+	}
 	def, ok := index["name:"+task.JobRef]
-	if !ok {
+	if !ok || def.Identity.SourceMode != "kubernetes" || def.Identity.Namespace != wfRevision.Identity.Namespace {
 		return fmt.Errorf("workflow run %d task %s references unknown definition %q", run.ID, task.Name, task.JobRef)
 	}
 	var declared v1alpha1.ScheduledJobSpec
@@ -366,19 +455,20 @@ func (w WorkflowWalker) createStep(ctx context.Context, tenant string, run workf
 		return fmt.Errorf("decode definition %s revision %d: %w", def.Identity.Name, def.ID, err)
 	}
 	key := workflow.StepOccurrenceKey(run.SourceUID, run.OccurrenceKey, task.Name)
-	if _, _, err := w.Workflows.CreateStepForTenant(ctx, tenant, run.ID, workflow.StepRun{
+	stored, _, err := w.Workflows.CreateStepForTenant(ctx, tenant, run.ID, workflow.StepRun{
 		SourceUID:     def.Identity.SourceUID,
 		RevisionID:    def.ID,
 		OccurrenceKey: key,
 		Trigger:       jobrun.Workflow,
 		Phase:         jobrun.Pending,
-	}, declared.RetryPolicy.EffectiveMaxAttempts(), w.actor()); err != nil {
+	}, declared.RetryPolicy.EffectiveMaxAttempts(), w.actor())
+	if err != nil {
 		return fmt.Errorf("create step for task %s of workflow run %d: %w", task.Name, run.ID, err)
 	}
 	// Publish unconditionally, the scheduler's repair move: dedup makes the
 	// row insert a no-op on replay, and an idempotent publish repairs a CR
 	// lost to a crash between row and object.
-	if err := w.Publisher.Publish(ctx, w.stepObject(def, declared, run, key)); err != nil {
+	if err := w.repairStepObjects(ctx, tenant, wfRevision.Identity.Namespace, run, []workflow.StepRun{stored}, index); err != nil {
 		return fmt.Errorf("publish step for task %s of workflow run %d: %w", task.Name, run.ID, err)
 	}
 	return nil
@@ -433,9 +523,8 @@ func (w WorkflowWalker) stepObject(def revision.Revision, declared v1alpha1.Sche
 // The phase write is one call even when decisions and a terminal verdict land
 // together: UpdatePhase merges decisions per task and refuses a write to a run
 // that already finished, so a replay of a finished run costs nothing. A
-// workflow with a CancelUnknown step records CancelUnknown once — it is sticky
-// and non-terminal, and the store refuses every later write, which is exactly
-// the once-only bookkeeping the phase needs.
+// A child cancellation gap isolates an otherwise uncanceled parent. Only a
+// workflow stop request or deadline fans cancellation out to its other steps.
 func (w WorkflowWalker) recordOutcome(
 	ctx context.Context, tenant string, run workflow.Run, dag workflow.DAG,
 	steps []workflow.StepRun, states map[string]workflow.StepState,
@@ -452,16 +541,21 @@ func (w WorkflowWalker) recordOutcome(
 	phase, terminal := workflow.DerivePhase(taskNames(dag), states, merged)
 	next := run.Phase
 	switch {
+	case terminal && (run.Phase == workflow.PhaseCancelRequested || run.Phase == workflow.PhaseCancelUnknown):
+		next = workflow.PhaseCanceled
 	case terminal:
 		next = phase
 	case phase == workflow.PhaseCancelUnknown:
-		// CancelUnknown dominates the roll-up and the row alike: a stop the
-		// platform could not confirm is not an outcome, the workflow stays
-		// non-terminal, and no later phase — not even a recorded stop
-		// request — may overwrite the one honest signal the row holds. Every
-		// decision-trail write that follows carries the same phase until the
-		// unknown resolves.
+		if fanCancel || run.Phase == workflow.PhaseCancelRequested || run.Phase == workflow.PhaseCancelUnknown {
+			next = phase
+		} else {
+			// A stop of one child is not a stop request for its siblings.
+			next = workflow.PhaseExecutionUnknown
+		}
+	case phase == workflow.PhaseExecutionUnknown && !fanCancel && run.Phase != workflow.PhaseCancelRequested && run.Phase != workflow.PhaseCancelUnknown:
 		next = phase
+	case run.Phase == workflow.PhaseExecutionUnknown && phase == workflow.PhaseRunning:
+		next = workflow.PhaseRunning
 	case run.Phase == workflow.PhasePending && (len(steps) > 0 || len(decisions) > 0 || created > 0):
 		next = workflow.PhaseRunning
 	}
@@ -490,12 +584,11 @@ func (w WorkflowWalker) recordOutcome(
 
 // fanCancel patches the stop request onto every in-flight step of a stopping
 // run. Terminal steps are done and left alone; a CancelUnknown step is
-// deliberately skipped — its run already carries a stop the platform could
-// not confirm, and re-patching would push its reconciliation into a phase
-// transition the run lifecycle refuses. Each patched step then travels the
-// ordinary per-run cancel path, which deletes the Kubernetes Job and observes
-// it gone before recording Canceled; the workflow-level Canceled waits for
-// those facts, it does not presume them.
+// deliberately skipped because its cancellation intent is already committed.
+// Its recovery path can still confirm a trusted stop after a deletion delay.
+// Each patched step uses the ordinary per-run cancellation path: controller
+// acknowledgement, persisted termination evidence, hold release and confirmed
+// Job removal. The workflow-level Canceled waits for those facts.
 func (w WorkflowWalker) fanCancel(ctx context.Context, tenant string, run workflow.Run, dag workflow.DAG, steps []workflow.StepRun, index map[string]revision.Revision) error {
 	byKey := make(map[string]workflow.StepRun, len(steps))
 	for _, step := range steps {
@@ -506,15 +599,12 @@ func (w WorkflowWalker) fanCancel(ctx context.Context, tenant string, run workfl
 		if !ok || jobrun.Terminal(step.Phase) || step.Phase == jobrun.CancelUnknown {
 			continue
 		}
-		def, ok := index["name:"+task.JobRef]
-		if !ok {
-			// The definition is gone; its CRs went with it via the owner
-			// reference, so there is nothing to patch and nothing will run.
-			continue
+		def, err := w.Revisions.RevisionByID(ctx, tenant, step.RevisionID)
+		if err != nil {
+			return fmt.Errorf("load pinned step revision: %w", err)
 		}
 		key := workflow.StepOccurrenceKey(run.SourceUID, run.OccurrenceKey, task.Name)
-		name := v1alpha1.RunObjectName(def.Identity.Name, key)
-		if err := w.Publisher.RequestCancel(ctx, def.Identity.Namespace, name); err != nil {
+		if err := w.Publisher.RequestCancel(ctx, def.Identity.Namespace, def.Identity.Name, v1alpha1.RunIdentity{SourceUID: step.SourceUID, OccurrenceKey: key, RevisionID: step.RevisionID, Trigger: v1alpha1.Workflow}); err != nil {
 			return fmt.Errorf("request cancel for step %s of workflow run %d: %w", task.Name, run.ID, err)
 		}
 	}

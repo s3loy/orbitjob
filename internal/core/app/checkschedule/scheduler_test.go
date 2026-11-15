@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"orbitjob/internal/platform/scan"
 	"strings"
 	"testing"
 	"time"
@@ -17,7 +18,7 @@ import (
 )
 
 // testScope is the tenant/namespace pair every test fires through.
-var testScope = Scope{TenantID: "00000000000000000000000001", Namespace: "tasks"}
+var testScope = Scope{TenantID: scan.GenerateID(), Namespace: "tasks"}
 
 type stubCheckRepo struct {
 	due       []check.Snapshot
@@ -43,8 +44,9 @@ func (s *stubCheckRepo) UpdateNextRunAt(_ context.Context, _ string, id int64, n
 type stubRevisions struct {
 	// ids maps (source_uid, generation) to the id the first projection got, so
 	// re-projecting a version is idempotent like the real store's upsert.
-	ids map[string]int64
-	err error
+	ids       map[string]int64
+	revisions map[int64]revision.Revision
+	err       error
 }
 
 func (s *stubRevisions) ApplyRevisionForTenant(_ context.Context, _ string, rev revision.Revision) (int64, error) {
@@ -60,6 +62,11 @@ func (s *stubRevisions) ApplyRevisionForTenant(_ context.Context, _ string, rev 
 	}
 	id := int64(len(s.ids) + 100)
 	s.ids[identity] = id
+	if s.revisions == nil {
+		s.revisions = map[int64]revision.Revision{}
+	}
+	rev.ID = id
+	s.revisions[id] = rev
 	return id, nil
 }
 
@@ -417,4 +424,11 @@ func TestNewTickUseCase_DefaultClock(t *testing.T) {
 	if _, err := f.uc.RunBatch(context.Background(), testScope, 10); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+}
+
+func (s *stubRevisions) RevisionByID(_ context.Context, _ string, id int64) (revision.Revision, error) {
+	if rev, ok := s.revisions[id]; ok {
+		return rev, nil
+	}
+	return revision.Revision{}, fmt.Errorf("revision %d missing", id)
 }

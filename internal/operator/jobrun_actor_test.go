@@ -76,7 +76,7 @@ func actorGuardRuntime() (Runtime, *actorGuardRuns, *actorGuardRevisions) {
 	return Runtime{
 		Runs:      runs,
 		Revisions: revisions,
-		Tenants:   NamespaceTenantResolver{Tenants: map[string]string{"finance": "tenant-a"}},
+		Tenants:   NamespaceTenantResolver{Tenants: map[string]string{"finance": executionTenant}},
 	}, runs, revisions
 }
 
@@ -173,7 +173,7 @@ func TestJobRunSpecFromUnstructuredRoundTripsASpecWithAnActor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a spec naming an actor must decode: %v", err)
 	}
-	if spec.Actor != "principal-key-1" {
+	if spec.Actor != executionActorKeyID {
 		t.Fatalf("spec.Actor = %q", spec.Actor)
 	}
 	if spec.Trigger != v1alpha1.Schedule {
@@ -221,4 +221,14 @@ func TestJobRunActorGuardRedProof(t *testing.T) {
 	if _, err := jobRunSpecFromUnstructuredWithoutActorCheck(obj); err != nil {
 		t.Fatalf("removing the actor check did not change behavior (still refused: %v), so the guard assertions cannot fail", err)
 	}
+}
+
+func (s *actorGuardRuns) CreateAttemptWithEnsure(context.Context, string, int64, jobrun.Attempt, func(context.Context) (jobrun.Attempt, error)) error {
+	s.calls++
+	return nil
+}
+
+func (s *actorGuardRuns) BindAttemptObservation(context.Context, string, int64, int, string, string, string) error {
+	s.calls++
+	return nil
 }

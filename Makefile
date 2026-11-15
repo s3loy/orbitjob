@@ -36,6 +36,7 @@ build-all:
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/operator    ./cmd/operator/
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/configure   ./cmd/configure/
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/bootstrap   ./cmd/bootstrap/
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/admission ./cmd/admission/
 
 # ---- Test ----
 test:
@@ -118,7 +119,7 @@ REGISTRY ?= ghcr.io/s3loy
 APP_VERSION := $(shell sed -n 's/^appVersion: *"\(.*\)"/\1/p' charts/orbitjob/Chart.yaml)
 TAG ?= v$(APP_VERSION)
 
-DOCKER_COMPONENTS := admin-api:admin scheduler:scheduler operator:operator migrate:migrate bootstrap:bootstrap
+DOCKER_COMPONENTS := admin-api:admin scheduler:scheduler operator:operator migrate:migrate bootstrap:bootstrap admission:admission
 
 docker-build:
 	@set -e; for pair in $(DOCKER_COMPONENTS); do \

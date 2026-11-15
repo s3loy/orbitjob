@@ -7,11 +7,13 @@ import (
 
 func TestCanTransitionAcceptsEveryLegalEdge(t *testing.T) {
 	legal := map[Phase][]Phase{
-		Pending:         {CreatingAttempt, CancelRequested},
-		CreatingAttempt: {Running, CancelRequested},
-		Running:         {RetryWaiting, Succeeded, Failed, CancelRequested},
-		RetryWaiting:    {CreatingAttempt, CancelRequested, Failed},
-		CancelRequested: {Canceled, CancelUnknown},
+		Pending:          {CreatingAttempt, CancelRequested},
+		CreatingAttempt:  {Running, ExecutionUnknown, CancelRequested},
+		Running:          {RetryWaiting, Succeeded, Failed, ExecutionUnknown, CancelRequested},
+		ExecutionUnknown: {Running, RetryWaiting, Succeeded, CancelRequested},
+		CancelUnknown:    {Canceled},
+		RetryWaiting:     {CreatingAttempt, CancelRequested, Failed},
+		CancelRequested:  {Canceled, CancelUnknown},
 	}
 	for from, targets := range legal {
 		for _, to := range targets {
@@ -35,7 +37,8 @@ func TestCanTransitionRejectsIllegalEdges(t *testing.T) {
 		{Succeeded, Running, "terminal phases are final"},
 		{Failed, RetryWaiting, "a failed run does not re-enter the retry queue"},
 		{Canceled, Running, "a stopped run does not resume"},
-		{CancelUnknown, Canceled, "an unconfirmed stop cannot become confirmed later"},
+		{ExecutionUnknown, CreatingAttempt, "uncertainty cannot authorize a replacement"},
+		{ExecutionUnknown, Failed, "absence cannot invent an outcome"},
 		{Pending, Pending, "self transitions are not progress"},
 		{RetryWaiting, Succeeded, "the retry must actually run"},
 	}
@@ -52,7 +55,7 @@ func TestTerminal(t *testing.T) {
 			t.Errorf("%s should be terminal", phase)
 		}
 	}
-	for _, phase := range []Phase{Pending, CreatingAttempt, Running, RetryWaiting, CancelRequested, CancelUnknown} {
+	for _, phase := range []Phase{Pending, CreatingAttempt, Running, RetryWaiting, CancelRequested, CancelUnknown, ExecutionUnknown} {
 		if Terminal(phase) {
 			t.Errorf("%s should not be terminal", phase)
 		}

@@ -10,10 +10,13 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/uuid"
 
 	v1alpha1 "orbitjob/api/kubernetes/workloads/v1alpha1"
 	"orbitjob/internal/admin/bootstrap"
 	domainworkflow "orbitjob/internal/core/domain/workflow"
+
+	"orbitjob/internal/platform/scan"
 )
 
 // workflowRunGVR is the resource identity the workflow routes publish and
@@ -103,9 +106,8 @@ func TestWorkflowTrigger_PublishesWorkflowRunCR(t *testing.T) {
 	}
 }
 
-// Triggering a suspended workflow is a conflict: the definition exists and the
-// caller reached it, but the platform has been told to hold its fire.
-func TestWorkflowTrigger_SuspendedIsConflict(t *testing.T) {
+// Pausing the automatic schedule does not disable manual execution.
+func TestWorkflowTrigger_PausedScheduleAllowsManual(t *testing.T) {
 	server, _, key, stores := newIntegrationServerWithWorkloads(t)
 	defer server.Close()
 
@@ -114,7 +116,7 @@ func TestWorkflowTrigger_SuspendedIsConflict(t *testing.T) {
 	stores.workflowDefs.seed(def)
 
 	resp := postJSON(t, server.Client(), server.URL+"/api/v1/workflows/5/runs", key, nil)
-	requireStatus(t, resp, http.StatusConflict)
+	requireStatus(t, resp, http.StatusCreated)
 }
 
 // seedWorkflowRunCR places a WorkflowRun custom resource in the fake cluster
@@ -124,8 +126,10 @@ func seedWorkflowRunCR(t *testing.T, stores *workloadsTestStores, def WorkflowDe
 	run := v1alpha1.WorkflowRun{
 		TypeMeta: v1.TypeMeta{APIVersion: v1alpha1.GroupVersion.String(), Kind: "WorkflowRun"},
 		ObjectMeta: v1.ObjectMeta{
-			Namespace: def.Namespace,
-			Name:      v1alpha1.WorkflowRunObjectName(def.Name, occurrenceKey),
+			Namespace:       def.Namespace,
+			Name:            v1alpha1.WorkflowRunObjectName(def.Name, occurrenceKey),
+			UID:             uuid.NewUUID(),
+			ResourceVersion: "1",
 		},
 		Spec: v1alpha1.WorkflowRunSpec{
 			WorkflowRef:        v1alpha1.ObjectReference{Name: def.Name, UID: def.SourceUID},
@@ -155,7 +159,7 @@ func TestWorkflowCancel_PatchesCancelRequested(t *testing.T) {
 	def := workflowIntegrationDef()
 	stores.workflowDefs.seed(def)
 	stores.workflowRuns.runs = map[int64]domainworkflow.Run{
-		12: {ID: 12, TenantID: bootstrap.DefaultTenantID, SourceUID: def.SourceUID,
+		12: {ID: 12, TenantID: bootstrap.DefaultTenantID, SourceUID: def.SourceUID, RevisionID: def.ID,
 			OccurrenceKey: "key-12", Trigger: "Manual", Phase: domainworkflow.PhaseRunning},
 	}
 	seedWorkflowRunCR(t, stores, def, "key-12")
@@ -192,7 +196,7 @@ func TestWorkflowCancel_TerminalRunNeedsNoResource(t *testing.T) {
 	def := workflowIntegrationDef()
 	stores.workflowDefs.seed(def)
 	stores.workflowRuns.runs = map[int64]domainworkflow.Run{
-		12: {ID: 12, TenantID: bootstrap.DefaultTenantID, SourceUID: def.SourceUID,
+		12: {ID: 12, TenantID: bootstrap.DefaultTenantID, SourceUID: def.SourceUID, RevisionID: def.ID,
 			OccurrenceKey: "key-12", Trigger: "Manual", Phase: domainworkflow.PhaseSucceeded},
 	}
 
@@ -217,7 +221,7 @@ func TestWorkflowCancel_MissingCRIsConflict(t *testing.T) {
 	def := workflowIntegrationDef()
 	stores.workflowDefs.seed(def)
 	stores.workflowRuns.runs = map[int64]domainworkflow.Run{
-		12: {ID: 12, TenantID: bootstrap.DefaultTenantID, SourceUID: def.SourceUID,
+		12: {ID: 12, TenantID: bootstrap.DefaultTenantID, SourceUID: def.SourceUID, RevisionID: def.ID,
 			OccurrenceKey: "key-12", Trigger: "Manual", Phase: domainworkflow.PhaseRunning},
 	}
 
@@ -286,6 +290,8 @@ func TestGetPolicy_MissingIDReturns404(t *testing.T) {
 	server, _, key, _ := newIntegrationServerWithWorkloads(t)
 	defer server.Close()
 
-	resp := get(t, server.Client(), server.URL+"/api/v1/policies/01JBB0W9YRXG4SZV2QKM78N3ZZ", key)
+	resp := get(t, server.Client(), server.URL+"/api/v1/policies/"+missingWorkflowPolicyIdentitySubjectID, key)
 	requireStatus(t, resp, http.StatusNotFound)
 }
+
+var missingWorkflowPolicyIdentitySubjectID = scan.GenerateID()

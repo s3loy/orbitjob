@@ -3,11 +3,15 @@ package sloevaluate
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
 	"orbitjob/internal/core/domain/slo"
+	"orbitjob/internal/platform/scan"
 )
+
+var sloTenant = scan.GenerateID()
 
 // ---------------------------------------------------------------------------
 // Stubs
@@ -90,7 +94,7 @@ func TestEvaluateAll_NoActiveSLOs(t *testing.T) {
 	aw := &stubAlertWriter{}
 
 	uc := NewEvaluateUseCase(reader, agg, bw, aw)
-	err := uc.EvaluateAll(context.Background(), "tenant-a")
+	err := uc.EvaluateAll(context.Background(), sloTenant)
 	if err != nil {
 		t.Fatalf("EvaluateAll() error = %v", err)
 	}
@@ -108,7 +112,7 @@ func TestEvaluateAll_SLOWithEvents_CalculatesBurnRate(t *testing.T) {
 			return []slo.Snapshot{
 				{
 					ID:                1,
-					TenantID:          "tenant-a",
+					TenantID:          sloTenant,
 					Name:              "availability-slo",
 					SLIID:             10,
 					Target:            0.99,
@@ -135,7 +139,7 @@ func TestEvaluateAll_SLOWithEvents_CalculatesBurnRate(t *testing.T) {
 	uc := NewEvaluateUseCase(reader, agg, bw, aw)
 	uc.clock = func() time.Time { return now }
 
-	err := uc.EvaluateAll(context.Background(), "tenant-a")
+	err := uc.EvaluateAll(context.Background(), sloTenant)
 	if err != nil {
 		t.Fatalf("EvaluateAll() error = %v", err)
 	}
@@ -169,7 +173,7 @@ func TestEvaluateAll_SLOWithEvents_CalculatesBurnRate(t *testing.T) {
 	}
 }
 
-func TestEvaluateAll_SLOWithNoEvents_ZeroConsumption(t *testing.T) {
+func TestEvaluateAll_SLOWithNoEvents_Unevaluated(t *testing.T) {
 	now := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
 
 	reader := &stubSLOReader{
@@ -177,7 +181,7 @@ func TestEvaluateAll_SLOWithNoEvents_ZeroConsumption(t *testing.T) {
 			return []slo.Snapshot{
 				{
 					ID:                2,
-					TenantID:          "tenant-a",
+					TenantID:          sloTenant,
 					Name:              "latency-slo",
 					SLIID:             20,
 					Target:            0.995,
@@ -196,12 +200,12 @@ func TestEvaluateAll_SLOWithNoEvents_ZeroConsumption(t *testing.T) {
 		},
 	}
 	bw := &stubBudgetWriter{}
-	aw := &stubAlertWriter{}
+	aw := &stubAlertWriter{activeAlerts: []AlertSnapshot{{AlertType: "fast_burn"}, {AlertType: "slow_burn"}}}
 
 	uc := NewEvaluateUseCase(reader, agg, bw, aw)
 	uc.clock = func() time.Time { return now }
 
-	err := uc.EvaluateAll(context.Background(), "tenant-a")
+	err := uc.EvaluateAll(context.Background(), sloTenant)
 	if err != nil {
 		t.Fatalf("EvaluateAll() error = %v", err)
 	}
@@ -214,8 +218,68 @@ func TestEvaluateAll_SLOWithNoEvents_ZeroConsumption(t *testing.T) {
 	if b.BudgetTotal != 0 || b.BudgetConsumed != 0 || b.BudgetRemaining != 0 || b.BurnRate != 0 {
 		t.Fatalf("expected all zeros for no events, got %+v", b)
 	}
-	if b.Status != slo.BudgetHealthy {
-		t.Fatalf("expected Status=%q for zero events, got %q", slo.BudgetHealthy, b.Status)
+	if b.Status != slo.BudgetUnevaluated || b.EvaluationReason != slo.ReasonNoSamples || !b.EvaluatedAt.Equal(now) {
+		t.Fatalf("empty window must remain unevaluated with its evaluation time: %+v", b)
+	}
+	if len(aw.created) != 0 || len(aw.resolved) != 0 {
+		t.Fatalf("empty window changed burn alerts: created=%+v resolved=%+v", aw.created, aw.resolved)
+	}
+}
+
+func TestEvaluateSLO_MeasurementEvidence(t *testing.T) {
+	now := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
+	lastEventAt, lastSampleAt := now.Add(-time.Minute), now.Add(-30*time.Second)
+	staleAt := now.Add(-time.Second)
+	inactive := false
+	s := slo.Snapshot{ID: 2, SLIID: 20, Target: 0.99, WindowType: slo.WindowTypeRolling,
+		WindowDuration: 24 * time.Hour, AlertFastBurnRate: 14.4, AlertSlowBurnRate: 2}
+	for _, tc := range []struct {
+		name      string
+		aggregate WindowAggregate
+		status    string
+		reason    string
+	}{
+		{name: "inactive without samples", aggregate: WindowAggregate{SourceAvailable: &inactive}, status: slo.BudgetUnevaluated, reason: slo.ReasonSourceInactive},
+		{name: "missing execution timing", aggregate: WindowAggregate{LastEventAt: &lastEventAt, MissingReason: "task_timing_unavailable"}, status: slo.BudgetUnevaluated, reason: slo.ReasonMissingTiming},
+		{name: "inactive with retained samples", aggregate: WindowAggregate{GoodEventsCount: 100, TotalEventsCount: 100, LastEventAt: &lastEventAt, LastSampleAt: &lastSampleAt, SourceAvailable: &inactive}, status: slo.BudgetUnevaluated, reason: slo.ReasonSourceInactive},
+		{name: "stale samples", aggregate: WindowAggregate{GoodEventsCount: 100, TotalEventsCount: 100, LastEventAt: &lastEventAt, LastSampleAt: &lastSampleAt, FreshUntil: &staleAt}, status: slo.BudgetUnevaluated, reason: slo.ReasonStale},
+		{name: "fresh at deadline", aggregate: WindowAggregate{GoodEventsCount: 100, TotalEventsCount: 100, LastEventAt: &lastEventAt, LastSampleAt: &lastSampleAt, FreshUntil: &now}, status: slo.BudgetHealthy},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.aggregate.StatisticsSemantics = "event_time_v2"
+			reader := &stubSLOReader{listFunc: func(context.Context, string) ([]slo.Snapshot, error) {
+				return []slo.Snapshot{s}, nil
+			}}
+			agg := &stubSnapshotAggregator{aggregateFunc: func(context.Context, string, int64, time.Time, time.Time) (WindowAggregate, error) {
+				return tc.aggregate, nil
+			}}
+			bw := &stubBudgetWriter{}
+			aw := &stubAlertWriter{activeAlerts: []AlertSnapshot{{AlertType: "fast_burn"}, {AlertType: "slow_burn"}}}
+			if tc.status == slo.BudgetUnevaluated {
+				aw.err = errors.New("unevaluated measurements must not manage burn alerts")
+			}
+			uc := NewEvaluateUseCase(reader, agg, bw, aw)
+			uc.clock = func() time.Time { return now }
+			if err := uc.EvaluateSLO(context.Background(), sloTenant, s.ID); err != nil {
+				t.Fatalf("EvaluateSLO() error = %v", err)
+			}
+			if len(bw.budgets) != 1 {
+				t.Fatalf("expected one persisted evaluation, got %d", len(bw.budgets))
+			}
+			b := bw.budgets[0]
+			if b.Status != tc.status || b.EvaluationReason != tc.reason || !b.EvaluatedAt.Equal(now) ||
+				b.StatisticsSemantics != tc.aggregate.StatisticsSemantics || !reflect.DeepEqual(b.LastEventAt, tc.aggregate.LastEventAt) ||
+				!reflect.DeepEqual(b.LastSampleAt, tc.aggregate.LastSampleAt) {
+				t.Fatalf("evaluation lost measurement evidence: %+v", b)
+			}
+			if tc.status == slo.BudgetUnevaluated {
+				if len(aw.created) != 0 || len(aw.resolved) != 0 {
+					t.Fatalf("unevaluated measurement changed alerts: created=%+v resolved=%+v", aw.created, aw.resolved)
+				}
+			} else if len(aw.created) != 0 || len(aw.resolved) != 2 {
+				t.Fatalf("fresh healthy measurement did not resolve existing alerts: created=%+v resolved=%+v", aw.created, aw.resolved)
+			}
+		})
 	}
 }
 
@@ -227,7 +291,7 @@ func TestEvaluateAll_FastBurnAlertTriggered(t *testing.T) {
 			return []slo.Snapshot{
 				{
 					ID:                3,
-					TenantID:          "tenant-a",
+					TenantID:          sloTenant,
 					Name:              "fast-burn-slo",
 					SLIID:             30,
 					Target:            0.99,
@@ -252,7 +316,7 @@ func TestEvaluateAll_FastBurnAlertTriggered(t *testing.T) {
 	uc := NewEvaluateUseCase(reader, agg, bw, aw)
 	uc.clock = func() time.Time { return now }
 
-	err := uc.EvaluateAll(context.Background(), "tenant-a")
+	err := uc.EvaluateAll(context.Background(), sloTenant)
 	if err != nil {
 		t.Fatalf("EvaluateAll() error = %v", err)
 	}
@@ -279,7 +343,7 @@ func TestEvaluateAll_SlowBurnAlertTriggered(t *testing.T) {
 			return []slo.Snapshot{
 				{
 					ID:                4,
-					TenantID:          "tenant-a",
+					TenantID:          sloTenant,
 					Name:              "slow-burn-slo",
 					SLIID:             40,
 					Target:            0.99,
@@ -307,7 +371,7 @@ func TestEvaluateAll_SlowBurnAlertTriggered(t *testing.T) {
 	uc := NewEvaluateUseCase(reader, agg, bw, aw)
 	uc.clock = func() time.Time { return now }
 
-	err := uc.EvaluateAll(context.Background(), "tenant-a")
+	err := uc.EvaluateAll(context.Background(), sloTenant)
 	if err != nil {
 		t.Fatalf("EvaluateAll() error = %v", err)
 	}
@@ -331,7 +395,7 @@ func TestEvaluateAll_FastBurnAlertResolved(t *testing.T) {
 			return []slo.Snapshot{
 				{
 					ID:                5,
-					TenantID:          "tenant-a",
+					TenantID:          sloTenant,
 					Name:              "recovering-slo",
 					SLIID:             50,
 					Target:            0.99,
@@ -360,7 +424,7 @@ func TestEvaluateAll_FastBurnAlertResolved(t *testing.T) {
 	uc := NewEvaluateUseCase(reader, agg, bw, aw)
 	uc.clock = func() time.Time { return now }
 
-	err := uc.EvaluateAll(context.Background(), "tenant-a")
+	err := uc.EvaluateAll(context.Background(), sloTenant)
 	if err != nil {
 		t.Fatalf("EvaluateAll() error = %v", err)
 	}
@@ -384,7 +448,7 @@ func TestEvaluateAll_SlowBurnAlertResolved(t *testing.T) {
 			return []slo.Snapshot{
 				{
 					ID:                6,
-					TenantID:          "tenant-a",
+					TenantID:          sloTenant,
 					Name:              "slow-recovering-slo",
 					SLIID:             60,
 					Target:            0.99,
@@ -412,7 +476,7 @@ func TestEvaluateAll_SlowBurnAlertResolved(t *testing.T) {
 	uc := NewEvaluateUseCase(reader, agg, bw, aw)
 	uc.clock = func() time.Time { return now }
 
-	err := uc.EvaluateAll(context.Background(), "tenant-a")
+	err := uc.EvaluateAll(context.Background(), sloTenant)
 	if err != nil {
 		t.Fatalf("EvaluateAll() error = %v", err)
 	}
@@ -440,7 +504,7 @@ func TestEvaluateAll_ReaderError(t *testing.T) {
 	aw := &stubAlertWriter{}
 
 	uc := NewEvaluateUseCase(reader, agg, bw, aw)
-	err := uc.EvaluateAll(context.Background(), "tenant-a")
+	err := uc.EvaluateAll(context.Background(), sloTenant)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
@@ -475,7 +539,7 @@ func TestEvaluateAll_AggregatorError_Continues(t *testing.T) {
 	uc.clock = func() time.Time { return now }
 
 	// Errors are logged and continue; EvaluateAll returns nil.
-	err := uc.EvaluateAll(context.Background(), "tenant-a")
+	err := uc.EvaluateAll(context.Background(), sloTenant)
 	if err != nil {
 		t.Fatalf("EvaluateAll() error = %v, expected nil (errors continue)", err)
 	}
@@ -501,7 +565,7 @@ func TestEvaluateSLO_NotFound(t *testing.T) {
 	aw := &stubAlertWriter{}
 
 	uc := NewEvaluateUseCase(reader, agg, bw, aw)
-	err := uc.EvaluateSLO(context.Background(), "tenant-a", 99)
+	err := uc.EvaluateSLO(context.Background(), sloTenant, 99)
 	if err == nil {
 		t.Fatalf("expected error for missing SLO, got nil")
 	}
@@ -528,7 +592,7 @@ func TestEvaluateSLO_SingleSLO(t *testing.T) {
 	uc := NewEvaluateUseCase(reader, agg, bw, aw)
 	uc.clock = func() time.Time { return now }
 
-	err := uc.EvaluateSLO(context.Background(), "tenant-a", 9)
+	err := uc.EvaluateSLO(context.Background(), sloTenant, 9)
 	if err != nil {
 		t.Fatalf("EvaluateSLO() error = %v", err)
 	}
@@ -549,7 +613,7 @@ func TestEvaluateAll_NoDuplicateFastBurnAlert(t *testing.T) {
 			return []slo.Snapshot{
 				{
 					ID:                10,
-					TenantID:          "tenant-a",
+					TenantID:          sloTenant,
 					Name:              "already-alerted-slo",
 					SLIID:             100,
 					Target:            0.99,
@@ -577,7 +641,7 @@ func TestEvaluateAll_NoDuplicateFastBurnAlert(t *testing.T) {
 	uc := NewEvaluateUseCase(reader, agg, bw, aw)
 	uc.clock = func() time.Time { return now }
 
-	err := uc.EvaluateAll(context.Background(), "tenant-a")
+	err := uc.EvaluateAll(context.Background(), sloTenant)
 	if err != nil {
 		t.Fatalf("EvaluateAll() error = %v", err)
 	}
@@ -606,7 +670,7 @@ func TestEvaluateSLO_ReaderError(t *testing.T) {
 	aw := &stubAlertWriter{}
 
 	uc := NewEvaluateUseCase(reader, agg, bw, aw)
-	err := uc.EvaluateAll(context.Background(), "tenant-a")
+	err := uc.EvaluateAll(context.Background(), sloTenant)
 	if err == nil {
 		t.Fatal("expected error for reader failure")
 	}
@@ -637,7 +701,7 @@ func TestEvaluateSLO_BudgetUpsertError(t *testing.T) {
 	uc := NewEvaluateUseCase(reader, agg, bw, aw)
 	uc.clock = func() time.Time { return now }
 
-	err := uc.EvaluateSLO(context.Background(), "tenant-a", 1)
+	err := uc.EvaluateSLO(context.Background(), sloTenant, 1)
 	if err == nil {
 		t.Fatal("expected error for budget upsert failure")
 	}
@@ -672,7 +736,7 @@ func TestEvaluateSLO_BudgetAtRisk(t *testing.T) {
 	uc := NewEvaluateUseCase(reader, agg, bw, aw)
 	uc.clock = func() time.Time { return now }
 
-	err := uc.EvaluateAll(context.Background(), "tenant-a")
+	err := uc.EvaluateAll(context.Background(), sloTenant)
 	if err != nil {
 		t.Fatalf("EvaluateSLO() error = %v", err)
 	}
@@ -707,7 +771,7 @@ func TestManageAlerts_GetActiveError(t *testing.T) {
 	uc.clock = func() time.Time { return now }
 
 	// EvaluateSLO should return error for alert writer failure
-	err := uc.EvaluateSLO(context.Background(), "tenant-a", 1)
+	err := uc.EvaluateSLO(context.Background(), sloTenant, 1)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -738,7 +802,7 @@ func TestManageAlerts_CreateAlertError(t *testing.T) {
 	// Override Create to return error
 	aw.err = wantErr
 
-	err := uc.EvaluateSLO(context.Background(), "tenant-a", 1)
+	err := uc.EvaluateSLO(context.Background(), sloTenant, 1)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -774,7 +838,7 @@ func TestManageAlerts_ResolveAlertError(t *testing.T) {
 	// Override ResolveBySLOAndType to return error
 	aw.err = wantErr
 
-	err := uc.EvaluateSLO(context.Background(), "tenant-a", 1)
+	err := uc.EvaluateSLO(context.Background(), sloTenant, 1)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -788,7 +852,7 @@ func TestEvaluateAll_NoDuplicateSlowBurnAlert(t *testing.T) {
 			return []slo.Snapshot{
 				{
 					ID:                11,
-					TenantID:          "tenant-a",
+					TenantID:          sloTenant,
 					Name:              "already-slow-alerted-slo",
 					SLIID:             110,
 					Target:            0.99,
@@ -816,7 +880,7 @@ func TestEvaluateAll_NoDuplicateSlowBurnAlert(t *testing.T) {
 	uc := NewEvaluateUseCase(reader, agg, bw, aw)
 	uc.clock = func() time.Time { return now }
 
-	err := uc.EvaluateAll(context.Background(), "tenant-a")
+	err := uc.EvaluateAll(context.Background(), sloTenant)
 	if err != nil {
 		t.Fatalf("EvaluateAll() error = %v", err)
 	}
@@ -868,7 +932,7 @@ func TestEvaluateSLO_NoEvents_BudgetUpsertError(t *testing.T) {
 	uc := NewEvaluateUseCase(reader, agg, bw, aw)
 	uc.clock = func() time.Time { return now }
 
-	err := uc.EvaluateSLO(context.Background(), "tenant-a", 1)
+	err := uc.EvaluateSLO(context.Background(), sloTenant, 1)
 	if err == nil {
 		t.Fatal("expected error for budget upsert failure on no events")
 	}
@@ -900,7 +964,7 @@ func TestManageAlerts_CreateFastBurnError(t *testing.T) {
 	uc.clock = func() time.Time { return now }
 	aw.err = wantErr
 
-	err := uc.EvaluateSLO(context.Background(), "tenant-a", 1)
+	err := uc.EvaluateSLO(context.Background(), sloTenant, 1)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -933,7 +997,7 @@ func TestManageAlerts_ResolveFastBurnError(t *testing.T) {
 	uc.clock = func() time.Time { return now }
 	aw.err = wantErr
 
-	err := uc.EvaluateSLO(context.Background(), "tenant-a", 1)
+	err := uc.EvaluateSLO(context.Background(), sloTenant, 1)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -962,7 +1026,7 @@ func TestManageAlerts_CreateSlowBurnError(t *testing.T) {
 	uc.clock = func() time.Time { return now }
 	aw.err = wantErr
 
-	err := uc.EvaluateSLO(context.Background(), "tenant-a", 1)
+	err := uc.EvaluateSLO(context.Background(), sloTenant, 1)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -995,7 +1059,7 @@ func TestManageAlerts_ResolveSlowBurnError(t *testing.T) {
 	uc.clock = func() time.Time { return now }
 	aw.err = wantErr
 
-	err := uc.EvaluateSLO(context.Background(), "tenant-a", 1)
+	err := uc.EvaluateSLO(context.Background(), sloTenant, 1)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -1013,7 +1077,7 @@ func TestEvaluateSLO_ListActiveError(t *testing.T) {
 	aw := &stubAlertWriter{}
 
 	uc := NewEvaluateUseCase(reader, agg, bw, aw)
-	err := uc.EvaluateSLO(context.Background(), "tenant-a", 1)
+	err := uc.EvaluateSLO(context.Background(), sloTenant, 1)
 	if err == nil {
 		t.Fatal("expected error")
 	}

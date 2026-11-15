@@ -3,6 +3,7 @@ package functioninvoke
 import (
 	"context"
 	"errors"
+	"orbitjob/internal/platform/scan"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +21,7 @@ import (
 // to it, so the promauto-registered global vectors keep the assertions exact
 // regardless of test order.
 
-const tenantID = "fninvoke-tenant00000000000" // 26 chars
+var tenantID = scan.GenerateID()
 
 func activeDefinition(id int64) function.Definition {
 	return function.Definition{
@@ -75,7 +76,17 @@ func (f *fakePublisher) Publish(ctx context.Context, run v1alpha1.JobRun) (v1alp
 	if f.err != nil {
 		return v1alpha1.JobRun{}, false, f.err
 	}
-	return f.stored, f.created, nil
+	stored := f.stored
+	if stored.Spec.ScheduledJobRef.UID == "" {
+		stored.Spec = run.Spec
+	}
+	if stored.Name == "" {
+		stored.Name = run.Name
+	}
+	if stored.Namespace == "" {
+		stored.Namespace = run.Namespace
+	}
+	return stored, f.created, nil
 }
 
 func (f *fakePublisher) Get(ctx context.Context, namespace, name string) (v1alpha1.JobRun, error) {
@@ -92,16 +103,20 @@ func assembledUseCase(fns *fakeFunctions, revs *fakeRevisions, pub *fakePublishe
 }
 
 func invokeInput(id int64) Input {
-	return Input{TenantID: tenantID, FunctionID: id, ActorID: "admin-key-1"}
+	return Input{TenantID: tenantID, FunctionID: id, ActorID: invokeFixtureActorKeyID}
 }
 
 // TestInvokePublishesOneFunctionRun pins the happy path: an active definition
 // with a materialized revision publishes exactly one Function-trigger JobRun
-// carrying the pinned revision, the caller's actor and the definition's
+// carrying the pinned revision, the caller's actor and that revision's
 // timeout, and reports the CR reference.
 func TestInvokePublishesOneFunctionRun(t *testing.T) {
 	def := activeDefinition(7)
-	rev := Revision{ID: 501, Namespace: "fn-namespace"}
+	// The newer definition has not been projected yet. Every execution field,
+	// including the CR deadline, must still belong to the active old revision.
+	def.Version = 2
+	def.TimeoutSeconds = 1
+	rev := Revision{ID: 501, Namespace: "fn-namespace", TimeoutSeconds: 60}
 	pub := &fakePublisher{created: true, stored: v1alpha1.JobRun{}}
 	pub.stored.Namespace = "fn-namespace"
 	uc := assembledUseCase(
@@ -128,14 +143,14 @@ func TestInvokePublishesOneFunctionRun(t *testing.T) {
 	if run.Spec.DefinitionRevision != 501 {
 		t.Fatalf("definitionRevision = %d, want the pinned 501", run.Spec.DefinitionRevision)
 	}
-	if run.Spec.Actor != "admin-key-1" {
+	if run.Spec.Actor != invokeFixtureActorKeyID {
 		t.Fatalf("actor = %q, want the caller's principal", run.Spec.Actor)
 	}
 	if run.Spec.OccurrenceKey == "" || len(run.Spec.OccurrenceKey) != 64 {
 		t.Fatalf("occurrence key = %q, want a 64-hex digest", run.Spec.OccurrenceKey)
 	}
-	if run.Spec.TimeoutSeconds != 45 {
-		t.Fatalf("timeoutSeconds = %d, want the definition's 45", run.Spec.TimeoutSeconds)
+	if run.Spec.TimeoutSeconds != 60 {
+		t.Fatalf("timeoutSeconds = %d, want the pinned revision's 60 despite current definition's 1", run.Spec.TimeoutSeconds)
 	}
 	if run.Namespace != "fn-namespace" {
 		t.Fatalf("namespace = %q, want the revision's", run.Namespace)
@@ -338,7 +353,7 @@ func TestInvokeScopedCallerCannotInvokeOtherGroups(t *testing.T) {
 	// A function outside the caller's group is as invisible as a missing one:
 	// saying anything else would leak whether it exists.
 	def := activeDefinition(10)
-	def.ResourceGroupID = "group-9"
+	def.ResourceGroupID = invokeFixtureDefinitionGroupID
 	pub := &fakePublisher{}
 	uc := assembledUseCase(
 		&fakeFunctions{def: def, found: true},
@@ -347,7 +362,7 @@ func TestInvokeScopedCallerCannotInvokeOtherGroups(t *testing.T) {
 	)
 
 	in := invokeInput(10)
-	in.ResourceGroupID = "group-2"
+	in.ResourceGroupID = invokeFixtureCallerGroupID
 	_, err := uc.Invoke(context.Background(), in)
 	var notFound *resource.NotFoundError
 	if !errors.As(err, &notFound) {
@@ -460,13 +475,13 @@ func TestInvokeStoreAndPublishErrorsPropagate(t *testing.T) {
 
 func TestInvokeValidatesInput(t *testing.T) {
 	cases := map[string]Input{
-		"zero function id":  {TenantID: tenantID, FunctionID: 0, ActorID: "a"},
-		"short tenant id":   {TenantID: "short", FunctionID: 1, ActorID: "a"},
+		"zero function id":  {TenantID: tenantID, FunctionID: 0, ActorID: invokeFixtureActorKeyID},
+		"short tenant id":   {TenantID: "short", FunctionID: 1, ActorID: invokeFixtureActorKeyID},
 		"blank actor":       {TenantID: tenantID, FunctionID: 1, ActorID: "  "},
 		"oversized actor":   {TenantID: tenantID, FunctionID: 1, ActorID: strings.Repeat("x", 256)},
-		"missing tenant id": {FunctionID: 1, ActorID: "a"},
-		"wait over the cap": {TenantID: tenantID, FunctionID: 1, ActorID: "a", WaitSeconds: maxInvokeWaitSeconds + 1},
-		"negative wait":     {TenantID: tenantID, FunctionID: 1, ActorID: "a", WaitSeconds: -1},
+		"missing tenant id": {FunctionID: 1, ActorID: invokeFixtureActorKeyID},
+		"wait over the cap": {TenantID: tenantID, FunctionID: 1, ActorID: invokeFixtureActorKeyID, WaitSeconds: maxInvokeWaitSeconds + 1},
+		"negative wait":     {TenantID: tenantID, FunctionID: 1, ActorID: invokeFixtureActorKeyID, WaitSeconds: -1},
 	}
 	for name, in := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -499,3 +514,9 @@ func TestInvokeRequiresDependencies(t *testing.T) {
 		t.Fatal("nil publisher accepted")
 	}
 }
+
+var invokeFixtureActorKeyID = scan.GenerateID()
+
+var invokeFixtureCallerGroupID = scan.GenerateID()
+
+var invokeFixtureDefinitionGroupID = scan.GenerateID()

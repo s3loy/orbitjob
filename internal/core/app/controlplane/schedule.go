@@ -6,6 +6,7 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -37,11 +38,15 @@ const (
 // work a cron expression triggered.
 const ActorScheduler = "orbitjob-scheduler"
 
-// RevisionSource lists the definitions a tenant may schedule and reports how many
-// of their runs are still open.
+// These hard bounds keep an accidental caller configuration from turning one
+// definition into an unbounded minute scan or catch-up admission burst.
+const MaxScheduleLookback = 24 * time.Hour
+const MaxCatchUpOccurrences = 100
+
+// RevisionSource lists the definitions a tenant may schedule. The run recorder
+// applies the source's concurrency policy atomically with admission.
 type RevisionSource interface {
 	ActiveRevisions(ctx context.Context, tenantID string) ([]revision.Revision, error)
-	CountOpenRuns(ctx context.Context, tenantID, sourceUID string) (int, error)
 }
 
 // RunRecorder stores a run, records who asked for it, and reports whether this
@@ -85,6 +90,8 @@ type Scheduler struct {
 	// MaxCatchUp bounds how many missed occurrences a CatchUpBounded definition
 	// may fire in one tick.
 	MaxCatchUp int
+	// SourceExists checks current definition liveness before creating new work.
+	SourceExists func(context.Context, revision.Revision) (bool, error)
 }
 
 // Schedule reports whether an instant is an activation of a cron expression.
@@ -149,14 +156,38 @@ func (s Scheduler) repairOpenRuns(ctx context.Context, tenant string, rev revisi
 	if err != nil {
 		return fmt.Errorf("list open runs for %s: %w", rev.Identity.Name, err)
 	}
-	var spec v1alpha1.ScheduledJobSpec
-	if err := json.Unmarshal([]byte(rev.NormalizedSpec), &spec); err != nil {
-		return fmt.Errorf("decode revision %d for %s: %w", rev.ID, rev.Identity.Name, err)
-	}
 	for _, run := range open {
-		obj := s.jobRunObject(rev, spec, jobrun.StoredRun{
+		pinned := rev
+		if reader, ok := s.Revisions.(interface {
+			RevisionByID(context.Context, string, int64) (revision.Revision, error)
+		}); ok {
+			pinned, err = reader.RevisionByID(ctx, tenant, run.RevisionID)
+			if err != nil {
+				return err
+			}
+			if pinned.Identity.SourceUID != rev.Identity.SourceUID {
+				return fmt.Errorf("repair revision source differs from recorded run")
+			}
+		} else if run.RevisionID != rev.ID {
+			return fmt.Errorf("pinned revision reader is required for repair")
+		}
+		var spec v1alpha1.ScheduledJobSpec
+		if err = json.Unmarshal([]byte(pinned.NormalizedSpec), &spec); err != nil {
+			return fmt.Errorf("decode pinned repair revision %d: %w", pinned.ID, err)
+		}
+		obj := s.jobRunObject(pinned, spec, jobrun.StoredRun{
 			ID: run.ID, RevisionID: run.RevisionID, Phase: run.Phase,
-		}, run.OccurrenceKey, time.Time{})
+		}, run.OccurrenceKey, run.ScheduledFor)
+		if run.Trigger != "" {
+			obj.Spec.Trigger = v1alpha1.Trigger(run.Trigger)
+		}
+		if run.Actor != "" {
+			obj.Spec.Actor = run.Actor
+		}
+		if pinned.Identity.SourceMode != "kubernetes" {
+			obj.OwnerReferences = nil
+		}
+		obj.Spec.CancelRequested = run.Phase == jobrun.CancelRequested || run.Phase == jobrun.CancelUnknown
 		if err := s.Publisher.Publish(ctx, obj); err != nil {
 			return fmt.Errorf("repair run %d for %s: %w", run.ID, rev.Identity.Name, err)
 		}
@@ -165,9 +196,22 @@ func (s Scheduler) repairOpenRuns(ctx context.Context, tenant string, rev revisi
 }
 
 func (s Scheduler) fireDefinition(ctx context.Context, tenant string, rev revision.Revision, now time.Time, grace time.Duration) (int, error) {
+	if s.SourceExists != nil {
+		alive, err := s.SourceExists(ctx, rev)
+		if err != nil {
+			return 0, err
+		}
+		if !alive {
+			return 0, nil
+		}
+	}
+
 	var spec v1alpha1.ScheduledJobSpec
 	if err := json.Unmarshal([]byte(rev.NormalizedSpec), &spec); err != nil {
 		return 0, fmt.Errorf("decode revision %d for %s: %w", rev.ID, rev.Identity.Name, err)
+	}
+	if err := s.repairOpenRuns(ctx, tenant, rev); err != nil {
+		return 0, err
 	}
 	if spec.Suspend || spec.Schedule == "" {
 		return 0, nil
@@ -182,26 +226,37 @@ func (s Scheduler) fireDefinition(ctx context.Context, tenant string, rev revisi
 	// non-terminal phase forever, and under Forbid that run blocks every future
 	// occurrence of its own definition -- including the reconcile that would
 	// have repaired it. Publishing first breaks that cycle.
-	if err := s.repairOpenRuns(ctx, tenant, rev); err != nil {
-		return 0, err
-	}
-
 	occurrences := selectOccurrences(schedule, spec.MisfirePolicy, now, grace, s.MaxCatchUp)
 	if len(occurrences) == 0 {
 		return 0, nil
 	}
 
-	allowed, err := s.concurrencyAllows(ctx, tenant, rev.Identity.SourceUID, spec.ConcurrencyPolicy)
-	if err != nil {
-		return 0, err
-	}
-	if !allowed {
-		return 0, nil
-	}
-
 	created := 0
 	for _, scheduledAt := range occurrences {
+		if !rev.CreatedAt.IsZero() && scheduledAt.Before(rev.CreatedAt) {
+			continue
+		}
 		occurrenceKey := coordination.OccurrenceKey(rev.Identity.SourceUID, rev.ID, scheduledAt)
+		if reader, ok := s.Runs.(interface {
+			RunByOccurrence(context.Context, string, string, string) (jobrun.StoredRun, bool, error)
+		}); ok {
+			_, found, err := reader.RunByOccurrence(ctx, tenant, rev.Identity.SourceUID, occurrenceKey)
+			if err != nil {
+				return created, err
+			}
+			if found {
+				continue
+			}
+		}
+		if s.SourceExists != nil {
+			alive, err := s.SourceExists(ctx, rev)
+			if err != nil {
+				return created, err
+			}
+			if !alive {
+				return created, nil
+			}
+		}
 		// RevisionID is the opaque stored identity; the run pins exactly the
 		// revision the scheduler read, so editing the definition mid-tick
 		// cannot change what an already-decided occurrence executes.
@@ -211,7 +266,17 @@ func (s Scheduler) fireDefinition(ctx context.Context, tenant string, rev revisi
 			OccurrenceKey: occurrenceKey,
 			Trigger:       jobrun.Schedule,
 			Phase:         jobrun.Pending,
+			ScheduledFor:  scheduledAt,
 		}, spec.RetryPolicy.EffectiveMaxAttempts(), s.actor())
+		var blocked *jobrun.AdmissionBlockedError
+		if errors.As(err, &blocked) {
+			if blocked.Policy == string(v1alpha1.Replace) {
+				if err := s.cancelRuns(ctx, rev, blocked.CancelTargets); err != nil {
+					return created, err
+				}
+			}
+			return created, nil
+		}
 		if err != nil {
 			return created, fmt.Errorf("create run for %s: %w", rev.Identity.Name, err)
 		}
@@ -229,6 +294,9 @@ func (s Scheduler) fireDefinition(ctx context.Context, tenant string, rev revisi
 		}
 		if isNew {
 			created++
+			if spec.ConcurrencyPolicy == v1alpha1.Forbid || spec.ConcurrencyPolicy == v1alpha1.Replace {
+				break
+			}
 		}
 	}
 	return created, nil
@@ -307,6 +375,15 @@ func scheduleAnnotation(at time.Time) map[string]string {
 // grace, so a definition that was idle far longer than its grace simply has
 // nothing due rather than replaying an unbounded backlog.
 func selectOccurrences(schedule Schedule, policy v1alpha1.MisfirePolicy, now time.Time, grace time.Duration, maxCatchUp int) []time.Time {
+	if grace <= 0 {
+		grace = time.Hour
+	}
+	if grace > MaxScheduleLookback {
+		grace = MaxScheduleLookback
+	}
+	if maxCatchUp > MaxCatchUpOccurrences {
+		maxCatchUp = MaxCatchUpOccurrences
+	}
 	matches := matchesInWindow(schedule, now, grace)
 	if len(matches) == 0 {
 		return nil
@@ -347,17 +424,6 @@ func matchesInWindow(schedule Schedule, now time.Time, grace time.Duration) []ti
 	return matches
 }
 
-func (s Scheduler) concurrencyAllows(ctx context.Context, tenant, sourceUID string, policy v1alpha1.ConcurrencyPolicy) (bool, error) {
-	if policy == "" || policy == v1alpha1.Allow {
-		return true, nil
-	}
-	open, err := s.Revisions.CountOpenRuns(ctx, tenant, sourceUID)
-	if err != nil {
-		return false, fmt.Errorf("count open runs: %w", err)
-	}
-	return open == 0, nil
-}
-
 func (s Scheduler) parse(expression string) (Schedule, error) {
 	if s.ParseSchedule != nil {
 		return s.ParseSchedule(expression)
@@ -384,4 +450,23 @@ func (s Scheduler) actor() string {
 		return v
 	}
 	return ActorScheduler
+}
+
+func (s Scheduler) cancelRuns(ctx context.Context, rev revision.Revision, runs []jobrun.OpenRun) error {
+	canceler, ok := s.Publisher.(interface {
+		RequestCancel(context.Context, string, string, ...v1alpha1.RunIdentity) error
+	})
+	if !ok {
+		return fmt.Errorf("run canceler required for Replace")
+	}
+	for _, run := range runs {
+		trigger := v1alpha1.Trigger(run.Trigger)
+		if trigger == "" {
+			trigger = v1alpha1.Schedule
+		}
+		if err := canceler.RequestCancel(ctx, rev.Identity.Namespace, rev.Identity.Name, v1alpha1.RunIdentity{SourceUID: rev.Identity.SourceUID, OccurrenceKey: run.OccurrenceKey, RevisionID: run.RevisionID, Trigger: trigger}); err != nil {
+			return err
+		}
+	}
+	return nil
 }

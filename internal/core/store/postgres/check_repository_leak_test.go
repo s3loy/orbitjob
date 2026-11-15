@@ -9,6 +9,8 @@ import (
 	"time"
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
+
+	"orbitjob/internal/platform/scan"
 )
 
 // The check repository used to release its transactions only through
@@ -25,16 +27,16 @@ func TestCheckRepository_GetByID_NotFound_RollsBack(t *testing.T) {
 	repo, mock := newCheckRepoMock(t)
 
 	mock.ExpectBegin()
-	expectSetConfig(mock, "default")
+	expectSetConfig(mock, coreFixtureCheckRepositoryLeakTenantID)
 	mock.ExpectQuery("SELECT .+ FROM checks WHERE tenant_id").
-		WithArgs("default", int64(99)).
+		WithArgs(coreFixtureCheckRepositoryLeakTenantID, int64(99)).
 		WillReturnError(sql.ErrNoRows)
 	// The not-found return carries scanErr, not the outer err the old
 	// conditional release was keyed on, so this rollback only happens once the
 	// release no longer depends on that variable.
 	mock.ExpectRollback()
 
-	if _, err := repo.GetByID(context.Background(), "default", 99); err == nil {
+	if _, err := repo.GetByID(context.Background(), coreFixtureCheckRepositoryLeakTenantID, 99); err == nil {
 		t.Fatal("expected not-found error")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -46,15 +48,15 @@ func TestCheckRepository_GetByID_ScanFailure_RollsBack(t *testing.T) {
 	repo, mock := newCheckRepoMock(t)
 
 	mock.ExpectBegin()
-	expectSetConfig(mock, "default")
+	expectSetConfig(mock, coreFixtureCheckRepositoryLeakTenantID)
 	// A scan failure other than ErrNoRows is captured into scanErr the same
 	// way and must not strand the transaction either.
 	mock.ExpectQuery("SELECT .+ FROM checks WHERE tenant_id").
-		WithArgs("default", int64(1)).
+		WithArgs(coreFixtureCheckRepositoryLeakTenantID, int64(1)).
 		WillReturnError(errors.New("read: connection reset"))
 	mock.ExpectRollback()
 
-	if _, err := repo.GetByID(context.Background(), "default", 1); err == nil {
+	if _, err := repo.GetByID(context.Background(), coreFixtureCheckRepositoryLeakTenantID, 1); err == nil {
 		t.Fatal("expected scan error")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -66,15 +68,15 @@ func TestCheckRepository_ChangeStatus_UnknownAction_RollsBack(t *testing.T) {
 	repo, mock := newCheckRepoMock(t)
 
 	mock.ExpectBegin()
-	expectSetConfig(mock, "default")
+	expectSetConfig(mock, coreFixtureCheckRepositoryLeakTenantID)
 	mock.ExpectQuery("SELECT status FROM checks").
-		WithArgs("default", int64(7), nil).
+		WithArgs(coreFixtureCheckRepositoryLeakTenantID, int64(7), nil).
 		WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow("active"))
 	// The unknown-action return happens before err is ever assigned, so the
 	// err-keyed release never fired on it.
 	mock.ExpectRollback()
 
-	_, err := repo.ChangeStatus(context.Background(), "default", "", 7, 1, "restart")
+	_, err := repo.ChangeStatus(context.Background(), coreFixtureCheckRepositoryLeakTenantID, "", 7, 1, "restart")
 	if err == nil || !strings.Contains(err.Error(), "unknown action: restart") {
 		t.Fatalf("expected unknown-action error, got %v", err)
 	}
@@ -88,18 +90,18 @@ func TestCheckRepository_ListDue_ScanError_RollsBack(t *testing.T) {
 	now := time.Now()
 
 	mock.ExpectBegin()
-	expectSetConfig(mock, "default")
+	expectSetConfig(mock, coreFixtureCheckRepositoryLeakTenantID)
 	// timeout_sec is a string, so the row Scan itself fails; the loop captures
 	// that error into a local, which the err-keyed release never saw.
 	mock.ExpectQuery("SELECT .+ FROM checks WHERE tenant_id").
-		WithArgs("default", sqlmock.AnyArg(), 50).
+		WithArgs(coreFixtureCheckRepositoryLeakTenantID, sqlmock.AnyArg(), 50).
 		WillReturnRows(sqlmock.NewRows(checkColumns).AddRow(
-			1, "health", nil, "default", nil, "active", "http_health",
-			nil, nil, "cron", nil, nil, "UTC", "boom", 2, 5, nil, nil, 1, now, now,
+			1, "health", nil, coreFixtureCheckRepositoryLeakTenantID, nil, "active", "http_health",
+			nil, nil, "cron", nil, nil, "UTC", "boom", 2, 5, nil, nil, 1, now, now, 1,
 		))
 	mock.ExpectRollback()
 
-	_, err := repo.ListDue(context.Background(), "default", now, 50)
+	_, err := repo.ListDue(context.Background(), coreFixtureCheckRepositoryLeakTenantID, now, 50)
 	if err == nil || !strings.Contains(err.Error(), "scan check") {
 		t.Fatalf("expected scan error, got %v", err)
 	}
@@ -113,21 +115,21 @@ func TestCheckRepository_ListDue_IterationError_RollsBack(t *testing.T) {
 	now := time.Now()
 
 	mock.ExpectBegin()
-	expectSetConfig(mock, "default")
+	expectSetConfig(mock, coreFixtureCheckRepositoryLeakTenantID)
 	// RowError makes the driver's Next fail on the second row, so one row
 	// scans fine and the loop then exits through rows.Err() -- also captured
 	// into a local the err-keyed release never saw.
 	mock.ExpectQuery("SELECT .+ FROM checks WHERE tenant_id").
-		WithArgs("default", sqlmock.AnyArg(), 50).
+		WithArgs(coreFixtureCheckRepositoryLeakTenantID, sqlmock.AnyArg(), 50).
 		WillReturnRows(sqlmock.NewRows(checkColumns).
-			AddRow(1, "health", nil, "default", nil, "active", "http_health",
-				nil, nil, "cron", nil, nil, "UTC", 30, 2, 5, nil, nil, 1, now, now).
-			AddRow(2, "backup", nil, "default", nil, "active", "http_health",
-				nil, nil, "cron", nil, nil, "UTC", 30, 2, 5, nil, nil, 1, now, now).
+			AddRow(1, "health", nil, coreFixtureCheckRepositoryLeakTenantID, nil, "active", "http_health",
+				nil, nil, "cron", nil, nil, "UTC", 30, 2, 5, nil, nil, 1, now, now, 1).
+			AddRow(2, "backup", nil, coreFixtureCheckRepositoryLeakTenantID, nil, "active", "http_health",
+				nil, nil, "cron", nil, nil, "UTC", 30, 2, 5, nil, nil, 1, now, now, 1).
 			RowError(1, errors.New("driver: connection reset mid-iteration")))
 	mock.ExpectRollback()
 
-	_, err := repo.ListDue(context.Background(), "default", now, 50)
+	_, err := repo.ListDue(context.Background(), coreFixtureCheckRepositoryLeakTenantID, now, 50)
 	if err == nil || !strings.Contains(err.Error(), "iterate checks") {
 		t.Fatalf("expected iteration error, got %v", err)
 	}
@@ -135,3 +137,5 @@ func TestCheckRepository_ListDue_IterationError_RollsBack(t *testing.T) {
 		t.Errorf("transaction lifecycle incomplete on the iteration-error path: %v", err)
 	}
 }
+
+var coreFixtureCheckRepositoryLeakTenantID = scan.GenerateID()

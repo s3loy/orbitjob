@@ -18,13 +18,25 @@ import (
 )
 
 type fakeFunctionRecorder struct {
-	records []function.CompletedRecord
-	err     error
+	records  []function.CompletedRecord
+	err      error
+	failures int
+	calls    int
 }
 
 func (f *fakeFunctionRecorder) RecordCompleted(_ context.Context, _ string, record function.CompletedRecord) error {
+	f.calls++
+	if f.failures > 0 {
+		f.failures--
+		return errors.New("history database unavailable")
+	}
 	if f.err != nil {
 		return f.err
+	}
+	for _, existing := range f.records {
+		if existing.RunID == record.RunID {
+			return nil
+		}
 	}
 	f.records = append(f.records, record)
 	return nil
@@ -52,7 +64,7 @@ func functionRunObject(t *testing.T) unstructured.Unstructured {
 			ScheduledJobRef:    v1alpha1.ObjectReference{Name: "resize-image", UID: "function-9"},
 			DefinitionRevision: 3,
 			Trigger:            v1alpha1.Function,
-			Actor:              "principal-key-1",
+			Actor:              executionActorKeyID,
 			OccurrenceKey:      "f0e1d2c3a4b5c6d7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1",
 		},
 	}
@@ -77,11 +89,11 @@ func TestMaterializeManualRunAcceptsFunctionTrigger(t *testing.T) {
 	obj := functionRunObject(t)
 	rt := newRuntime(t, fakeDynamic(t, &obj), revs, runs, &fakeJobs{})
 
-	_, found, err := rt.materializeManualRun(context.Background(), "tenant-a", v1alpha1.JobRunSpec{
+	_, found, err := rt.materializeManualRun(context.Background(), executionTenant, v1alpha1.JobRunSpec{
 		ScheduledJobRef:    v1alpha1.ObjectReference{Name: "resize-image", UID: "function-9"},
 		DefinitionRevision: 3,
 		Trigger:            v1alpha1.Function,
-		Actor:              "principal-key-1",
+		Actor:              executionActorKeyID,
 		OccurrenceKey:      "f0e1d2c3",
 	})
 	if err != nil || !found {
@@ -99,7 +111,7 @@ func TestMaterializeManualRunAcceptsFunctionTrigger(t *testing.T) {
 	// walker commits the row first, so a bare CR is forged, and the run
 	// reconciliation turns the not-found into its refusal.
 	before := len(runs.createdRuns)
-	_, found, err = rt.materializeManualRun(context.Background(), "tenant-a", v1alpha1.JobRunSpec{
+	_, found, err = rt.materializeManualRun(context.Background(), executionTenant, v1alpha1.JobRunSpec{
 		ScheduledJobRef:    v1alpha1.ObjectReference{Name: "resize-image", UID: "function-9"},
 		DefinitionRevision: 3,
 		Trigger:            v1alpha1.Workflow,
@@ -114,13 +126,14 @@ func TestMaterializeManualRunAcceptsFunctionTrigger(t *testing.T) {
 // TestRecordFunctionOutcomeRoutesFunctionRunsOnly pins the hook: a terminal
 // transition whose source uid carries the function prefix upserts the read
 // model with the derived run id and mapped status; any other definition's
-// outcome reaches nothing, and a replayed transition reaches nothing.
+// outcome reaches nothing, and a replay keeps one history row.
 func TestRecordFunctionOutcomeRoutesFunctionRunsOnly(t *testing.T) {
 	outcome := controlplane.TerminalOutcome{
 		RunID:         11,
 		SourceUID:     "function-9",
 		OccurrenceKey: "f0e1d2c3",
 		Phase:         jobrun.Succeeded,
+		CreatedAt:     time.Unix(1699999900, 0).UTC(),
 		StartedAt:     time.Unix(1700000000, 0).UTC(),
 		CompletedAt:   time.Unix(1700000065, 0).UTC(),
 	}
@@ -132,7 +145,9 @@ func TestRecordFunctionOutcomeRoutesFunctionRunsOnly(t *testing.T) {
 		Now:           func() time.Time { return time.Unix(1700000100, 0).UTC() },
 	}
 
-	rt.recordFunctionOutcome(context.Background(), "tenant-a", 11, jobrun.Succeeded, true)
+	if err := rt.recordFunctionOutcome(context.Background(), executionTenant, 11, jobrun.Succeeded, true); err != nil {
+		t.Fatal(err)
+	}
 	if len(functions.records) != 1 {
 		t.Fatalf("records = %+v, want exactly one upsert", functions.records)
 	}
@@ -146,45 +161,91 @@ func TestRecordFunctionOutcomeRoutesFunctionRunsOnly(t *testing.T) {
 	if record.DurationMs != 65000 {
 		t.Fatalf("duration = %d, want 65000 from the attempt span", record.DurationMs)
 	}
-	if record.TriggeredAt != outcome.StartedAt {
-		t.Fatalf("triggered at = %s, want the attempt start", record.TriggeredAt)
+	if record.TriggeredAt != outcome.CreatedAt {
+		t.Fatalf("triggered at = %s, want ledger creation %s", record.TriggeredAt, outcome.CreatedAt)
+	}
+	if record.StartedAt != outcome.StartedAt {
+		t.Fatalf("started at = %s, want the newest attempt start", record.StartedAt)
 	}
 
 	functions.records = nil
-	rt.recordFunctionOutcome(context.Background(), "tenant-a", 11, jobrun.Succeeded, false)
+	if err := rt.recordFunctionOutcome(context.Background(), executionTenant, 11, jobrun.Succeeded, false); err != nil {
+		t.Fatal(err)
+	}
 	if len(functions.records) != 0 {
 		t.Fatalf("records = %+v, want none: a replayed transition must not double-write", functions.records)
 	}
+	functions.records = nil
 
 	outcomesNonFunction := &fakeTerminalOutcomes{outcome: controlplane.TerminalOutcome{
 		RunID: 11, SourceUID: "a-uuid-not-a-function", OccurrenceKey: "occ-1", Phase: jobrun.Succeeded,
 	}}
 	rt.OutcomeReader = outcomesNonFunction
-	rt.recordFunctionOutcome(context.Background(), "tenant-a", 11, jobrun.Succeeded, true)
+	if err := rt.recordFunctionOutcome(context.Background(), executionTenant, 11, jobrun.Succeeded, true); err != nil {
+		t.Fatal(err)
+	}
 	if len(functions.records) != 0 {
 		t.Fatalf("records = %+v, want none for a non-function definition", functions.records)
 	}
 
+	outcome.Phase = jobrun.Canceled
 	rt.OutcomeReader = &fakeTerminalOutcomes{outcome: outcome}
-	rt.recordFunctionOutcome(context.Background(), "tenant-a", 11, jobrun.Canceled, true)
+	if err := rt.recordFunctionOutcome(context.Background(), executionTenant, 11, jobrun.Canceled, true); err != nil {
+		t.Fatal(err)
+	}
 	if len(functions.records) != 1 || functions.records[0].Status != function.StatusCanceled {
 		t.Fatalf("records = %+v, want the canceled outcome recorded", functions.records)
 	}
 }
 
-// TestRecordFunctionOutcomeToleratesReadFailures pins the checkobserve call:
-// the phase write is the fact, so a failed outcome read or a failed read
-// model write is absorbed, never failed over into the reconcile.
-func TestRecordFunctionOutcomeToleratesReadFailures(t *testing.T) {
+func TestRecordFunctionOutcomeRetainsLegacyReaderTimingFallback(t *testing.T) {
+	now := time.Unix(1700000100, 0).UTC()
+	started := now.Add(-time.Minute)
+	for _, hasAttempt := range []bool{true, false} {
+		name := "attempt start"
+		if !hasAttempt {
+			name = "clock without attempt"
+		}
+		t.Run(name, func(t *testing.T) {
+			outcome := controlplane.TerminalOutcome{
+				SourceUID: "function-9", OccurrenceKey: "legacy", Phase: jobrun.Canceled,
+				CompletedAt: now,
+			}
+			want := now
+			if hasAttempt {
+				outcome.StartedAt, want = started, started
+			}
+			recorder := &fakeFunctionRecorder{}
+			rt := Runtime{
+				Functions: recorder, OutcomeReader: &fakeTerminalOutcomes{outcome: outcome},
+				Now: func() time.Time { return now },
+			}
+			if err := rt.recordFunctionOutcome(context.Background(), "tenant-a", 11, jobrun.Canceled); err != nil {
+				t.Fatal(err)
+			}
+			if len(recorder.records) != 1 || recorder.records[0].TriggeredAt != want {
+				t.Fatalf("legacy reader fallback = %+v, want trigger time %s", recorder.records, want)
+			}
+		})
+	}
+}
+
+// Errors must reach the controller so the committed terminal fact can be replayed.
+func TestRecordFunctionOutcomeReturnsReadAndWriteFailures(t *testing.T) {
+	readErr, writeErr := errors.New("read failed"), errors.New("upsert failed")
 	rt := Runtime{
 		Functions:     &fakeFunctionRecorder{},
-		OutcomeReader: &fakeTerminalOutcomes{err: errors.New("read failed")},
+		OutcomeReader: &fakeTerminalOutcomes{err: readErr},
 	}
-	rt.recordFunctionOutcome(context.Background(), "tenant-a", 11, jobrun.Failed, true)
+	if err := rt.recordFunctionOutcome(context.Background(), executionTenant, 11, jobrun.Failed, true); !errors.Is(err, readErr) {
+		t.Fatalf("read error was lost: %v", err)
+	}
 
-	rt.OutcomeReader = &fakeTerminalOutcomes{outcome: controlplane.TerminalOutcome{SourceUID: "function-9", OccurrenceKey: "occ"}}
-	rt.Functions = &fakeFunctionRecorder{err: errors.New("upsert failed")}
-	rt.recordFunctionOutcome(context.Background(), "tenant-a", 11, jobrun.Failed, true)
+	rt.OutcomeReader = &fakeTerminalOutcomes{outcome: controlplane.TerminalOutcome{SourceUID: "function-9", OccurrenceKey: "occ", Phase: jobrun.Failed}}
+	rt.Functions = &fakeFunctionRecorder{err: writeErr}
+	if err := rt.recordFunctionOutcome(context.Background(), executionTenant, 11, jobrun.Failed, true); !errors.Is(err, writeErr) {
+		t.Fatalf("write error was lost: %v", err)
+	}
 }
 
 // TestCancelOfFunctionRunRecordsCanceledOutcome pins the cancel path's hook:
@@ -195,8 +256,7 @@ func TestCancelOfFunctionRunRecordsCanceledOutcome(t *testing.T) {
 		"function", "function-4", "finance", "resize-image")
 	revs := &fakeRevisions{byID: map[int64]revision.Revision{7: rev}}
 	obj, stored := jobRunObjectWithCancel(t, string(jobrun.Running), 1)
-	// reportPhaseChange=true models the real transition to Canceled; the
-	// hook fires only on genuine transitions.
+	// The first reconciliation observes the real transition to Canceled.
 	runs := &fakeRuns{found: true, stored: stored, reportPhaseChange: true}
 	jobs := &fakeJobs{}
 	functions := &fakeFunctionRecorder{}
@@ -215,4 +275,9 @@ func TestCancelOfFunctionRunRecordsCanceledOutcome(t *testing.T) {
 	if len(functions.records) != 1 || functions.records[0].Status != function.StatusCanceled || functions.records[0].FunctionID != 4 {
 		t.Fatalf("records = %+v, want one canceled row for function 4", functions.records)
 	}
+}
+
+func (f *fakeFunctionRecorder) RecordCompletedOnce(ctx context.Context, tenant string, record function.CompletedRecord) (bool, error) {
+	err := f.RecordCompleted(ctx, tenant, record)
+	return err == nil, err
 }

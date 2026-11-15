@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"orbitjob/internal/core/domain/function"
+	"orbitjob/internal/domain/executionpolicy"
 	"orbitjob/internal/domain/resource"
 )
 
@@ -28,7 +30,7 @@ func NewFunctionRepository(db *sql.DB) *FunctionRepository {
 // functionColumns is the projection every definition read uses, in scan order.
 const functionColumns = `id, name, description, tenant_id, resource_group_id, status,
 	image, command, args, timeout_seconds, retry_limit, history_success, history_failed,
-	labels, version, created_at, updated_at`
+	labels, version, created_at, updated_at, execution_policy_version, retry_safe, resources`
 
 // functionJSON normalizes the jsonb columns' Go shapes before marshal: a nil
 // slice or map would encode as SQL null and violate the array/object CHECKs
@@ -87,29 +89,31 @@ func (r *FunctionRepository) CreateForTenant(ctx context.Context, tenantID strin
 	}
 
 	var snap function.Definition
-	var commandRaw, argsRaw, labelsRaw []byte
+	var commandRaw, argsRaw, labelsRaw, resourcesRaw []byte
 	var description sql.NullString
 	var resourceGroup sql.NullString
 	err = tx.QueryRowContext(ctx, `
 		INSERT INTO functions (
 			name, description, tenant_id, resource_group_id, status, image, command, args,
-			timeout_seconds, retry_limit, history_success, history_failed, labels, version
-		) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11, $12, $13::jsonb, $14)
+			timeout_seconds, retry_limit, history_success, history_failed, labels, version, execution_policy_version, retry_safe, resources
+		) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11, $12, $13::jsonb, $14, $15, $16, $17::jsonb)
 		RETURNING `+functionColumns,
 		def.Name, nullableText(def.Description), tenantID, nullableGroup(def.ResourceGroupID),
 		status, def.Image, commandBytes, argsBytes,
 		def.TimeoutSeconds, def.RetryLimit, def.HistorySuccess, def.HistoryFailed,
-		labelsBytes, version,
+		labelsBytes, version, def.ExecutionPolicyVersion, def.RetrySafe, nullableResourceJSON(def.Resources),
 	).Scan(
 		&snap.ID, &snap.Name, &description, &snap.TenantID, &resourceGroup, &snap.Status,
 		&snap.Image, &commandRaw, &argsRaw, &snap.TimeoutSeconds, &snap.RetryLimit,
 		&snap.HistorySuccess, &snap.HistoryFailed, &labelsRaw, &snap.Version,
-		&snap.CreatedAt, &snap.UpdatedAt,
+		&snap.CreatedAt, &snap.UpdatedAt, &snap.ExecutionPolicyVersion, &snap.RetrySafe, &resourcesRaw,
 	)
 	if err != nil {
 		return function.Definition{}, fmt.Errorf("insert function: %w", err)
 	}
-	unmarshalFunctionScan(&snap, description, resourceGroup, commandRaw, argsRaw, labelsRaw)
+	if err := unmarshalFunctionScan(&snap, description, resourceGroup, commandRaw, argsRaw, labelsRaw, resourcesRaw); err != nil {
+		return function.Definition{}, err
+	}
 
 	if err = tx.Commit(); err != nil {
 		return function.Definition{}, fmt.Errorf("commit function create: %w", err)
@@ -144,24 +148,25 @@ func (r *FunctionRepository) UpdateForTenant(ctx context.Context, tenantID strin
 	}
 
 	var snap function.Definition
-	var commandRaw, argsRaw, labelsRaw []byte
+	var commandRaw, argsRaw, labelsRaw, resourcesRaw []byte
 	var description sql.NullString
 	var resourceGroup sql.NullString
 	err = tx.QueryRowContext(ctx, `
 		UPDATE functions SET
 			name = $3, description = $4, status = $5, image = $6, command = $7::jsonb, args = $8::jsonb,
 			timeout_seconds = $9, retry_limit = $10, history_success = $11, history_failed = $12,
-			labels = $13::jsonb, version = version + 1, updated_at = now()
+			labels = $13::jsonb, version = version + 1, updated_at = now(),
+            execution_policy_version=$15, retry_safe=$16, resources=$17::jsonb
 		WHERE tenant_id = $1 AND id = $2 AND version = $14 AND deleted_at IS NULL
 		RETURNING `+functionColumns,
 		tenantID, def.ID, def.Name, nullableText(def.Description), def.Status, def.Image,
 		commandBytes, argsBytes, def.TimeoutSeconds, def.RetryLimit,
-		def.HistorySuccess, def.HistoryFailed, labelsBytes, def.Version,
+		def.HistorySuccess, def.HistoryFailed, labelsBytes, def.Version, def.ExecutionPolicyVersion, def.RetrySafe, nullableResourceJSON(def.Resources),
 	).Scan(
 		&snap.ID, &snap.Name, &description, &snap.TenantID, &resourceGroup, &snap.Status,
 		&snap.Image, &commandRaw, &argsRaw, &snap.TimeoutSeconds, &snap.RetryLimit,
 		&snap.HistorySuccess, &snap.HistoryFailed, &labelsRaw, &snap.Version,
-		&snap.CreatedAt, &snap.UpdatedAt,
+		&snap.CreatedAt, &snap.UpdatedAt, &snap.ExecutionPolicyVersion, &snap.RetrySafe, &resourcesRaw,
 	)
 	if err == sql.ErrNoRows {
 		// A zero-row update is either a stale Version or a definition that is
@@ -180,7 +185,9 @@ func (r *FunctionRepository) UpdateForTenant(ctx context.Context, tenantID strin
 	if err != nil {
 		return function.Definition{}, fmt.Errorf("update function: %w", err)
 	}
-	unmarshalFunctionScan(&snap, description, resourceGroup, commandRaw, argsRaw, labelsRaw)
+	if err := unmarshalFunctionScan(&snap, description, resourceGroup, commandRaw, argsRaw, labelsRaw, resourcesRaw); err != nil {
+		return function.Definition{}, err
+	}
 
 	if err = tx.Commit(); err != nil {
 		return function.Definition{}, fmt.Errorf("commit function update: %w", err)
@@ -203,7 +210,7 @@ func (r *FunctionRepository) GetForTenant(ctx context.Context, tenantID string, 
 	}
 
 	var snap function.Definition
-	var commandRaw, argsRaw, labelsRaw []byte
+	var commandRaw, argsRaw, labelsRaw, resourcesRaw []byte
 	var description sql.NullString
 	var resourceGroup sql.NullString
 	scanErr := tx.QueryRowContext(ctx, `
@@ -214,7 +221,7 @@ func (r *FunctionRepository) GetForTenant(ctx context.Context, tenantID string, 
 		&snap.ID, &snap.Name, &description, &snap.TenantID, &resourceGroup, &snap.Status,
 		&snap.Image, &commandRaw, &argsRaw, &snap.TimeoutSeconds, &snap.RetryLimit,
 		&snap.HistorySuccess, &snap.HistoryFailed, &labelsRaw, &snap.Version,
-		&snap.CreatedAt, &snap.UpdatedAt,
+		&snap.CreatedAt, &snap.UpdatedAt, &snap.ExecutionPolicyVersion, &snap.RetrySafe, &resourcesRaw,
 	)
 	if scanErr == sql.ErrNoRows {
 		// Deleted and other-tenant rows are alike not found: RLS hides the
@@ -224,7 +231,9 @@ func (r *FunctionRepository) GetForTenant(ctx context.Context, tenantID string, 
 	if scanErr != nil {
 		return function.Definition{}, false, fmt.Errorf("get function: %w", scanErr)
 	}
-	unmarshalFunctionScan(&snap, description, resourceGroup, commandRaw, argsRaw, labelsRaw)
+	if err := unmarshalFunctionScan(&snap, description, resourceGroup, commandRaw, argsRaw, labelsRaw, resourcesRaw); err != nil {
+		return function.Definition{}, false, err
+	}
 
 	if err = tx.Commit(); err != nil {
 		return function.Definition{}, false, fmt.Errorf("commit function get: %w", err)
@@ -263,8 +272,10 @@ func (r *FunctionRepository) listScoped(ctx context.Context, tenantID string, ac
 		WHERE tenant_id = $1 AND deleted_at IS NULL`
 	if activeOnly {
 		query += ` AND status = '` + function.StatusActive + `'`
+		query += ` ORDER BY id ASC`
+	} else {
+		query += ` ORDER BY created_at DESC, id DESC`
 	}
-	query += ` ORDER BY id ASC`
 
 	rows, err := tx.QueryContext(ctx, query, tenantID)
 	if err != nil {
@@ -275,19 +286,21 @@ func (r *FunctionRepository) listScoped(ctx context.Context, tenantID string, ac
 	var defs []function.Definition
 	for rows.Next() {
 		var snap function.Definition
-		var commandRaw, argsRaw, labelsRaw []byte
+		var commandRaw, argsRaw, labelsRaw, resourcesRaw []byte
 		var description sql.NullString
 		var resourceGroup sql.NullString
 		err := rows.Scan(
 			&snap.ID, &snap.Name, &description, &snap.TenantID, &resourceGroup, &snap.Status,
 			&snap.Image, &commandRaw, &argsRaw, &snap.TimeoutSeconds, &snap.RetryLimit,
 			&snap.HistorySuccess, &snap.HistoryFailed, &labelsRaw, &snap.Version,
-			&snap.CreatedAt, &snap.UpdatedAt,
+			&snap.CreatedAt, &snap.UpdatedAt, &snap.ExecutionPolicyVersion, &snap.RetrySafe, &resourcesRaw,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan function: %w", err)
 		}
-		unmarshalFunctionScan(&snap, description, resourceGroup, commandRaw, argsRaw, labelsRaw)
+		if err := unmarshalFunctionScan(&snap, description, resourceGroup, commandRaw, argsRaw, labelsRaw, resourcesRaw); err != nil {
+			return nil, err
+		}
 		defs = append(defs, snap)
 	}
 	if err := rows.Err(); err != nil {
@@ -346,9 +359,9 @@ func nullableText(s string) any {
 // functions-row scan into the domain struct. Decode failures of jsonb the
 // database itself validated (array/object CHECKs) are not survivable
 // misencodings, but losing the row to one would hide a live definition, so
-// the values are surfaced as zero values instead of an error, matching the
-// check repository's read path.
-func unmarshalFunctionScan(snap *function.Definition, description, resourceGroup sql.NullString, commandRaw, argsRaw, labelsRaw []byte) {
+// legacy arrays retain their existing decoding behavior. New execution resources
+// fail closed on malformed typed content instead of silently selecting defaults.
+func unmarshalFunctionScan(snap *function.Definition, description, resourceGroup sql.NullString, commandRaw, argsRaw, labelsRaw, resourcesRaw []byte) error {
 	snap.Description = description.String
 	snap.ResourceGroupID = resourceGroup.String
 	if len(commandRaw) > 0 {
@@ -360,6 +373,12 @@ func unmarshalFunctionScan(snap *function.Definition, description, resourceGroup
 	if len(labelsRaw) > 0 {
 		_ = json.Unmarshal(labelsRaw, &snap.Labels)
 	}
+	if len(resourcesRaw) > 0 {
+		if err := json.Unmarshal(resourcesRaw, &snap.Resources); err != nil {
+			return fmt.Errorf("decode function resources: %w", err)
+		}
+	}
+	return nil
 }
 
 // FunctionRunRepository implements FunctionRunStore against the function_runs
@@ -399,17 +418,23 @@ RETURNING id`
 // a partially-timed record insertable rather than aborting the operator's
 // bookkeeping on a null it can still answer honestly.
 func (r *FunctionRunRepository) RecordCompleted(ctx context.Context, tenantID string, record function.CompletedRecord) error {
+	_, err := r.RecordCompletedOnce(ctx, tenantID, record)
+	return err
+}
+
+// RecordCompletedOnce reports whether this call inserted the terminal fact.
+func (r *FunctionRunRepository) RecordCompletedOnce(ctx context.Context, tenantID string, record function.CompletedRecord) (created bool, err error) {
 	if record.RunID == "" {
-		return fmt.Errorf("run id is required")
+		return false, fmt.Errorf("run id is required")
 	}
 	if record.FunctionID < 1 {
-		return fmt.Errorf("function id is required")
+		return false, fmt.Errorf("function id is required")
 	}
 	if record.Status != function.StatusSuccess && record.Status != function.StatusFailed && record.Status != function.StatusCanceled {
-		return fmt.Errorf("status %q is not a terminal function-run status", record.Status)
+		return false, fmt.Errorf("status %q is not a terminal function-run status", record.Status)
 	}
 	if record.TriggeredAt.IsZero() {
-		return fmt.Errorf("triggered_at is required")
+		return false, fmt.Errorf("triggered_at is required")
 	}
 	if record.FinishedAt.IsZero() {
 		record.FinishedAt = time.Now().UTC()
@@ -422,30 +447,36 @@ func (r *FunctionRunRepository) RecordCompleted(ctx context.Context, tenantID st
 	if record.DurationMs < 0 {
 		record.DurationMs = 0
 	}
+	// A cancellation before its first attempt has no measured execution time.
+	// Keep a recorded zero duration when an attempt did start, but do not turn
+	// an absent start into year 0001 or an unknown duration into zero.
+	startedAt := sql.NullTime{Time: record.StartedAt, Valid: !record.StartedAt.IsZero()}
+	durationMs := sql.NullInt64{Int64: int64(record.DurationMs), Valid: startedAt.Valid}
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin function run record tx: %w", err)
+		return false, fmt.Errorf("begin function run record tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID); err != nil {
-		return fmt.Errorf("set tenant context: %w", err)
+		return false, fmt.Errorf("set tenant context: %w", err)
 	}
 
 	var id int64
 	err = tx.QueryRowContext(ctx, recordCompletedFunctionRunSQL,
 		record.RunID, tenantID, record.FunctionID, record.Status,
-		record.TriggeredAt, record.StartedAt, record.FinishedAt, record.DurationMs,
+		record.TriggeredAt, startedAt, record.FinishedAt, durationMs,
 	).Scan(&id)
-	if err != nil {
-		return fmt.Errorf("record completed function run: %w", err)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, fmt.Errorf("record completed function run: %w", err)
 	}
 
+	created = err == nil
 	if err = tx.Commit(); err != nil {
-		return fmt.Errorf("commit function run record: %w", err)
+		return false, fmt.Errorf("commit function run record: %w", err)
 	}
-	return nil
+	return created, nil
 }
 
 // RunByRunID reads one terminal invocation by its deterministic run id, the
@@ -575,4 +606,15 @@ func (r *FunctionRunRepository) RunsByFunction(ctx context.Context, tenantID str
 		return nil, fmt.Errorf("commit function runs list: %w", err)
 	}
 	return runs, nil
+}
+
+// RunsByFunctionPage filters terminal history on triggered_at before pagination.
+
+// Resource strings were normalized at the management boundary; marshal cannot fail.
+func nullableResourceJSON(resources *executionpolicy.Resources) any {
+	if resources == nil {
+		return nil
+	}
+	encoded, _ := json.Marshal(resources)
+	return encoded
 }

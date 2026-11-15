@@ -254,6 +254,13 @@ func TestReconcileJobProjectsObservedPhase(t *testing.T) {
 			if err := rt.ReconcileJob(context.Background(), obj); err != nil {
 				t.Fatal(err)
 			}
+			wantAttempt := string(tt.wantPhase)
+			if tt.jobPhase == execution.PhaseFailed {
+				wantAttempt = string(jobrun.Failed)
+			}
+			if len(runs.observedPhases) != 1 || runs.observedPhases[0] != wantAttempt {
+				t.Fatalf("attempt phases = %v, want %s", runs.observedPhases, wantAttempt)
+			}
 			if len(runs.phases) != 1 {
 				t.Fatalf("run phase writes = %+v", runs.phases)
 			}
@@ -337,11 +344,9 @@ func TestReconcileJobRunDoesNotStartASecondAttemptWhileRunning(t *testing.T) {
 	}
 }
 
-// TestReconcileJobRunDoesNotStartAnAttemptWhileOneIsBeingCreated covers the same
-// hole from the other phase an attempt can be in. An observed Pending Job is
-// recorded as CreatingAttempt, and the Job exists, so starting another attempt
-// would again run the occurrence twice.
-func TestReconcileJobRunDoesNotStartAnAttemptWhileOneIsBeingCreated(t *testing.T) {
+// A durable CreatingAttempt may precede the Kubernetes Create; recover that
+// same deterministic attempt instead of starting number two.
+func TestReconcileJobRunResumesReservedAttemptWithoutIncrementing(t *testing.T) {
 	obj := jobRunObject(t)
 	runs := &fakeRuns{
 		found: true,
@@ -356,9 +361,8 @@ func TestReconcileJobRunDoesNotStartAnAttemptWhileOneIsBeingCreated(t *testing.T
 	if err := rt.ReconcileJobRun(context.Background(), obj); err != nil {
 		t.Fatal(err)
 	}
-	if len(jobs.created) != 0 || len(runs.attempts) != 0 || len(runs.phases) != 0 {
-		t.Fatalf("drove an in-flight run: jobs=%d attempts=%d phases=%+v",
-			len(jobs.created), len(runs.attempts), runs.phases)
+	if len(jobs.created) != 1 || len(runs.attempts) != 1 || runs.attempts[0].attempt.Number != 1 {
+		t.Fatalf("reserved attempt was not repaired in place: jobs=%d attempts=%+v", len(jobs.created), runs.attempts)
 	}
 }
 

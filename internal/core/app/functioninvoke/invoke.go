@@ -35,7 +35,9 @@ import (
 // platform's honest latency promise for a function is seconds -- every
 // invocation is a cold pod and image pull dominates -- so a longer wait would
 // hold an HTTP request open against work the caller can already poll.
-const maxInvokeWaitSeconds = 60
+const MaxInvokeWaitSeconds = 60
+
+const maxInvokeWaitSeconds = MaxInvokeWaitSeconds
 
 // invokePollInterval is how often the synchronous variant re-reads the JobRun
 // custom resource while waiting for a terminal phase.
@@ -52,8 +54,10 @@ type FunctionReader interface {
 // revision-sync loop materialized from the definition's current version, and
 // the namespace its ScheduledJob-shaped identity lives in.
 type Revision struct {
-	ID        int64
-	Namespace string
+	ID                int64
+	DefinitionVersion int
+	Namespace         string
+	TimeoutSeconds    int32
 }
 
 // RevisionSource resolves a definition's active revision by its source_uid.
@@ -61,8 +65,8 @@ type Revision struct {
 // resolver is the one dependency the invoke path cannot satisfy from the
 // functions row itself. Resolution rides the sync loop's one-tick lag by
 // design: until a new version's revision is materialized the previous one
-// stays active, and an invocation in that window pins it — invoke-what-you-
-// read, the same generation lag every CR-first path exposes.
+// stays active. Calls supplying ExpectedVersion refuse that older revision;
+// legacy calls without a precondition keep their existing behavior.
 type RevisionSource interface {
 	ActiveRevision(ctx context.Context, tenantID, sourceUID string) (Revision, bool, error)
 }
@@ -101,6 +105,8 @@ func (uc *UseCase) WithPollInterval(interval time.Duration) *UseCase {
 // Input is one invocation request.
 type Input struct {
 	TenantID string
+	// ExpectedVersion pins a reviewed definition; zero preserves legacy calls.
+	ExpectedVersion int
 	// FunctionID is the definition being invoked.
 	FunctionID int64
 	// ActorID is the authenticated principal that asked for the run. It rides
@@ -170,6 +176,10 @@ func (uc *UseCase) Invoke(ctx context.Context, in Input) (Result, error) {
 			Message:  "cannot invoke a paused function",
 		}
 	}
+	if normalized.ExpectedVersion > 0 && def.Version != normalized.ExpectedVersion {
+		return Result{}, &resource.ConflictError{Resource: "function", ID: def.ID,
+			Field: "expected_version", Message: "the function changed; review the current version before invoking"}
+	}
 
 	sourceUID := function.SourceUID(def.ID)
 	rev, found, err := uc.revisions.ActiveRevision(ctx, normalized.TenantID, sourceUID)
@@ -187,6 +197,10 @@ func (uc *UseCase) Invoke(ctx context.Context, in Input) (Result, error) {
 			Message:  "the function has no active revision yet; the operator's revision sync has not caught up",
 		}
 	}
+	if normalized.ExpectedVersion > 0 && rev.DefinitionVersion != normalized.ExpectedVersion {
+		return Result{}, &resource.ConflictError{Resource: "function", ID: def.ID,
+			Field: "revision", Message: "the reviewed version is not ready yet; wait for operator projection and retry"}
+	}
 
 	occurrenceKey, err := deriveOccurrenceKey(normalized, sourceUID)
 	if err != nil {
@@ -194,9 +208,16 @@ func (uc *UseCase) Invoke(ctx context.Context, in Input) (Result, error) {
 	}
 
 	start := time.Now()
-	stored, created, err := uc.publisher.Publish(ctx, jobRun(def, rev, occurrenceKey, normalized.ActorID))
+	wanted := jobRun(def, rev, occurrenceKey, normalized.ActorID)
+	stored, created, err := uc.publisher.Publish(ctx, wanted)
 	if err != nil {
 		return Result{}, fmt.Errorf("publish function invocation: %w", err)
+	}
+	wantedSpec, storedSpec := wanted.Spec, stored.Spec
+	wantedSpec.CancelRequested, storedSpec.CancelRequested = false, false
+	if stored.Name != wanted.Name || stored.Namespace != wanted.Namespace || stored.DeletionTimestamp != nil || wantedSpec != storedSpec {
+		return Result{}, &resource.ConflictError{Resource: "function invocation", ID: def.ID, Field: "revision",
+			Message: "the published invocation does not match the reviewed Function occurrence"}
 	}
 	elapsed := time.Since(start).Seconds()
 
@@ -214,7 +235,7 @@ func (uc *UseCase) Invoke(ctx context.Context, in Input) (Result, error) {
 		RevisionID:    rev.ID,
 	}
 
-	if normalized.WaitSeconds > 0 {
+	if normalized.WaitSeconds > 0 && !jobrun.Terminal(jobrun.Phase(result.Phase)) {
 		result.Phase = uc.awaitTerminalPhase(ctx, stored.Namespace, stored.Name,
 			start.Add(time.Duration(normalized.WaitSeconds)*time.Second))
 	}
@@ -227,6 +248,8 @@ func (uc *UseCase) Invoke(ctx context.Context, in Input) (Result, error) {
 // needed. An expired wait is not an error -- the caller always gets the
 // reference, and the phase observed last.
 func (uc *UseCase) awaitTerminalPhase(ctx context.Context, namespace, name string, deadline time.Time) string {
+	ctx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
 	interval := uc.pollInterval
 	if interval <= 0 {
 		interval = invokePollInterval
@@ -282,12 +305,15 @@ func normalizeInput(in Input) (Input, error) {
 	if actorID == "" {
 		return Input{}, validation.New("actor_id", "is required")
 	}
-	if len(actorID) > 255 {
-		return Input{}, validation.New("actor_id", "must be <= 255 characters")
+	if len(actorID) > v1alpha1.RunActorMaxLength {
+		return Input{}, validation.New("actor_id", fmt.Sprintf("must be <= %d characters", v1alpha1.RunActorMaxLength))
 	}
 	if in.WaitSeconds < 0 || in.WaitSeconds > maxInvokeWaitSeconds {
 		return Input{}, validation.New("wait_seconds",
 			fmt.Sprintf("must be between 0 and %d", maxInvokeWaitSeconds))
+	}
+	if in.ExpectedVersion < 0 {
+		return Input{}, validation.New("expected_version", "must be >= 1 when supplied")
 	}
 
 	return Input{
@@ -297,6 +323,7 @@ func normalizeInput(in Input) (Input, error) {
 		IdempotencyKey:  strings.TrimSpace(in.IdempotencyKey),
 		ResourceGroupID: in.ResourceGroupID,
 		WaitSeconds:     in.WaitSeconds,
+		ExpectedVersion: in.ExpectedVersion,
 	}, nil
 }
 
@@ -308,6 +335,9 @@ func normalizeInput(in Input) (Input, error) {
 // otherwise.
 func deriveOccurrenceKey(in Input, sourceUID string) (string, error) {
 	base := fmt.Sprintf("function|%s|%s|%d", in.TenantID, sourceUID, in.FunctionID)
+	if in.ExpectedVersion > 0 {
+		base += fmt.Sprintf("|version|%d", in.ExpectedVersion)
+	}
 	if in.IdempotencyKey != "" {
 		return sha256Hex(base + "|idem|" + in.IdempotencyKey), nil
 	}
@@ -347,7 +377,7 @@ func jobRun(def function.Definition, rev Revision, occurrenceKey, actorID string
 			Trigger:            v1alpha1.Function,
 			Actor:              actorID,
 			OccurrenceKey:      occurrenceKey,
-			TimeoutSeconds:     int32(def.TimeoutSeconds),
+			TimeoutSeconds:     rev.TimeoutSeconds,
 		},
 	}
 }

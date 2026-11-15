@@ -8,7 +8,7 @@ const (
 	TenantIDLength    = 26
 	DefaultTimezone   = "UTC"
 	DefaultTimeoutSec = 30
-	DefaultRetryLimit = 2
+	DefaultRetryLimit = 0
 	DefaultPriority   = 5
 
 	ScheduleTypeCron     = "cron"

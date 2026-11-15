@@ -206,8 +206,8 @@ func TestRunRepository_GetCancelTarget(t *testing.T) {
 		expectRunTenantTx(mock, "tenant-a")
 		mock.ExpectQuery("JOIN job_definition_revisions d").
 			WithArgs("tenant-a", int64(7)).
-			WillReturnRows(sqlmock.NewRows([]string{"phase", "occurrence_key", "source_name", "source_namespace"}).
-				AddRow("Running", "occ-1", "nightly", "jobs"))
+			WillReturnRows(sqlmock.NewRows([]string{"phase", "occurrence_key", "source_name", "source_namespace", "source_uid", "revision_id", "trigger"}).
+				AddRow("Running", "occ-1", "nightly", "jobs", "def-1", 11, "Manual"))
 		mock.ExpectCommit()
 
 		got, err := repo.GetCancelTarget(context.Background(), runquery.GetInput{TenantID: "tenant-a", ID: 7})

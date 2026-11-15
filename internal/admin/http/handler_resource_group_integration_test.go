@@ -139,40 +139,10 @@ func TestSLOPathsRespectResourceGroup(t *testing.T) {
 	_, ciKey := createKeyScoped(t, server, adminKey, tenantID, ciGroup)
 	_, prodKey := createKeyScoped(t, server, adminKey, tenantID, prodGroup)
 
-	// An SLI and an SLO to hang off it, both created inside the ci group. The
-	// SLI's source is the run ledger: source_type job_run names its definition
-	// by source_uid in source_config.
-	sliResp := postJSON(t, server.Client(), server.URL+"/api/v1/slis", ciKey, map[string]any{
-		"name":        "ci-availability",
-		"sli_type":    "availability",
-		"source_type": "job_run",
-		"source_config": map[string]any{
-			"source_uid": "01JSLI00000000000000000001",
-		},
-		"aggregation":         "ratio",
-		"good_event_criteria": map[string]any{"status": "success"},
-	})
-	requireStatus(t, sliResp, http.StatusCreated)
-	var sli struct {
-		ID int64 `json:"id"`
-	}
-	decodeJSON(t, sliResp, &sli)
-
-	sloResp := postJSON(t, server.Client(), server.URL+"/api/v1/slos", ciKey, map[string]any{
-		"name":            "ci-slo",
-		"sli_id":          sli.ID,
-		"target":          0.999,
-		"window_type":     "rolling",
-		"window_duration": "24h",
-	})
-	requireStatus(t, sloResp, http.StatusCreated)
-	var slo struct {
-		ID int64 `json:"id"`
-	}
-	decodeJSON(t, sloResp, &slo)
-
-	sliBase := fmt.Sprintf("%s/api/v1/slis/%d", server.URL, sli.ID)
-	sloBase := fmt.Sprintf("%s/api/v1/slos/%d", server.URL, slo.ID)
+	// Both parents and the SLI source are real, visible rows in this group.
+	_, sliID, sloID := createScopedAvailabilitySLO(t, server, ciKey)
+	sliBase := fmt.Sprintf("%s/api/v1/slis/%d", server.URL, sliID)
+	sloBase := fmt.Sprintf("%s/api/v1/slos/%d", server.URL, sloID)
 
 	requireStatus(t, get(t, server.Client(), sliBase, ciKey), http.StatusOK)
 	requireStatus(t, get(t, server.Client(), sliBase, prodKey), http.StatusNotFound)

@@ -59,6 +59,17 @@ func TestMigrationFileSet(t *testing.T) {
 		"0012_storage_integrity.up.sql",
 		"0013_execution_observation.up.sql",
 		"0014_execution_log_archive.up.sql",
+		"0015_execution_dispatch.up.sql",
+		"0016_definition_operations.up.sql",
+		"0017_definition_admission.up.sql",
+		"0018_execution_resources.up.sql",
+		"0019_definition_admission_proof.up.sql",
+		"0020_workflow_snapshots.up.sql",
+		"0021_sli_event_configuration.up.sql",
+		"0022_execution_source_controls.up.sql",
+		"0023_execution_control_permissions.up.sql",
+		"0024_slo_evaluation_reason.up.sql",
+		"0025_check_execution_policy.up.sql",
 	}
 	if !reflect.DeepEqual(files, want) {
 		t.Fatalf("migration files = %v, want %v", files, want)

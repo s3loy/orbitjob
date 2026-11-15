@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/lib/pq"
+
+	"orbitjob/internal/platform/scan"
 )
 
 // These tests prove the D1 grant matrix (schema-strategy.md) at the point of
@@ -32,7 +34,7 @@ import (
 // writeDenialTenantID is the scratch tenant every probe runs under. 26
 // characters, matching tenants.id CHAR(26), in the fixture style of
 // helperTenantID.
-const writeDenialTenantID = "30000000000000000000000001"
+var writeDenialTenantID = scan.GenerateID()
 
 // adminLedgerWriteDenials probes the tables where the migrations give
 // orbitjob_admin SELECT and nothing else. job_run_control_plane is the
@@ -233,9 +235,22 @@ func TestNoTableBeyondTheConfigurationSetGrantsAdminWrites(t *testing.T) {
 	defer cancel()
 
 	db := Open(t)
+	// Audit tables keep INSERT but never mutation privileges, including when
+	// addressed through their partition name.
+	for _, table := range []string{"audit_events", "audit_events_default"} {
+		for _, privilege := range []string{"UPDATE", "DELETE", "TRUNCATE"} {
+			var allowed bool
+			if err := db.QueryRowContext(ctx, `SELECT has_table_privilege('orbitjob_admin', $1, $2)`, table, privilege).Scan(&allowed); err != nil {
+				t.Fatal(err)
+			}
+			if allowed {
+				t.Fatalf("admin must not hold %s on %s", privilege, table)
+			}
+		}
+	}
 
 	rows, err := db.QueryContext(ctx, `
-		SELECT DISTINCT c.relname
+		SELECT DISTINCT c.relname, a.privilege_type
 		FROM pg_class c
 		JOIN pg_namespace n ON n.oid = c.relnamespace
 		CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) a
@@ -245,7 +260,7 @@ func TestNoTableBeyondTheConfigurationSetGrantsAdminWrites(t *testing.T) {
 		  AND c.relname <> 'schema_migrations'
 		  AND g.rolname = 'orbitjob_admin'
 		  AND a.privilege_type IN ('INSERT', 'UPDATE', 'DELETE', 'TRUNCATE')
-		ORDER BY c.relname
+		ORDER BY c.relname, a.privilege_type
 	`)
 	if err != nil {
 		t.Fatalf("sweep admin table grants: %v", err)
@@ -254,30 +269,39 @@ func TestNoTableBeyondTheConfigurationSetGrantsAdminWrites(t *testing.T) {
 
 	var observed []string
 	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
+		var name, privilege string
+		if err := rows.Scan(&name, &privilege); err != nil {
 			t.Fatalf("scan granted table: %v", err)
 		}
-		observed = append(observed, name)
+		observed = append(observed, name+"."+privilege)
 	}
 	if err := rows.Err(); err != nil {
 		t.Fatalf("sweep admin table grants: %v", err)
 	}
 
-	// Exactly the tables the migrations grant orbitjob_admin a write on: the
-	// baseline's configuration family, audit trail, and read models, plus
-	// functions from 0004. Anything else -- and any grant that disappears from
-	// these -- is a migration the review must see.
-	expected := []string{
-		"audit_events", "audit_events_default",
+	// Pin each write privilege, including the control/configuration tables from
+	// 0016 and 0022. Adding one must not silently permit DELETE/TRUNCATE
+	// where the owning migration only grants INSERT/UPDATE. Operator-owned
+	// ledger tables remain excluded and the audit trail stays INSERT-only.
+	expected := []string{"audit_events.INSERT", "audit_events_default.INSERT"}
+	for _, table := range []string{
 		"api_keys", "budget_alerts", "budgets", "check_runs", "checks",
 		"functions", "key_policies", "policies", "resource_groups",
 		"sli_snapshots", "slis", "slos", "tenants",
+	} {
+		for _, privilege := range []string{"INSERT", "UPDATE", "DELETE"} {
+			expected = append(expected, table+"."+privilege)
+		}
+	}
+	for _, table := range []string{"definition_operations", "execution_source_controls"} {
+		for _, privilege := range []string{"INSERT", "UPDATE"} {
+			expected = append(expected, table+"."+privilege)
+		}
 	}
 
 	unexpected, missing := diffStringSets(expected, observed)
 	if len(unexpected) > 0 || len(missing) > 0 {
-		t.Fatalf("orbitjob_admin table-grant drift (schema %s):\n  writes on tables beyond the grant matrix: %v\n  matrix tables that lost every write grant: %v\nthe ledger's SELECT-only posture (D1) depends on the first list staying empty",
+		t.Fatalf("orbitjob_admin table-grant drift (schema %s):\n  write privileges beyond the grant matrix: %v\n  missing write privileges: %v\nthe ledger's SELECT-only posture (D1) depends on the first list staying empty",
 			currentSchemaNameForTest(t), unexpected, missing)
 	}
 }

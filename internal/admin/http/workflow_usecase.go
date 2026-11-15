@@ -70,7 +70,7 @@ type workflowRunReader interface {
 // its cancelRequested, and the operator owns every effect of both.
 type workflowRunPublisher interface {
 	Create(ctx context.Context, run v1alpha1.WorkflowRun) (v1alpha1.WorkflowRun, bool, error)
-	RequestCancel(ctx context.Context, namespace, name string) error
+	RequestCancel(ctx context.Context, namespace, definitionName string, identity v1alpha1.RunIdentity) (string, error)
 }
 
 // ==================== Definition reads ====================
@@ -308,23 +308,20 @@ func (uc *TriggerWorkflowUseCase) Trigger(ctx context.Context, in WorkflowTrigge
 	if err != nil {
 		return WorkflowTriggerResult{}, err
 	}
-	if def.Spec.Suspend {
-		return WorkflowTriggerResult{}, &resource.ConflictError{
-			Resource: "workflow",
-			ID:       def.ID,
-			Field:    "suspend",
-			Message:  "cannot trigger a suspended workflow",
-		}
-	}
 
 	occurrenceKey, err := workflowOccurrenceKey(normalized, def.SourceUID)
 	if err != nil {
 		return WorkflowTriggerResult{}, err
 	}
 
-	stored, created, err := uc.publisher.Create(ctx, manualWorkflowRun(def, occurrenceKey, normalized.ActorID))
+	requested := manualWorkflowRun(def, occurrenceKey, normalized.ActorID)
+	stored, created, err := uc.publisher.Create(ctx, requested)
 	if err != nil {
 		return WorkflowTriggerResult{}, fmt.Errorf("publish workflow run: %w", err)
+	}
+
+	if stored.DeletionTimestamp != nil || stored.Spec.WorkflowRef != requested.Spec.WorkflowRef || stored.Spec.DefinitionRevision != requested.Spec.DefinitionRevision || stored.Spec.Trigger != requested.Spec.Trigger || stored.Spec.Actor != requested.Spec.Actor || stored.Spec.OccurrenceKey != requested.Spec.OccurrenceKey {
+		return WorkflowTriggerResult{}, &resource.ConflictError{Resource: "workflow run resource", ID: requested.Name, Message: "published WorkflowRun does not match the requested execution"}
 	}
 
 	return WorkflowTriggerResult{
@@ -663,7 +660,8 @@ func (uc *CancelWorkflowRunUseCase) Cancel(ctx context.Context, in WorkflowCance
 		}, nil
 	}
 
-	if err := uc.publisher.RequestCancel(ctx, def.Namespace, name); err != nil {
+	name, err = uc.publisher.RequestCancel(ctx, def.Namespace, def.Name, v1alpha1.RunIdentity{SourceUID: run.SourceUID, RevisionID: run.RevisionID, OccurrenceKey: run.OccurrenceKey, Trigger: v1alpha1.Trigger(run.Trigger), Workflow: true})
+	if err != nil {
 		return WorkflowCancelResult{}, fmt.Errorf("request cancel for workflow run %d: %w", in.RunID, err)
 	}
 

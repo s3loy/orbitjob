@@ -3,9 +3,13 @@ package operator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"time"
 
 	v1alpha1 "orbitjob/api/kubernetes/workloads/v1alpha1"
+	"orbitjob/internal/core/app/controlplane"
+	"orbitjob/internal/core/domain/jobrun"
 	"orbitjob/internal/core/domain/revision"
 	"orbitjob/internal/core/domain/workflow"
 )
@@ -45,9 +49,10 @@ type WorkflowRetainer struct {
 	History     WorkflowHistoryPruner
 	Remover     RunRemover
 	Tenants     []string
+	Now         func() time.Time
 }
 
-// Sweep prunes history for every active workflow definition and reports how
+// Sweep prunes history for workflow definitions, including inactive sources, and reports how
 // many workflow runs it removed.
 func (r WorkflowRetainer) Sweep(ctx context.Context) (int, error) {
 	if r.Definitions == nil || r.Workflows == nil || r.History == nil || r.Remover.Client == nil {
@@ -56,6 +61,11 @@ func (r WorkflowRetainer) Sweep(ctx context.Context) (int, error) {
 	removed := 0
 	for _, tenant := range r.Tenants {
 		defs, err := r.Definitions.ActiveWorkflowRevisions(ctx, tenant)
+		if reader, ok := r.Definitions.(interface {
+			RetentionWorkflowRevisions(context.Context, string) ([]revision.Revision, error)
+		}); ok {
+			defs, err = reader.RetentionWorkflowRevisions(ctx, tenant)
+		}
 		if err != nil {
 			return removed, fmt.Errorf("list active workflow revisions for tenant %s: %w", tenant, err)
 		}
@@ -84,8 +94,38 @@ func (r WorkflowRetainer) pruneDefinition(ctx context.Context, tenant string, re
 
 	removed := 0
 	for _, run := range prunable {
+		recordedSkip := run.Trigger == jobrun.Schedule && run.Phase == workflow.PhaseRejected
+		// A skipped occurrence is its own anti-replay receipt. Keep it through
+		// the firing minute even if a burst of Manual rejections exceeds history.
+		if recordedSkip && run.ResourceUID == "" {
+			now := time.Now().UTC()
+			if r.Now != nil {
+				now = r.Now().UTC()
+			}
+			if run.ScheduledFor == nil || !run.ScheduledFor.Before(now.Truncate(time.Minute)) {
+				continue
+			}
+		}
+		if !workflow.Terminal(run.Phase) || (run.ResourceUID == "" && !recordedSkip) {
+			continue
+		}
+		pending := false
 		if err := r.removeStepObjects(ctx, tenant, run); err != nil {
-			return removed, err
+			if !errors.Is(err, controlplane.ErrObjectDeletionPending) {
+				return removed, err
+			}
+			pending = true
+		}
+		if pending {
+			continue
+		}
+		if run.ResourceUID != "" {
+			if err := r.Remover.RemoveWorkflow(ctx, rev.Identity, run); err != nil {
+				if errors.Is(err, controlplane.ErrObjectDeletionPending) {
+					continue
+				}
+				return removed, fmt.Errorf("remove retained workflow resource %d: %w", run.ID, err)
+			}
 		}
 		deleted, err := r.History.DeleteRun(ctx, tenant, run.ID)
 		if err != nil {
@@ -112,18 +152,30 @@ func (r WorkflowRetainer) removeStepObjects(ctx context.Context, tenant string, 
 		return nil
 	}
 	defs, err := r.Definitions.ActiveRevisions(ctx, tenant)
+	if reader, ok := r.Definitions.(interface {
+		RetentionRevisions(context.Context, string) ([]revision.Revision, error)
+	}); ok {
+		defs, err = reader.RetentionRevisions(ctx, tenant)
+	}
 	if err != nil {
 		return fmt.Errorf("list active revisions for tenant %s: %w", tenant, err)
 	}
 	index := definitionIndex(defs)
+	pending := false
 	for _, step := range steps {
 		def, ok := index["uid:"+step.SourceUID]
 		if !ok {
 			continue
 		}
-		if err := r.Remover.Remove(ctx, def.Identity.Namespace, def.Identity.Name, step.OccurrenceKey); err != nil {
-			return fmt.Errorf("remove step run of workflow run %d: %w", run.ID, err)
+		if err := r.Remover.RemoveWorkflowStep(ctx, def.Identity, run, step); err != nil {
+			if !errors.Is(err, controlplane.ErrObjectDeletionPending) {
+				return fmt.Errorf("remove step run of workflow run %d: %w", run.ID, err)
+			}
+			pending = true
 		}
+	}
+	if pending {
+		return controlplane.ErrObjectDeletionPending
 	}
 	return nil
 }

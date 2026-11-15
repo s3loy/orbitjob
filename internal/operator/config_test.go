@@ -8,33 +8,33 @@ import (
 )
 
 func TestParseNamespaceTenants(t *testing.T) {
-	got, err := ParseNamespaceTenants("finance=tenant-a,platform=tenant-b")
+	got, err := ParseNamespaceTenants("finance=" + executionTenant + ",platform=" + executionTenantB)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got["finance"] != "tenant-a" || got["platform"] != "tenant-b" {
+	if got["finance"] != executionTenant || got["platform"] != executionTenantB {
 		t.Fatalf("mapping = %v", got)
 	}
 
-	trimmed, err := ParseNamespaceTenants(" finance = tenant-a ,, platform=tenant-b ")
+	trimmed, err := ParseNamespaceTenants(" finance = " + executionTenant + " ,, platform=" + executionTenantB + " ")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if trimmed["finance"] != "tenant-a" || trimmed["platform"] != "tenant-b" {
+	if trimmed["finance"] != executionTenant || trimmed["platform"] != executionTenantB {
 		t.Fatalf("mapping = %v", trimmed)
 	}
 }
 
 func TestNamespaceTenantResolverListsNamespacesDeterministically(t *testing.T) {
 	resolver := NamespaceTenantResolver{Tenants: map[string]string{
-		"platform": "tenant-b",
-		"finance":  "tenant-a",
+		"platform": executionTenantB,
+		"finance":  executionTenant,
 	}}
 	got := resolver.Namespaces()
 	if len(got) != 2 || got[0] != "finance" || got[1] != "platform" {
 		t.Fatalf("namespaces = %v", got)
 	}
-	if got := (DefaultTenantResolver{Tenant: "tenant-a"}).Namespaces(); got != nil {
+	if got := (DefaultTenantResolver{Tenant: executionTenant}).Namespaces(); got != nil {
 		t.Fatalf("default resolver namespaces = %v, want nil", got)
 	}
 }

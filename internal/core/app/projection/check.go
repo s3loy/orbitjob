@@ -42,15 +42,25 @@ func CheckJobSpec(c check.Snapshot) (v1alpha1.ScheduledJobSpec, error) {
 	if timeout < 1 {
 		timeout = check.DefaultTimeoutSec
 	}
-	return v1alpha1.ScheduledJobSpec{
-		TimeoutSeconds: int32(timeout),
-		RetryPolicy:    v1alpha1.RetryPolicy{MaxAttempts: int32(c.RetryLimit + 1)},
+	script := legacyProbeScript(probe, timeout)
+	if c.ExecutionPolicyVersion == 1 {
+		script = probeScript(probe, timeout)
+	}
+	spec := v1alpha1.ScheduledJobSpec{
+		ExecutionPolicyVersion: c.ExecutionPolicyVersion,
+		RetrySafe:              c.ExecutionPolicyVersion == 1 && c.RetryLimit > 0,
+		TimeoutSeconds:         int32(timeout),
+		RetryPolicy:            v1alpha1.RetryPolicy{MaxAttempts: int32(c.RetryLimit + 1)},
 		JobTemplate: v1alpha1.JobTemplateSpec{
 			Image:   ProbeImage,
 			Command: append([]string(nil), probeContainerCommand...),
-			Args:    []string{probeScript(probe, timeout)},
+			Args:    []string{script},
 		},
-	}, nil
+	}
+	if err := spec.NormalizeExecutionPolicy(); err != nil {
+		return v1alpha1.ScheduledJobSpec{}, fmt.Errorf("check execution policy: %w", err)
+	}
+	return spec, nil
 }
 
 // probeScript renders the container's whole exit contract as one POSIX sh
@@ -58,11 +68,29 @@ func CheckJobSpec(c check.Snapshot) (v1alpha1.ScheduledJobSpec, error) {
 // with the comparison. curl failures leave the capture empty, and an empty
 // code matches nothing, so connection, TLS and timeout failures all land in
 // the same non-zero exit a mismatch does.
-func probeScript(probe check.ProbeConfig, timeoutSec int) string {
+func legacyProbeScript(probe check.ProbeConfig, timeoutSec int) string {
+	method := "-X " + probe.Method
+	if probe.Method == "HEAD" {
+		method = "--head"
+	}
 	return fmt.Sprintf(
-		"code=$(curl -sS -o /dev/null -w '%%{http_code}' --max-time %d -X %s %s); [ \"$code\" = %d ]",
-		timeoutSec, probe.Method, shSingleQuote(probe.URL), probe.ExpectedStatus,
+		"code=$(curl -sS -o /dev/null -w '%%{http_code}' --max-time %d %s %s) && [ \"$code\" = %d ]",
+		timeoutSec, method, shSingleQuote(probe.URL), probe.ExpectedStatus,
 	)
+}
+
+// probeScript is pinned only by policy-1 revisions. It does not follow
+// redirects, download unbounded responses or accept non-HTTP protocols.
+func probeScript(probe check.ProbeConfig, timeoutSec int) string {
+	method := "-X " + probe.Method
+	if probe.Method == "HEAD" {
+		method = "--head"
+	}
+	connect := timeoutSec
+	if connect > 5 {
+		connect = 5
+	}
+	return fmt.Sprintf("code=$(curl -sS --proto '=http,https' --proto-redir '=http,https' --connect-timeout %d --max-filesize 1048576 -o /dev/null -w '%%{http_code}' --max-time %d %s %s) && [ \"$code\" = %d ]", connect, timeoutSec, method, shSingleQuote(probe.URL), probe.ExpectedStatus)
 }
 
 // shSingleQuote quotes s as a POSIX sh single-quoted literal, so a URL

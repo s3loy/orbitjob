@@ -21,9 +21,12 @@ spec:
           properties:
             spec:
               type: object
-              required: [schedule, jobTemplate]
+              required: [jobTemplate]
               properties:
-                schedule: {type: string, minLength: 1}
+                # Empty or omitted means manual-only; the scheduler skips it.
+                schedule: {type: string}
+                executionPolicyVersion: {type: integer, format: int32, enum: [0, 1]}
+                retrySafe: {type: boolean}
                 suspend: {type: boolean}
                 concurrencyPolicy: {type: string, enum: [Allow, Forbid, Replace]}
                 misfirePolicy: {type: string, enum: [Skip, FireOnce, CatchUpBounded]}
@@ -37,6 +40,21 @@ spec:
                     command: {type: array, items: {type: string}}
                     args: {type: array, items: {type: string}}
                     backoffLimit: {type: integer, format: int32, minimum: 0}
+                    resources:
+                      type: object
+                      properties:
+                        requests:
+                          type: object
+                          additionalProperties: {type: string, minLength: 1, maxLength: 64}
+                          x-kubernetes-validations:
+                            - rule: "self.all(k, k in ['cpu', 'memory', 'ephemeral-storage'])"
+                              message: Only cpu, memory and ephemeral-storage are supported
+                        limits:
+                          type: object
+                          additionalProperties: {type: string, minLength: 1, maxLength: 64}
+                          x-kubernetes-validations:
+                            - rule: "self.all(k, k in ['cpu', 'memory', 'ephemeral-storage'])"
+                              message: Only cpu, memory and ephemeral-storage are supported
                 retryPolicy:
                   type: object
                   properties:

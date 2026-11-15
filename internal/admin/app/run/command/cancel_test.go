@@ -8,11 +8,14 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	v1alpha1 "orbitjob/api/kubernetes/workloads/v1alpha1"
 	runquery "orbitjob/internal/admin/app/run/query"
 	"orbitjob/internal/core/domain/jobrun"
 	"orbitjob/internal/domain/resource"
 	"orbitjob/internal/domain/validation"
 	"orbitjob/internal/platform/metrics"
+
+	"orbitjob/internal/platform/scan"
 )
 
 // CancelRunUseCase is the write gate for stopping a run: validate, read the run
@@ -25,7 +28,7 @@ var errCancelPatchRefused = errors.New("patch refused")
 
 // ulidTenant matches tenants.id: a CHAR(26) ULID, the shape the query gate
 // demands before a cancel request is looked up.
-const ulidTenant = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+var ulidTenant = runCancelIdentityTenantID
 
 type fakeLocator struct {
 	in    runquery.GetInput
@@ -48,11 +51,11 @@ type fakeCanceller struct {
 	err error
 }
 
-func (f *fakeCanceller) RequestCancel(_ context.Context, namespace, name string) error {
+func (f *fakeCanceller) RequestCancel(_ context.Context, namespace, definitionName string, identity v1alpha1.RunIdentity) (string, error) {
 	f.calls++
 	f.namespace = namespace
-	f.name = name
-	return f.err
+	f.name = v1alpha1.RunObjectName(definitionName, identity.OccurrenceKey)
+	return f.name, f.err
 }
 
 func TestCancelRunRefusedInputNeverLooksUp(t *testing.T) {
@@ -76,7 +79,7 @@ func TestCancelRunRefusedInputNeverLooksUp(t *testing.T) {
 		},
 		{
 			name:      "a scoped caller is refused because a run has no group",
-			in:        CancelInput{RunID: 7, TenantID: ulidTenant, ResourceGroupID: "rg-7"},
+			in:        CancelInput{RunID: 7, TenantID: ulidTenant, ResourceGroupID: runCancelIdentityGroupID},
 			wantScope: true,
 		},
 	}
@@ -260,9 +263,8 @@ func TestCancelRunPatchesStopIntentOnTheDerivedName(t *testing.T) {
 	if canceller.calls != 1 {
 		t.Fatalf("canceller called %d times, want exactly 1", canceller.calls)
 	}
-	// The JobRun name is the definition name plus the occurrence key's first
-	// eight characters (v1alpha1.RunObjectName).
-	if canceller.namespace != "jobs" || canceller.name != "nightly-etl-deadbeef" {
+	// The reference uses the same full-identity naming rule as publication.
+	if canceller.namespace != "jobs" || canceller.name != v1alpha1.RunObjectName("nightly-etl", locator.target.OccurrenceKey) {
 		t.Fatalf("patched ns=%q name=%q, want the derived object identity", canceller.namespace, canceller.name)
 	}
 	if got.Name != canceller.name || got.Namespace != "jobs" || got.Phase != string(jobrun.Running) {
@@ -294,3 +296,7 @@ func TestCancelRunPatchFailurePropagates(t *testing.T) {
 		t.Fatalf("error %v does not name the run", err)
 	}
 }
+
+var runCancelIdentityTenantID = scan.GenerateID()
+
+var runCancelIdentityGroupID = scan.GenerateID()

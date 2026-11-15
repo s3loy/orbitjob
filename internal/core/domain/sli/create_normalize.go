@@ -62,6 +62,9 @@ func NormalizeCreate(in CreateInput) (CreateSpec, error) {
 		}
 	}
 
+	if err := ValidateCriteria(sliType, in.GoodEventCriteria); err != nil {
+		return CreateSpec{}, validation.New("good_event_criteria", err.Error())
+	}
 	return CreateSpec{
 		Name:              name,
 		Description:       in.Description,

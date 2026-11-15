@@ -39,6 +39,11 @@ type workflowPhaseWrite struct {
 	keys  []string
 }
 
+func (f *fakeWorkflowRuns) BindResource(_ context.Context, _ string, _ int64, uid string) error {
+	f.stored.ResourceUID = uid
+	return nil
+}
+
 func (f *fakeWorkflowRuns) CreateRunForTenant(_ context.Context, _ string, run workflow.Run) (workflow.Run, bool, error) {
 	if f.createErr != nil {
 		return workflow.Run{}, false, f.createErr
@@ -153,7 +158,10 @@ func (f *fakeWorkflowPublisher) Publish(_ context.Context, run v1alpha1.JobRun) 
 	return nil
 }
 
-func (f *fakeWorkflowPublisher) RequestCancel(_ context.Context, _, name string) error {
+func (f *fakeWorkflowPublisher) RequestCancel(_ context.Context, _, name string, ids ...v1alpha1.RunIdentity) error {
+	if len(ids) > 0 {
+		name = v1alpha1.RunObjectName(name, ids[0].OccurrenceKey)
+	}
 	if f.err != nil {
 		return f.err
 	}
@@ -174,7 +182,7 @@ func workflowRunObject(t *testing.T, mutate func(*v1alpha1.WorkflowRun)) unstruc
 			WorkflowRef:        v1alpha1.ObjectReference{Name: "nightly-pipeline", UID: "wf-uid-1"},
 			DefinitionRevision: 5,
 			Trigger:            v1alpha1.Manual,
-			Actor:              "principal-key-1",
+			Actor:              executionActorKeyID,
 			OccurrenceKey:      "wocc-1",
 		},
 	}
@@ -227,7 +235,7 @@ func newWorkflowRuntime(t *testing.T, revisions *fakeWorkflowRevisions, runs *fa
 		Dynamic:   fakeDynamic(t, objs...),
 		Revisions: revisions,
 		Workflows: runs,
-		Tenants:   NamespaceTenantResolver{Tenants: map[string]string{"finance": "tenant-a"}},
+		Tenants:   NamespaceTenantResolver{Tenants: map[string]string{"finance": executionTenant}},
 		Now:       func() time.Time { return time.Unix(1700000000, 0).UTC() },
 	}
 }
@@ -252,7 +260,7 @@ func TestReconcileWorkflowRunMaterializesLedgerRow(t *testing.T) {
 	}
 	created := runs.created[0]
 	if created.SourceUID != "wf-uid-1" || created.OccurrenceKey != "wocc-1" ||
-		created.RevisionID != 5 || created.Trigger != "Manual" || created.Actor != "principal-key-1" ||
+		created.RevisionID != 5 || created.Trigger != "Manual" || created.Actor != executionActorKeyID ||
 		created.Phase != workflow.PhasePending {
 		t.Fatalf("created run = %+v, want the CR's declared identity at Pending", created)
 	}
@@ -265,8 +273,8 @@ func TestReconcileWorkflowRunIsIdempotentOnRedelivery(t *testing.T) {
 	spec := workflowSpecJSON(t, twoTaskSpec())
 	revs := &fakeWorkflowRevisions{byID: map[int64]revision.Revision{5: workflowRevision(t, 5, spec)}}
 	stored := workflow.Run{
-		ID: 42, TenantID: "tenant-a", SourceUID: "wf-uid-1", RevisionID: 5,
-		OccurrenceKey: "wocc-1", Trigger: "Manual", Actor: "principal-key-1",
+		ID: 42, TenantID: executionTenant, SourceUID: "wf-uid-1", RevisionID: 5,
+		OccurrenceKey: "wocc-1", Trigger: "Manual", Actor: executionActorKeyID,
 		Phase: workflow.PhaseRunning, CreatedAt: time.Unix(1699999000, 0).UTC(),
 	}
 	runs := &fakeWorkflowRuns{stored: stored, found: true}
@@ -395,7 +403,7 @@ func TestReconcileWorkflowRunProjectsStepStatus(t *testing.T) {
 	rt := newWorkflowRuntime(t, revs, runs)
 
 	obj := workflowRunObject(t, nil)
-	status, err := rt.workflowStatus(context.Background(), "tenant-a", runs.stored)
+	status, err := rt.workflowStatus(context.Background(), executionTenant, runs.stored)
 	if err != nil {
 		t.Fatal(err)
 	}

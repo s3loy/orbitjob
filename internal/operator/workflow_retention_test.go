@@ -56,9 +56,10 @@ func TestWorkflowRetainerSweepsWorkflowDefinitionsOnly(t *testing.T) {
 		workflowActive: []revision.Revision{workflowDef},
 	}
 
-	run := workflow.Run{ID: 42, SourceUID: "wf-uid-1", OccurrenceKey: "wocc-1", Phase: workflow.PhaseSucceeded}
+	run := workflow.Run{ID: 42, ResourceUID: "parent-uid", RevisionID: 5, Trigger: jobrun.Manual, Actor: "operator", SourceUID: "wf-uid-1", OccurrenceKey: "wocc-1", Phase: workflow.PhaseSucceeded}
 	pruner := &fakeHistoryPruner{prunable: []workflow.Run{run}}
 	steps := []workflow.StepRun{stepFor(t, "extract", jobrun.Succeeded, 1)}
+	steps[0].RevisionID = 10
 	runs := &fakeWorkflowRuns{stored: run, steps: steps}
 
 	// The step's CR exists in the definition's namespace, named by the shared
@@ -68,16 +69,22 @@ func TestWorkflowRetainerSweepsWorkflowDefinitionsOnly(t *testing.T) {
 		"kind":       "JobRun",
 		"metadata": map[string]any{
 			"name":      v1alpha1.RunObjectName("extract-job", steps[0].OccurrenceKey),
-			"namespace": "finance",
+			"namespace": "finance", "uid": "step-uid", "resourceVersion": "1",
 		},
+		"spec":   map[string]any{"scheduledJobRef": map[string]any{"name": "extract-job", "uid": "extract-job-uid"}, "definitionRevision": int64(10), "trigger": "Workflow", "actor": ActorWorkflowWalker, "occurrenceKey": steps[0].OccurrenceKey},
+		"status": map[string]any{"phase": "Succeeded"},
 	}}
-	dyn := fakeDynamic(t, &stepCR)
+	parentCR := unstructured.Unstructured{Object: map[string]any{"apiVersion": v1alpha1.GroupVersion.String(), "kind": "WorkflowRun", "metadata": map[string]any{"name": v1alpha1.WorkflowRunObjectName("nightly-pipeline", run.OccurrenceKey), "namespace": "finance", "uid": "parent-uid", "resourceVersion": "1"}, "spec": map[string]any{"workflowRef": map[string]any{"uid": run.SourceUID, "name": "nightly-pipeline"}, "definitionRevision": run.RevisionID, "occurrenceKey": run.OccurrenceKey, "trigger": string(run.Trigger), "actor": "operator"}}}
+	if err := unstructured.SetNestedField(parentCR.Object, "Succeeded", "status", "phase"); err != nil {
+		t.Fatal(err)
+	}
+	dyn := fakeDynamic(t, &stepCR, &parentCR)
 	retainer := WorkflowRetainer{
 		Definitions: defs,
 		Workflows:   runs,
 		History:     pruner,
 		Remover:     RunRemover{Client: dyn},
-		Tenants:     []string{"tenant-a"},
+		Tenants:     []string{executionTenant},
 	}
 
 	removed, err := retainer.Sweep(context.Background())
@@ -90,7 +97,7 @@ func TestWorkflowRetainerSweepsWorkflowDefinitionsOnly(t *testing.T) {
 	if len(pruner.prunedOf) != 1 || pruner.prunedOf[0] != "wf-uid-1" {
 		t.Fatalf("pruner queried for %+v, want only the workflow definition", pruner.prunedOf)
 	}
-	if len(pruner.deleted) != 1 || pruner.deleted[0] != (prunedRun{tenant: "tenant-a", id: 42}) {
+	if len(pruner.deleted) != 1 || pruner.deleted[0] != (prunedRun{tenant: executionTenant, id: 42}) {
 		t.Fatalf("deleted rows = %+v, want the workflow run", pruner.deleted)
 	}
 	_, err = dyn.Resource(jobRunGVR).Namespace("finance").Get(context.Background(),
@@ -98,6 +105,19 @@ func TestWorkflowRetainerSweepsWorkflowDefinitionsOnly(t *testing.T) {
 	if !apierrors.IsNotFound(err) {
 		t.Fatalf("step CR still present after sweep: %v", err)
 	}
+	if _, err := dyn.Resource(workflowRunGVR).Namespace("finance").Get(context.Background(), parentCR.GetName(), metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("parent trigger can rematerialize pruned workflow: %v", err)
+	}
+	// An already queued stale informer object must not resurrect the pruned row.
+	rt := Runtime{Dynamic: dyn, Revisions: &fakeRevisions{}, Workflows: runs, Tenants: NamespaceTenantResolver{Tenants: map[string]string{"finance": executionTenant}}}
+	runs.found = false
+	if err := rt.ReconcileWorkflowRun(context.Background(), parentCR); err != nil {
+		t.Fatal(err)
+	}
+	if len(runs.created) != 0 {
+		t.Fatal("deleted workflow trigger was rematerialized")
+	}
+
 }
 
 // TestWorkflowRetainerSurvivesGoneDefinitions pins the skip: a step whose
@@ -106,7 +126,7 @@ func TestWorkflowRetainerSweepsWorkflowDefinitionsOnly(t *testing.T) {
 func TestWorkflowRetainerSurvivesGoneDefinitions(t *testing.T) {
 	workflowDef := withIdentity(t, workflowRevision(t, 5, workflowSpecJSON(t, twoTaskSpec())), "workflow", "wf-uid-1", "finance", "nightly-pipeline")
 	defs := &fakeWorkflowRevisions{workflowActive: []revision.Revision{workflowDef}}
-	run := workflow.Run{ID: 42, SourceUID: "wf-uid-1", OccurrenceKey: "wocc-1", Phase: workflow.PhaseFailed}
+	run := workflow.Run{ID: 42, ResourceUID: "resource-uid", SourceUID: "wf-uid-1", OccurrenceKey: "wocc-1", Phase: workflow.PhaseFailed}
 	pruner := &fakeHistoryPruner{prunable: []workflow.Run{run}}
 	// The step's source uid resolves to no active definition.
 	steps := []workflow.StepRun{{
@@ -122,7 +142,7 @@ func TestWorkflowRetainerSurvivesGoneDefinitions(t *testing.T) {
 		Workflows:   runs,
 		History:     pruner,
 		Remover:     RunRemover{Client: fakeDynamic(t)},
-		Tenants:     []string{"tenant-a"},
+		Tenants:     []string{executionTenant},
 	}
 	removed, err := retainer.Sweep(context.Background())
 	if err != nil {

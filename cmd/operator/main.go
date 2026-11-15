@@ -22,6 +22,7 @@ import (
 	"orbitjob/internal/core/app/controlplane"
 	"orbitjob/internal/core/app/execution"
 	"orbitjob/internal/core/app/functionsync"
+	"orbitjob/internal/core/domain/revision"
 	"orbitjob/internal/core/domain/workflow"
 	corepostgres "orbitjob/internal/core/store/postgres"
 	"orbitjob/internal/operator"
@@ -29,6 +30,7 @@ import (
 	"orbitjob/internal/platform/election"
 	"orbitjob/internal/platform/health"
 	platformlogger "orbitjob/internal/platform/logger"
+	"sync"
 )
 
 const (
@@ -73,12 +75,17 @@ func (p workflowPrunerStore) PrunableRuns(
 	}
 	out := make([]workflow.Run, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, workflow.Run{
-			ID:            row.ID,
-			SourceUID:     sourceUID,
-			OccurrenceKey: row.OccurrenceKey,
-			Phase:         row.Phase,
-		})
+		stored, found, err := p.store.RunByID(ctx, tenantID, row.ID)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			continue
+		}
+		if stored.SourceUID != sourceUID || stored.OccurrenceKey != row.OccurrenceKey {
+			return nil, fmt.Errorf("prunable workflow row identity changed")
+		}
+		out = append(out, stored)
 	}
 	return out, nil
 }
@@ -139,11 +146,17 @@ func run() error {
 	repository := corepostgres.NewControlPlaneRepository(db)
 	workflowRepo := corepostgres.NewWorkflowRunRepository(db)
 	functionRunRepo := corepostgres.NewFunctionRunRepository(db)
+	controller.Queue = operator.NewQueue()
 	runtime := operator.Runtime{
+		Enqueue: func(resource, namespace, name string) { controller.Queue.Add(resource + ":" + namespace + "/" + name) },
+		EnqueueAfter: func(resource, namespace, name string, after time.Duration) {
+			controller.Queue.AddAfter(resource+":"+namespace+"/"+name, after)
+		},
 		Dynamic:       controller.Dynamic,
-		Jobs:          execution.Adapter{Client: execution.KubernetesJobClient{Client: controller.Kubernetes.BatchV1()}},
+		Jobs:          execution.Adapter{Client: execution.KubernetesJobClient{Client: controller.Kubernetes.BatchV1(), Core: controller.Kubernetes.CoreV1()}},
 		Revisions:     repository,
 		Runs:          repository,
+		ArchivedJobs:  repository,
 		Tenants:       tenants,
 		Workflows:     workflowRepo,
 		Functions:     functionRunRepo,
@@ -168,7 +181,19 @@ func run() error {
 	// Scheduling and retention are singleton work: two instances acting at once
 	// would race on the same occurrences. Reconciliation stays multi-replica,
 	// where the database constraints make concurrent writers converge.
-	go runSingletonLoops(ctx, logger, controller, db, repository, workflowRepo, tenants.TenantIDs(), checkScopes, checkschedule.CheckSource(corepostgres.NewCheckRepository(db)))
+	workerCtx, stopWorkers := context.WithCancel(ctx)
+	var workers sync.WaitGroup
+	defer func() { stopWorkers(); workers.Wait() }()
+	workers.Add(3)
+	go func() {
+		defer workers.Done()
+		runSingletonLoops(workerCtx, logger, controller, db, repository, workflowRepo, tenants.TenantIDs(), checkScopes, checkschedule.CheckSource(corepostgres.NewCheckRepository(db)))
+	}()
+	go func() { defer workers.Done(); runOutcomeReplay(workerCtx, logger, runtime, tenants.TenantIDs()) }()
+	go func() {
+		defer workers.Done()
+		runExecutionIsolationLoop(workerCtx, logger, repository, tenants.TenantIDs())
+	}()
 
 	logger.Info("operator starting")
 	if err := runFn(ctx, controller); err != nil {
@@ -215,11 +240,12 @@ func defaultWorkers() int {
 
 // scheduleDeps are the dependencies the schedule loop needs.
 type scheduleDeps struct {
-	Revisions controlplane.RevisionSource
-	Runs      controlplane.RunRecorder
-	Publisher controlplane.RunPublisher
-	Tenants   []string
-	Interval  string
+	Revisions    controlplane.RevisionSource
+	Runs         controlplane.RunRecorder
+	Publisher    controlplane.RunPublisher
+	Tenants      []string
+	Interval     string
+	SourceExists func(context.Context, revision.Revision) (bool, error)
 }
 
 // checkDeps are the dependencies the check firing loop needs. They are stated
@@ -239,12 +265,14 @@ type checkDeps struct {
 // publisher it creates step CRs and cancel requests with, and the projection
 // closure that keeps a run's CR status honest between resyncs.
 type workflowDeps struct {
-	Workflows     operator.WorkflowRunStore
-	Revisions     operator.WorkflowRevisionSource
-	Publisher     operator.WorkflowPublisher
-	ProjectStatus func(context.Context, string, workflow.Run) error
-	Tenants       []string
-	Interval      string
+	Outcomes        controlplane.OutcomeReader
+	Workflows       operator.WorkflowRunStore
+	Revisions       operator.WorkflowRevisionSource
+	Publisher       operator.WorkflowPublisher
+	ProjectStatus   func(context.Context, string, workflow.Run) error
+	ObserveResource func(context.Context, string, workflow.Run) (bool, error)
+	Tenants         []string
+	Interval        string
 }
 
 // functionSyncDeps are the dependencies the function revision-sync loop
@@ -309,7 +337,8 @@ func buildCheckScopes(resolver tenantResolver) ([]checkschedule.Scope, error) {
 // retention is housekeeping, not scheduling.
 // runSingletonLoops runs the scheduler, check, workflow, function-sync and
 // retention loops under a Lease. If leadership is lost, all loops stop: a
-// leader that cannot renew must not keep acting on stale authority.
+// leader that cannot renew must not keep acting on stale authority. Drain every
+// worker before campaigning again so recovery never overlaps writer epochs.
 func runSingletonLoops(
 	ctx context.Context, logger *slog.Logger, controller operator.Controller, db *sql.DB,
 	repository *corepostgres.ControlPlaneRepository, workflowStore *corepostgres.WorkflowRunRepository,
@@ -327,67 +356,109 @@ func runSingletonLoops(
 	}
 	defer func() { _ = coordinator.Close() }()
 
-	leaderCtx, err := coordinator.Campaign(ctx, "operator-singleton")
+	interval := operator.EnvOr(envScheduleInterval, defaultScheduleInterval)
+	resolved, err := loadTenantResolver()
 	if err != nil {
-		logger.Error("leader election failed, singleton loops disabled", "error", err)
+		logger.Error("load source scope", "error", err)
 		return
 	}
-	logger.Info("became leader, starting scheduling, checks, workflows, function sync and retention")
+	runtime := operator.Runtime{Dynamic: controller.Dynamic, Revisions: repository, Tenants: resolved}
+	campaign := func(ctx context.Context, key string) (context.Context, error) {
+		leaderCtx, err := coordinator.Campaign(ctx, key)
+		if err != nil {
+			return nil, err
+		}
+		// Every singleton waits for missed source deletions to converge. A
+		// failed inventory must not leave workflow admission using stale rows.
+		for leaderCtx.Err() == nil {
+			if err := runtime.SyncSourceLiveness(leaderCtx); err == nil {
+				return leaderCtx, nil
+			} else {
+				logger.Error("source inventory failed; singleton startup waits", "error", err)
+			}
+			timer := time.NewTimer(2 * time.Second)
+			select {
+			case <-leaderCtx.Done():
+				timer.Stop()
+			case <-timer.C:
+			}
+		}
+		return nil, leaderCtx.Err()
+	}
+	runLeaderSessions(ctx, logger, campaign, 2*time.Second, func(ctx context.Context) {
 
-	interval := operator.EnvOr(envScheduleInterval, defaultScheduleInterval)
-	go runScheduleLoop(leaderCtx, logger, scheduleDeps{
-		Revisions: repository,
-		Runs:      repository,
-		Publisher: operator.RunPublisher{Client: controller.Dynamic},
-		Tenants:   tenantIDs,
-		Interval:  interval,
+		runScheduleLoop(ctx, logger, scheduleDeps{
+			Revisions:    repository,
+			SourceExists: runtime.SourceExists,
+			Runs:         repository,
+			Publisher:    operator.RunPublisher{Client: controller.Dynamic},
+			Tenants:      tenantIDs,
+			Interval:     interval,
+		})
+	}, func(ctx context.Context) {
+		runCheckLoop(ctx, logger, checkDeps{
+			Checks:    checks,
+			Revisions: repository,
+			Runs:      repository,
+			Publisher: operator.RunPublisher{Client: controller.Dynamic},
+			Scopes:    checkScopes,
+			Interval:  interval,
+		})
+	}, func(ctx context.Context) {
+		runWorkflowScheduleLoop(ctx, logger, workflowScheduleDeps{
+			Revisions: repository, Workflows: workflowStore,
+			Publisher: operator.RunPublisher{Client: controller.Dynamic}, Tenants: tenantIDs, Interval: interval,
+		})
+	}, func(ctx context.Context) {
+		runWorkflowLoop(ctx, logger, workflowDeps{
+			Workflows: workflowStore,
+			Outcomes:  repository,
+			Revisions: repository,
+			Publisher: operator.RunPublisher{Client: controller.Dynamic},
+			ObserveResource: func(ctx context.Context, tenant string, run workflow.Run) (bool, error) {
+				return (operator.Runtime{Dynamic: controller.Dynamic, Revisions: repository, Workflows: workflowStore}).ObserveWorkflowResource(ctx, tenant, run)
+			},
+			ProjectStatus: func(ctx context.Context, tenant string, run workflow.Run) error {
+				return (operator.Runtime{
+					Dynamic:   controller.Dynamic,
+					Revisions: repository,
+					Workflows: workflowStore,
+				}).PatchWorkflowStatusByName(ctx, tenant, run)
+			},
+			Tenants:  tenantIDs,
+			Interval: interval,
+		})
+	}, func(ctx context.Context) {
+		runWorkflowRetentionLoop(ctx, logger, workflowRetentionDeps{
+			Definitions: repository,
+			Workflows:   workflowStore,
+			Pruner:      workflowPrunerStore{store: workflowStore},
+			Remover:     operator.RunRemover{Client: controller.Dynamic},
+			Tenants:     tenantIDs,
+			Interval:    operator.EnvOr(envRetention, defaultRetentionInterval),
+		})
+	}, func(ctx context.Context) {
+		runFunctionSyncLoop(ctx, logger, functionSyncDeps{
+			Functions: corepostgres.NewFunctionRepository(db),
+			Revisions: repository,
+			Scopes:    checkScopes,
+			Interval:  interval,
+		})
+	}, func(ctx context.Context) {
+		runRetentionLoop(ctx, logger, retentionDeps{
+			Revisions: repository,
+			Pruner:    repository,
+			Remover:   operator.RunRemover{Client: controller.Dynamic},
+			Tenants:   tenantIDs,
+			Interval:  operator.EnvOr(envRetention, defaultRetentionInterval),
+		})
+	}, func(ctx context.Context) {
+		runSLIMaintenanceLoop(ctx, logger, sliMaintenanceDeps{
+			Pruner:   corepostgres.NewSLIRepository(db),
+			Tenants:  tenantIDs,
+			Interval: operator.EnvOr(envRetention, defaultRetentionInterval),
+		})
 	})
-	go runCheckLoop(leaderCtx, logger, checkDeps{
-		Checks:    checks,
-		Revisions: repository,
-		Runs:      repository,
-		Publisher: operator.RunPublisher{Client: controller.Dynamic},
-		Scopes:    checkScopes,
-		Interval:  interval,
-	})
-	go runWorkflowLoop(leaderCtx, logger, workflowDeps{
-		Workflows: workflowStore,
-		Revisions: repository,
-		Publisher: operator.RunPublisher{Client: controller.Dynamic},
-		ProjectStatus: func(ctx context.Context, tenant string, run workflow.Run) error {
-			return (operator.Runtime{
-				Dynamic:   controller.Dynamic,
-				Revisions: repository,
-				Workflows: workflowStore,
-			}).PatchWorkflowStatusByName(ctx, tenant, run)
-		},
-		Tenants:  tenantIDs,
-		Interval: interval,
-	})
-	go runWorkflowRetentionLoop(leaderCtx, logger, workflowRetentionDeps{
-		Definitions: repository,
-		Workflows:   workflowStore,
-		Pruner:      workflowPrunerStore{store: workflowStore},
-		Remover:     operator.RunRemover{Client: controller.Dynamic},
-		Tenants:     tenantIDs,
-		Interval:    operator.EnvOr(envRetention, defaultRetentionInterval),
-	})
-	go runFunctionSyncLoop(leaderCtx, logger, functionSyncDeps{
-		Functions: corepostgres.NewFunctionRepository(db),
-		Revisions: repository,
-		Scopes:    checkScopes,
-		Interval:  interval,
-	})
-	runRetentionLoop(leaderCtx, logger, retentionDeps{
-		Revisions: repository,
-		Pruner:    repository,
-		Remover:   operator.RunRemover{Client: controller.Dynamic},
-		Tenants:   tenantIDs,
-		Interval:  operator.EnvOr(envRetention, defaultRetentionInterval),
-	})
-
-	<-leaderCtx.Done()
-	logger.Warn("lost leadership, singleton loops stopped")
 }
 
 // retentionDeps are the dependencies the retention loop needs. They are narrower
@@ -444,10 +515,11 @@ func runScheduleLoop(ctx context.Context, logger *slog.Logger, deps scheduleDeps
 		return
 	}
 	scheduler := controlplane.Scheduler{
-		Revisions: deps.Revisions,
-		Runs:      deps.Runs,
-		Publisher: deps.Publisher,
-		Tenants:   deps.Tenants,
+		Revisions:    deps.Revisions,
+		SourceExists: deps.SourceExists,
+		Runs:         deps.Runs,
+		Publisher:    deps.Publisher,
+		Tenants:      deps.Tenants,
 		// Who asked for the run. A scheduled occurrence has no human behind it,
 		// and the ledger's actor column is NOT NULL and non-empty, so the writer
 		// states the scheduling identity explicitly rather than relying on the
@@ -489,11 +561,13 @@ func runWorkflowLoop(ctx context.Context, logger *slog.Logger, deps workflowDeps
 		return
 	}
 	walker := operator.WorkflowWalker{
-		Workflows:     deps.Workflows,
-		Revisions:     deps.Revisions,
-		Publisher:     deps.Publisher,
-		ProjectStatus: deps.ProjectStatus,
-		Tenants:       deps.Tenants,
+		Outcomes:        deps.Outcomes,
+		Workflows:       deps.Workflows,
+		Revisions:       deps.Revisions,
+		Publisher:       deps.Publisher,
+		ProjectStatus:   deps.ProjectStatus,
+		ObserveResource: deps.ObserveResource,
+		Tenants:         deps.Tenants,
 		// Who asked for the step. The workflow's actor asked for the run; the
 		// walker is what advanced it, and the ledger records the role name.
 		Actor: operator.ActorWorkflowWalker,
@@ -617,6 +691,35 @@ func runCheckLoop(ctx context.Context, logger *slog.Logger, deps checkDeps) {
 					logger.Info("fired check runs", "tenant", scope.TenantID, "count", created)
 				}
 			}
+		}
+	}
+}
+
+// Derived terminal facts are idempotent and may be repaired by every replica;
+// leadership is required for creating work, not for completing bookkeeping.
+func runOutcomeReplay(ctx context.Context, logger *slog.Logger, runtime operator.Runtime, tenants []string) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	cursor := &operator.OutcomeReplayCursor{}
+	executions := &operator.ExecutionRecoveryCursor{}
+	for {
+		if count, err := runtime.CleanupArchivedJobs(ctx, tenants); err != nil && ctx.Err() == nil {
+			logger.Error("archived execution resource cleanup failed", "error", err)
+		} else if count > 0 {
+			logger.Info("removed archived execution Jobs", "count", count)
+		}
+		if _, err := runtime.RecoverExecutions(ctx, tenants, 100, executions); err != nil && ctx.Err() == nil {
+			logger.Error("execution recovery pass failed", "error", err)
+		}
+		if count, err := runtime.ReplayOutcomes(ctx, tenants, 100, cursor); err != nil && ctx.Err() == nil {
+			logger.Error("terminal outcome replay failed", "error", err)
+		} else if count > 0 {
+			logger.Info("repaired terminal outcomes", "count", count)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
 		}
 	}
 }

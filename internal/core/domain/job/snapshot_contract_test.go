@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"orbitjob/internal/platform/scan"
 )
 
 // TestLifecycleConstantsAreDistinct pins the job vocabulary. The status and
@@ -75,7 +77,7 @@ func TestSnapshotJSONKeySet(t *testing.T) {
 	snap := Snapshot{
 		ID:        7,
 		Name:      "nightly-report",
-		TenantID:  "acme",
+		TenantID:  jobSnapshotFixtureTenantID,
 		Status:    StatusActive,
 		Version:   3,
 		NextRunAt: &next,
@@ -106,7 +108,7 @@ func TestSnapshotJSONRoundTrip(t *testing.T) {
 	snap := Snapshot{
 		ID:        7,
 		Name:      "nightly-report",
-		TenantID:  "acme",
+		TenantID:  jobSnapshotFixtureTenantID,
 		Status:    StatusPaused,
 		Version:   3,
 		CreatedAt: time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
@@ -133,3 +135,5 @@ func sortedKeys(m map[string]struct{}) []string {
 	sort.Strings(out)
 	return out
 }
+
+var jobSnapshotFixtureTenantID = scan.GenerateID()

@@ -31,6 +31,9 @@ var ValidStatuses = map[string]bool{
 // MaxNameLength is the maximum length of an SLO name.
 const MaxNameLength = 128
 
+// MaxWindowDuration bounds rolling evaluation and retained missing evidence.
+const MaxWindowDuration = 8760 * time.Hour
+
 // MinTarget is the minimum valid SLO target (> 0).
 const MinTarget = 0.0001
 
@@ -45,9 +48,18 @@ const DefaultSlowBurnRate = 2.0
 
 // Budget status constants.
 const (
-	BudgetHealthy   = "healthy"
-	BudgetAtRisk    = "at_risk"
-	BudgetExhausted = "exhausted"
+	BudgetUnevaluated = "unevaluated"
+	BudgetHealthy     = "healthy"
+	BudgetAtRisk      = "at_risk"
+	BudgetExhausted   = "exhausted"
+)
+
+const (
+	ReasonNoSamples             = "no_samples"
+	ReasonSourceInactive        = "source_inactive"
+	ReasonMissingTiming         = "missing_timing"
+	ReasonStale                 = "stale"
+	ReasonDependencyUnavailable = "dependency_unavailable"
 )
 
 // CreateInput is the raw input for creating an SLO.
