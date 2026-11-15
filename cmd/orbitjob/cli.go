@@ -39,9 +39,8 @@ var commands = map[string]command{
 
 const usageText = `usage: orbitjob <command> [options]
 
-Developer CLI for an OrbitJob installation. A client only: it talks to the
-admin API over HTTP and to the cluster through kubectl; it never touches the
-database.
+Developer CLI for an OrbitJob installation. Commands talk to the admin API
+over HTTP and to the cluster through kubectl; the CLI never touches the database.
 
 Commands:
   status          install snapshot from the cluster (helm release, pods,
@@ -57,7 +56,7 @@ Commands:
   checks list     list checks (GET /api/v1/checks)
   checks get ID   one check
 
-Connection flags (accepted by every command):
+Connection flags:
   --api-url URL   admin API base URL (default http://localhost:8080)
   --api-key KEY   bearer key for the admin API
   --json          print the raw API response instead of a table

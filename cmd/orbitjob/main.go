@@ -1,6 +1,5 @@
-// Command orbitjob is the developer CLI for an OrbitJob installation. It is a
-// client only: it talks to the admin API over HTTP and to the cluster through
-// kubectl, and it never opens a database connection.
+// Command orbitjob is an API and cluster client for OrbitJob installations.
+// It never opens a database connection.
 package main
 
 import (
