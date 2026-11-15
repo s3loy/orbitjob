@@ -1,157 +1,148 @@
-# Known issues
+# Known issues and verification gaps
 
-Things that are wrong, misleading, or unverified today, with what was actually
-checked and how. Nothing here is a plan; it is a record so the same ground does
-not have to be walked twice.
+This page records implementation gaps and operating constraints.
+[Project status](status.md) describes implemented capabilities;
+[verification](verification.md) records tested behavior and qualification limits.
 
-"Verified" means a command was run or a file was read and the answer is quoted
-below it; "unverified" means exactly that. An entry leaves the open list when
-it is fixed, or when a test would now fail without it; fixed entries move to
-the resolved list at the bottom with a one-line receipt pointing at the fix.
+## Current implementation gaps
 
-## Open
+### Private authoring drafts have no persistent API
 
-### The long and standard profiles have no recorded completed result
+Migration 0026 and the draft service define storage fields, validation, encryption
+and draft recovery primitives. No persistent Store adapter or HTTP routes connect
+them to the Admin API. The declared `RecoverDraft` policy actions do not establish
+an available save or recovery operation.
 
-`standard` is four hours of schedule and `long` is eight. Neither has a
-completed result recorded in this repository. `long` cannot run on a hosted
-GitHub Actions job, which is capped at six hours.
+### Fault qualification requires complete installed recovery evidence
 
-**In progress.** `.github/workflows/loadtest.yml` runs `smoke` and `standard`
-only by manual dispatch — `timeout-minutes: 350` for `standard`, 90 otherwise —
-with `scripts/loadtest-ci.sh` doing the sequence the guide walks a human
-through. These profiles are advisory operator evidence, not merge gates; an
-operator decides when a fresh run is useful and records its artifact outside
-the repository.
+The load harness prepares separate recovery canaries for Operator, Admin API,
+PostgreSQL and Scheduler faults. Verification cross-checks tenant-scoped ledger
+facts, Kubernetes ownership, a continuous fixture journal and Scheduler budget
+evaluation. Ready replicas or a manually supplied recovery claim cannot establish
+recovery. Missing preparation, source observations or journal continuity remain
+`INCONCLUSIVE`. The fixture keeps its journal in memory; a restart invalidates the
+current run's continuity even if later effects are available.
 
-### Rotating the database password silently breaks every workload
+These checks require installed fault scenarios for the actual candidate before
+they support qualification. They do not establish arbitrary network-partition or
+Lease-loss recovery. See [load testing](loadtest-guide.md) and the scoped
+[verification record](verification.md).
 
-**Verified the hard way.** `configure setup` generates the migrator, admin and
-runtime passwords and writes them into the installation Secret; the `owner-init`
-hook sets them on the roles. Regenerate the Secret without re-running the hook
-and the two diverge. Nothing notices until a pod restarts: running pods keep the
-environment they started with, so the install looks healthy while every restart
-is a crash-loop — `password authentication failed for user "orbitjob_runtime"`.
-`helm upgrade` re-runs `owner-init` and repairs it.
+### Clean-machine onboarding remains unverified
 
-Two things made this harder to see than it should have been, both worth
-remembering:
+The quick start has no measured clean-machine completion-time guarantee.
+Installation duration depends on downloads, image builds and host resources.
+See [verification](verification.md) for installation checks and
+[product requirements](prd.md) for onboarding scope.
 
-- The bundled PostgreSQL runs the stock `postgres:17-alpine` image
-  (`deploy/kind/postgres-17.yaml:44`) and mounts no custom pg_hba, so its
-  built-in `pg_hba.conf` keeps `host all all 127.0.0.1/32 trust` ahead of the
-  catch-all `host all all all scram-sha-256` line. `kubectl port-forward`
-  arrives on the pod's loopback, so a connection from the host matches the
-  `trust` rule and **verifies no password at all**. A
-  from-the-host check reports the credentials as fine while every in-cluster
-  connection fails. Test credentials from inside the cluster, or expect the
-  answer to be meaningless.
-- The failure only shows on restart, so it can sit for hours.
+### Execution evidence can remain irrecoverable
 
-### The integration suite ran against the cluster database and rotated its passwords
+Missing bound Jobs become nonterminal ExecutionUnknown. Empty Pod inventories,
+node loss and force deletion do not establish physical process termination.
+Unknown and CancelUnknown retain their Forbid slot and are excluded from normal
+history pruning. There is no force-release API; prolonged uncertainty
+may require manual isolation and a separately reviewed recovery procedure.
 
-**Verified the hard way (2026-09-18 ~13:07Z).** A test run pointed at the
-cluster's PostgreSQL instead of the dedicated `ojtest-pg` instance. The
-cluster database gained two scratch databases (`baseline_check`,
-`orbitjob_test`), and the run's role provisioning flipped `orbitjob_runtime`
-— and the `postgres` monitor user the exporter uses — to test values. Every
-database touch from the operator and the scheduler failed with
-`password authentication failed` (28P01) from 13:07:44Z until the roles were
-realigned from the `orbitjob-database` secret and the scratch databases were
-dropped. The health gate worked as designed: the operator pod went 0/1 within
-one readiness interval, which is what surfaced it.
+New workload Pods retain container exit evidence until the Operator commits it.
+An Operator or database outage can therefore leave exited Pods and their Jobs
+present. Restore the compatible Operator and database before removing the
+installation; follow [the drain checks](../USAGE.md#74-upgrade-and-uninstall).
+Historical workloads without this protection do not gain missing evidence
+during upgrade.
 
-The red line is unchanged: integration suites run ONLY against `ojtest-pg`
-at `127.0.0.1:55432`; the cluster database is install state. The same loopback
-`trust` trap as the entry above applies when verifying credentials from the
-host — a port-forwarded check proves nothing.
+A terminal Pod without trustworthy container exit status remains unknown even
+when Kubernetes reports a Job failure. This includes an unscheduled Pod marked
+Failed during cleanup. Its evidence hold remains until a separately reviewed
+recovery establishes what can safely be removed.
 
-### Schedule adherence has its input but no derivation
+### Schedule adherence has no dedicated SLI derivation
 
-**Verified.** `job_run_control_plane.scheduled_for` exists so that "did the
-03:00 job run" is answerable without re-deriving occurrence keys
-(`db/migrations/0002_checks_to_kubernetes_jobs.up.sql:39`). Nothing derives an
-SLI from it: the SLI type vocabulary is `availability`, `latency`, `quality`,
-`custom` (`internal/core/domain/sli/create_input.go:5-8`) and the only source
-type is `job_run` (`:18`). No owner.
+The ledger records `scheduled_for`, but the supported SLI types and run-outcome
+criteria do not derive a dedicated schedule-adherence
+indicator. Existing status/duration SLIs do not fully measure schedule adherence.
+The vocabulary is defined in `internal/core/domain/sli/create_input.go` and
+`criteria.go`; `scheduled_for` is not itself an adherence evaluation.
 
-## Resolved
+### SLI retirement preserves unresolved history
 
-**Resolved 2026-09-21:** `generate` accepts the same explicit profile as the
-other load-test stages and rejects a config/profile mismatch before writing a
-manifest (`scripts/loadtest/main.go`, `Makefile`).
+The Operator retires replay details in bounded pages after the original Run is
+gone, all plan members have matching facts, and the plan and latest fact have
+passed the minimum 30-day replay horizon. Queryable `unavailable` facts remain
+for the longest supported SLO window, currently 8760 hours. A missing event time,
+incomplete projection or retained Run prevents automatic retirement. Aggregate
+snapshots and observation state remain.
 
-- **Operator cadence units are explicit.** Resolved 2026-09-18 by distinct
-  `OPERATOR_SCHEDULE_INTERVAL_SEC` and `OPERATOR_RETENTION_INTERVAL_MIN` names.
-- **The integration harness replays the baseline seed.** Resolved by deriving
-  the preset statement from `0001_baseline.up.sql`; no parallel schema remains.
-- **Orphan labeled Jobs no longer retry forever.** `ReconcileJob` treats
-  `ErrNoAttempt` as a safe skip while preserving the store's anti-adoption gate.
+Source and event-run locks serialize plan creation, fact recording and retirement;
+retired plans cannot authorize another counter increment. Maintenance includes
+inactive sources and suspended tenants still in the Operator namespace mapping.
+Removing a tenant from that mapping also removes it from automatic maintenance.
+Preserve its data for explicit review. See
+[outcome recovery](database-setup.md#audit-permissions-and-outcome-recovery).
 
-- **The hosted loadtest harness could not complete a profile.** Resolved on
-  2026-09-19 in run 35387532919: prepare cleared, manual triggers were admitted
-  500/500, and evidence reads used the SELECT-only admin DSN. Load testing is
-  intentionally advisory. A green workflow means the harness completed and
-  uploaded evidence; the product result remains the independent verdict in
-  `result.json`, which an operator reviews rather than using as a merge gate.
+## Operational and compatibility constraints
 
-- **The operator went deaf 15–20 minutes after start, and its workers hung
-  behind the dead watches.** Three stacked defects produced one symptom (runs
-  materializing but never reaching a terminal phase, 893 in flight on the
-  2026-09-18 smoke). First, a watch riding a connection the network had gone
-  silent on hung forever: TCP idle, no HTTP/2 pings, no error, no delivery —
-  only the startup LIST and the 10-minute resync still arrived. Second, every
-  reconcile paid an apiserver GET per dequeued key, throttled by client-go's
-  silent 5 QPS default, so a burst drained far slower than it filled. Third,
-  those GETs carried no deadline, so when the connection died the GETs hung
-  and the two workers stopped taking work at all — not even resync
-  re-deliveries were processed. Fixed in `internal/operator/factory.go` (the
-  shared apiserver client now carries TCP keepalive plus HTTP/2
-  send-ping/ping-timeout health checks, and an explicit 50 QPS / 150 burst),
-  `internal/operator/controller.go` (the reconcile reads its object from the
-  informer store, falls back to one read when the key is gone, and every pass
-  runs under a 60-second budget that turns a wedge into a retried failure),
-  and `cmd/operator/main.go` (four workers). Live receipts 2026-09-18:
-  `prepare` declared 1200 definitions without the revision-wait timeout that
-  used to fire, the smoke test passed 65/65/0, and the loadtest smoke profile
-  ended with the verdict below.
+- **Account rollout requires installed acceptance.** The personal-account
+  candidate includes migration 0027, session-origin configuration and the
+  out-of-band setup/recovery tool. It has not been deployed to the working kind
+  installation. PostgreSQL and HTTP checks do not
+  establish an upgraded installation. Preserve the original API-key and migration
+  input channels, stop old writers and verify human sessions, existing automation
+  and retained history after the coordinated cutover.
+- **The working development cluster still needs its maintenance window.** Native
+  kind network-policy enforcement and a bounded collector filesystem were
+  exercised in a disposable cluster. The working installation's verified flags
+  must remain unset until its own traffic, mount, capacity and restart checks
+  pass. Host backing-filesystem space must meet the 40-GiB prerequisite. Follow
+  [local maintenance](local-maintenance.md) before scheduling the change.
+- **Publication matrices omit Admission.** The source chart enables the Admission
+  service, and the backend build list includes its image. The retained release
+  and prerelease workflows publish six components and omit `orbitjob-admission`.
+  Their published set cannot by itself install this source chart. Use reviewed
+  source-built images for all seven components; release qualification requires
+  a matching publication matrix and installed evidence.
+- **Settling observes the projected JobRun ledger.** The hosted runner now uses
+  `loadtest settle`, with transaction-local tenant context and this run's recorded
+  revision IDs. Missing observations or query errors remain unknown. A zero count
+  does not prove that unprojected CRs have completed, stop active cron definitions,
+  or establish fault recovery; the independent verifier remains authoritative.
+- **Historical projection cutover.** Migration 0012 preserves old aggregates
+  and acknowledges already-terminal rows. It cannot distinguish a previously
+  counted historical event from a missed projection. Automatic recovery covers
+  later terminal transitions; missing older projections need offline review.
+  Stop old operators before applying this migration and start the new version
+  afterwards; overlapping old and new writers can invalidate deduplication.
+- **Migration checksum channels differ.** The existing Helm ConfigMap `|-`
+  projection removes trailing LF bytes; the migrator hashes its actual input.
+  Raw-directory and Helm-mounted SQL therefore are not interchangeable checksum
+  channels for an existing ledger. Keep its original input channel and preserve
+  both source/projected manifests; never rewrite recorded checksums. See
+  [database setup](database-setup.md#audit-permissions-and-outcome-recovery).
+- **Credential rotation is coordinated work.** Changing an installation Secret
+  alone does not change PostgreSQL role passwords or the environment of running
+  Pods. Follow the owner-init/upgrade workflow in [database setup](database-setup.md)
+  and verify both new connections and restarted workloads. A loopback/port-forward
+  connection using a trust rule does not prove that the supplied password works.
+- **Integration tests require a disposable database.** They can rebuild schema,
+  provision roles and change data. A dedicated `TEST_DATABASE_DSN` must never
+  point at installation state. The supported command and serialization are in
+  [CONTRIBUTING.md](../CONTRIBUTING.md) and the Makefile; there is no mandatory
+  machine-specific test port or container name.
+- **Namespace onboarding is explicit.** Workload namespaces must be in
+  `operator.namespaceTenants` and receive the matching RBAC. A new tenant row
+  alone does not provision a namespace or expand operator authority.
+- **External work can repeat.** Job backoff and platform retries have at-least-once
+  effects. A successful trigger response acknowledges a run resource, not a
+  completed workload or a ledger row already visible to queries.
 
-- **The "jobs informer blackout" reported by the 2026-09-18 upgrade smoke did
-  not reproduce.** On the same build that had reported zero job reconciles, a
-  labeled probe Job was delivered by both the startup LIST and the running
-  watch in under a second, and a 33-Job burst was fully processed (reconcile
-  counter 4 → 198). The 893 non-terminal runs that smoke reported are better
-  attributed to its 60-second restart watchdog starving the workers behind a
-  ~1300-key startup LIST than to a broken informer; no informer defect is
-  known to exist.
+## Live evidence still required
 
-- **Kubernetes mode had no load-test path.** The tool now drives the CR path end
-  to end: `prepare` declares one `ScheduledJob` per generated definition
-  (`scripts/loadtest/prepare.go:110`) and `verify` checks the ledger and the
-  JobRun CRs (`scripts/loadtest/verify.go:452`). The dispatcher gate and the
-  `job_instances` route the entry warned about were deleted with the legacy path.
-- **The load tool sent `X-OrbitJob-Tenant`, which the server ignored.** The
-  header is gone; `scripts/loadtest/api.go:289-294` sets only `Authorization`,
-  `X-OrbitJob-Idempotency-Key` and `Content-Type`.
-- **`reset` left run state behind.** Rewritten: the control-plane tables
-  truncate first, the four RESTRICT-family tables delete before their tenants,
-  and namespace cleanup is label-scoped to what the tool created
-  (`scripts/loadtest/reset.go:43` and the steps that follow it). The legacy
-  tables it used to miss no longer exist.
-- **The tool's correctness checks could not see the runs that matter.** verify's
-  checks read the run ledger, its attempts and CR reads
-  (`scripts/loadtest/verify.go:181-238`); the `job_instances` reads they used to
-  pass without looking through are gone.
-- **Scenario family names overstated what the workloads do.** One family per
-  body, enforced at build time by `TestCurlFamiliesReachTheirOwnEndpoint` and
-  `TestNonCurlFamiliesMatchTheirBody` (`scripts/loadtest/generate_test.go:438`,
-  `:503`).
-- **What `preflight` does about images was unestablished.** Established:
-  preflight validates the image lock — allowed repositories, index and
-  per-platform digests, exactly six entries (`scripts/loadtest/images.go:41-72`)
-  — and does not pull or probe the registry; the guide now describes exactly
-  that.
-- **Documentation drift in the load-test guide.** The `long`-as-qualification
-  listing, the `expected-terminal-state` false-failure note and the stale family
-  table are gone. The guide no longer hard-codes run history; workflow artifacts
-  and local run directories are the evidence source for individual results.
+Controlled recovery scenarios do not establish arbitrary network-partition
+recovery, production resilience or general Job/Pod garbage-collection timing.
+Upgrade, rollback and backup recovery must be verified for the actual source,
+database history and deployment configuration involved. See
+[verification](verification.md) for completed checks and outstanding scenarios.
+
+Load profile durations and hosted choices are defined in
+[test/load/config/](../test/load/config/) and the
+[load workflow](../.github/workflows/loadtest.yml). Read the product verdict in
+`result.json`; successful harness completion alone is not qualification.

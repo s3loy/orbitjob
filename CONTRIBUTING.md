@@ -1,6 +1,8 @@
 # Contribution Guide
 
-Open an Issue before submitting major features or interface changes, describing the problem scope, edge cases and verification plan. Small fixes can go straight to a PR.
+Discuss major features or interface changes with the maintainer first, describing
+the problem scope, edge cases and verification plan. An Issue or PR can carry
+that discussion when an external contribution needs review.
 
 Issues and pull requests use a small multi-axis taxonomy: `kind/*` describes
 the work, `area/*` identifies the affected subsystem, and `priority/*` records
@@ -10,10 +12,10 @@ breaking changes are always classified by a maintainer.
 
 ## Development environment
 
-- Go 1.27.1
-- PostgreSQL 17
-- golangci-lint latest (version auto-updates with CI)
-- Helm 3, kind, kubectl (for chart or Kubernetes changes)
+- Go 1.27.3+ as required by [`go.mod`](go.mod); image build stages are in [`Dockerfile`](Dockerfile).
+- PostgreSQL 17 for integration tests: use the service image in [the Integration workflow](.github/workflows/integration.yml), on a disposable instance.
+- golangci-lint 2.15.0, pinned in [the Lint workflow](.github/workflows/lint.yml).
+- Helm, kind and kubectl for chart or Kubernetes changes. The [Load Test workflow](.github/workflows/loadtest.yml) records its Helm/kind pins; [the local guide](docs/local-deployment.md) explains prerequisites and side effects.
 
 ```bash
 git clone https://github.com/s3loy/orbitjob.git
@@ -23,18 +25,15 @@ go mod download
 
 ## Branch strategy
 
-Create development branches from `dev` and merge PRs back into `dev`. Maintainers merge `dev` into `main` on the release cadence.
+Use `dev` as the shared development branch. Routine maintainer work does not
+require a separate topic branch or self-authored PR.
+`main` remains the release branch. Publication and promotion to `main` are
+separate maintainer actions after the applicable quality gates pass.
 
-Branch naming:
-
-```text
-feat/<description>
-fix/<description>
-refactor/<description>
-chore/<description>
-```
-
-Use kebab-case; one branch, one topic.
+External contributions may still use a topic branch and PR targeting `dev`.
+Use a short kebab-case branch name when isolation is explicitly needed.
+Pushes, merges and releases require separate maintainer authorization. Preserve
+existing uncommitted changes when switching branches or integrating work.
 
 ## Code conventions
 
@@ -47,6 +46,15 @@ core does not import admin
 admin/http -> admin/app -> core/domain
 ```
 
+Check production imports with:
+
+```bash
+go list -f '{{.ImportPath}} -> {{join .Imports " "}}' ./internal/core/... \
+  | grep -E 'orbitjob/internal/(admin|operator)'
+```
+
+No matches are expected; grep exits 1 when the output is empty.
+
 Submitted code must:
 
 - Use context-first APIs, with external dependencies injected through function variables
@@ -56,7 +64,7 @@ Submitted code must:
 - Put writes in transactions; batch claims use `FOR UPDATE SKIP LOCKED`
 - Use the `version` optimistic lock for concurrent updates
 - Add metrics, structured logging or trace hooks to new code paths
-- Ship authentication, input validation and permission checks together with the feature
+- Implement authentication, input validation and permission checks with the feature
 
 ## Database migrations
 
@@ -64,10 +72,13 @@ File names use a four-digit ordinal:
 
 ```text
 NNNN_description.up.sql
-NNNN_description.down.sql
 ```
 
-Irreversible migrations add an `_irreversible` suffix to the down file name and explain the reason inside the file. Published migrations, or ones already recorded in `schema_migrations`, must never be modified; the runner detects changes via SHA-256 checksums.
+Versions must be contiguous from `0001`. The runner applies forward migrations
+only and ignores `.down.sql` files; a down file is not a rollback mechanism.
+Published migrations, or ones already recorded in `schema_migrations`, must
+never be modified; the runner detects changes via SHA-256 checksums. Add a new
+forward migration and document any backup/restore or compatibility boundary.
 
 After editing `db/migrations/*.up.sql`, sync the Helm chart copy:
 
@@ -82,6 +93,11 @@ Changes touching roles, RLS, ownership or `SECURITY DEFINER` functions must stat
 - whether RLS is bypassed or enforced
 - why `SECURITY DEFINER` instead of a tenant-scoped query
 - whether rollback is reversible
+
+The [migration and compatibility requirements](docs/database-setup.md#migration-lineage-and-compatibility)
+require stopping older writers before migration/deployment. A Helm
+rolling upgrade alone does not implement that boundary. See
+[database setup](docs/database-setup.md#audit-permissions-and-outcome-recovery).
 
 ## Testing
 
@@ -112,6 +128,10 @@ Changes touching the database, repositories, migrations, bootstrap or RLS also r
 TEST_DATABASE_DSN='postgres://...' make integration
 ```
 
+The integration target refuses an empty DSN and runs the shared-database packages
+serially without cached results. Calling tagged Go tests directly without a DSN
+can still skip individual tests; that is not integration evidence.
+
 Changes touching Helm or Kubernetes require:
 
 ```bash
@@ -119,17 +139,30 @@ make helm-check
 make kind-verify
 ```
 
-`kind-verify` creates a local kind cluster and takes longer than unit tests. State in the PR whether you actually ran it; never mark "not run" as "passed".
+`kind-verify` creates or reuses `orbitjob-verify` (overridable with
+`KIND_CLUSTER_NAME`), switches kubeconfig context, and modifies its database
+and Helm release. It exercises upgrade, failing migration, uninstall and
+reinstall paths, so use a disposable cluster. A cluster created by the script
+is removed on success and retained on failure; an existing cluster is retained.
+State in the PR whether it actually ran and against which checkout. Helm
+rendering and local tests do not prove a real installation or upgrade passed.
 
 ### Benchmarks
 
-`make bench` measures the ledger's pure hot paths: occurrence-key derivation (the dedup cornerstone), run phase transitions, check/probe-config normalization, Kubernetes Job rendering, terminal-outcome-to-SLI derivation, and leader election/locking. These are in-process functions — no database, no cluster — so the target finishes in about a minute. It covers only packages that carry benchmarks and skips the test suites; `make test` owns verification.
+`make bench` measures the ledger's pure hot paths: occurrence-key derivation, run phase transitions, check/probe-config normalization, Kubernetes Job rendering, terminal-outcome-to-SLI derivation, and leader election/locking. These are in-process functions with no database or cluster dependency. The target covers only packages listed in `BENCH_PACKAGES` in the Makefile and skips test suites; `make test` owns verification. Runtime depends on the host and benchmark inputs.
 
-The run writes `bench.txt`, which the Benchmark workflow tracks per commit; check the comparison it posts on your PR before merging a change to a benched path.
+The run publishes `bench.txt` only after the benchmark process succeeds and
+emits a numeric measurement. Producer failures, empty runs and stale artifacts
+cannot count as a baseline. The Benchmark workflow stores a baseline on pushes
+to `main` and compares PRs targeting `main` when a baseline exists; a PR to
+`dev` does not receive that comparison automatically.
 
 `make bench-etcd-memory` reruns the election benchmarks at higher count for benchstat-style comparisons. `make bench-etcd` does the same against a live etcd and needs `ETCD_ENDPOINTS` (default `localhost:2379`).
 
-A change to a performance-sensitive path ships with a benchmark next to it: table-driven over representative inputs, with `b.ReportAllocs`, and honest — a trivially fast function says so in a comment rather than inflating the scenario. Benchmarks that need the ledger database are out of scope for now; once the store workstream settles they will land as a separate tagged target, not inside `make bench`.
+A change to a performance-sensitive path must include a benchmark alongside it:
+table-driven over representative inputs, with `b.ReportAllocs`. State which
+dependency costs it excludes. The current `make bench` target does not measure
+database queries, a deployed cluster or end-to-end throughput.
 
 ## Local hooks
 
@@ -149,7 +182,8 @@ GitGuardian configuration. Never put that token in this repository or an env
 file under version control.
 
 `make hooks` runs `pre-commit install`, which wires both the pre-commit and
-commit-msg hooks. No gate touches unstaged or unrelated files. The gates that
+commit-msg hooks. Hooks select staged paths, but package vet, OpenAPI and chart
+checks may read their dependencies elsewhere in the checkout. The gates that
 rewrite files — trailing-whitespace, end-of-file-fixer, mixed-line-ending,
 go-fmt — exit non-zero after fixing: review the changes, `git add` them, and
 commit again.
@@ -169,18 +203,28 @@ commit again.
 | chart-gate | `charts/` staged | `make helm-check` fails |
 | commit-msg | every commit | subject is empty, longer than 72 characters, or a `WIP` marker |
 
-The heavyweight suites stay in CI — lint, unit/race/coverage, the integration suites, benchmark comparison, image builds; the pipeline map is `docs/ci.md`. Run `make check` before pushing rather than expecting the hooks to run the world.
+The heavyweight suites stay in CI — lint, unit/race/coverage, the integration suites, benchmark comparison, image builds; the pipeline map is `docs/ci.md`. Run `make check` before pushing rather than expecting the hooks to run every check.
 
-Bypass with `git commit --no-verify`, but only in documented emergencies — a release cherry-pick out of a broken tree, or a failure caused by a hook itself — and say so in the commit or PR description. Never use it to skip a failure you have not read.
+A maintainer may authorize a hook bypass for a documented emergency, such as a
+release cherry-pick out of a broken tree or a failure in the hook itself. Agents
+must report the failure and must not infer that exception from permission to
+commit. Preserve Git signing and hooks unless the maintainer explicitly directs
+the specific exception; document any authorized bypass in the commit or PR.
 
 ## CI
 
-The pipeline map — which workflow runs when, what each one proves, and where
-artifacts land — is `docs/ci.md`. On PRs into `dev`: unit/race/coverage, the
-integration suites, lint, govulncheck, dependency review, and a build of all
-five images for both release platforms (no push). Benchmark comparison runs on
-PRs into `main`. Load tests are manually dispatched advisory operator evidence,
-never a required merge check.
+The [pipeline map](docs/ci.md) describes configured checks, outputs and their
+limits. PRs into `dev` run unit/race/coverage tests, the integration suites, lint,
+govulncheck, dependency review and builds of the Makefile's configured image
+targets for both release platforms without pushing. Benchmark comparison runs
+on PRs into `main`. Load tests are manually dispatched advisory operator evidence,
+not a required merge check.
+
+Release and prerelease workflows run their own quality gates and publication
+matrices. They currently omit the Admission image required by the source chart;
+a successful backend build does not establish a complete published installation.
+Installed migration, execution and recovery acceptance must identify the actual
+source and artifacts independently of those build results.
 
 ## OpenAPI
 
@@ -195,16 +239,28 @@ Runtime documentation is at `GET /openapi.json`. If handler behavior temporarily
 
 ## Documentation
 
-Code and documentation change in the same PR:
+Update affected documentation with the behavior change, in the same development
+unit. Documentation and code comments are written in English. Existing localized
+content is preserved; translation is a separate, explicitly requested task under
+`AGENTS.md`.
 
-- Project positioning and quick start: `README.md` (English), `README.zh.md` (Chinese variant)
+- Project positioning and quick start: `README.md`; `README.zh.md` is an existing localized variant
 - Operating steps and curl examples: `USAGE.md`
 - Security boundaries: `SECURITY.md`
 - API schema: `api/openapi.yaml`
 
+Public documentation must be complete in the distributed source tree. Keep
+operational requirements in the maintained guides and verify local links against
+the files included in the release. Internal plans, decision records and raw
+verification output are not prerequisites for following a public procedure.
+
 The README does not record the version roadmap. Roadmaps and architecture plans live in Issues, PRs or maintainer-designated design documents.
 
 ## Commit format
+
+Agents create local commits only when the maintainer explicitly requests them;
+ordinary edits remain uncommitted. A commit request includes the necessary
+staging within that scope, but does not authorize pushing or publication.
 
 Conventional Commits:
 
@@ -212,7 +268,9 @@ Conventional Commits:
 type(scope): description
 ```
 
-Descriptions are lowercase English, no trailing period, at most 72 characters. Common types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `style`, `perf`.
+Descriptions are lowercase English with no trailing period; the entire subject
+is at most 72 characters. Common types: `feat`, `fix`, `refactor`, `test`, `docs`,
+`chore`, `style`, `perf`.
 
 | Scope | Purpose |
 |---|---|
@@ -227,7 +285,7 @@ Descriptions are lowercase English, no trailing period, at most 72 characters. C
 | `check` | Checks and CheckRuns |
 | `slo` | SLIs, SLOs and error budgets |
 | `bootstrap` | first-time initialization |
-| `deploy` | Docker, Compose, Helm and kind |
+| `deploy` | Docker images, Helm and kind |
 | `platform` | migrations, coordination layer, infrastructure |
 | `ci` | CI/CD |
 | `docs` | documentation |
@@ -236,7 +294,7 @@ Do not fold unrelated features into one commit, and do not split one logical uni
 
 ## PR descriptions
 
-PRs target `dev`. Write for the reviewer, not as release notes: start with why
+When a PR is used, target `dev`. Write for the reviewer, not as release notes: start with why
 the change exists, then explain the behavior or design that changed. A small
 change may need only one sentence. A larger change should explain causality,
 tradeoffs, migration impact, known limitations and any issue, ADR or prior PR
