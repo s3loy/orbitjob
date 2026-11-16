@@ -8,6 +8,7 @@ package checkschedule
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -47,7 +48,7 @@ type Scope struct {
 // CheckSource reads due checks and advances their scheduling cursor.
 type CheckSource interface {
 	ListDue(ctx context.Context, tenantID string, now time.Time, limit int) ([]check.Snapshot, error)
-	UpdateNextRunAt(ctx context.Context, tenantID string, id int64, nextRunAt time.Time) error
+	UpdateNextRunAt(ctx context.Context, tenantID string, id int64, version int, previous, nextRunAt time.Time) (bool, error)
 }
 
 // RevisionWriter materializes the check's definition revision.
@@ -163,6 +164,23 @@ func (uc *TickUseCase) fireCheck(ctx context.Context, scope Scope, c check.Snaps
 		// The check semantics count retries; the platform counts attempts.
 	}, c.RetryLimit+1, ActorCheckScheduler)
 	if err != nil {
+		var blocked *jobrun.AdmissionBlockedError
+		if errors.As(err, &blocked) && blocked.Reason == "before_revision_activation" {
+			// A newly projected version cannot execute a slot from before its
+			// activation. Skip that unaccepted slot without changing its identity
+			// or bypassing admission; the next slot uses this activated revision.
+			next := nextRunAt(c, now)
+			advanced, advanceErr := uc.checks.UpdateNextRunAt(ctx, scope.TenantID, c.ID, c.Version, scheduledAt, next)
+			if advanceErr != nil {
+				return 0, fmt.Errorf("advance next_run_at after ineligible occurrence: %w", advanceErr)
+			}
+			slog.Info("skipped check occurrence before revision activation",
+				"tenant", scope.TenantID, "check_id", c.ID, "source_uid", sourceUID,
+				"revision_id", revisionID, "scheduled_for", scheduledAt,
+				"next_run_at", next, "cursor_advanced", advanced,
+			)
+			return 0, nil
+		}
 		return 0, fmt.Errorf("create occurrence: %w", err)
 	}
 
@@ -181,7 +199,7 @@ func (uc *TickUseCase) fireCheck(ctx context.Context, scope Scope, c check.Snaps
 	}
 
 	next := nextRunAt(c, now)
-	if err := uc.checks.UpdateNextRunAt(ctx, scope.TenantID, c.ID, next); err != nil {
+	if _, err := uc.checks.UpdateNextRunAt(ctx, scope.TenantID, c.ID, c.Version, scheduledAt, next); err != nil {
 		return 0, fmt.Errorf("advance next_run_at: %w", err)
 	}
 

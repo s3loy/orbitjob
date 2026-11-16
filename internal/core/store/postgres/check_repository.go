@@ -364,41 +364,39 @@ func (r *CheckRepository) ListDue(ctx context.Context, tenantID string, now time
 	return checks, nil
 }
 
-// UpdateNextRunAt advances the check's scheduling cursor in a tenant-scoped
-// transaction, for the same RLS reason as ListDue: an unscoped UPDATE matches
-// no rows the policy does not reveal.
-func (r *CheckRepository) UpdateNextRunAt(ctx context.Context, tenantID string, id int64, nextRunAt time.Time) error {
+// UpdateNextRunAt advances only the active snapshot the scheduler observed.
+// A changed version, cursor or status leaves the newer state untouched and
+// returns false, so the next tick reads that state instead of overwriting it.
+func (r *CheckRepository) UpdateNextRunAt(ctx context.Context, tenantID string, id int64, version int, previous, nextRunAt time.Time) (bool, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin update next_run_at tx: %w", err)
+		return false, fmt.Errorf("begin update next_run_at tx: %w", err)
 	}
 	// Unconditional release: no return path below is required to keep err
 	// non-nil, so a rollback keyed on it would strand the tx.
 	defer func() { _ = tx.Rollback() }()
 
 	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID); err != nil {
-		return fmt.Errorf("set tenant context: %w", err)
+		return false, fmt.Errorf("set tenant context: %w", err)
 	}
 
 	result, err := tx.ExecContext(ctx, `
 		UPDATE checks SET next_run_at = $1, updated_at = now()
-		WHERE tenant_id = $2 AND id = $3 AND deleted_at IS NULL
-	`, nextRunAt, tenantID, id)
+		WHERE tenant_id = $2 AND id = $3 AND version = $4
+		  AND next_run_at = $5 AND status = 'active' AND deleted_at IS NULL
+	`, nextRunAt, tenantID, id, version, previous)
 	if err != nil {
-		return fmt.Errorf("update next_run_at: %w", err)
+		return false, fmt.Errorf("update next_run_at: %w", err)
 	}
 	updated, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("read next_run_at update: %w", err)
-	}
-	if updated == 0 {
-		return &resource.NotFoundError{Resource: "check", ID: id}
+		return false, fmt.Errorf("read next_run_at update: %w", err)
 	}
 
 	if err = tx.Commit(); err != nil {
-		return fmt.Errorf("commit update next_run_at: %w", err)
+		return false, fmt.Errorf("commit update next_run_at: %w", err)
 	}
-	return nil
+	return updated > 0, nil
 }
 
 // GetByID reads one check inside a tenant-scoped transaction. The checks table

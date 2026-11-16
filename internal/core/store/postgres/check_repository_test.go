@@ -285,39 +285,47 @@ func TestCheckRepository_ListDue_Empty(t *testing.T) {
 
 func TestCheckRepository_UpdateNextRunAt(t *testing.T) {
 	repo, mock := newCheckRepoMock(t)
-	next := time.Now().Add(time.Minute)
+	previous := time.Now()
+	next := previous.Add(time.Minute)
 
 	mock.ExpectBegin()
 	mock.ExpectExec("SELECT set_config").
 		WithArgs(coreFixtureCheckRepositoryTenantID).
 		WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec("UPDATE checks SET next_run_at").
-		WithArgs(next, coreFixtureCheckRepositoryTenantID, int64(1)).
+	mock.ExpectExec("UPDATE checks SET next_run_at = .+ WHERE tenant_id = .+ AND id = .+ AND version = .+ AND next_run_at = .+ AND status = 'active' AND deleted_at IS NULL").
+		WithArgs(next, coreFixtureCheckRepositoryTenantID, int64(1), 2, previous).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	if err := repo.UpdateNextRunAt(context.Background(), coreFixtureCheckRepositoryTenantID, 1, next); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if advanced, err := repo.UpdateNextRunAt(context.Background(), coreFixtureCheckRepositoryTenantID, 1, 2, previous, next); err != nil || !advanced {
+		t.Fatalf("advanced=%t err=%v", advanced, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 
-func TestCheckRepository_UpdateNextRunAt_MissingCheck(t *testing.T) {
+func TestCheckRepository_UpdateNextRunAt_StaleSnapshot(t *testing.T) {
 	repo, mock := newCheckRepoMock(t)
-	next := time.Now().Add(time.Minute)
+	previous := time.Now()
+	next := previous.Add(time.Minute)
 
-	// An update matching no rows must surface as not-found: a cursor write
-	// that silently did nothing would make the check fire again next tick.
+	// A newer cursor, version or status belongs to another snapshot. The
+	// scheduler must leave it untouched and reload on the next tick.
 	mock.ExpectBegin()
 	mock.ExpectExec("SELECT set_config").
 		WithArgs(coreFixtureCheckRepositoryTenantID).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("UPDATE checks SET next_run_at").
-		WithArgs(next, coreFixtureCheckRepositoryTenantID, int64(1)).
+		WithArgs(next, coreFixtureCheckRepositoryTenantID, int64(1), 2, previous).
 		WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectRollback()
+	mock.ExpectCommit()
 
-	if err := repo.UpdateNextRunAt(context.Background(), coreFixtureCheckRepositoryTenantID, 1, next); err == nil {
-		t.Fatal("expected not-found for a check the update did not touch")
+	if advanced, err := repo.UpdateNextRunAt(context.Background(), coreFixtureCheckRepositoryTenantID, 1, 2, previous, next); err != nil || advanced {
+		t.Fatalf("advanced=%t err=%v", advanced, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 

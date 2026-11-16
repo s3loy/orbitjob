@@ -37,21 +37,19 @@ func TestCheckSchedulePauseStopsTimerAndPreservesAcceptedRecovery(t *testing.T) 
 	checks := NewCheckRepository(runtimeDB)
 	control := NewControlPlaneRepository(runtimeDB)
 	interval := 60
+	planned := time.Now().UTC().Add(time.Minute).Truncate(time.Microsecond)
 	c, err := NewCheckRepository(owner).Create(t.Context(), check.CreateSpec{
 		Name: "schedule-pause", TenantID: tenant, CheckType: check.CheckTypeHTTPHealth,
 		CheckConfig:    map[string]any{"url": "https://example.com/health", "method": "GET", "expected_status": 200},
 		AssertionRules: []check.AssertionRule{}, Labels: map[string]any{},
 		ScheduleType: check.ScheduleTypeInterval, IntervalSec: &interval, Timezone: "UTC", TimeoutSec: 5,
+		NextRunAt: &planned,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	revisionID, err := (projection.Service{Revisions: control}).ApplyCheck(t.Context(), c, "checks", tenant, checkschedule.ActorCheckScheduler)
 	if err != nil {
-		t.Fatal(err)
-	}
-	planned := time.Now().UTC().Add(time.Minute).Truncate(time.Microsecond)
-	if err := checks.UpdateNextRunAt(t.Context(), tenant, c.ID, planned); err != nil {
 		t.Fatal(err)
 	}
 	publisher := &checkPausePublisher{}

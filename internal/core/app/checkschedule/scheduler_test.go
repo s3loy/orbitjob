@@ -29,6 +29,8 @@ type stubCheckRepo struct {
 
 type nextRunUpdate struct {
 	id        int64
+	version   int
+	previous  time.Time
 	nextRunAt time.Time
 }
 
@@ -36,9 +38,9 @@ func (s *stubCheckRepo) ListDue(_ context.Context, _ string, _ time.Time, _ int)
 	return s.due, s.listErr
 }
 
-func (s *stubCheckRepo) UpdateNextRunAt(_ context.Context, _ string, id int64, nextRunAt time.Time) error {
-	s.updated = append(s.updated, nextRunUpdate{id: id, nextRunAt: nextRunAt})
-	return s.updateErr
+func (s *stubCheckRepo) UpdateNextRunAt(_ context.Context, _ string, id int64, version int, previous, nextRunAt time.Time) (bool, error) {
+	s.updated = append(s.updated, nextRunUpdate{id: id, version: version, previous: previous, nextRunAt: nextRunAt})
+	return s.updateErr == nil, s.updateErr
 }
 
 type stubRevisions struct {
