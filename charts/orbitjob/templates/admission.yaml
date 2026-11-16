@@ -80,6 +80,14 @@ webhooks:
     admissionReviewVersions: [v1]
     sideEffects: NoneOnDryRun
     failurePolicy: Fail
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: In
+          values:
+{{- range $entry := splitList "," (include "orbitjob.operatorNamespaceTenants" .) }}
+            - {{ index (splitList "=" $entry) 0 | quote }}
+{{- end }}
     matchPolicy: Equivalent
     timeoutSeconds: 5
     clientConfig:
