@@ -11,8 +11,73 @@ import (
 
 	"github.com/lib/pq"
 	"orbitjob/internal/admin/app/account"
+	"orbitjob/internal/core/domain/policy"
 	"orbitjob/internal/platform/scan"
 )
+
+func TestAccountEmptyPolicyReactivationReplacesTheSavedSQLBindings(t *testing.T) {
+	db, service := accountFixture(t)
+	_, admin, _ := accountClaim(t, service, "empty-policy-admin")
+	ctx := context.Background()
+	workspace, err := service.CreateWorkspace(ctx, admin.ID, "Empty policy recovery", "empty-policy-recovery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const viewerPresetID = "00000000000000000000000012"
+	wideID := scan.GenerateID()
+	if _, err := db.Exec(`INSERT INTO policies(id,tenant_id,name,document)
+		SELECT $1,$2,'WiderSavedMember',jsonb_set(document,'{statement,0,action}',(document#>'{statement,0,action}')||'["job:Trigger"]'::jsonb)
+		FROM policies WHERE id=$3`, wideID, workspace.ID, viewerPresetID); err != nil {
+		t.Fatal(err)
+	}
+	createMember := func(username, role, policyID, boundaryID string) account.User {
+		t.Helper()
+		invitation, err := service.Invite(ctx, admin.ID, account.Grant{TenantID: workspace.ID, Username: username, Role: role, PolicyIDs: []string{policyID}, BoundaryPolicyID: boundaryID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		user, err := service.AcceptInvitation(ctx, "", invitation.Token, username, accountTestPassword, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return user
+	}
+	limited := createMember("empty-policy-limited", account.RoleAdmin, viewerPresetID, viewerPresetID)
+	limitedSession, _, err := service.Login(ctx, limited.Username, accountTestPassword, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := createMember("empty-policy-target", account.RoleViewer, wideID, "")
+	disabled, active := "disabled", "active"
+	if err := service.UpdateMember(ctx, admin.ID, target.ID, workspace.ID, account.MemberChange{Status: &disabled}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.UpdateMember(ctx, limitedSession.ID, target.ID, workspace.ID, account.MemberChange{Status: &active}); !errors.Is(err, account.ErrForbidden) {
+		t.Fatalf("status-only reactivation restored the broader saved grant: %v", err)
+	}
+	if err := service.UpdateMember(ctx, limitedSession.ID, target.ID, workspace.ID, account.MemberChange{Status: &active, PolicyIDs: []string{}}); err != nil {
+		t.Fatalf("explicit preset reset failed: %v", err)
+	}
+	member, err := service.Membership(ctx, target.ID, workspace.ID)
+	if err != nil || member.Status != active || member.BoundaryPolicyID != viewerPresetID || len(member.PolicyIDs) != 1 || member.PolicyIDs[0] != viewerPresetID {
+		t.Fatalf("saved member differs from checked preset: member=%+v err=%v", member, err)
+	}
+	var staleBindings, resetAudits int
+	if err := db.QueryRow(`SELECT count(*) FROM account_membership_policies WHERE tenant_id=$1 AND user_id=$2 AND policy_id=$3`, workspace.ID, target.ID, wideID).Scan(&staleBindings); err != nil || staleBindings != 0 {
+		t.Fatalf("unvalidated SQL bindings retained: count=%d err=%v", staleBindings, err)
+	}
+	if err := db.QueryRow(`SELECT count(*) FROM audit_events WHERE tenant_id=$1 AND resource_id=$2 AND event_type='membership.updated' AND diff->'policy_ids'=jsonb_build_array($3::text) AND diff->>'status'='active'`, workspace.ID, target.ID, viewerPresetID).Scan(&resetAudits); err != nil || resetAudits != 1 {
+		t.Fatalf("preset reset audit missing explicit persisted IDs: count=%d err=%v", resetAudits, err)
+	}
+	documents, err := service.EffectiveDocuments(ctx, target.ID, workspace.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arn := policy.ARN{Tenant: workspace.ID, Group: "*", Type: "job", ID: scan.GenerateID()}
+	if policy.Evaluate(documents, policy.Request{Action: "job:Get", Resource: arn}) != policy.DecisionAllow || policy.Evaluate(documents, policy.Request{Action: "job:Trigger", Resource: arn}) == policy.DecisionAllow {
+		t.Fatal("reactivated member did not receive exactly the checked read-only authority")
+	}
+}
 
 func TestAccountRecoveryConsumesPreviouslyIssuedPasswordReset(t *testing.T) {
 	db, s := accountFixture(t)

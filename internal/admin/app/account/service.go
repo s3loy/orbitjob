@@ -474,6 +474,13 @@ func (s *Service) grantAuthority(ctx context.Context, sessionID, tenantID string
 }
 
 func (s *Service) checkGrant(ctx context.Context, sessionID string, grant *Grant) error {
+	if len(grant.PolicyIDs) == 0 {
+		var err error
+		grant.PolicyIDs, err = rolePolicies(grant.Role)
+		if err != nil {
+			return err
+		}
+	}
 	actor, membership, err := s.grantAuthority(ctx, sessionID, grant.TenantID)
 	if err != nil {
 		return err
