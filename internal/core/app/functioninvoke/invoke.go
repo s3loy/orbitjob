@@ -18,6 +18,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -215,7 +216,7 @@ func (uc *UseCase) Invoke(ctx context.Context, in Input) (Result, error) {
 	}
 	wantedSpec, storedSpec := wanted.Spec, stored.Spec
 	wantedSpec.CancelRequested, storedSpec.CancelRequested = false, false
-	if stored.Name != wanted.Name || stored.Namespace != wanted.Namespace || stored.DeletionTimestamp != nil || wantedSpec != storedSpec {
+	if !slices.Contains(v1alpha1.RunNameCandidates(wanted.Spec.ScheduledJobRef.Name, occurrenceKey), stored.Name) || stored.Namespace != wanted.Namespace || stored.DeletionTimestamp != nil || wantedSpec != storedSpec {
 		return Result{}, &resource.ConflictError{Resource: "function invocation", ID: def.ID, Field: "revision",
 			Message: "the published invocation does not match the reviewed Function occurrence"}
 	}

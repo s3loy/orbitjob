@@ -64,11 +64,13 @@ func (f *fakeRevisions) ActiveRevision(ctx context.Context, tenant, sourceUID st
 }
 
 type fakePublisher struct {
-	stored    v1alpha1.JobRun
-	created   bool
-	err       error
-	published []v1alpha1.JobRun
-	getQueue  []v1alpha1.JobRun
+	stored        v1alpha1.JobRun
+	created       bool
+	err           error
+	published     []v1alpha1.JobRun
+	getQueue      []v1alpha1.JobRun
+	getNames      []string
+	getNamespaces []string
 }
 
 func (f *fakePublisher) Publish(ctx context.Context, run v1alpha1.JobRun) (v1alpha1.JobRun, bool, error) {
@@ -90,6 +92,8 @@ func (f *fakePublisher) Publish(ctx context.Context, run v1alpha1.JobRun) (v1alp
 }
 
 func (f *fakePublisher) Get(ctx context.Context, namespace, name string) (v1alpha1.JobRun, error) {
+	f.getNames = append(f.getNames, name)
+	f.getNamespaces = append(f.getNamespaces, namespace)
 	if len(f.getQueue) == 0 {
 		return v1alpha1.JobRun{}, nil
 	}
