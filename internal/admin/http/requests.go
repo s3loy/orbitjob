@@ -533,9 +533,9 @@ type GetFunctionRequest struct {
 }
 
 // InvokeFunctionRequest defines the route and query parameters for an
-// invocation. wait_seconds is the synchronous variant's budget: zero (or
-// absent) means async-with-reference, and the cap keeps one HTTP request from
-// being held open past the platform's honest latency promise.
+// invocation. wait_seconds bounds polling for a terminal custom-resource phase
+// to at most 60 seconds. Zero or omission returns an asynchronous receipt;
+// the polling budget does not change the workload's execution timeout.
 type InvokeFunctionRequest struct {
 	ID              int64 `uri:"id" form:"-" json:"-" binding:"required,min=1"`
 	WaitSeconds     int   `form:"wait_seconds" binding:"omitempty,min=0,max=60"`

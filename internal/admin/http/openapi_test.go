@@ -55,10 +55,8 @@ func TestHandler_OpenAPIDocument(t *testing.T) {
 		t.Fatalf("expected /metrics response content type text/plain, got %+v", metricsPath.Get.Responses["200"].Content)
 	}
 
-	// A job definition is a projected Custom Resource: the read side is GET
-	// only. Creation and mutation happen in Kubernetes, so a POST on the
-	// collection must stay undocumented rather than imply a route that would
-	// write the ledger.
+	// The collection reads projected revisions. Typed definition writes use
+	// separate PUT routes, so the collection itself has no POST operation.
 	jobsPath, ok := doc.Paths["/api/v1/jobs"]
 	if !ok {
 		t.Fatal("expected /api/v1/jobs path to be documented")
@@ -67,7 +65,7 @@ func TestHandler_OpenAPIDocument(t *testing.T) {
 		t.Fatal("expected GET /api/v1/jobs operation")
 	}
 	if jobsPath.Post != nil {
-		t.Fatal("POST /api/v1/jobs must not be documented: definitions are not created over HTTP")
+		t.Fatal("POST /api/v1/jobs must not be documented: authoring uses the typed definition PUT route")
 	}
 	if !hasParameter(jobsPath.Get.Parameters, "tenant_id", "query") {
 		t.Fatalf("expected tenant_id query parameter, got %+v", jobsPath.Get.Parameters)

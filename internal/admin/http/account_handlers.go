@@ -59,6 +59,11 @@ type SetupAccountRequest struct {
 	Password    string `json:"password"`
 	DisplayName string `json:"display_name,omitempty"`
 }
+
+// AcceptInvitationRequest describes the conditional credentials accepted by the
+// invitation endpoint. The decoder uses the same fields as SetupAccountRequest.
+type AcceptInvitationRequest SetupAccountRequest
+
 type PasswordRequest struct {
 	Password string `json:"password"`
 }

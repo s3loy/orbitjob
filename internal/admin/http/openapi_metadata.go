@@ -142,9 +142,9 @@ func operationRequestExample(id string) any {
 	case "updateFunction":
 		return map[string]any{"name": "disk-usage-snapshot", "image": "busybox:1.37.0", "command": []string{"df"}, "args": []string{"-P", "/"}, "status": "paused", "expected_version": 1}
 	case "applyjobDefinition":
-		return map[string]any{"request_id": "11111111-1111-4111-8111-111111111111", "dry_run": true, "spec_json": `{"schedule":"0 2 * * *","jobTemplate":{"image":"busybox:1.37.0","command":["df"],"args":["-P","/"]}}`}
+		return map[string]any{"request_id": "11111111-1111-4111-8111-111111111111", "dry_run": true, "spec_json": `{"executionPolicyVersion":1,"schedule":"0 2 * * *","jobTemplate":{"image":"busybox:1.37.0","command":["df"],"args":["-P","/"]}}`}
 	case "applyworkflowDefinition":
-		return map[string]any{"request_id": "11111111-1111-4111-8111-111111111111", "dry_run": true, "spec_json": `{"tasks":[{"name":"extract","jobRef":{"name":"billing-extract"}},{"name":"publish","jobRef":{"name":"billing-publish"},"dependsOn":["extract"]}]}`}
+		return map[string]any{"request_id": "11111111-1111-4111-8111-111111111111", "dry_run": true, "spec_json": `{"executionPolicyVersion":1,"tasks":[{"name":"extract","jobRef":{"name":"billing-extract"}},{"name":"publish","jobRef":{"name":"billing-publish"},"dependsOn":["extract"]}]}`}
 	}
 	return nil
 }

@@ -290,7 +290,7 @@ paths:
     post:
       operationId: inviteConsoleMember
       summary: Issue a single-use workspace invitation
-      description: Human account endpoint. Browser credentials are HttpOnly SameSite=Strict cookies. Credential and capability submissions require the exact configured Origin; cookie-authenticated writes additionally require X-CSRF-Token from the same-origin session snapshot. Session and account changes are evaluated against current server state. Sensitive changes require password confirmation within 15 minutes. API keys cannot administer human accounts.
+      description: Issue a single-use workspace invitation valid for 24 hours. Requires an active administrator membership in the selected active workspace and password confirmation within 15 minutes. Granted permissions must remain within the caller's effective grants and boundary. Installation administrator status alone does not grant this authority. Browser credentials are HttpOnly SameSite=Strict cookies. Credential and capability submissions require the exact configured Origin; cookie-authenticated writes additionally require X-CSRF-Token from the same-origin session snapshot. Session and account authority are evaluated against current server state. API keys cannot administer human accounts.
       tags:
       - Authentication
       parameters:
@@ -350,7 +350,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
-          description: Operation forbidden, CSRF rejected, or recent_auth_required
+          description: Operation forbidden, CSRF rejected, or recent_auth_required where required
           headers:
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
@@ -425,7 +425,7 @@ paths:
     post:
       operationId: acceptConsoleInvitation
       summary: Consume a workspace invitation
-      description: Human account endpoint. Browser credentials are HttpOnly SameSite=Strict cookies. Credential and capability submissions require the exact configured Origin; cookie-authenticated writes additionally require X-CSRF-Token from the same-origin session snapshot. Session and account changes are evaluated against current server state. Sensitive changes require password confirmation within 15 minutes. API keys cannot administer human accounts.
+      description: Consume a valid, unexpired workspace invitation. Creating a new account requires a username and new password and signs in that account. An existing account must use its own active session cookie and CSRF token; username may be omitted or must match that session, and password may be omitted. Existing account credentials and display name are unchanged. A username-bound invitation must match the accepting account. No recent password confirmation is required. Browser credentials are HttpOnly SameSite=Strict cookies. Credential and capability submissions require the exact configured Origin; cookie-authenticated writes additionally require X-CSRF-Token from the same-origin session snapshot. Session and account authority are evaluated against current server state. API keys cannot administer human accounts.
       tags:
       - Authentication
       parameters:
@@ -449,7 +449,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SetupAccountRequest"
+              $ref: "#/components/schemas/AcceptInvitationRequest"
       responses:
         "200":
           description: Account operation completed
@@ -485,7 +485,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
-          description: Operation forbidden, CSRF rejected, or recent_auth_required
+          description: Operation forbidden, CSRF rejected, or recent_auth_required where required
           headers:
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
@@ -558,7 +558,7 @@ paths:
     post:
       operationId: loginConsole
       summary: Authenticate a human account
-      description: Human account endpoint. Browser credentials are HttpOnly SameSite=Strict cookies. Credential and capability submissions require the exact configured Origin; cookie-authenticated writes additionally require X-CSRF-Token from the same-origin session snapshot. Session and account changes are evaluated against current server state. Sensitive changes require password confirmation within 15 minutes. API keys cannot administer human accounts.
+      description: Authenticate an active account with its username and current password, and create a session. Password confirmation starts the 15-minute recent-authentication window. Browser credentials are HttpOnly SameSite=Strict cookies. Credential and capability submissions require the exact configured Origin; cookie-authenticated writes additionally require X-CSRF-Token from the same-origin session snapshot. Session and account authority are evaluated against current server state. API keys cannot administer human accounts.
       tags:
       - Authentication
       parameters:
@@ -618,7 +618,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
-          description: Operation forbidden, CSRF rejected, or recent_auth_required
+          description: Operation forbidden, CSRF rejected, or recent_auth_required where required
           headers:
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
@@ -691,7 +691,7 @@ paths:
     post:
       operationId: logoutConsole
       summary: Revoke the current human session
-      description: Human account endpoint. Browser credentials are HttpOnly SameSite=Strict cookies. Credential and capability submissions require the exact configured Origin; cookie-authenticated writes additionally require X-CSRF-Token from the same-origin session snapshot. Session and account changes are evaluated against current server state. Sensitive changes require password confirmation within 15 minutes. API keys cannot administer human accounts.
+      description: Revoke the caller's current session and clear its cookie. Requires that session; no recent password confirmation is required. Browser credentials are HttpOnly SameSite=Strict cookies. Credential and capability submissions require the exact configured Origin; cookie-authenticated writes additionally require X-CSRF-Token from the same-origin session snapshot. Session and account authority are evaluated against current server state. API keys cannot administer human accounts.
       tags:
       - Authentication
       parameters:
@@ -741,7 +741,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
-          description: Operation forbidden, CSRF rejected, or recent_auth_required
+          description: Operation forbidden, CSRF rejected, or recent_auth_required where required
           headers:
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
@@ -816,7 +816,7 @@ paths:
     get:
       operationId: listConsoleMembers
       summary: List workspace members
-      description: Human account endpoint. Browser credentials are HttpOnly SameSite=Strict cookies. Credential and capability submissions require the exact configured Origin; cookie-authenticated writes additionally require X-CSRF-Token from the same-origin session snapshot. Session and account changes are evaluated against current server state. Sensitive changes require password confirmation within 15 minutes. API keys cannot administer human accounts.
+      description: List members of the workspace selected by tenant_id. Requires an active administrator membership in that active workspace and password confirmation within 15 minutes. Installation administrator status alone does not grant workspace membership access. Browser credentials are HttpOnly SameSite=Strict cookies. Credential and capability submissions require the exact configured Origin; cookie-authenticated writes additionally require X-CSRF-Token from the same-origin session snapshot. Session and account authority are evaluated against current server state. API keys cannot administer human accounts.
       tags:
       - Authentication
       parameters:
@@ -866,7 +866,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
-          description: Operation forbidden, CSRF rejected, or recent_auth_required
+          description: Operation forbidden, CSRF rejected, or recent_auth_required where required
           headers:
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
@@ -941,7 +941,7 @@ paths:
     patch:
       operationId: updateConsoleMember
       summary: Change a workspace membership
-      description: Human account endpoint. Browser credentials are HttpOnly SameSite=Strict cookies. Credential and capability submissions require the exact configured Origin; cookie-authenticated writes additionally require X-CSRF-Token from the same-origin session snapshot. Session and account changes are evaluated against current server state. Sensitive changes require password confirmation within 15 minutes. API keys cannot administer human accounts.
+      description: Change a member's status, role, policies or boundary in the selected workspace. Requires an active administrator membership in that active workspace and password confirmation within 15 minutes. Changed grants and reactivation must remain within the caller's effective grants and boundary. Installation administrator status alone does not grant this authority. Browser credentials are HttpOnly SameSite=Strict cookies. Credential and capability submissions require the exact configured Origin; cookie-authenticated writes additionally require X-CSRF-Token from the same-origin session snapshot. Session and account authority are evaluated against current server state. API keys cannot administer human accounts.
       tags:
       - Authentication
       parameters:
@@ -1002,7 +1002,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
-          description: Operation forbidden, CSRF rejected, or recent_auth_required
+          description: Operation forbidden, CSRF rejected, or recent_auth_required where required
           headers:
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
@@ -1077,7 +1077,7 @@ paths:
     post:
       operationId: issueConsolePasswordReset
       summary: Issue a single-use account password reset
-      description: Human account endpoint. Browser credentials are HttpOnly SameSite=Strict cookies. Credential and capability submissions require the exact configured Origin; cookie-authenticated writes additionally require X-CSRF-Token from the same-origin session snapshot. Session and account changes are evaluated against current server state. Sensitive changes require password confirmation within 15 minutes. API keys cannot administer human accounts.
+      description: Issue a single-use password reset capability valid for one hour for the selected installation account. Requires installation administrator status and password confirmation within 15 minutes. Workspace administrator membership alone is insufficient; tenant_id does not narrow this installation-scoped authority. Issuing a new reset capability invalidates earlier outstanding reset capabilities for that account. Browser credentials are HttpOnly SameSite=Strict cookies. Credential and capability submissions require the exact configured Origin; cookie-authenticated writes additionally require X-CSRF-Token from the same-origin session snapshot. Session and account authority are evaluated against current server state. API keys cannot administer human accounts.
       tags:
       - Authentication
       parameters:
@@ -1142,7 +1142,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
-          description: Operation forbidden, CSRF rejected, or recent_auth_required
+          description: Operation forbidden, CSRF rejected, or recent_auth_required where required
           headers:
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
@@ -1217,7 +1217,7 @@ paths:
     post:
       operationId: changeConsolePassword
       summary: Change the current account password and revoke every session
-      description: Human account endpoint. Browser credentials are HttpOnly SameSite=Strict cookies. Credential and capability submissions require the exact configured Origin; cookie-authenticated writes additionally require X-CSRF-Token from the same-origin session snapshot. Session and account changes are evaluated against current server state. Sensitive changes require password confirmation within 15 minutes. API keys cannot administer human accounts.
+      description: Change the caller's password using its active session and current password. The operation verifies the supplied current password without requiring a previous recent-authentication window, revokes all of that account's sessions and outstanding reset capabilities, and clears the current cookie. Sign in again after success. Browser credentials are HttpOnly SameSite=Strict cookies. Credential and capability submissions require the exact configured Origin; cookie-authenticated writes additionally require X-CSRF-Token from the same-origin session snapshot. Session and account authority are evaluated against current server state. API keys cannot administer human accounts.
       tags:
       - Authentication
       parameters:
@@ -1273,7 +1273,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
-          description: Operation forbidden, CSRF rejected, or recent_auth_required
+          description: Operation forbidden, CSRF rejected, or recent_auth_required where required
           headers:
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
@@ -1348,7 +1348,7 @@ paths:
     post:
       operationId: resetConsolePassword
       summary: Consume a single-use password reset capability
-      description: Human account endpoint. Browser credentials are HttpOnly SameSite=Strict cookies. Credential and capability submissions require the exact configured Origin; cookie-authenticated writes additionally require X-CSRF-Token from the same-origin session snapshot. Session and account changes are evaluated against current server state. Sensitive changes require password confirmation within 15 minutes. API keys cannot administer human accounts.
+      description: Consume a valid, unexpired single-use reset capability and set a new account password. No session is required. Success revokes all of that account's sessions and outstanding reset capabilities and clears the current cookie. Browser credentials are HttpOnly SameSite=Strict cookies. Credential and capability submissions require the exact configured Origin; cookie-authenticated writes additionally require X-CSRF-Token from the same-origin session snapshot. Session and account authority are evaluated against current server state. API keys cannot administer human accounts.
       tags:
       - Authentication
       parameters:
@@ -1404,7 +1404,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
-          description: Operation forbidden, CSRF rejected, or recent_auth_required
+          description: Operation forbidden, CSRF rejected, or recent_auth_required where required
           headers:
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
@@ -1477,7 +1477,7 @@ paths:
     post:
       operationId: reauthenticateConsole
       summary: Confirm the account password for sensitive changes
-      description: Human account endpoint. Browser credentials are HttpOnly SameSite=Strict cookies. Credential and capability submissions require the exact configured Origin; cookie-authenticated writes additionally require X-CSRF-Token from the same-origin session snapshot. Session and account changes are evaluated against current server state. Sensitive changes require password confirmation within 15 minutes. API keys cannot administer human accounts.
+      description: Confirm the current account password for the caller's active session and renew its 15-minute recent-authentication window. An expired recent-authentication window does not prevent this operation. Browser credentials are HttpOnly SameSite=Strict cookies. Credential and capability submissions require the exact configured Origin; cookie-authenticated writes additionally require X-CSRF-Token from the same-origin session snapshot. Session and account authority are evaluated against current server state. API keys cannot administer human accounts.
       tags:
       - Authentication
       parameters:
@@ -1537,7 +1537,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
-          description: Operation forbidden, CSRF rejected, or recent_auth_required
+          description: Operation forbidden, CSRF rejected, or recent_auth_required where required
           headers:
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
@@ -1612,7 +1612,7 @@ paths:
     get:
       operationId: getConsoleSession
       summary: Read the current human session
-      description: Human account endpoint. Browser credentials are HttpOnly SameSite=Strict cookies. Credential and capability submissions require the exact configured Origin; cookie-authenticated writes additionally require X-CSRF-Token from the same-origin session snapshot. Session and account changes are evaluated against current server state. Sensitive changes require password confirmation within 15 minutes. API keys cannot administer human accounts.
+      description: Read installation initialization state and, when a valid session cookie is present, the current account, active workspace memberships and CSRF token. No login is required for an unauthenticated snapshot. Browser credentials are HttpOnly SameSite=Strict cookies. Credential and capability submissions require the exact configured Origin; cookie-authenticated writes additionally require X-CSRF-Token from the same-origin session snapshot. Session and account authority are evaluated against current server state. API keys cannot administer human accounts.
       tags:
       - Authentication
       parameters:
@@ -1656,7 +1656,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
-          description: Operation forbidden, CSRF rejected, or recent_auth_required
+          description: Operation forbidden, CSRF rejected, or recent_auth_required where required
           headers:
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
@@ -1729,7 +1729,7 @@ paths:
     get:
       operationId: listConsoleSessions
       summary: List the current account sessions
-      description: Human account endpoint. Browser credentials are HttpOnly SameSite=Strict cookies. Credential and capability submissions require the exact configured Origin; cookie-authenticated writes additionally require X-CSRF-Token from the same-origin session snapshot. Session and account changes are evaluated against current server state. Sensitive changes require password confirmation within 15 minutes. API keys cannot administer human accounts.
+      description: List unexpired sessions belonging to the caller's account. Requires an active session; no recent password confirmation is required. Browser credentials are HttpOnly SameSite=Strict cookies. Credential and capability submissions require the exact configured Origin; cookie-authenticated writes additionally require X-CSRF-Token from the same-origin session snapshot. Session and account authority are evaluated against current server state. API keys cannot administer human accounts.
       tags:
       - Authentication
       parameters:
@@ -1773,7 +1773,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
-          description: Operation forbidden, CSRF rejected, or recent_auth_required
+          description: Operation forbidden, CSRF rejected, or recent_auth_required where required
           headers:
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
@@ -1848,7 +1848,7 @@ paths:
     delete:
       operationId: revokeConsoleSession
       summary: Revoke one of the current account sessions
-      description: Human account endpoint. Browser credentials are HttpOnly SameSite=Strict cookies. Credential and capability submissions require the exact configured Origin; cookie-authenticated writes additionally require X-CSRF-Token from the same-origin session snapshot. Session and account changes are evaluated against current server state. Sensitive changes require password confirmation within 15 minutes. API keys cannot administer human accounts.
+      description: Revoke a session belonging to the caller's account, including the current session. Requires an active session with password confirmation within 15 minutes. Other accounts' sessions cannot be revoked through this operation. Browser credentials are HttpOnly SameSite=Strict cookies. Credential and capability submissions require the exact configured Origin; cookie-authenticated writes additionally require X-CSRF-Token from the same-origin session snapshot. Session and account authority are evaluated against current server state. API keys cannot administer human accounts.
       tags:
       - Authentication
       parameters:
@@ -1903,7 +1903,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
-          description: Operation forbidden, CSRF rejected, or recent_auth_required
+          description: Operation forbidden, CSRF rejected, or recent_auth_required where required
           headers:
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
@@ -1978,7 +1978,7 @@ paths:
     post:
       operationId: setupConsole
       summary: Consume the installer capability and create the first administrator
-      description: Human account endpoint. Browser credentials are HttpOnly SameSite=Strict cookies. Credential and capability submissions require the exact configured Origin; cookie-authenticated writes additionally require X-CSRF-Token from the same-origin session snapshot. Session and account changes are evaluated against current server state. Sensitive changes require password confirmation within 15 minutes. API keys cannot administer human accounts.
+      description: Consume a valid, unexpired installer setup or recovery capability to create or recover an installation administrator and its default-workspace administrator membership. Requires the capability and account credentials; no existing session is required. A recovery capability can be bound to a username. Browser credentials are HttpOnly SameSite=Strict cookies. Credential and capability submissions require the exact configured Origin; cookie-authenticated writes additionally require X-CSRF-Token from the same-origin session snapshot. Session and account authority are evaluated against current server state. API keys cannot administer human accounts.
       tags:
       - Authentication
       parameters:
@@ -2038,7 +2038,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
-          description: Operation forbidden, CSRF rejected, or recent_auth_required
+          description: Operation forbidden, CSRF rejected, or recent_auth_required where required
           headers:
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
@@ -2111,7 +2111,7 @@ paths:
     get:
       operationId: listConsoleUsers
       summary: List installation accounts
-      description: Human account endpoint. Browser credentials are HttpOnly SameSite=Strict cookies. Credential and capability submissions require the exact configured Origin; cookie-authenticated writes additionally require X-CSRF-Token from the same-origin session snapshot. Session and account changes are evaluated against current server state. Sensitive changes require password confirmation within 15 minutes. API keys cannot administer human accounts.
+      description: List installation accounts. Requires installation administrator status and password confirmation within 15 minutes; workspace administrator membership alone is insufficient. Browser credentials are HttpOnly SameSite=Strict cookies. Credential and capability submissions require the exact configured Origin; cookie-authenticated writes additionally require X-CSRF-Token from the same-origin session snapshot. Session and account authority are evaluated against current server state. API keys cannot administer human accounts.
       tags:
       - Authentication
       parameters:
@@ -2155,7 +2155,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
-          description: Operation forbidden, CSRF rejected, or recent_auth_required
+          description: Operation forbidden, CSRF rejected, or recent_auth_required where required
           headers:
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
@@ -2230,7 +2230,7 @@ paths:
     patch:
       operationId: updateConsoleUser
       summary: Change an installation account
-      description: Human account endpoint. Browser credentials are HttpOnly SameSite=Strict cookies. Credential and capability submissions require the exact configured Origin; cookie-authenticated writes additionally require X-CSRF-Token from the same-origin session snapshot. Session and account changes are evaluated against current server state. Sensitive changes require password confirmation within 15 minutes. API keys cannot administer human accounts.
+      description: Change an installation account's status, installation administrator flag or display name. Requires installation administrator status and password confirmation within 15 minutes. Disabling an account revokes its sessions. The last active installation administrator cannot be disabled or demoted. Browser credentials are HttpOnly SameSite=Strict cookies. Credential and capability submissions require the exact configured Origin; cookie-authenticated writes additionally require X-CSRF-Token from the same-origin session snapshot. Session and account authority are evaluated against current server state. API keys cannot administer human accounts.
       tags:
       - Authentication
       parameters:
@@ -2291,7 +2291,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
-          description: Operation forbidden, CSRF rejected, or recent_auth_required
+          description: Operation forbidden, CSRF rejected, or recent_auth_required where required
           headers:
             X-Trace-ID:
               description: Trace identifier echoed back to clients. Generated when request does not provide one.
@@ -4043,7 +4043,7 @@ paths:
             example:
               dry_run: true
               request_id: 11111111-1111-4111-8111-111111111111
-              spec_json: "{\"schedule\":\"0 2 * * *\",\"jobTemplate\":{\"image\":\"busybox:1.37.0\",\"command\":[\"df\"],\"args\":[\"-P\",\"/\"]}}"
+              spec_json: "{\"executionPolicyVersion\":1,\"schedule\":\"0 2 * * *\",\"jobTemplate\":{\"image\":\"busybox:1.37.0\",\"command\":[\"df\"],\"args\":[\"-P\",\"/\"]}}"
       responses:
         "200":
           description: Live definition, validation, acceptance or reconciliation
@@ -4672,7 +4672,7 @@ paths:
             example:
               dry_run: true
               request_id: 11111111-1111-4111-8111-111111111111
-              spec_json: "{\"tasks\":[{\"name\":\"extract\",\"jobRef\":{\"name\":\"billing-extract\"}},{\"name\":\"publish\",\"jobRef\":{\"name\":\"billing-publish\"},\"dependsOn\":[\"extract\"]}]}"
+              spec_json: "{\"executionPolicyVersion\":1,\"tasks\":[{\"name\":\"extract\",\"jobRef\":{\"name\":\"billing-extract\"}},{\"name\":\"publish\",\"jobRef\":{\"name\":\"billing-publish\"},\"dependsOn\":[\"extract\"]}]}"
       responses:
         "200":
           description: Live definition, validation, acceptance or reconciliation
@@ -6024,7 +6024,7 @@ paths:
     post:
       operationId: invokeFunction
       summary: Invoke a function
-      description: "Invoke a function by publishing a JobRun custom resource, exactly as a manual job trigger does; the operator materializes the ledger run from the pinned revision. The request carries no body: v1 functions are parameterless, and parameters are baked into the definition. With wait_seconds (capped at 60) the call polls the custom resource until a terminal phase or the budget expires, then answers with the phase observed. Every invocation is a cold pod, so latency is honest seconds, not milliseconds -- and the only result channel is the exit outcome: the receipt returns the observed phase; run observations carry timestamps. This invoke response contains no log text or function response body; bounded retained diagnostic logs use the separate function:ReadLogs route. Invoking a paused function is a conflict. Optional expected_version must match both the saved definition and the active executable revision; a stale review or pending projection returns 409 without publishing an older version. Omitting it preserves legacy active-revision invocation. Use the X-OrbitJob-Idempotency-Key header to prevent duplicate invocations; version-pinned calls scope that identity to the reviewed version."
+      description: "Invoke a function by publishing a JobRun custom resource; the operator materializes the ledger run from the pinned revision and starts a new Kubernetes Job and Pod for execution. Scheduling, image availability and container startup affect execution timing; no warm execution pool is used. The request carries no body: v1 functions are parameterless, and parameters are baked into the definition. With wait_seconds omitted or zero, the call returns an asynchronous invocation receipt without waiting for completion. A positive wait_seconds (capped at 60) polls the custom resource until a terminal phase or the wait budget expires, then returns the observed phase. The wait budget does not limit the workload's execution timeout. The receipt reports the observed phase; run observations carry timestamps and the exit outcome. This invoke response contains no log text or function response body; bounded retained diagnostic logs use the separate function:ReadLogs route. Invoking a paused function is a conflict. Optional expected_version must match both the saved definition and the active executable revision; a stale review or pending projection returns 409 without publishing an older version. Omitting it preserves legacy active-revision invocation. Use the X-OrbitJob-Idempotency-Key header to prevent duplicate invocations; version-pinned calls scope that identity to the reviewed version."
       tags:
       - Functions
       parameters:
@@ -6715,7 +6715,7 @@ paths:
         in: query
         schema:
           type: integer
-          default: 50
+          default: 500
           minimum: 1
           maximum: 1000
       - name: attempt
@@ -6876,7 +6876,7 @@ paths:
         in: query
         schema:
           type: integer
-          default: 50
+          default: 500
           minimum: 1
           maximum: 1000
       - name: attempt
@@ -7048,7 +7048,7 @@ paths:
         in: query
         schema:
           type: integer
-          default: 50
+          default: 500
           minimum: 1
           maximum: 1000
       - name: attempt
@@ -8050,7 +8050,7 @@ paths:
     post:
       operationId: cancelInstance
       summary: Request a run cancel
-      description: Request a stop for one run by patching spec.cancelRequested on its JobRun custom resource. The request carries no body. The run reaches the Canceled phase only once the operator has observed its Kubernetes Job gone; the response carries the phase observed at request time. Canceling a run that already finished succeeds and reports the terminal phase.
+      description: Request a stop for one run by patching spec.cancelRequested on its JobRun custom resource. The request carries no body. The operator can cancel a Prepared attempt before dispatch when the locked dispatch record proves no send was authorized. If execution may have started, Canceled requires trusted termination evidence for the owned attempt and confirmation that the original owned Kubernetes Job no longer exists; retained evidence also requires completed release. Missing or uncertain evidence keeps cancellation unresolved. The response carries the phase observed at request time. Canceling a run that already finished succeeds and reports the terminal phase.
       tags:
       - Instances
       parameters:
@@ -8235,7 +8235,7 @@ paths:
         in: query
         schema:
           type: integer
-          default: 50
+          default: 500
           minimum: 1
           maximum: 1000
       - name: attempt
@@ -8390,7 +8390,7 @@ paths:
         in: query
         schema:
           type: integer
-          default: 50
+          default: 500
           minimum: 1
           maximum: 1000
       - name: attempt
@@ -8556,7 +8556,7 @@ paths:
         in: query
         schema:
           type: integer
-          default: 50
+          default: 500
           minimum: 1
           maximum: 1000
       - name: attempt
@@ -13423,7 +13423,7 @@ paths:
     get:
       operationId: listWorkflows
       summary: List workflow definitions
-      description: List the active revision of every WorkflowJob definition in the tenant. Search is a case-insensitive literal substring of name or namespace, applied before pagination. A workflow definition is a WorkflowJob custom resource, declared outside this API and read here through its projection; there is no create route. limit defaults to 50 when omitted.
+      description: List the projected active revision of each WorkflowJob definition in the tenant. Search is a case-insensitive literal substring of name or namespace, applied before pagination. Create or update a WorkflowJob through the separate typed definition route, PUT /api/v1/definitions/workflows/{namespace}/{name}. An accepted definition becomes visible here after operator projection. limit defaults to 50 when omitted.
       tags:
       - Workflows
       parameters:
@@ -15030,6 +15030,29 @@ components:
           type: boolean
       required:
       - revoked
+    AcceptInvitationRequest:
+      type: object
+      description: A new account requires username and password. An existing account requires its own active session and CSRF token; username and password may be omitted. Supplied nonempty passwords are validated, but never replace an existing account's password.
+      properties:
+        display_name:
+          type: string
+          description: Display name encoded as valid UTF-8, with at most 128 Unicode code points.
+          maxLength: 128
+        password:
+          type: string
+          format: password
+          description: "New password: valid UTF-8 with at least 15 Unicode code points and at most 1024 UTF-8 bytes. Common passwords and repeated patterns are rejected; no character-class requirement applies. Required for a new account. An existing account may omit this field or send an empty string; a supplied nonempty value is validated and does not change its password."
+        token:
+          type: string
+          description: Single-use capability token containing 43 ASCII characters, as issued by the installer or account API. It must be unexpired and unconsumed.
+          minLength: 43
+          maxLength: 43
+        username:
+          type: string
+          description: Account username, normalized by trimming surrounding whitespace and converting to lowercase. The normalized value must match [a-z0-9][a-z0-9._-]{2,63} (3 to 64 ASCII characters). Required for a new account; optional for an existing account and must match its authenticated session when supplied.
+      required:
+      - token
+      additionalProperties: false
     AlertListResponse:
       type: object
       properties:
@@ -16229,16 +16252,27 @@ components:
       properties:
         boundary_policy_id:
           type: string
+          description: Optional boundary policy ID. An empty value inherits the inviting administrator's membership boundary; delegated grants must preserve that boundary.
         policy_ids:
           type: array
+          description: Optional explicit policy IDs. Omitted or empty uses the selected role's preset; the resulting grant must be contained within the caller's effective permissions.
           items:
             type: string
         role:
           type: string
+          enum:
+          - admin
+          - operator
+          - viewer
         tenant_id:
           type: string
         username:
           type: string
+          description: Account username, normalized by trimming surrounding whitespace and converting to lowercase. The normalized value must match [a-z0-9][a-z0-9._-]{2,63} (3 to 64 ASCII characters). Omit to allow any eligible account to accept the invitation.
+      required:
+      - tenant_id
+      - role
+      additionalProperties: false
     HealthzResponse:
       type: object
       properties:
@@ -16390,10 +16424,19 @@ components:
       properties:
         password:
           type: string
+          format: password
+          description: Current account password. At most 1024 UTF-8 bytes; login and password confirmation do not apply the new-password length or quality rules.
         remember:
           type: boolean
+          description: Use a seven-day session instead of the default eight-hour session.
+          default: false
         username:
           type: string
+          description: Account username, normalized by trimming surrounding whitespace and converting to lowercase. The normalized value must match [a-z0-9][a-z0-9._-]{2,63} (3 to 64 ASCII characters).
+      required:
+      - username
+      - password
+      additionalProperties: false
     LogsResult:
       type: object
       properties:
@@ -16432,16 +16475,22 @@ components:
           nullable: true
         policy_ids:
           type: array
+          description: Explicit IDs replace the current policy bindings. An empty array resets bindings to the selected role's preset. Omit or use null to retain current bindings unless role changes, which selects the new role's preset. The resulting grant must fit the administrator's effective permissions and boundary.
           items:
             type: string
         role:
           type: string
+          description: Set role to admin, operator or viewer. Omit or use null to keep the current role.
           nullable: true
         status:
           type: string
+          description: Set status to active or disabled. Omit or use null to keep the current status.
           nullable: true
         tenant_id:
           type: string
+      required:
+      - tenant_id
+      additionalProperties: false
     MemberListResponse:
       type: object
       properties:
@@ -16568,18 +16617,33 @@ components:
       properties:
         current_password:
           type: string
+          description: Current account password. At most 1024 UTF-8 bytes; login and password confirmation do not apply the new-password length or quality rules.
         password:
           type: string
+          format: password
+          description: "New password: valid UTF-8 with at least 15 Unicode code points and at most 1024 UTF-8 bytes. Common passwords and repeated patterns are rejected; no character-class requirement applies."
+          minLength: 15
+      required:
+      - current_password
+      - password
+      additionalProperties: false
     PasswordRequest:
       type: object
       properties:
         password:
           type: string
+          format: password
+          description: Current account password. At most 1024 UTF-8 bytes; login and password confirmation do not apply the new-password length or quality rules.
+      required:
+      - password
+      additionalProperties: false
     PasswordResetRequest:
       type: object
       properties:
         tenant_id:
           type: string
+          description: Optional compatibility field. Password reset issuance requires installation administrator authority regardless of this value.
+      additionalProperties: false
     PolicyCreateResult:
       type: object
       properties:
@@ -16731,8 +16795,18 @@ components:
       properties:
         password:
           type: string
+          format: password
+          description: "New password: valid UTF-8 with at least 15 Unicode code points and at most 1024 UTF-8 bytes. Common passwords and repeated patterns are rejected; no character-class requirement applies."
+          minLength: 15
         token:
           type: string
+          description: Single-use capability token containing 43 ASCII characters, as issued by the installer or account API. It must be unexpired and unconsumed.
+          minLength: 43
+          maxLength: 43
+      required:
+      - token
+      - password
+      additionalProperties: false
     ResourceGroupListResponse:
       type: object
       properties:
@@ -16992,12 +17066,26 @@ components:
       properties:
         display_name:
           type: string
+          description: Display name encoded as valid UTF-8, with at most 128 Unicode code points.
+          maxLength: 128
         password:
           type: string
+          format: password
+          description: "New password: valid UTF-8 with at least 15 Unicode code points and at most 1024 UTF-8 bytes. Common passwords and repeated patterns are rejected; no character-class requirement applies."
+          minLength: 15
         token:
           type: string
+          description: Single-use capability token containing 43 ASCII characters, as issued by the installer or account API. It must be unexpired and unconsumed.
+          minLength: 43
+          maxLength: 43
         username:
           type: string
+          description: Account username, normalized by trimming surrounding whitespace and converting to lowercase. The normalized value must match [a-z0-9][a-z0-9._-]{2,63} (3 to 64 ASCII characters).
+      required:
+      - token
+      - username
+      - password
+      additionalProperties: false
     SliCreateResult:
       type: object
       properties:
@@ -17652,13 +17740,17 @@ components:
       properties:
         display_name:
           type: string
+          description: Display name encoded as valid UTF-8, with at most 128 Unicode code points.
           nullable: true
+          maxLength: 128
         installation_admin:
           type: boolean
           nullable: true
         status:
           type: string
+          description: Set status to active or disabled. Omit or use null to keep the current status.
           nullable: true
+      additionalProperties: false
     UserListResponse:
       type: object
       properties:

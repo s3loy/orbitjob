@@ -32,6 +32,7 @@ import (
 	"orbitjob/internal/admin/http/apperror"
 	"orbitjob/internal/admin/http/middleware"
 	"orbitjob/internal/core/domain/policy"
+	"orbitjob/internal/logarchive"
 )
 
 const adminAPIPrefix = "/api/v1"
@@ -414,7 +415,7 @@ func adminAPIRoutes() []routeDefinition {
 			spec: operationDefinition{
 				id:              "cancelInstance",
 				summary:         "Request a run cancel",
-				description:     "Request a stop for one run by patching spec.cancelRequested on its JobRun custom resource. The request carries no body. The run reaches the Canceled phase only once the operator has observed its Kubernetes Job gone; the response carries the phase observed at request time. Canceling a run that already finished succeeds and reports the terminal phase.",
+				description:     "Request a stop for one run by patching spec.cancelRequested on its JobRun custom resource. The request carries no body. The operator can cancel a Prepared attempt before dispatch when the locked dispatch record proves no send was authorized. If execution may have started, Canceled requires trusted termination evidence for the owned attempt and confirmation that the original owned Kubernetes Job no longer exists; retained evidence also requires completed release. Missing or uncertain evidence keeps cancellation unresolved. The response carries the phase observed at request time. Canceling a run that already finished succeeds and reports the terminal phase.",
 				tags:            []string{"Instances"},
 				parameterModels: []any{instanceRunIDURI{}},
 				responses: []responseDefinition{
@@ -1253,7 +1254,7 @@ func adminAPIRoutes() []routeDefinition {
 			spec: operationDefinition{
 				id:              "invokeFunction",
 				summary:         "Invoke a function",
-				description:     "Invoke a function by publishing a JobRun custom resource, exactly as a manual job trigger does; the operator materializes the ledger run from the pinned revision. The request carries no body: v1 functions are parameterless, and parameters are baked into the definition. With wait_seconds (capped at 60) the call polls the custom resource until a terminal phase or the budget expires, then answers with the phase observed. Every invocation is a cold pod, so latency is honest seconds, not milliseconds -- and the only result channel is the exit outcome: the receipt returns the observed phase; run observations carry timestamps. This invoke response contains no log text or function response body; bounded retained diagnostic logs use the separate function:ReadLogs route. Invoking a paused function is a conflict. Optional expected_version must match both the saved definition and the active executable revision; a stale review or pending projection returns 409 without publishing an older version. Omitting it preserves legacy active-revision invocation. Use the X-OrbitJob-Idempotency-Key header to prevent duplicate invocations; version-pinned calls scope that identity to the reviewed version.",
+				description:     "Invoke a function by publishing a JobRun custom resource; the operator materializes the ledger run from the pinned revision and starts a new Kubernetes Job and Pod for execution. Scheduling, image availability and container startup affect execution timing; no warm execution pool is used. The request carries no body: v1 functions are parameterless, and parameters are baked into the definition. With wait_seconds omitted or zero, the call returns an asynchronous invocation receipt without waiting for completion. A positive wait_seconds (capped at 60) polls the custom resource until a terminal phase or the wait budget expires, then returns the observed phase. The wait budget does not limit the workload's execution timeout. The receipt reports the observed phase; run observations carry timestamps and the exit outcome. This invoke response contains no log text or function response body; bounded retained diagnostic logs use the separate function:ReadLogs route. Invoking a paused function is a conflict. Optional expected_version must match both the saved definition and the active executable revision; a stale review or pending projection returns 409 without publishing an older version. Omitting it preserves legacy active-revision invocation. Use the X-OrbitJob-Idempotency-Key header to prevent duplicate invocations; version-pinned calls scope that identity to the reviewed version.",
 				tags:            []string{"Functions"},
 				parameterModels: []any{InvokeFunctionRequest{}, idempotencyKeyHeaderRequest{}},
 				responses: []responseDefinition{
@@ -1319,7 +1320,7 @@ func adminAPIRoutes() []routeDefinition {
 			spec: operationDefinition{
 				id:              "listWorkflows",
 				summary:         "List workflow definitions",
-				description:     "List the active revision of every WorkflowJob definition in the tenant. Search is a case-insensitive literal substring of name or namespace, applied before pagination. A workflow definition is a WorkflowJob custom resource, declared outside this API and read here through its projection; there is no create route. limit defaults to 50 when omitted.",
+				description:     "List the projected active revision of each WorkflowJob definition in the tenant. Search is a case-insensitive literal substring of name or namespace, applied before pagination. Create or update a WorkflowJob through the separate typed definition route, PUT /api/v1/definitions/workflows/{namespace}/{name}. An accepted definition becomes visible here after operator projection. limit defaults to 50 when omitted.",
 				tags:            []string{"Workflows"},
 				parameterModels: []any{ListWorkflowsRequest{}},
 				responses: []responseDefinition{
@@ -1632,9 +1633,8 @@ func parametersFromModel(model any) []Parameter {
 			Schema:   inlineSchemaForType(field.Type),
 		}
 		applyBindingRules(&parameter.Schema, field.Tag.Get("binding"))
-		applyParameterDefaults(&parameter)
-		// Gin's explicit form default takes precedence over legacy name-based
-		// defaults (workspace discovery has a smaller default page).
+		applyParameterDefaults(t, &parameter)
+		// Explicit binding defaults take precedence over use-case defaults.
 		for _, option := range strings.Split(field.Tag.Get("form"), ",")[1:] {
 			if value, ok := strings.CutPrefix(option, "default="); ok {
 				var decoded any
@@ -1670,14 +1670,25 @@ func openAPIParameterTag(field reflect.StructField) (string, string, bool) {
 	return "", "", false
 }
 
-func applyParameterDefaults(parameter *Parameter) {
+func applyParameterDefaults(model reflect.Type, parameter *Parameter) {
 	if parameter.In != "query" {
 		return
 	}
 
 	switch parameter.Name {
 	case "limit":
-		parameter.Schema.Default = jobquery.DefaultListLimit
+		switch model {
+		case reflect.TypeFor[ListJobsRequest](), reflect.TypeFor[ListInstancesRequest](),
+			reflect.TypeFor[ListChecksRequest](), reflect.TypeFor[ListCheckRunsRequest](),
+			reflect.TypeFor[ListSLIsRequest](), reflect.TypeFor[ListSLOsRequest](),
+			reflect.TypeFor[ListSLOBudgetsRequest](), reflect.TypeFor[ListSLOAlertsRequest](),
+			reflect.TypeFor[ListTenantsRequest](), reflect.TypeFor[ListFunctionsRequest](),
+			reflect.TypeFor[ListFunctionRunsRequest](), reflect.TypeFor[ListWorkflowsRequest](),
+			reflect.TypeFor[ListWorkflowRunsRequest]():
+			parameter.Schema.Default = jobquery.DefaultListLimit
+		case reflect.TypeFor[logarchive.Query]():
+			parameter.Schema.Default = 500
+		}
 	case "offset":
 		parameter.Schema.Default = 0
 	case "created_from", "created_before":
@@ -1777,6 +1788,7 @@ func (r *schemaRegistry) schemaForType(t reflect.Type, mode schemaMode) Schema {
 		schema := r.structSchema(t, mode)
 		r.applySchemaDefaults(name, &schema)
 		applyInputSchemaMetadata(t, mode, &schema)
+		applyAccountSchemaMetadata(t, mode, &schema)
 		r.components[name] = schema
 		return Schema{Ref: "#/components/schemas/" + name}
 	case reflect.Slice, reflect.Array:
