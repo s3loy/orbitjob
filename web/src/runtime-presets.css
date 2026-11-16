@@ -1,0 +1,24 @@
+.runtime-preset-field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.runtime-preset-field .form-field {
+  max-width: 350px;
+  margin: 0;
+}
+.runtime-preset-hint {
+  max-width: 72ch;
+  margin: 0;
+  color: var(--console-muted);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.runtime-preset-hint code {
+  color: var(--console-ink);
+}
+.runtime-preset-field select:focus-visible {
+  outline: 2px solid var(--console-link);
+  outline-offset: 3px;
+}

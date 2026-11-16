@@ -1,0 +1,22 @@
+apiVersion: workloads.orbitjob.io/v1alpha1
+kind: ScheduledJob
+metadata:
+  name: disk-usage-snapshot
+  namespace: your-tenant-namespace
+spec:
+  executionPolicyVersion: 1
+  schedule: ''
+  suspend: false
+  concurrencyPolicy: Forbid
+  misfirePolicy: Skip
+  timeoutSeconds: 120
+  retryPolicy:
+    maxAttempts: 1
+  history:
+    successfulRuns: 3
+    failedRuns: 3
+  jobTemplate:
+    image: busybox:1.37.0
+    command: [df]
+    args: ['-P', '/']
+    backoffLimit: 0

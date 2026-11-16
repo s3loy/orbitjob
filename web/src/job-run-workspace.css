@@ -1,0 +1,96 @@
+/* Task context for job and execution views; the global shell owns its own styling. */
+.jobs-table .record-link {
+  color: var(--console-link);
+  font-weight: 550;
+}
+.jobs-table .record-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.jobs-table .job-mode {
+  font-size: 12px;
+  white-space: normal;
+}
+.jobs-table .job-mode.is-paused {
+  color: var(--console-warn);
+}
+.jobs-table tbody .rt-Button {
+  background: transparent;
+  font-weight: 400;
+}
+.run-phase-filter {
+  display: grid;
+  gap: 6px;
+}
+.run-filter-identity {
+  min-width: 0;
+  flex: 1 1 240px;
+  font-size: 13px;
+  color: var(--console-muted);
+}
+.run-filter-identity > summary {
+  width: fit-content;
+  cursor: pointer;
+}
+.run-filter-identity > summary:focus-visible {
+  outline: 2px solid var(--console-link);
+  outline-offset: 4px;
+}
+.run-investigation {
+  border-top: 1px solid var(--console-line);
+  padding-top: 16px;
+  margin-bottom: 16px;
+}
+.run-investigation h2 {
+  margin: 0 0 8px;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.run-investigation p {
+  margin: 0 0 12px;
+  max-width: 76ch;
+  color: var(--console-muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+.run-attempt-evidence {
+  margin-top: 28px;
+  border-top: 1px solid var(--console-line);
+  padding-top: 20px;
+}
+.run-attempt-picker {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 16px;
+  font-size: 13px;
+  color: var(--console-muted);
+}
+.run-attempt-picker select {
+  min-height: 36px;
+  max-width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--console-line);
+  border-radius: 6px;
+  background: var(--console-paper);
+  color: var(--console-ink);
+  font: inherit;
+}
+.run-attempt-timing {
+  margin: 24px 0;
+  border-top: 1px solid var(--console-line);
+  padding-top: 16px;
+}
+.run-attempt-timing > section {
+  margin-top: 16px;
+}
+.run-attempt-picker select:focus-visible {
+  outline: 2px solid var(--console-link);
+  outline-offset: 3px;
+}
+#run-output,
+#attempt-diagnostics {
+  scroll-margin-top: 20px;
+}

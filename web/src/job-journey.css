@@ -1,0 +1,69 @@
+.workload-builder.job-authoring,
+.definition-editor.job-authoring {
+  max-width: 1240px;
+}
+.job-authoring-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+.job-authoring-form,
+.job-authoring-preview {
+  min-width: 0;
+}
+.job-preview-jump {
+  display: inline-block;
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+.job-authoring-resources {
+  border-bottom: 1px solid var(--console-line);
+  padding-block: 20px;
+}
+.job-authoring-resources > summary {
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+}
+.job-authoring-resources > p {
+  color: var(--console-muted);
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 8px 0 0;
+}
+.job-authoring-resources > .authoring-settings-group {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+.job-draft-source {
+  color: var(--console-muted);
+  font-size: 12px;
+  margin: 12px 0 0;
+}
+.job-first-run {
+  margin-block: 12px;
+}
+@media (min-width: 1380px) {
+  .job-authoring-layout {
+    grid-template-columns: minmax(0, 1fr) 340px;
+    gap: 28px;
+  }
+  .job-authoring-preview {
+    position: sticky;
+    top: 24px;
+    max-height: calc(100dvh - 48px);
+    overflow: auto;
+    scrollbar-gutter: stable;
+  }
+  .job-preview-jump {
+    display: none;
+  }
+}
+@media (pointer: coarse) {
+  .job-authoring-resources > summary,
+  .job-preview-jump {
+    min-height: 44px;
+    align-content: center;
+  }
+}

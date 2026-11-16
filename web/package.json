@@ -1,0 +1,63 @@
+{
+  "name": "orbitjob-console",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "engines": {
+    "node": "^22.13.0 || ^24.0.0 || >=26.0.0"
+  },
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "generate": "node scripts/generate-api.mjs && node scripts/generate-manifest-schemas.mjs && node scripts/generate-workload-assistant.mjs",
+    "types:check": "node scripts/generate-api.mjs --check && node scripts/generate-manifest-schemas.mjs --check && node scripts/generate-workload-assistant.mjs --check",
+    "typecheck": "tsc -b",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:browser": "playwright test",
+    "build": "tsc -b && vite build",
+    "build:pages": "tsc -b && vite build --mode pages --outDir dist-pages",
+    "preview": "vite preview --host 127.0.0.1",
+    "check": "npm run types:check && npm run typecheck && npm run lint && npm test && npm run build",
+    "image:check": "node scripts/check-image.mjs",
+    "test:installed": "playwright test --config installed.config.ts"
+  },
+  "dependencies": {
+    "@fontsource/geist": "5.3.0",
+    "@radix-ui/themes": "3.3.0",
+    "@tanstack/react-query": "5.104.2",
+    "lossless-json": "4.3.1",
+    "lucide-react": "1.56.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-router-dom": "7.18.4",
+    "ulid": "3.0.2",
+    "yaml": "2.9.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@playwright/test": "1.64.0",
+    "@types/node": "26.6.5",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "ajv": "8.20.0",
+    "eslint": "10.15.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "eslint-plugin-react-refresh": "0.5.7",
+    "globals": "17.13.0",
+    "openapi-typescript": "7.13.0",
+    "prettier": "3.9.10",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.71.2",
+    "vite": "8.3.4",
+    "vitest": "5.0.4"
+  },
+  "overrides": {
+    "@typescript-eslint/typescript-estree": {
+      "minimatch": "11.0.8"
+    }
+  }
+}

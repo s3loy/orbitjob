@@ -1,0 +1,325 @@
+.m4-collection td,
+.m4-collection th,
+.m4-records td,
+.m4-records th {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.m4-notice {
+  margin: 12px 0 20px;
+  padding: 12px 16px;
+  border: 1px solid var(--console-line);
+  border-radius: 8px;
+  background: var(--console-soft);
+}
+.m4-version-status {
+  color: var(--console-muted);
+  font-variant-numeric: tabular-nums;
+}
+.m4-readiness {
+  margin-block: 12px 20px;
+  padding-block: 12px;
+  border-block: 1px solid var(--console-line);
+}
+.m4-readiness.is-ready {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+}
+.m4-readiness.is-ready > details {
+  margin: 0;
+}
+.m4-readiness.is-ready > details[open] {
+  flex-basis: 100%;
+}
+.m4-detail-disclosure {
+  margin-top: 16px;
+}
+.m4-detail-disclosure > summary,
+.attempt-log-disclosure > summary,
+.history-range > summary {
+  width: fit-content;
+  max-width: 100%;
+  color: var(--console-muted);
+  font-size: 13px;
+  line-height: 1.6;
+  cursor: pointer;
+}
+.m4-detail-disclosure[open] > summary,
+.attempt-log-disclosure[open] > summary {
+  margin-bottom: 14px;
+}
+.m4-detail-disclosure > summary:focus-visible,
+.attempt-log-disclosure > summary:focus-visible,
+.history-range > summary:focus-visible {
+  outline: 2px solid var(--console-link);
+  outline-offset: 4px;
+  border-radius: 2px;
+}
+.m4-detail-disclosure .definition-list {
+  margin-block: 12px;
+}
+.history-window {
+  display: flex;
+  align-items: end;
+  gap: 16px 24px;
+  flex-wrap: wrap;
+  margin-block: 16px 24px;
+}
+.history-range {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.history-range > summary {
+  padding-block: 7px;
+}
+.history-range > form {
+  margin-top: 12px;
+}
+.m4-container-entries {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.m4-section {
+  border-top: 1px solid var(--console-line);
+  margin-top: 30px;
+  padding-top: 22px;
+}
+.m4-dag {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  padding: 16px 0;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.m4-dag-stage {
+  display: flex;
+  flex: 1 0 126px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  min-width: 0;
+}
+.m4-dag .m4-task {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 3px;
+  height: auto;
+  min-height: 74px;
+  padding: 9px 11px;
+  border-radius: 7px;
+  color: var(--console-muted);
+  background: var(--console-paper);
+  box-shadow: inset 0 0 0 1px var(--console-line);
+  font-size: 12px;
+  font-weight: 400;
+  white-space: normal;
+  text-align: left;
+}
+.m4-task > span {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.m4-task .m4-task-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--console-ink);
+}
+.m4-dag .m4-task:hover {
+  background: var(--console-soft);
+}
+.m4-dag .m4-task[aria-pressed='true'] {
+  box-shadow: inset 0 0 0 1px var(--console-link);
+  background: color-mix(in srgb, var(--console-link) 8%, var(--console-paper));
+}
+.m4-task-detail {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--console-line);
+}
+.m4-task-detail .definition-list {
+  max-width: 650px;
+}
+.m4-task-detail code {
+  overflow-wrap: anywhere;
+}
+main > form.function-editor {
+  max-width: 850px;
+}
+.function-editor-group {
+  padding: 16px 18px;
+  margin-bottom: 14px;
+  border: 1px solid var(--console-line);
+  border-radius: 9px;
+  background: var(--console-paper);
+}
+.function-editor-group h2 {
+  margin-bottom: 14px;
+}
+.function-editor-group .manifest-fields {
+  margin-bottom: 12px;
+}
+.function-editor-group > .container-image-field {
+  margin-bottom: 16px;
+}
+.function-editor-group > .form-field:last-child {
+  margin-bottom: 0;
+}
+.function-editor-entries .rt-TextAreaRoot {
+  flex: 1;
+  min-width: 0;
+  min-height: 34px;
+}
+.function-editor-review {
+  padding: 0;
+  border: 0;
+}
+.function-editor-review > p {
+  margin-top: 16px;
+}
+.function-editor .rt-variant-solid:not(:disabled) {
+  background: var(--console-link);
+  color: var(--console-paper);
+}
+@media (min-width: 960px) {
+  .function-editor-general {
+    display: grid;
+    grid-template-columns: 2fr 3fr;
+    gap: 12px 20px;
+    align-items: start;
+  }
+  .function-editor-general h2 {
+    grid-column: 1 / -1;
+    margin: 0;
+  }
+  .function-editor-general > .form-field {
+    margin: 0;
+  }
+  .function-editor-execution > .manifest-fields {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+  }
+  .function-collection th:nth-child(1),
+  .workflow-collection th:nth-child(1) {
+    width: 28%;
+  }
+  .function-collection th:nth-child(2),
+  .workflow-collection th:last-child {
+    width: 12%;
+  }
+  .function-collection th:nth-child(3) {
+    width: 40%;
+  }
+  .function-invocation-records th:first-child {
+    width: 28%;
+  }
+  .m4-configuration > .definition-list,
+  .function-editor-review > .definition-list {
+    display: block;
+    margin: 12px 0;
+    padding: 0 12px;
+    border: 1px solid var(--console-line);
+    border-radius: 8px;
+  }
+  .m4-configuration > .definition-list > .fact-pair,
+  .function-editor-review > .definition-list > .fact-pair {
+    display: grid;
+    grid-template-columns: minmax(155px, 205px) minmax(0, 1fr);
+    gap: 18px;
+    padding-block: 9px;
+    border-bottom: 1px solid var(--console-line);
+  }
+  .m4-configuration > .definition-list > .fact-pair:last-child,
+  .function-editor-review > .definition-list > .fact-pair:last-child {
+    border-bottom: 0;
+  }
+  .m4-task-workspace {
+    display: grid;
+    grid-template-columns: minmax(0, 3fr) minmax(235px, 2fr);
+    align-items: start;
+    gap: 18px;
+    margin-top: 12px;
+  }
+  .m4-task-workspace .m4-dag {
+    padding-block: 2px 8px;
+  }
+  .m4-task-workspace .m4-task-detail {
+    min-width: 0;
+    margin: 0;
+    padding: 12px 14px;
+    border: 1px solid var(--console-line);
+    border-radius: 8px;
+    background: var(--console-soft);
+  }
+  .m4-task-workspace .m4-task-detail .definition-list {
+    grid-template-columns: minmax(95px, 0.8fr) minmax(0, 1fr);
+    gap: 10px;
+    margin-block: 12px;
+  }
+}
+@media (max-width: 600px) {
+  .m4-dag {
+    flex-direction: column;
+    gap: 14px;
+    overflow-x: visible;
+  }
+  .m4-dag-stage {
+    flex: none;
+  }
+  .m4-records .rt-TableRootTable,
+  .m4-records .rt-TableBody {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+  .m4-records .rt-TableHeader {
+    display: none;
+  }
+  .m4-records .rt-TableRow {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 10px 14px;
+    padding: 14px 0;
+    box-shadow: inset 0 -1px var(--console-line);
+  }
+  .m4-records .rt-TableCell,
+  .m4-records .rt-TableRowHeaderCell {
+    display: block;
+    min-width: 0;
+    width: auto;
+    height: auto;
+    padding: 0;
+    box-shadow: none;
+  }
+  .m4-records .rt-TableRowHeaderCell {
+    grid-column: 1 / -1;
+  }
+  .m4-records [data-label]::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 3px;
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--console-muted);
+  }
+  .m4-records .phase-label {
+    align-self: start;
+  }
+  .m4-records code,
+  .m4-records time {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .m4-task-detail .definition-list {
+    grid-template-columns: 90px minmax(0, 1fr);
+    gap: 12px;
+  }
+}

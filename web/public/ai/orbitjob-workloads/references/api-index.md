@@ -1,0 +1,48 @@
+# Workload API index
+
+Generated from api/openapi.yaml. See openapi.yaml for request bodies, authorization, errors and response schemas.
+
+- `GET /api/v1/definitions/jobs/{namespace}/{name}` — Read live typed job definition
+- `PUT /api/v1/definitions/jobs/{namespace}/{name}` — Validate or apply typed job definition
+- `PUT /api/v1/definitions/jobs/{namespace}/{name}/compat` — Apply a legacy definition with mandatory server checks
+- `GET /api/v1/definitions/jobs/{namespace}/{name}/operations/{request_id}` — Read an original definition save outcome
+- `GET /api/v1/definitions/workflows/{namespace}/{name}` — Read live typed workflow definition
+- `PUT /api/v1/definitions/workflows/{namespace}/{name}` — Validate or apply typed workflow definition
+- `PUT /api/v1/definitions/workflows/{namespace}/{name}/compat` — Apply a legacy definition with mandatory server checks
+- `GET /api/v1/definitions/workflows/{namespace}/{name}/operations/{request_id}` — Read an original definition save outcome
+- `GET /api/v1/functions` — List function definitions
+- `POST /api/v1/functions` — Create a Function definition
+- `GET /api/v1/functions/{id}` — Get one function definition
+- `PUT /api/v1/functions/{id}` — Replace a Function definition or pause/resume it
+- `GET /api/v1/functions/{id}/execution-controls` — get source execution controls
+- `PATCH /api/v1/functions/{id}/execution-controls` — update source execution controls
+- `POST /api/v1/functions/{id}/invoke` — Invoke a function
+- `GET /api/v1/functions/{id}/runs` — List function invocations
+- `GET /api/v1/functions/{id}/runs/{run_id}` — Get one function invocation
+- `GET /api/v1/functions/{id}/runs/{run_id}/attempts/{attempt}/logs` — Read bounded retained task logs
+- `GET /api/v1/functions/{id}/runs/{run_id}/logs/archive` — read durable execution logs
+- `DELETE /api/v1/functions/{id}/runs/{run_id}/logs/archive` — delete durable execution logs
+- `GET /api/v1/functions/{id}/runs/{run_id}/logs/archive/download` — download durable execution logs
+- `GET /api/v1/instances` — List runs
+- `GET /api/v1/instances/summary` — Summarize matching runs
+- `GET /api/v1/instances/{run_id}` — Get one run
+- `GET /api/v1/instances/{run_id}/attempts` — List run attempts
+- `GET /api/v1/instances/{run_id}/attempts/{attempt}/logs` — Read bounded retained task logs
+- `POST /api/v1/instances/{run_id}/cancel` — Request a run cancel
+- `GET /api/v1/instances/{run_id}/logs/archive` — read durable execution logs
+- `DELETE /api/v1/instances/{run_id}/logs/archive` — delete durable execution logs
+- `GET /api/v1/instances/{run_id}/logs/archive/download` — download durable execution logs
+- `GET /api/v1/jobs` — List job definitions
+- `GET /api/v1/jobs/{id}` — Get one job definition
+- `GET /api/v1/jobs/{id}/execution-controls` — get source execution controls
+- `PATCH /api/v1/jobs/{id}/execution-controls` — update source execution controls
+- `POST /api/v1/jobs/{id}/trigger` — Trigger a manual run
+- `GET /api/v1/workflows` — List workflow definitions
+- `POST /api/v1/workflows/schedule-preview` — Preview upcoming Workflow schedule times
+- `GET /api/v1/workflows/{id}` — Get one workflow definition
+- `GET /api/v1/workflows/{id}/execution-controls` — get source execution controls
+- `PATCH /api/v1/workflows/{id}/execution-controls` — update source execution controls
+- `GET /api/v1/workflows/{id}/runs` — List workflow runs
+- `POST /api/v1/workflows/{id}/runs` — Trigger a manual workflow run
+- `GET /api/v1/workflows/{id}/runs/{run_id}` — Get one workflow run
+- `POST /api/v1/workflows/{id}/runs/{run_id}/cancel` — Request a workflow run cancel

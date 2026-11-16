@@ -1,0 +1,267 @@
+.job-task-templates-dialog {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: calc(100vw - 32px);
+  max-height: calc(100dvh - 32px);
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  color: var(--console-ink);
+  background: var(--console-paper);
+}
+.job-task-templates-heading {
+  flex: 0 0 auto;
+  padding: 24px 24px 20px;
+  border-bottom: 1px solid var(--console-line);
+}
+.job-task-templates-description {
+  max-width: 75ch;
+  margin: 0;
+  color: var(--console-muted);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.job-task-templates-body {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.job-task-templates-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  min-width: 0;
+}
+.job-task-template-parameters {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  min-width: 0;
+  padding: 24px;
+}
+.job-task-template-field {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  font-size: 13px;
+}
+.job-task-template-field > label {
+  color: var(--console-ink);
+  font-weight: 500;
+}
+.job-task-template-field > input,
+.job-task-template-field > select,
+.job-task-template-field > textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 1px solid var(--console-line);
+  border-radius: var(--radius-2);
+  background: var(--console-paper);
+  color: var(--console-ink);
+  font: inherit;
+  line-height: 1.5;
+}
+.job-task-template-field > select {
+  padding-right: 28px;
+}
+.job-task-template-field > textarea {
+  max-height: 240px;
+  overflow-y: auto;
+  resize: vertical;
+}
+.job-task-template-field > .job-task-template-json {
+  font:
+    12px/1.65 ui-monospace,
+    SFMono-Regular,
+    monospace;
+}
+.job-task-template-field > input:focus-visible,
+.job-task-template-field > select:focus-visible,
+.job-task-template-field > textarea:focus-visible {
+  outline: 2px solid var(--console-link);
+  outline-offset: 2px;
+}
+.job-task-template-field > [aria-invalid='true'] {
+  border-color: var(--red-9);
+}
+.job-task-template-field > :disabled {
+  opacity: 0.55;
+}
+.job-task-template-help,
+.job-task-template-error,
+.job-task-template-code-note,
+.job-task-template-preview-note,
+.job-task-template-unavailable,
+.job-task-template-save-note {
+  margin: 0;
+  color: var(--console-muted);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.job-task-template-error {
+  color: var(--red-11);
+}
+.job-task-template-code-note {
+  padding-top: 16px;
+  border-top: 1px solid var(--console-line);
+}
+.job-task-template-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  padding: 24px;
+  border-left: 1px solid var(--console-line);
+  background: var(--console-soft);
+}
+.job-task-template-preview > h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+.job-task-template-facts {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.job-task-template-facts > div {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 12px;
+}
+.job-task-template-facts dt {
+  color: var(--console-muted);
+}
+.job-task-template-facts dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.job-task-template-behavior {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.job-task-template-invocation {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.job-task-template-exact > summary {
+  cursor: pointer;
+  color: var(--console-link);
+  font-size: 13px;
+  padding-block: 6px;
+}
+.job-task-template-exact > summary:focus-visible {
+  outline: 2px solid var(--console-link);
+  outline-offset: 2px;
+}
+.job-task-template-exact > .job-task-template-invocation {
+  margin-top: 12px;
+}
+.job-task-template-message {
+  max-height: 180px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--console-paper);
+  border: 1px solid var(--console-line);
+  border-radius: var(--radius-2);
+  font-size: 13px;
+}
+.job-task-template-invocation h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.job-task-template-invocation pre {
+  min-width: 0;
+  max-height: 180px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--console-line);
+  border-radius: var(--radius-2);
+  background: var(--console-paper);
+  font:
+    12px/1.65 ui-monospace,
+    SFMono-Regular,
+    monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow: auto;
+  tab-size: 2;
+}
+.job-task-template-invocation .job-task-template-script {
+  max-height: 260px;
+}
+.job-task-template-arguments {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.job-task-template-arguments li {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.job-task-template-arguments li > span {
+  color: var(--console-muted);
+  font-size: 12px;
+}
+.job-task-template-argument-note {
+  margin-top: 10px;
+}
+.job-task-template-preview-note {
+  padding-top: 12px;
+  border-top: 1px solid var(--console-line);
+}
+.job-task-templates-actions {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 16px 24px;
+  border-top: 1px solid var(--console-line);
+  background: var(--console-paper);
+}
+@media (max-width: 700px) {
+  .job-task-templates-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .job-task-template-preview {
+    border-top: 1px solid var(--console-line);
+    border-left: 0;
+  }
+}
+@media (max-width: 380px) {
+  .job-task-templates-heading,
+  .job-task-template-parameters,
+  .job-task-template-preview {
+    padding: 20px 16px;
+  }
+  .job-task-templates-actions {
+    padding: 14px 16px;
+  }
+}

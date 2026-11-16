@@ -10,6 +10,12 @@ permissions:
   contents: read
 
 jobs:
+  console:
+    name: Console
+    uses: ./.github/workflows/console.yml
+    with:
+      source_ref: ${{ github.sha }}
+
   test:
     name: Test
     runs-on: ubuntu-latest
@@ -106,7 +112,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      # Images are the release contract: release.yml pushes five targets for
+      # Images are the release contract: release.yml pushes component targets for
       # linux/amd64 and linux/arm64. This job builds — never pushes — every
       # target for both platforms, so a PR that breaks an image, the arm64
       # cross-compile included, is caught before tag day and not on it. The
@@ -114,7 +120,7 @@ jobs:
       # the dev loop (make docker-build). No QEMU is needed: the Dockerfile
       # pins build stages to the runner architecture and cross-compiles
       # through Go.
-      - name: Build all five image targets (amd64 + arm64, no push)
+      - name: Build all image targets (amd64 + arm64, no push)
         env:
           PLATFORMS: linux/amd64,linux/arm64
         run: |
@@ -139,10 +145,11 @@ jobs:
     # the required check for a later dev-to-main pull request at the same SHA.
     name: ${{ github.event_name == 'pull_request' && 'CI / Gate' || 'CI / Post-merge' }}
     if: always()
-    needs: [docker]
+    needs: [docker, console]
     runs-on: ubuntu-latest
     steps:
       - name: Require successful CI
         env:
           RESULT: ${{ needs.docker.result }}
-        run: test "$RESULT" = success
+          CONSOLE_RESULT: ${{ needs.console.result }}
+        run: test "$RESULT" = success && test "$CONSOLE_RESULT" = success

@@ -1,0 +1,64 @@
+.execution-controls {
+  margin-block: 20px 24px;
+  padding-block: 16px;
+  border-block: 1px solid var(--console-line);
+}
+
+.execution-controls > h2 {
+  margin-bottom: 2px;
+  font-size: 13px;
+  color: var(--console-muted);
+}
+
+.execution-control-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding-block: 12px;
+}
+.execution-control-label {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.execution-control-label p {
+  max-width: 48ch;
+}
+.execution-control-form > .rt-Flex {
+  margin-top: 2px;
+}
+@media (min-width: 1000px) {
+  .execution-control-form {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 40px;
+  }
+  .execution-control-form > :not(.execution-control-row) {
+    grid-column: 1 / -1;
+  }
+}
+
+.execution-control-review {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--gray-a5);
+  border-radius: var(--radius-3);
+}
+
+.execution-control-review p + p {
+  margin-top: 8px;
+}
+.execution-control-request {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--console-muted);
+}
+.execution-control-request > summary {
+  width: fit-content;
+  cursor: pointer;
+}
+.execution-control-request > summary:focus-visible {
+  outline: 2px solid var(--console-link);
+  outline-offset: 3px;
+}

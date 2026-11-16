@@ -14,6 +14,13 @@ RUN --mount=type=cache,target=/go/pkg/mod go mod download
 # ============================================================
 # Build stages
 # ============================================================
+FROM --platform=$BUILDPLATFORM node:26-alpine AS build-console
+WORKDIR /src/web
+COPY web/package.json web/package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm npm ci --ignore-scripts
+COPY web/ ./
+RUN npm run build
+
 # Keep Go build inputs independent of Console and repository tooling changes.
 FROM base AS go-source
 COPY api/ ./api/
@@ -109,6 +116,7 @@ COPY --from=build-admin /etc/passwd /etc/passwd
 COPY --from=build-healthcheck /out/healthcheck /healthcheck
 COPY --from=build-admin /out/admin-api /admin-api
 COPY --from=build-identity /out/orbitjob-identity /orbitjob-identity
+COPY --from=build-console /src/web/dist /console
 USER 65534:65534
 ENTRYPOINT ["/admin-api"]
 

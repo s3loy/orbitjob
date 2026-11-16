@@ -1,0 +1,142 @@
+.execution-command-fields {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  margin: 18px 0 0;
+  padding: 0;
+  border: 0;
+}
+.execution-command-fields .form-field {
+  margin: 0;
+}
+.execution-command-fields .execution-method {
+  max-width: 350px;
+}
+.execution-command-fields .execution-shell {
+  max-width: 190px;
+}
+.execution-command-hint,
+.execution-command-note {
+  max-width: 72ch;
+  margin: 0;
+  color: var(--console-muted);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.execution-command-note {
+  border-left: 2px solid var(--console-line);
+  padding-left: 12px;
+  color: var(--console-ink);
+}
+.execution-command-program,
+.execution-arguments,
+.execution-command-tokens,
+.execution-command-imported {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+}
+.execution-arguments > h3,
+.execution-command-tokens > h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+}
+.execution-arguments > button,
+.execution-command-tokens > button,
+.execution-command-imported > button {
+  justify-self: start;
+  margin-top: 3px;
+}
+.execution-token-row {
+  display: flex;
+  align-items: end;
+  gap: 14px;
+  min-width: 0;
+}
+.execution-token-row > button {
+  flex-shrink: 0;
+  min-height: 34px;
+  margin-bottom: 1px;
+}
+.execution-token-field {
+  display: grid;
+  flex: 1;
+  gap: 5px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--console-muted);
+}
+.execution-token-field textarea,
+.execution-command-program textarea {
+  min-height: 36px;
+  color: var(--console-ink);
+}
+.execution-token-field textarea {
+  max-height: 96px;
+  overflow-y: auto;
+}
+.execution-command-line textarea,
+.execution-script-input textarea {
+  font:
+    13px/1.65 ui-monospace,
+    SFMono-Regular,
+    monospace;
+}
+.execution-command-line textarea {
+  min-height: 64px;
+  max-height: 144px;
+  overflow-y: auto;
+}
+.execution-script-input textarea {
+  min-height: 132px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.execution-command-error {
+  margin: 0;
+  color: var(--red-11);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.execution-command-advanced {
+  border-top: 1px solid var(--console-line);
+  padding-top: 12px;
+  font-size: 13px;
+}
+.execution-command-advanced > summary {
+  cursor: pointer;
+  width: fit-content;
+  color: var(--console-muted);
+}
+.execution-command-advanced-content {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+  max-height: 320px;
+  margin-top: 12px;
+  padding: 3px 5px 6px 1px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.execution-command-fields select:focus-visible,
+.execution-command-advanced > summary:focus-visible {
+  outline: 2px solid var(--console-link);
+  outline-offset: 3px;
+}
+@media (max-width: 520px) {
+  .execution-token-row {
+    gap: 10px;
+  }
+}
+@media (pointer: coarse) {
+  .execution-token-row > button,
+  .execution-command-advanced > summary {
+    min-height: 44px;
+  }
+  .execution-command-advanced > summary {
+    align-content: center;
+  }
+}

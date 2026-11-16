@@ -1,0 +1,154 @@
+.monitoring-tabs a {
+  text-decoration: none;
+}
+.monitoring-next-action {
+  font-size: 13px;
+}
+.monitoring-details {
+  max-width: 760px;
+}
+.monitoring-details .definition-list {
+  margin-block: 12px 0;
+}
+.monitoring-source-kind {
+  margin-inline-start: 10px;
+}
+.monitoring-manage {
+  max-width: 760px;
+  padding-block-start: 12px;
+  border-block-start: 1px solid var(--console-line);
+}
+.monitoring-manage[open] > summary {
+  margin-block-end: 10px;
+}
+.monitoring-field-group {
+  min-width: 0;
+  margin: 0 0 16px;
+  padding: 0 0 12px;
+  border: 0;
+  border-bottom: 1px solid var(--console-line);
+}
+.monitoring-field-group:last-child {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border: 0;
+}
+.monitoring-field-group legend {
+  padding: 0;
+  color: var(--console-ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+.monitoring-field-group .form-field {
+  margin-block: 8px 10px;
+}
+.monitoring-field-group .advanced-details {
+  margin-block-start: 6px;
+}
+.monitoring-field-group .rt-TextAreaInput {
+  resize: vertical;
+}
+.monitoring-sheet-actions {
+  padding-block-start: 14px;
+}
+@media (min-width: 901px) {
+  .module-tabs.monitoring-tabs {
+    display: inline-flex;
+    gap: 2px;
+    padding: 3px;
+    margin-bottom: 20px;
+    border: 1px solid var(--console-line);
+    border-radius: 8px;
+    background: var(--console-soft);
+  }
+  .monitoring-tabs a {
+    padding: 5px 16px;
+    border-radius: 5px;
+  }
+  .monitoring-tabs a[aria-current='page'] {
+    border: 0;
+    background: var(--console-paper);
+    box-shadow: 0 0 0 1px var(--console-line);
+    font-weight: 500;
+  }
+  .monitoring-tabs a:hover {
+    color: var(--console-ink);
+  }
+  .monitoring-table .monitor-name {
+    width: 30%;
+  }
+  .monitoring-table .rt-TableCell {
+    font-variant-numeric: tabular-nums;
+  }
+  .monitoring-details .definition-list {
+    display: block;
+    border-block-start: 1px solid var(--console-line);
+  }
+  .monitoring-details .fact-pair {
+    display: grid;
+    grid-template-columns: 164px minmax(0, 1fr);
+    align-items: baseline;
+    gap: 16px;
+    padding: 10px 0;
+    border-block-end: 1px solid var(--console-line);
+  }
+  .monitoring-details dd > details {
+    margin-top: 4px;
+  }
+  .monitoring-budget {
+    max-width: 760px;
+  }
+  .monitoring-budget .budget-metrics {
+    margin-block: 16px;
+    font-variant-numeric: tabular-nums;
+  }
+  .monitoring-budget .budget-title {
+    margin-bottom: 6px;
+  }
+  .monitoring-sheet.rt-DialogContent {
+    display: flex;
+    flex-direction: column;
+    max-height: min(800px, calc(100dvh - 72px));
+    padding: 0;
+    overflow: hidden;
+    border-radius: 12px;
+  }
+  .monitoring-sheet-title {
+    flex-shrink: 0;
+    padding: 20px 24px 14px;
+    margin: 0;
+    border-block-end: 1px solid var(--console-line);
+  }
+  .monitoring-sheet-form {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .monitoring-sheet-body {
+    min-height: 0;
+    padding: 16px 24px;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+  }
+  .monitoring-sheet .monitoring-form {
+    margin: 0;
+  }
+  .monitoring-field-group > .form-field {
+    display: grid;
+    grid-template-columns: 130px minmax(0, 1fr);
+    align-items: baseline;
+  }
+  .monitoring-sheet-actions {
+    flex-shrink: 0;
+    padding: 14px 24px;
+    border-block-start: 1px solid var(--console-line);
+    background: var(--console-soft);
+  }
+  .monitoring-sheet-actions > button:first-child {
+    margin-inline-end: auto;
+  }
+  .monitoring-sheet-actions .rt-variant-solid:not(:disabled) {
+    background: var(--console-link);
+    color: var(--console-paper);
+  }
+}

@@ -1,0 +1,90 @@
+{
+  "generatedFrom": "repository source files",
+  "files": {
+    "references/openapi.yaml": {
+      "source": "api/openapi.yaml",
+      "sourceSha256": "7616b15bc6f9c4166bf5c51340c9f84e1ddb4c8a2f603816134e7b94ddd48a82",
+      "generatedSha256": "7616b15bc6f9c4166bf5c51340c9f84e1ddb4c8a2f603816134e7b94ddd48a82"
+    },
+    "references/scheduledjob-crd.yaml": {
+      "source": "charts/orbitjob/crds/workloads.orbitjob.io_scheduledjobs.yaml",
+      "sourceSha256": "2b94ec5cebc14e7cd2a01faae72eef365e2453513de3d0a03841374930df11f3",
+      "generatedSha256": "2b94ec5cebc14e7cd2a01faae72eef365e2453513de3d0a03841374930df11f3"
+    },
+    "references/workflowjob-crd.yaml": {
+      "source": "charts/orbitjob/crds/workloads.orbitjob.io_workflowjobs.yaml",
+      "sourceSha256": "f979d0cba00724149e7050b3f58d95433fc57b69c1dccdef4c32ec29c61990b3",
+      "generatedSha256": "f979d0cba00724149e7050b3f58d95433fc57b69c1dccdef4c32ec29c61990b3"
+    },
+    "references/usage.md": {
+      "source": "USAGE.md",
+      "sourceSha256": "c756936bec72960de22120c5526f716175e55ff0fae8a09141654f908c305c53",
+      "generatedSha256": "4a27d68560689a17b9a5e1b1f72f074ed96fc3edaa49589ce16597e1c98036cd"
+    },
+    "references/docs/getting-started.md": {
+      "source": "docs/getting-started.md",
+      "sourceSha256": "cd86a7e89e396ff3dfb0fb2cc79beb8c2e32a042c46064bfa448f89a7757ca13",
+      "generatedSha256": "1bfacd91089dbaa96a277121850722d9cf50ec26a1e60a2784018052725b5cf1"
+    },
+    "references/docs/concepts/execution-model.md": {
+      "source": "docs/concepts/execution-model.md",
+      "sourceSha256": "a411383ddc9dd41c42d33d0368709b3b36a88218730130f54edd6d73cf199258",
+      "generatedSha256": "c5173152cb165ff2405c41f797d364549002b1396998b16b3fc48098d3097f6d"
+    },
+    "references/docs/reference/workload-resources.md": {
+      "source": "docs/reference/workload-resources.md",
+      "sourceSha256": "27e0a81fc015ba7a7fb3f02f8c06825d2a968e79692f5889ebdf1fb622264c5e",
+      "generatedSha256": "119a98cbac5fffb8281fb325c8b3ddfcec79f8a3b208941f85fc210e83d0737f"
+    },
+    "references/docs/reference/http-conventions.md": {
+      "source": "docs/reference/http-conventions.md",
+      "sourceSha256": "252a0282a75ce9d4ef899426cc752ddd95041862106e80f8fa68807e251036d9",
+      "generatedSha256": "811cd55327db506fa9ba709aeeeb36927b947e521deb02418c5bc5ba9af13437"
+    },
+    "references/docs/reference/access-policies.md": {
+      "source": "docs/reference/access-policies.md",
+      "sourceSha256": "8a6206a1a715580a52f2d67834461ee36943fba324f3ff952089b1192e379354",
+      "generatedSha256": "911f40a1ddae56dfe5c490f4e10a80ff577570a95896eea3462a540afbed629f"
+    },
+    "references/docs/tasks/manage-jobs.md": {
+      "source": "docs/tasks/manage-jobs.md",
+      "sourceSha256": "3ed230baee4460ad3877bdb2182a6ad1ed27e1f3d77ff325a3b753e7d0e08d21",
+      "generatedSha256": "820c270b066e774d90c460032f8bc11c32d997af1e6913471f3d395e40003a9e"
+    },
+    "references/docs/tasks/trigger-and-observe.md": {
+      "source": "docs/tasks/trigger-and-observe.md",
+      "sourceSha256": "c9d0160b1c0876eec469c96d07a5d824103e2304f4f381324c630384238523c1",
+      "generatedSha256": "c3080705bebf0612fb06fadfcf35faa96736734ce546960baf535be7a1f7177c"
+    },
+    "references/docs/tasks/cancel-a-run.md": {
+      "source": "docs/tasks/cancel-a-run.md",
+      "sourceSha256": "32dee8fd8cc8f6a893f40680ba90f9434f4a54d7aca2cf1fb06b1e94b8f392f8",
+      "generatedSha256": "ea51a95069945c7b4148bfcdc5066422581f2860d4b1169a5b494cb541ee8356"
+    },
+    "references/docs/tasks/read-logs.md": {
+      "source": "docs/tasks/read-logs.md",
+      "sourceSha256": "6a0586edab71f6f18548b5c9c408eed65699610ebf190018d0c1a3cfc5a1bc78",
+      "generatedSha256": "2836f8adf18a8f4463c6f5cf0e02d732d2a5f9b0bf507603b9ee96d126de6d9a"
+    },
+    "references/docs/tasks/manage-access.md": {
+      "source": "docs/tasks/manage-access.md",
+      "sourceSha256": "34ace3e8c318178acea2d971427c6f4e3119150505cc01d568363ecaa18b23ea",
+      "generatedSha256": "a4924379c6ec123ac3f0609acac875afb0d111e73ee81a0aa229809cb896ad0a"
+    },
+    "references/docs/tasks/call-api.md": {
+      "source": "docs/tasks/call-api.md",
+      "sourceSha256": "98f6621f7870a62e34281fcbabf2d8482c6ea0bd7ae370c9b5e33c0f9f3670f3",
+      "generatedSha256": "e8b823782986872cea729ef0cb2aca2d749593578a23bc651e68b202b6486997"
+    },
+    "references/docs/tasks/checks-and-slos.md": {
+      "source": "docs/tasks/checks-and-slos.md",
+      "sourceSha256": "fbbe4ffbdf654cb6960119cedc4bfcd7852b26396f1aafe3145b6306c1744030",
+      "generatedSha256": "f55f1268dc9ae2ae78f684262be3e8920a1d9b538bd919ba956dd99e63dec6f9"
+    },
+    "references/docs/tasks/functions-and-workflows.md": {
+      "source": "docs/tasks/functions-and-workflows.md",
+      "sourceSha256": "4aee7cb54eca937946fb28ac6ee43e4bb132f331c7575200b1a7567521320a60",
+      "generatedSha256": "529e54c7244d6f6b118217f2b8308e086e7b17023196f01e7656486136b50b9a"
+    }
+  }
+}

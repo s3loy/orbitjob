@@ -1,0 +1,328 @@
+.manifest-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px 24px;
+  margin: 0 0 24px;
+  align-items: start;
+}
+.manifest-fields > .form-field,
+.manifest-fields > div > .form-field:first-child {
+  margin-block: 0;
+}
+.manifest-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+  font-size: 13px;
+}
+.workload-builder,
+.definition-editor {
+  width: 100%;
+  max-width: 960px;
+}
+.manifest-field > select {
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid var(--console-line);
+  border-radius: 6px;
+  background: var(--console-paper);
+  color: var(--console-ink);
+  font: inherit;
+}
+.workload-builder .tab-content {
+  padding: 16px 0 0;
+  margin: 0;
+}
+.authoring-group {
+  margin: 0 0 22px;
+  border: 1px solid var(--console-line);
+  border-radius: 9px;
+  padding: 18px 20px;
+  background: var(--console-paper);
+}
+.authoring-group > .rt-Heading {
+  margin-bottom: 16px;
+}
+.authoring-group .manifest-fields:last-child,
+.authoring-settings-group .manifest-fields:last-child {
+  margin-bottom: 0;
+}
+.authoring-settings-group {
+  border-bottom: 1px solid var(--console-line);
+  padding: 18px 0;
+}
+.authoring-settings-group > .rt-Heading {
+  margin-bottom: 12px;
+}
+.authoring-settings-group > div {
+  min-width: 0;
+}
+.authoring-settings-group .manifest-fields + .manifest-suspend {
+  margin-top: -10px;
+}
+.authoring-settings-group .container-image-field > .form-field {
+  margin-top: 0;
+}
+@media (min-width: 1080px) {
+  .authoring-settings-group {
+    display: grid;
+    grid-template-columns: 130px minmax(0, 1fr);
+    gap: 18px;
+  }
+  .authoring-settings-group > .rt-Heading {
+    margin: 0;
+  }
+  .authoring-settings-group .job-schedule-fields {
+    grid-template-columns: 1fr 1fr 0.85fr;
+    gap: 16px;
+  }
+}
+.workload-builder .m4-section {
+  margin-top: 24px;
+  padding-top: 24px;
+  border-top: 1px solid var(--console-line);
+}
+.configuration-errors {
+  border: 1px solid var(--amber-7);
+  background: var(--amber-2);
+  border-radius: 8px;
+  padding: 18px 20px;
+  margin: 18px 0;
+  font-size: 14px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.configuration-errors:focus {
+  outline: 2px solid var(--amber-8);
+  outline-offset: 3px;
+}
+.advanced-run-settings {
+  border: 1px solid var(--console-line);
+  border-radius: 8px;
+  padding: 18px;
+  margin-top: 20px;
+}
+.advanced-run-settings > summary {
+  cursor: pointer;
+  font-weight: 500;
+  font-size: 14px;
+}
+.advanced-run-settings > .manifest-fields {
+  margin-top: 16px;
+}
+.authoring-field-error {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--console-bad);
+}
+.definition-editor > .advanced-details {
+  margin: 16px 0;
+}
+.definition-editor > .definition-review {
+  margin-top: 22px;
+}
+.definition-review > h2:focus {
+  outline: none;
+}
+.definition-confirm .definition-summary {
+  margin-top: 20px;
+}
+.definition-summary > .definition-list,
+.definition-summary section > .definition-list {
+  margin: 0 0 16px;
+}
+.definition-summary .definition-list {
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: 8px 20px;
+  align-items: baseline;
+}
+.definition-summary .definition-list dt {
+  font-size: 13px;
+}
+.definition-summary code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.definition-summary section > h3 {
+  border-top: 1px solid var(--console-line);
+  padding-top: 14px;
+  margin-bottom: 12px;
+}
+.definition-summary .review-policies {
+  margin: 12px 0;
+  padding-top: 12px;
+}
+.definition-action-bar {
+  border-top: 1px solid var(--console-line);
+  margin-top: 16px;
+  padding-top: 14px;
+}
+.definition-action-bar .rt-variant-solid:not(:disabled),
+.definition-confirm .rt-variant-solid:not(:disabled),
+.definition-editor .readiness .rt-variant-solid:not(:disabled),
+.yaml-editor-tools .rt-variant-solid:not(:disabled) {
+  background: var(--console-link);
+  color: var(--console-paper);
+  box-shadow: none;
+}
+.definition-action-bar .rt-variant-solid:not(:disabled):hover,
+.definition-confirm .rt-variant-solid:not(:disabled):hover,
+.definition-editor .readiness .rt-variant-solid:not(:disabled):hover,
+.yaml-editor-tools .rt-variant-solid:not(:disabled):hover {
+  background: color-mix(in srgb, var(--console-link) 88%, var(--console-paper));
+}
+.review-entries {
+  margin: 0;
+  padding-left: 18px;
+}
+.review-entries > li::marker {
+  color: var(--console-muted);
+}
+.workflow-review-tasks {
+  margin: 0 0 16px;
+  padding-left: 18px;
+  font-size: 13px;
+}
+.workflow-review-tasks li + li {
+  margin-top: 8px;
+}
+.workflow-review-tasks li > span {
+  display: block;
+  margin-top: 2px;
+  color: var(--console-muted);
+}
+.definition-raw textarea {
+  margin-top: 12px;
+}
+.readiness-details,
+.schedule-preview-details,
+.authoring-examples {
+  margin-top: 16px;
+  font-size: 13px;
+  color: var(--console-muted);
+}
+.readiness-details {
+  border-top: 1px solid var(--console-line);
+  padding-top: 12px;
+}
+.readiness-details > summary,
+.schedule-preview-details > summary,
+.authoring-examples > summary {
+  cursor: pointer;
+  width: fit-content;
+}
+.readiness-details > .definition-list {
+  margin: 12px 0 0;
+}
+.function-save-status {
+  max-width: 850px;
+}
+.function-save-status > .rt-Heading:focus {
+  outline: none;
+}
+.function-review-details > .definition-list {
+  margin-top: 14px;
+}
+.schedule-preview {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--console-line);
+}
+.schedule-times {
+  margin: 12px 0 0;
+  padding-left: 20px;
+  font-size: 13px;
+  line-height: 1.8;
+  color: var(--console-ink);
+}
+.manifest-array {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+.manifest-array > div {
+  width: 100%;
+}
+.manifest-array > div > .rt-TextAreaRoot {
+  flex: 1;
+  min-width: 0;
+}
+.manifest-array textarea {
+  min-height: 34px;
+}
+.authoring-settings-group .container-image-field + .manifest-fields {
+  margin-top: 16px;
+}
+.manifest-yaml,
+.manifest-yaml textarea {
+  font:
+    12px/1.65 ui-monospace,
+    SFMono-Regular,
+    monospace;
+  white-space: pre;
+}
+.manifest-task-link {
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--console-link);
+  text-align: left;
+  padding: 4px 0;
+  overflow-wrap: anywhere;
+}
+.manifest-task-link[aria-pressed='true'] {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.manifest-rule {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--console-line);
+  margin-bottom: 12px;
+}
+.manifest-rule > button {
+  grid-column: 1/-1;
+  justify-self: start;
+}
+@media (max-width: 700px) {
+  .manifest-fields {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 18px;
+  }
+  .manifest-rule {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .definition-summary .definition-list {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+  .definition-summary .fact-pair {
+    display: grid;
+    gap: 4px;
+  }
+}
+@media (pointer: coarse) {
+  .manifest-task-link {
+    min-height: 44px;
+  }
+}
+
+@media (pointer: coarse) {
+  .manifest-suspend {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+  }
+}
+.workload-configuration {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}

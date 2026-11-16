@@ -1,0 +1,81 @@
+.job-starting-point {
+  margin: 0 0 20px;
+  padding: 0 0 20px;
+  border-bottom: 1px solid var(--console-line);
+}
+.job-starting-point h2 {
+  margin: 0 0 7px;
+  color: var(--console-ink);
+  font-size: 15px;
+  font-weight: 600;
+}
+.job-starting-point p {
+  max-width: 74ch;
+  margin: 0 0 14px;
+  color: var(--console-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.job-starting-point .job-starting-hint {
+  margin: 12px 0 0;
+  font-size: 12px;
+}
+.job-starting-point code {
+  overflow-wrap: anywhere;
+}
+.job-starting-sources {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--console-line);
+}
+.job-starting-sources h3 {
+  margin: 0 0 7px;
+  color: var(--console-ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+.job-starting-source-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.job-starting-source-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--console-line);
+}
+.job-starting-source-list li > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.job-starting-source-list strong {
+  color: var(--console-ink);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.job-starting-source-list span,
+.job-starting-page {
+  color: var(--console-muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.job-starting-source-list button {
+  flex-shrink: 0;
+}
+.job-starting-failure {
+  margin-top: 16px;
+}
+.job-starting-point .job-starting-notice {
+  margin: 12px 0 0;
+  color: var(--console-link);
+}
+@media (max-width: 600px) {
+  .job-starting-source-list li {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+}

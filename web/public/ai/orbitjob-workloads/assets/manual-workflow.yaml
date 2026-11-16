@@ -1,0 +1,31 @@
+apiVersion: workloads.orbitjob.io/v1alpha1
+kind: WorkflowJob
+metadata:
+  name: billing-report-delivery
+  namespace: your-tenant-namespace
+spec:
+  executionPolicyVersion: 1
+  schedule: ''
+  timeZone: UTC
+  suspend: false
+  concurrencyPolicy: Forbid
+  failPolicy: FailFast
+  timeoutSeconds: 600
+  history:
+    successfulRuns: 3
+    failedRuns: 3
+  tasks:
+    - name: extract
+      jobRef:
+        name: billing-extract
+    - name: publish
+      jobRef:
+        name: billing-publish
+      dependsOn: [extract]
+      condition:
+        type: all
+        rules:
+          - task: extract
+            field: phase
+            operator: eq
+            values: [Succeeded]

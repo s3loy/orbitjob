@@ -1,0 +1,646 @@
+.administration-panel {
+  padding-top: 8px;
+}
+.administration-panel code,
+.admin-full-id {
+  overflow-wrap: anywhere;
+}
+.administration-panel pre {
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.administration-tabs {
+  flex-wrap: wrap;
+  height: auto;
+}
+.administration-tabs [role='tab'] {
+  flex-shrink: 0;
+}
+.admin-list-toolbar {
+  margin-block: 16px 12px;
+}
+.admin-list-search {
+  max-width: 260px;
+  margin-block-end: 12px;
+}
+.administration-create {
+  margin-top: 32px;
+  padding-top: 24px;
+  border-top: 1px solid var(--console-line);
+  max-width: 680px;
+  scroll-margin-top: 32px;
+}
+.administration-create > p {
+  margin-top: 8px;
+  max-width: 64ch;
+  line-height: 1.65;
+}
+.administration-create fieldset {
+  border: 0;
+  padding: 0;
+  margin: 20px 0 0;
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+.administration-create label,
+.administration-tenant label {
+  display: grid;
+  gap: 7px;
+  font-size: 13px;
+}
+.administration-create label small {
+  color: var(--gray-10);
+  line-height: 1.6;
+}
+.administration-create select {
+  height: 34px;
+  max-width: 100%;
+  width: 100%;
+  border: 1px solid var(--gray-7);
+  border-radius: 4px;
+  color: var(--gray-12);
+  background: var(--color-background);
+  font: inherit;
+  padding: 0 9px;
+}
+.admin-primary {
+  justify-self: start;
+  min-width: 112px;
+  margin-top: 4px;
+}
+.administration-tenant {
+  display: grid;
+  gap: 12px;
+  max-width: 480px;
+  margin: 16px 0 24px;
+}
+.administration-tenant form {
+  display: flex;
+  gap: 12px;
+  align-items: end;
+}
+.administration-tenant form label {
+  flex: 1;
+  min-width: 0;
+}
+.admin-field-group {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding-top: 18px;
+  border-top: 1px solid var(--gray-6);
+}
+.admin-field-group > p {
+  margin: 0;
+  line-height: 1.65;
+}
+.admin-field-group > button {
+  justify-self: start;
+}
+.admin-policy-options {
+  max-height: 270px;
+  overflow-y: auto;
+  border: 1px solid var(--gray-6);
+  border-radius: 5px;
+  background: var(--color-background);
+}
+.administration-create .admin-policy-option {
+  display: flex;
+  align-items: start;
+  gap: 10px;
+  padding: 13px 14px;
+  border-bottom: 1px solid var(--gray-5);
+}
+.admin-policy-option:last-child {
+  border-bottom: 0;
+}
+.admin-policy-option > button {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+.admin-policy-option span {
+  display: grid;
+  gap: 4px;
+}
+.admin-policy-option strong {
+  font-size: 14px;
+  font-weight: 500;
+}
+.admin-policy-option small {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--gray-10);
+}
+.admin-policy-option .admin-policy-kind {
+  margin-inline-start: auto;
+  flex-shrink: 0;
+}
+.admin-policy-option:has([data-state='checked']) {
+  background: var(--gray-3);
+}
+.admin-inline-empty {
+  padding: 18px;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--gray-10);
+}
+.admin-picker {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+.admin-picker > p {
+  margin: 0;
+}
+.admin-picker-trigger {
+  justify-content: space-between;
+  width: 100%;
+  text-align: left;
+  white-space: normal;
+  height: auto;
+  min-height: 34px;
+  padding: 8px 12px;
+}
+.admin-picker-menu {
+  border: 1px solid var(--gray-7);
+  border-radius: 6px;
+  background: var(--color-background);
+  padding: 8px;
+}
+.admin-option-list {
+  max-height: 220px;
+  overflow-y: auto;
+  padding-top: 6px;
+}
+.admin-option-list > button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--gray-12);
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+.admin-option-list > button:hover,
+.admin-option-list > button[aria-pressed='true'] {
+  background: var(--gray-3);
+}
+.admin-option-list > button:focus-visible {
+  outline: 2px solid var(--focus-8);
+  outline-offset: -2px;
+}
+.admin-option-list strong {
+  display: block;
+  font-size: 14px;
+  font-weight: 500;
+}
+.admin-option-list small {
+  display: block;
+  font-size: 12px;
+  color: var(--gray-10);
+  margin-top: 3px;
+  line-height: 1.5;
+}
+.admin-scope-summary {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  padding: 12px 0;
+  border-block: 1px solid var(--gray-6);
+}
+.admin-scope-summary > details,
+.admin-record-actions > details {
+  margin-block-start: 0;
+}
+.admin-advanced {
+  display: grid;
+  gap: 12px;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.admin-advanced > summary {
+  cursor: pointer;
+  color: var(--gray-11);
+  font-weight: 500;
+}
+.admin-advanced[open] > :not(summary) {
+  margin-top: 12px;
+}
+.admin-advanced .admin-advanced {
+  padding-left: 12px;
+  border-left: 1px solid var(--gray-6);
+}
+.admin-action-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 12px;
+  background: var(--color-background);
+  border: 1px solid var(--gray-6);
+}
+.admin-action-options label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.admin-scope {
+  display: grid;
+  gap: 12px;
+  padding-top: 14px;
+  border-top: 1px solid var(--gray-6);
+}
+.admin-record-table {
+  border: 1px solid var(--gray-5);
+  border-radius: 7px;
+}
+.admin-record-table td,
+.admin-record-table th {
+  vertical-align: middle;
+}
+.admin-record-table tbody th {
+  min-width: 160px;
+}
+.admin-record-table th strong {
+  font-size: 14px;
+  font-weight: 500;
+}
+.admin-record-table .rt-TableColumnHeaderCell {
+  color: var(--console-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+.admin-key-prefix {
+  font-variant-numeric: tabular-nums;
+  margin: 2px 0 0;
+}
+.admin-record-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.admin-record-identity {
+  font-size: 11px;
+  line-height: 1.6;
+  max-width: 300px;
+}
+.admin-record-identity > summary {
+  cursor: pointer;
+  color: var(--gray-10);
+}
+.admin-full-id {
+  display: block;
+  margin-top: 8px;
+  user-select: text;
+  font-size: 11px;
+}
+.admin-record-document {
+  font-size: 11px;
+}
+.admin-record-document summary {
+  cursor: pointer;
+}
+.admin-table-empty {
+  height: 92px;
+  text-align: center;
+  vertical-align: middle;
+}
+.admin-table-empty > div {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 20px;
+}
+.admin-table-empty p {
+  margin: 0;
+}
+.admin-activity {
+  margin-top: 36px;
+  padding-top: 24px;
+  border-top: 1px solid var(--gray-5);
+  max-width: 808px;
+}
+.admin-activity > p {
+  margin: 8px 0 16px;
+  line-height: 1.65;
+}
+.admin-activity-list {
+  max-height: 350px;
+  overflow-y: auto;
+}
+.admin-activity-entry {
+  border-bottom: 1px solid var(--gray-5);
+  padding: 13px 0;
+}
+.admin-activity-entry > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  list-style: none;
+}
+.admin-activity-entry > summary svg {
+  color: var(--green-10);
+  flex-shrink: 0;
+}
+.admin-activity-entry > summary strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+}
+.admin-activity-entry > summary small {
+  margin-inline-start: auto;
+  color: var(--green-11);
+  font-size: 11px;
+}
+.admin-activity-entry > section {
+  padding: 14px 0 0 26px;
+}
+.admin-activity-entry > section p {
+  line-height: 1.65;
+}
+.admin-success {
+  color: var(--green-11);
+}
+.administration-operation {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-bottom: 16px;
+  padding-block: 8px;
+  font-size: 12px;
+  color: var(--gray-10);
+}
+.administration-operation a {
+  color: var(--gray-12);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.administration-operation svg {
+  flex-shrink: 0;
+}
+.administration-secret {
+  margin-block: 12px 24px;
+  padding: 20px;
+  border: 1px solid var(--amber-7);
+  background: var(--amber-2);
+  max-width: 760px;
+  border-radius: 7px;
+}
+.administration-secret > p {
+  line-height: 1.65;
+  margin-top: 10px;
+}
+.administration-secret textarea {
+  user-select: text;
+}
+.admin-key-help {
+  max-width: 760px;
+  margin-top: 24px;
+}
+@media (min-width: 901px) {
+  .administration-tabs {
+    height: 36px;
+    gap: 8px;
+    box-shadow: inset 0 -1px var(--console-line);
+  }
+  .administration-tabs [role='tab'] {
+    padding-inline: 12px;
+  }
+  .administration-tabs [role='tab'][data-state='active'] {
+    color: var(--console-link);
+    background: var(--console-selected);
+    border-radius: 6px 6px 0 0;
+  }
+  .administration-tenant {
+    max-width: 480px;
+    padding: 14px 0 0;
+    margin-block: 0 20px;
+    border: 0;
+  }
+  .administration-tenant > .admin-advanced {
+    margin-block-start: 0;
+  }
+  .administration-create {
+    max-width: 680px;
+    padding: 20px 0 0;
+    border: 0;
+    border-block-start: 1px solid var(--console-line);
+    border-radius: 0;
+    background: transparent;
+    scroll-margin-top: 72px;
+  }
+  .administration-create:focus-visible {
+    outline-offset: 6px;
+  }
+  .admin-primary:not(:disabled) {
+    color: var(--console-paper);
+    background: var(--console-link);
+  }
+  .admin-scope-summary {
+    padding-block: 10px;
+    border-block-start: 0;
+  }
+  .admin-record-table {
+    border: 0;
+    border-radius: 0;
+  }
+  .admin-record-table .rt-TableColumnHeaderCell {
+    background: var(--console-soft);
+    color: var(--console-muted);
+  }
+  .admin-record-table tbody tr:hover {
+    background: var(--console-soft);
+  }
+}
+@media (max-width: 720px) {
+  .administration-create {
+    padding-top: 20px;
+  }
+}
+@media (max-width: 560px) {
+  .administration-tenant {
+    padding: 0;
+  }
+  .administration-tenant form {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .admin-action-options {
+    grid-template-columns: 1fr;
+  }
+  .administration-create {
+    padding: 20px 0 0;
+  }
+  .admin-activity-entry > section {
+    padding-left: 0;
+  }
+}
+
+.account-table-wrap {
+  overflow-x: auto;
+  margin-top: 1rem;
+}
+.account-table {
+  border-collapse: collapse;
+  width: 100%;
+  text-align: left;
+  font-size: var(--font-size-2);
+}
+.account-table th {
+  color: var(--console-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+.account-table th,
+.account-table td {
+  padding: 0.8rem 0.6rem;
+  border-bottom: 1px solid var(--gray-5);
+  vertical-align: top;
+}
+.account-session-list {
+  padding: 0;
+  list-style: none;
+}
+.account-session-list li {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 0;
+  border-bottom: 1px solid var(--gray-5);
+  flex-wrap: wrap;
+}
+.account-remember {
+  margin-top: 1rem;
+}
+.account-remember > span {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.account-profile {
+  margin-block: 28px 24px;
+}
+.account-profile p {
+  margin-block: 5px 0;
+}
+.account-workspace-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+}
+.account-workspace-form > .form-field {
+  margin: 0;
+}
+.account-workspace-form > .rt-Button {
+  height: 36px;
+  margin-bottom: 1px;
+}
+.account-workspace-form > p,
+.account-workspace-form > .error-state {
+  grid-column: 1 / -1;
+}
+.account-workspace-notice {
+  margin: 0;
+}
+.account-access .advanced-details {
+  margin-top: 16px;
+  padding-top: 0;
+  border-top: 0;
+}
+.account-access .connection-environment {
+  margin-top: 16px;
+}
+.account-access-details[open] > .definition-list {
+  margin-top: 16px;
+}
+.account-namespace-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  overflow-wrap: anywhere;
+}
+.account-security-heading {
+  margin-top: 36px;
+  padding-top: 24px;
+  border-top: 1px solid var(--console-line);
+}
+.account-security-details {
+  margin-top: 0;
+  padding-block: 16px;
+  border-top: 0;
+  border-bottom: 1px solid var(--console-line);
+}
+.account-security-details > summary {
+  color: var(--console-ink);
+  font-size: 14px;
+}
+.account-security-details form {
+  max-width: 440px;
+}
+.account-session-list {
+  margin-bottom: 0;
+}
+.account-session-list li:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+.account-session-list p {
+  margin-block: 0;
+}
+.account-administration {
+  padding-top: 24px;
+}
+.account-administration .form-field {
+  margin: 0;
+}
+.account-administration .account-table td {
+  vertical-align: middle;
+}
+.account-administration select {
+  padding: 6px 8px;
+  border: 1px solid var(--console-line);
+  border-radius: 5px;
+  color: var(--console-ink);
+  background: var(--console-paper);
+  font: inherit;
+}
+.account-administration .form-field select {
+  min-height: 36px;
+}
+.account-administration input[type='checkbox'] {
+  accent-color: var(--console-link);
+}
+.account-administration .account-table p {
+  margin-block: 4px 0;
+}
+@media (max-width: 480px) {
+  .account-workspace-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .account-workspace-form > .rt-Button {
+    justify-self: start;
+    margin-top: 2px;
+  }
+  .account-profile {
+    margin-top: 20px;
+  }
+}

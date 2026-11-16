@@ -1,0 +1,13 @@
+{
+  "apiVersion": "workloads.orbitjob.io/v1alpha1",
+  "sources": {
+    "scheduledJob": {
+      "file": "charts/orbitjob/crds/workloads.orbitjob.io_scheduledjobs.yaml",
+      "sha256": "2b94ec5cebc14e7cd2a01faae72eef365e2453513de3d0a03841374930df11f3"
+    },
+    "workflow": {
+      "file": "charts/orbitjob/crds/workloads.orbitjob.io_workflowjobs.yaml",
+      "sha256": "f979d0cba00724149e7050b3f58d95433fc57b69c1dccdef4c32ec29c61990b3"
+    }
+  }
+}

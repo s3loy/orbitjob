@@ -1,0 +1,56 @@
+.workload-assistant {
+  max-width: 740px;
+  padding: 4px 0 16px;
+}
+.workload-assistant p {
+  font-size: 13px;
+  line-height: 1.6;
+}
+.workload-skill-download {
+  color: var(--console-link);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+}
+.workload-skill-download:hover {
+  text-decoration: underline;
+}
+.workload-assistant .assistant-notice {
+  margin: 12px 0 0;
+  color: var(--console-link);
+}
+.assistant-brief,
+.assistant-reference-links {
+  margin-top: 18px;
+  font-size: 13px;
+  color: var(--console-muted);
+}
+.assistant-brief summary,
+.assistant-reference-links summary {
+  cursor: pointer;
+  padding: 3px 0;
+}
+.assistant-brief textarea {
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 10px;
+  padding: 12px;
+  background: var(--console-paper);
+  border: 1px solid var(--console-line);
+  border-radius: 6px;
+  font: inherit;
+  line-height: 1.6;
+  color: var(--console-ink);
+  resize: vertical;
+}
+.assistant-reference-links ul {
+  padding-left: 20px;
+  margin-bottom: 0;
+  line-height: 1.9;
+}
+.assistant-reference-links a {
+  color: var(--console-link);
+}
