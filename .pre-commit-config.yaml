@@ -54,9 +54,9 @@ repos:
         files: \.go$
         pass_filenames: false
 
-      # English-uniform tree; README.zh.md is the sanctioned exception.
+      # English sources, with translated README and bilingual site exceptions.
       - id: no-cjk
-        name: no CJK characters (README.zh.md exempt)
+        name: no CJK characters (README.zh.md and site exempt)
         entry: scripts/hooks/no-cjk.sh
         language: system
         pass_filenames: false

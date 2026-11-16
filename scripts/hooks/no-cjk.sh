@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# no-cjk gate: the repository is English-uniform; CJK content ships only in
-# README.zh.md, the sanctioned Chinese variant. Binary files (NUL byte) and
+# no-cjk gate: English is used outside README.zh.md and the bilingual
+# documentation site (content, rendering and tests). Binary files (NUL byte) and
 # files that are not valid UTF-8 are skipped.
 set -euo pipefail
 
@@ -19,10 +19,9 @@ cjk = re.compile(
     "[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff"
     "\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]"
 )
-exempt = "README.zh.md"
 offenders = []
 for path in sys.stdin.read().splitlines():
-    if not path or path == exempt:
+    if not path or path == "README.zh.md" or path.startswith("site/"):
         continue
     try:
         data = open(path, "rb").read()
@@ -40,8 +39,8 @@ for path in offenders:
     print(path)
 sys.exit(1 if offenders else 0)
 '); then
-	echo "Staged files contain CJK characters (only README.zh.md is exempt):"
+	echo "Staged files contain CJK characters outside README.zh.md and site/:"
 	printf '%s\n' "$hits"
-	echo "The repository is English-uniform; see CONTRIBUTING.md."
+	echo "Use English outside the maintained Chinese README and bilingual site; see CONTRIBUTING.md."
 	exit 1
 fi
