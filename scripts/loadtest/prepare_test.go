@@ -75,7 +75,7 @@ func TestTenantNamespaceManifestGrantsOperatorInTenantNamespace(t *testing.T) {
 		{[]string{"workloads.orbitjob.io"}, []string{"workflowruns"}, []string{"get", "list", "watch", "patch", "delete"}},
 		{[]string{"workloads.orbitjob.io"}, []string{"scheduledjobs/status", "jobruns/status", "workflowruns/status", "workflowjobs/status"}, []string{"get", "update", "patch"}},
 		{[]string{"batch"}, []string{"jobs"}, []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
-		{[]string{""}, []string{"pods"}, []string{"get", "list", "watch"}},
+		{[]string{""}, []string{"pods"}, []string{"get", "list", "watch", "patch"}},
 	}
 	if !reflect.DeepEqual(role.Rules, wantRules) {
 		t.Fatalf("operator Role rules = %#v, want %#v", role.Rules, wantRules)
