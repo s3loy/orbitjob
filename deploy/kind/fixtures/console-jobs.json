@@ -1,0 +1,114 @@
+{
+  "apiVersion": "v1",
+  "kind": "List",
+  "items": [
+    {
+      "apiVersion": "workloads.orbitjob.io/v1alpha1",
+      "kind": "ScheduledJob",
+      "metadata": {
+        "name": "console-success",
+        "namespace": "orbitjob",
+        "labels": {
+          "orbitjob.io/console-check": "20261018"
+        }
+      },
+      "spec": {
+        "schedule": "0 0 30 2 *",
+        "timeoutSeconds": 120,
+        "retryPolicy": {
+          "maxAttempts": 1
+        },
+        "jobTemplate": {
+          "image": "busybox:1.37",
+          "command": [
+            "sh",
+            "-c",
+            "echo console-success; sleep 2; exit 0"
+          ],
+          "backoffLimit": 0
+        }
+      }
+    },
+    {
+      "apiVersion": "workloads.orbitjob.io/v1alpha1",
+      "kind": "ScheduledJob",
+      "metadata": {
+        "name": "console-retry",
+        "namespace": "orbitjob",
+        "labels": {
+          "orbitjob.io/console-check": "20261018"
+        }
+      },
+      "spec": {
+        "schedule": "0 0 30 2 *",
+        "timeoutSeconds": 120,
+        "retryPolicy": {
+          "maxAttempts": 2
+        },
+        "jobTemplate": {
+          "image": "busybox:1.37",
+          "command": [
+            "sh",
+            "-c",
+            "echo console-failure; sleep 2; exit 1"
+          ],
+          "backoffLimit": 0
+        }
+      }
+    },
+    {
+      "apiVersion": "workloads.orbitjob.io/v1alpha1",
+      "kind": "ScheduledJob",
+      "metadata": {
+        "name": "console-cancel",
+        "namespace": "orbitjob",
+        "labels": {
+          "orbitjob.io/console-check": "20261018"
+        }
+      },
+      "spec": {
+        "schedule": "0 0 30 2 *",
+        "timeoutSeconds": 360,
+        "retryPolicy": {
+          "maxAttempts": 1
+        },
+        "jobTemplate": {
+          "image": "busybox:1.37",
+          "command": [
+            "sh",
+            "-c",
+            "echo console-long-running; sleep 300"
+          ],
+          "backoffLimit": 0
+        }
+      }
+    },
+    {
+      "apiVersion": "workloads.orbitjob.io/v1alpha1",
+      "kind": "ScheduledJob",
+      "metadata": {
+        "name": "console-recovery",
+        "namespace": "orbitjob",
+        "labels": {
+          "orbitjob.io/console-check": "20261018"
+        }
+      },
+      "spec": {
+        "schedule": "0 0 30 2 *",
+        "timeoutSeconds": 120,
+        "retryPolicy": {
+          "maxAttempts": 2
+        },
+        "jobTemplate": {
+          "image": "busybox:1.37",
+          "command": [
+            "sh",
+            "-c",
+            "echo \"$HOSTNAME\"; sleep 2; case \"${HOSTNAME%-*}\" in *-1) exit 1;; *) exit 0;; esac"
+          ],
+          "backoffLimit": 0
+        }
+      }
+    }
+  ]
+}

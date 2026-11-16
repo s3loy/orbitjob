@@ -1,0 +1,250 @@
+{
+  "apiVersion": "v1",
+  "kind": "List",
+  "items": [
+    {
+      "apiVersion": "workloads.orbitjob.io/v1alpha1",
+      "kind": "ScheduledJob",
+      "metadata": {
+        "name": "console-m4-success",
+        "namespace": "orbitjob",
+        "labels": {
+          "orbitjob.io/console-m4": "verification"
+        }
+      },
+      "spec": {
+        "schedule": "0 0 30 2 *",
+        "timeoutSeconds": 240,
+        "retryPolicy": {
+          "maxAttempts": 1
+        },
+        "jobTemplate": {
+          "image": "busybox:1.37",
+          "command": [
+            "sh",
+            "-c",
+            "sleep 2; exit 0"
+          ],
+          "backoffLimit": 0
+        }
+      }
+    },
+    {
+      "apiVersion": "workloads.orbitjob.io/v1alpha1",
+      "kind": "ScheduledJob",
+      "metadata": {
+        "name": "console-m4-failure",
+        "namespace": "orbitjob",
+        "labels": {
+          "orbitjob.io/console-m4": "verification"
+        }
+      },
+      "spec": {
+        "schedule": "0 0 30 2 *",
+        "timeoutSeconds": 240,
+        "retryPolicy": {
+          "maxAttempts": 2
+        },
+        "jobTemplate": {
+          "image": "busybox:1.37",
+          "command": [
+            "sh",
+            "-c",
+            "sleep 2; exit 1"
+          ],
+          "backoffLimit": 0
+        }
+      }
+    },
+    {
+      "apiVersion": "workloads.orbitjob.io/v1alpha1",
+      "kind": "ScheduledJob",
+      "metadata": {
+        "name": "console-m4-long",
+        "namespace": "orbitjob",
+        "labels": {
+          "orbitjob.io/console-m4": "verification"
+        }
+      },
+      "spec": {
+        "schedule": "0 0 30 2 *",
+        "timeoutSeconds": 240,
+        "retryPolicy": {
+          "maxAttempts": 1
+        },
+        "jobTemplate": {
+          "image": "busybox:1.37",
+          "command": [
+            "sh",
+            "-c",
+            "sleep 180; exit 0"
+          ],
+          "backoffLimit": 0
+        }
+      }
+    },
+    {
+      "apiVersion": "workloads.orbitjob.io/v1alpha1",
+      "kind": "WorkflowJob",
+      "metadata": {
+        "name": "console-m4-dag",
+        "namespace": "orbitjob",
+        "labels": {
+          "orbitjob.io/console-m4": "verification"
+        }
+      },
+      "spec": {
+        "schedule": "0 0 30 2 *",
+        "timeoutSeconds": 300,
+        "failPolicy": "Continue",
+        "tasks": [
+          {
+            "name": "extract",
+            "jobRef": {
+              "name": "console-m4-success"
+            },
+            "dependsOn": []
+          },
+          {
+            "name": "validate",
+            "jobRef": {
+              "name": "console-m4-success"
+            },
+            "dependsOn": [
+              "extract"
+            ]
+          },
+          {
+            "name": "failed",
+            "jobRef": {
+              "name": "console-m4-failure"
+            },
+            "dependsOn": [
+              "extract"
+            ]
+          },
+          {
+            "name": "unconditional",
+            "jobRef": {
+              "name": "console-m4-success"
+            },
+            "dependsOn": [
+              "failed"
+            ]
+          },
+          {
+            "name": "publish",
+            "jobRef": {
+              "name": "console-m4-success"
+            },
+            "dependsOn": [
+              "validate",
+              "failed"
+            ],
+            "condition": {
+              "type": "any",
+              "rules": [
+                {
+                  "task": "validate",
+                  "field": "attempts",
+                  "operator": "ge",
+                  "number": 0
+                },
+                {
+                  "task": "failed",
+                  "field": "phase",
+                  "operator": "eq",
+                  "values": [
+                    "Succeeded"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "name": "skipped",
+            "jobRef": {
+              "name": "console-m4-success"
+            },
+            "dependsOn": [
+              "failed"
+            ],
+            "condition": {
+              "type": "all",
+              "rules": [
+                {
+                  "task": "failed",
+                  "field": "phase",
+                  "operator": "eq",
+                  "values": [
+                    "Succeeded"
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "workloads.orbitjob.io/v1alpha1",
+      "kind": "WorkflowJob",
+      "metadata": {
+        "name": "console-m4-cancel",
+        "namespace": "orbitjob",
+        "labels": {
+          "orbitjob.io/console-m4": "verification"
+        }
+      },
+      "spec": {
+        "schedule": "0 0 30 2 *",
+        "timeoutSeconds": 300,
+        "failPolicy": "Continue",
+        "tasks": [
+          {
+            "name": "long",
+            "jobRef": {
+              "name": "console-m4-long"
+            },
+            "dependsOn": []
+          },
+          {
+            "name": "after",
+            "jobRef": {
+              "name": "console-m4-success"
+            },
+            "dependsOn": [
+              "long"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "workloads.orbitjob.io/v1alpha1",
+      "kind": "WorkflowJob",
+      "metadata": {
+        "name": "console-m4-paused",
+        "namespace": "orbitjob",
+        "labels": {
+          "orbitjob.io/console-m4": "verification"
+        }
+      },
+      "spec": {
+        "schedule": "0 0 30 2 *",
+        "timeoutSeconds": 300,
+        "failPolicy": "Continue",
+        "tasks": [
+          {
+            "name": "extract",
+            "jobRef": {
+              "name": "console-m4-success"
+            },
+            "dependsOn": []
+          }
+        ],
+        "suspend": true
+      }
+    }
+  ]
+}

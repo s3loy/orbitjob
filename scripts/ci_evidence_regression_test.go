@@ -68,8 +68,11 @@ func TestIntegrationTargetRequiresDatabaseAndRunsSerially(t *testing.T) {
 			if !os.IsNotExist(readErr) || !strings.Contains(string(out), "TEST_DATABASE_DSN is required") {
 				t.Fatalf("missing database was not rejected before tests: called=%q err=%v output=%s", called, readErr, out)
 			}
-		} else if readErr != nil || !strings.Contains(string(called), "test -p=1 -count=1 -tags integration ") || len(strings.Fields(string(called))) != 12 {
-			t.Fatalf("integration did not run seven serial uncached packages: %q err=%v", called, readErr)
+		} else {
+			want := "test -p=1 -count=1 -tags integration ./db/migrations ./internal/platform/postgrestest ./internal/admin/bootstrap ./internal/admin/http ./internal/admin/store/postgres ./internal/core/store/postgres ./scripts/loadtest ./deploy/kind/console-fixture"
+			if readErr != nil || strings.TrimSpace(string(called)) != want {
+				t.Fatalf("integration did not run the required serial uncached packages: %q err=%v", called, readErr)
+			}
 		}
 	}
 }
