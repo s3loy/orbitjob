@@ -8,14 +8,12 @@
 # kind load. This workflow gives a branch the same artifact the release
 # produces, under an unmistakably non-release tag.
 #
-# The tag is `rc-<run number>-<short sha>` and NEVER moves to another commit
-# except as an extra `rc` alias on the newest run: an install pinned to
-# rc-7-9a4f21c keeps building that exact commit, while `rc` tracks the latest
-# for convenience in a dev cluster. Version tags (v*) stay reserved for
+# Each run publishes `rc-<run number>-<short sha>`. The separate mutable `rc`
+# aliases move one component at a time and can differ after interruption; use
+# the explicit run tag for an installation. Version tags (v*) stay reserved for
 # release.yml; a release must be exactly what the default branch tagged.
 #
-# Dispatch it from any branch with an optional Helm values override string;
-# the run page prints the install command using it.
+# Dispatch it from any branch; the run page prints its immutable image tag.
 
 name: Pre-release Images
 
@@ -39,30 +37,11 @@ env:
 jobs:
   verify:
     name: Verify
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
-
-      - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      # Published images must be verified, so the quality gate is not skipped
-      # here either: an rc tag is something another machine will install.
-      # golangci-lint is not preinstalled on the runner; the action installs
-      # the binary into PATH before make check reaches the lint target.
-      - name: Install golangci-lint
-        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
-        with:
-          version: v2.15.0
-          # Lint runs here as part of make check; skip the action's own run.
-          install-only: true
-
-      - name: Run quality gate
-        run: make check
+    uses: ./.github/workflows/verification.yml
+    with:
+      source_ref: ${{ github.sha }}
+    permissions:
+      contents: read
 
   images:
     name: ${{ matrix.component }}
@@ -78,6 +57,7 @@ jobs:
           - { component: migrate,    target: migrate }
           - { component: bootstrap,  target: bootstrap }
           - { component: log-archive, target: log-archive }
+          - { component: admission, target: admission }
     outputs:
       version: ${{ steps.tag.outputs.version }}
     steps:
@@ -133,19 +113,18 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # `rc` is a moving alias for "newest pre-release build". It is retagged
-      # with a manifest list copy — the image contents are identical — after
-      # every component push succeeded, so an alias move can never point at a
-      # partial build.
+      # with a manifest list copy after every component push succeeded.
+      # Registry updates are separate: interruption can leave mixed aliases.
       - name: Move rc alias
         env:
           VERSION: ${{ needs.images.outputs.version }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
-          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
           # shellcheck disable=SC2153 # VERSION is injected through the step env above.
           version="$VERSION"
-          for component in admin-api scheduler operator migrate bootstrap log-archive; do
+          for component in admin-api scheduler operator migrate bootstrap log-archive admission; do
             image="${REGISTRY}/${owner}/orbitjob-${component}"
             docker buildx imagetools create \
               -t "${image}:rc" "${image}:${version}"
@@ -156,7 +135,7 @@ jobs:
         env:
           VERSION: ${{ needs.images.outputs.version }}
         run: |
-          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
           # shellcheck disable=SC2153 # VERSION is injected through the step env above.
           cat <<EOF
 
@@ -166,8 +145,6 @@ jobs:
             helm upgrade --install orbitjob charts/orbitjob \\
               --set global.imageTag=${VERSION}
 
-          Or track the latest pre-release:
-            helm upgrade --install orbitjob charts/orbitjob \\
-              --set global.imageTag=rc
+          Use the explicit run tag above; mutable :rc aliases are not an atomic component set.
 
           EOF

@@ -1,7 +1,10 @@
 package main
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -30,7 +33,8 @@ func TestValidateReleaseVersion(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := exec.Command("bash", "validate-release-version.sh", tt.value).Run()
+			chart := releaseChart(t, "version: "+strings.TrimPrefix(tt.value, "v")+"\nappVersion: \""+strings.TrimPrefix(tt.value, "v")+"\"\n")
+			err := exec.Command("bash", "validate-release-version.sh", tt.value, chart).Run()
 			if tt.valid && err != nil {
 				t.Fatalf("valid version %q rejected: %v", tt.value, err)
 			}
@@ -39,4 +43,45 @@ func TestValidateReleaseVersion(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateReleaseVersionRequiresMatchingChart(t *testing.T) {
+	for _, tt := range []struct {
+		name, chart string
+		valid       bool
+	}{
+		{"matching scalars", "version: 1.2.3\nappVersion: \"1.2.3\"\n", true},
+		{"matching quoted scalars", "version: '1.2.3' # chart\nappVersion: \"1.2.3\" # image\n", true},
+		{"stale chart", "version: 1.2.2\nappVersion: \"1.2.3\"\n", false},
+		{"stale image", "version: 1.2.3\nappVersion: \"1.2.2\"\n", false},
+		{"missing chart version", "appVersion: \"1.2.3\"\n", false},
+		{"missing image version", "version: 1.2.3\n", false},
+		{"duplicate version", "version: 1.2.3\nversion: 1.2.3\nappVersion: 1.2.3\n", false},
+		{"duplicate appVersion", "version: 1.2.3\nappVersion: 1.2.3\nappVersion: 1.2.3\n", false},
+		{"mismatched quote", "version: 1.2.3\nappVersion: '1.2.3\"\n", false},
+		{"nested fields", "metadata:\n  version: 1.2.3\n  appVersion: 1.2.3\n", false},
+		{"missing file", "", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			chart := releaseChart(t, tt.chart)
+			if tt.chart == "" {
+				if err := os.Remove(chart); err != nil {
+					t.Fatal(err)
+				}
+			}
+			out, err := exec.Command("bash", "validate-release-version.sh", "v1.2.3", chart).CombinedOutput()
+			if (err == nil) != tt.valid {
+				t.Fatalf("valid=%v, err=%v: %s", tt.valid, err, out)
+			}
+		})
+	}
+}
+
+func releaseChart(t *testing.T, contents string) string {
+	t.Helper()
+	chart := filepath.Join(t.TempDir(), "Chart.yaml")
+	if err := os.WriteFile(chart, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return chart
 }

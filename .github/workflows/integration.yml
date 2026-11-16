@@ -10,6 +10,11 @@ on:
       - main
       - dev
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      source_ref:
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -45,6 +50,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+          persist-credentials: false
 
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0

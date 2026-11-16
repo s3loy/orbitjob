@@ -1,0 +1,166 @@
+name: Release verification
+
+on:
+  workflow_call:
+    inputs:
+      source_ref:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend and Helm
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
+        with:
+          ref: ${{ inputs.source_ref }}
+          persist-credentials: false
+
+      - name: Confirm source commit
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_REF"
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+
+      - name: Install golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.15.0
+          install-only: true
+
+      - name: Run backend quality and coverage gates
+        run: |
+          make check
+          make test-cover-check
+
+      - name: Validate Helm chart
+        run: make helm-check
+
+  postgres:
+    uses: ./.github/workflows/integration.yml
+    with:
+      source_ref: ${{ inputs.source_ref }}
+
+  vulnerabilities:
+    uses: ./.github/workflows/govulncheck.yml
+    with:
+      source_ref: ${{ inputs.source_ref }}
+
+  console:
+    uses: ./.github/workflows/console.yml
+    with:
+      source_ref: ${{ inputs.source_ref }}
+
+  installation:
+    name: Installation and real Console
+    needs: [backend, postgres, vulnerabilities, console]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      KIND_CLUSTER_NAME: orbitjob-console-e2e
+      TAG: verify-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
+        with:
+          ref: ${{ inputs.source_ref }}
+          persist-credentials: false
+
+      - name: Isolate Kubernetes configuration
+        run: echo "KUBECONFIG=$RUNNER_TEMP/orbitjob-release-kubeconfig" >> "$GITHUB_ENV"
+
+      # This job owns an ephemeral hosted runner; remove unused bundled SDKs
+      # before downloading Go or building the component images.
+      - name: Make room for the disposable installation
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost
+          df -h /
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Read deployment tool versions
+        id: tools
+        run: |
+          kind_version="$(sed -n 's/^  KIND_VERSION: "\(.*\)"/\1/p' .github/workflows/loadtest.yml)"
+          helm_version="$(sed -n 's/^  HELM_VERSION: "\(.*\)"/\1/p' .github/workflows/loadtest.yml)"
+          [[ $kind_version =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ $helm_version =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          echo "kind=$kind_version" >> "$GITHUB_OUTPUT"
+          echo "helm=$helm_version" >> "$GITHUB_OUTPUT"
+
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ steps.tools.outputs.helm }}
+
+      - name: Install kind
+        env:
+          KIND_VERSION: ${{ steps.tools.outputs.kind }}
+        run: go install "sigs.k8s.io/kind@${KIND_VERSION}"
+
+      # Pre-create the exact dedicated cluster accepted by the Console harness.
+      # kind-verify retains a cluster it did not create, including its images.
+      - name: Create disposable verification cluster
+        run: kind create cluster --name "$KIND_CLUSTER_NAME" --kubeconfig "$KUBECONFIG" --wait 5m
+
+      # Builds and loads this checkout's component images, then exercises fresh
+      # install, repeated upgrade, failed migration and uninstall/reinstall.
+      - name: Verify installation lifecycle
+        run: make kind-verify
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '26'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install Console test dependencies
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      - name: Prepare real Console fixtures
+        run: |
+          python3 scripts/console-installed.py prepare \
+            --kubeconfig "$KUBECONFIG" --state-dir "$RUNNER_TEMP/console-installed" --port 0
+
+      - name: Verify complete installed Console suite
+        run: |
+          python3 scripts/console-installed.py run \
+            --kubeconfig "$KUBECONFIG" --state-dir "$RUNNER_TEMP/console-installed" --port 0
+
+      # The receipt contains source hashes, image IDs and test counts only.
+      # Other state files contain credentials or raw diagnostics and stay private.
+      - name: Preserve installed verification receipt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: installed-console-verification
+          path: ${{ runner.temp }}/console-installed/verification.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Retire owned Console fixtures
+        if: always()
+        run: |
+          if [[ -d "$RUNNER_TEMP/console-installed" ]]; then
+            python3 scripts/console-installed.py cleanup \
+              --kubeconfig "$KUBECONFIG" --state-dir "$RUNNER_TEMP/console-installed" --port 0
+          fi
+
+      - name: Remove disposable cluster
+        if: always()
+        run: kind delete cluster --name "$KIND_CLUSTER_NAME"
