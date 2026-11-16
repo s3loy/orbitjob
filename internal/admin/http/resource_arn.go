@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -112,12 +113,37 @@ func apiKeyResource(c *gin.Context) (policy.ARN, error) {
 	return policy.ARN{Tenant: tenantID, Group: "*", Type: "apikey", ID: keyID}, nil
 }
 
-// requestTenant reads the same tenant selector handlers consume without consuming
-// the body. Conflicting selectors fail closed rather than authorizing one target
-// and executing against another.
+type requestTenantContextKey struct{}
+
+// requestTenant retains the authorized tenant before JSON binding consumes the
+// body. JSON selectors are checked regardless of the declared content type.
 func requestTenant(c *gin.Context) (string, error) {
-	explicit := c.Query("tenant_id")
-	if c.Request.Body != nil && c.ContentType() == "application/json" {
+	return resolveRequestTenant(c, "")
+}
+
+func resolveRequestTenant(c *gin.Context, boundSelector string) (string, error) {
+	boundSelector = strings.TrimSpace(boundSelector)
+	if tenantID, ok := c.Request.Context().Value(requestTenantContextKey{}).(string); ok {
+		if boundSelector != "" && boundSelector != tenantID {
+			return "", middleware.ErrTenantMismatch
+		}
+		return tenantID, nil
+	}
+	explicit := strings.TrimSpace(c.Query("tenant_id"))
+	merge := func(selector string) error {
+		selector = strings.TrimSpace(selector)
+		if selector != "" {
+			if explicit != "" && explicit != selector {
+				return middleware.ErrTenantMismatch
+			}
+			explicit = selector
+		}
+		return nil
+	}
+	if err := merge(boundSelector); err != nil {
+		return "", err
+	}
+	if c.Request.Body != nil {
 		raw, err := io.ReadAll(c.Request.Body)
 		c.Request.Body = io.NopCloser(bytes.NewReader(raw))
 		if err != nil {
@@ -130,13 +156,15 @@ func requestTenant(c *gin.Context) (string, error) {
 			if err := json.Unmarshal(raw, &body); err != nil {
 				return "", validation.New("body", "must contain exactly one valid JSON object")
 			}
-			if body.TenantID != "" {
-				if explicit != "" && explicit != body.TenantID {
-					return "", middleware.ErrTenantMismatch
-				}
-				explicit = body.TenantID
+			if err := merge(body.TenantID); err != nil {
+				return "", err
 			}
 		}
 	}
-	return middleware.ResolveEffectiveTenant(c, explicit)
+	tenantID, err := middleware.ResolveEffectiveTenant(c, explicit)
+	if err != nil {
+		return "", err
+	}
+	c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), requestTenantContextKey{}, tenantID))
+	return tenantID, nil
 }

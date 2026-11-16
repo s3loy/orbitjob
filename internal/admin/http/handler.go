@@ -517,13 +517,7 @@ func writeAPIError(c *gin.Context, err error) {
 // Platform credentials must choose a tenant explicitly; tenant credentials
 // cannot change their data scope with request parameters.
 func requireTenantID(c *gin.Context, fromRequest string) (string, bool) {
-	var tenantID string
-	var err error
-	if fromRequest != "" {
-		tenantID, err = middleware.ResolveEffectiveTenant(c, fromRequest)
-	} else {
-		tenantID, err = requestTenant(c)
-	}
+	tenantID, err := resolveRequestTenant(c, fromRequest)
 	if err != nil {
 		writeForbidden(c, err.Error())
 		return "", false
