@@ -65,15 +65,17 @@ printf 'Filesystem 1024-blocks Used Available Capacity Mounted\nhost 999999999 1
 
 func TestPreflightClusterRequiresMatchingKubectlMinor(t *testing.T) {
 	for _, tc := range []struct {
-		name, client, server, diagnostic string
-		wantSuccess                      bool
+		name, client, server, claim, diagnostic string
+		wantSuccess                             bool
 	}{
-		{"matched", "37", "37", "minor version match", true},
-		{"development minor suffix", "37+", "37", "minor version match", true},
-		{"old Docker bundled client", "34", "37", "requires kubectl 1.37.x", false},
-		{"newer client", "38", "37", "requires kubectl 1.37.x", false},
-		{"malformed client", "unknown", "37", "incomplete kubectl", false},
-		{"missing server", "37", "", "incomplete kubectl", false},
+		{"matched", "37", "37", "5Gi", "minor version match", true},
+		{"development minor suffix", "37+", "37", "5Gi", "minor version match", true},
+		{"old Docker bundled client", "34", "37", "5Gi", "requires kubectl 1.37.x", false},
+		{"newer client", "38", "37", "5Gi", "requires kubectl 1.37.x", false},
+		{"malformed client", "unknown", "37", "5Gi", "incomplete kubectl", false},
+		{"missing server", "37", "", "5Gi", "incomplete kubectl", false},
+		{"undersized database", "37", "37", "2Gi", "stop installation and prepare a separate backup and storage-migration plan", false},
+		{"larger database", "37", "37", "6Gi", "database volume meets", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -94,7 +96,7 @@ esac
 case "$*" in
   *'version -o yaml'*) printf '%s\n' "$TEST_VERSIONS" ;;
   *'get deploy'*) echo current-database ;;
-  *'get pvc'*) echo 5Gi ;;
+  *'get pvc'*) echo "$TEST_DATABASE_CLAIM" ;;
   *) exit 1 ;;
 esac
 `)
@@ -103,7 +105,7 @@ esac
 				versions += "serverVersion:\n  major: \"1\"\n  minor: \"" + tc.server + "\"\n"
 			}
 			cmd := exec.Command("bash", "preflight-local.sh", "--cluster")
-			cmd.Env = append(gateEnvironment("PATH", "TEST_VERSIONS"), "PATH="+fakebin+":"+os.Getenv("PATH"), "TEST_VERSIONS="+versions)
+			cmd.Env = append(gateEnvironment("PATH", "TEST_VERSIONS", "TEST_DATABASE_CLAIM"), "PATH="+fakebin+":"+os.Getenv("PATH"), "TEST_VERSIONS="+versions, "TEST_DATABASE_CLAIM="+tc.claim)
 			out, err := cmd.CombinedOutput()
 			if (err == nil) != tc.wantSuccess || !strings.Contains(string(out), tc.diagnostic) {
 				t.Fatalf("success=%v, want %v with %q:\n%s", err == nil, tc.wantSuccess, tc.diagnostic, out)

@@ -7,6 +7,7 @@ context=kind-orbitjob-dev
 namespace=orbitjob
 k=(kubectl --context "$context")
 old_claim=$("${k[@]}" -n "$namespace" get deployment orbitjob-postgres -o jsonpath='{.spec.template.spec.volumes[?(@.name=="data")].persistentVolumeClaim.claimName}')
+database_replicas=$("${k[@]}" -n "$namespace" get deployment orbitjob-postgres -o jsonpath='{.spec.replicas}')
 request=$("${k[@]}" -n "$namespace" get pvc "$old_claim" -o jsonpath='{.spec.resources.requests.storage}')
 if [[ $request =~ ^([0-9]+)Gi$ ]] && (( BASH_REMATCH[1] >= 5 )); then
   echo '[OK] database claim already meets the 5-GiB floor'
@@ -24,24 +25,46 @@ done
 new_claim="orbitjob-postgres-logs-$(date +%s)"
 helper="orbitjob-db-copy-$(date +%s)"
 switched=false
-success=false
+copy_verified=false
+restore_failed=false
+restore_command() {
+  local description=$1
+  shift
+  if "$@" >/dev/null; then
+    return 0
+  else
+    local command_rc=$?
+    echo "[FAIL] recovery: $description (exit $command_rc)" >&2
+    restore_failed=true
+    return "$command_rc"
+  fi
+}
 restore() {
   local rc=$?
   trap - EXIT
-  "${k[@]}" -n "$namespace" delete pod "$helper" --ignore-not-found --wait=true >/dev/null 2>&1 || true
-  if [[ $success != true && $switched == true ]]; then
-    "${k[@]}" -n "$namespace" scale deployment/orbitjob-postgres --replicas=0 >/dev/null || true
-    "${k[@]}" -n "$namespace" wait --for=delete pod -l app=orbitjob-postgres --timeout=90s >/dev/null || true
-    "${k[@]}" -n "$namespace" patch deployment orbitjob-postgres --type=json \
-      -p "[{\"op\":\"replace\",\"path\":\"/spec/template/spec/volumes/0/persistentVolumeClaim/claimName\",\"value\":\"$old_claim\"}]" >/dev/null || true
+  restore_command "remove copy Pod $helper" "${k[@]}" -n "$namespace" delete pod "$helper" --ignore-not-found --wait=true || :
+  if [[ $copy_verified != true && $switched == true ]]; then
+    if restore_command 'stop PostgreSQL before claim rollback' "${k[@]}" -n "$namespace" scale deployment/orbitjob-postgres --replicas=0 &&
+      restore_command 'wait for PostgreSQL to stop before claim rollback' "${k[@]}" -n "$namespace" wait --for=delete pod -l app=orbitjob-postgres --timeout=90s; then
+      restore_command "restore database claim $old_claim" "${k[@]}" -n "$namespace" patch deployment orbitjob-postgres --type=json \
+        -p "[{\"op\":\"replace\",\"path\":\"/spec/template/spec/volumes/0/persistentVolumeClaim/claimName\",\"value\":\"$old_claim\"}]" || :
+    fi
   fi
-  "${k[@]}" -n "$namespace" scale deployment/orbitjob-postgres --replicas=1 >/dev/null || true
-  "${k[@]}" -n "$namespace" rollout status deployment/orbitjob-postgres --timeout=180s >/dev/null || true
+  restore_command "restore PostgreSQL replicas to $database_replicas" "${k[@]}" -n "$namespace" scale deployment/orbitjob-postgres --replicas="$database_replicas" || :
+  restore_command 'wait for PostgreSQL recovery' "${k[@]}" -n "$namespace" rollout status deployment/orbitjob-postgres --timeout=180s || :
   for index in "${!workloads[@]}"; do
-    "${k[@]}" -n orbitjob-system scale "${workloads[$index]}" --replicas="${replicas[$index]}" >/dev/null || true
+    restore_command "restore ${workloads[$index]} replicas to ${replicas[$index]}" "${k[@]}" -n orbitjob-system scale "${workloads[$index]}" --replicas="${replicas[$index]}" || :
+    restore_command "wait for ${workloads[$index]} recovery" "${k[@]}" -n orbitjob-system rollout status "${workloads[$index]}" --timeout=180s || :
   done
-  if [[ $success != true ]]; then
+  if [[ $copy_verified != true ]]; then
     echo "[FAIL] copy not accepted; original claim retained: $old_claim; new claim retained for inspection: $new_claim" >&2
+  fi
+  if [[ $restore_failed == true ]]; then
+    echo "[FAIL] recovery incomplete; inspect the reported workloads and claims: original=$old_claim; copied=$new_claim" >&2
+    if (( rc == 0 )); then rc=1; fi
+  fi
+  if (( rc == 0 )) && [[ $copy_verified == true ]]; then
+    printf '[OK] active database claim: %s (5 GiB); original rollback claim retained: %s\n' "$new_claim" "$old_claim"
   fi
   exit "$rc"
 }
@@ -102,5 +125,4 @@ switched=true
 "${k[@]}" -n "$namespace" scale deployment/orbitjob-postgres --replicas=1 >/dev/null
 "${k[@]}" -n "$namespace" rollout status deployment/orbitjob-postgres --timeout=180s
 "${k[@]}" -n "$namespace" exec deployment/orbitjob-postgres -- pg_isready -U postgres -d orbitjob >/dev/null
-success=true
-printf '[OK] active database claim: %s (5 GiB); original rollback claim retained: %s\n' "$new_claim" "$old_claim"
+copy_verified=true

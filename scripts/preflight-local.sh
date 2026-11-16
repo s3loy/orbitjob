@@ -87,6 +87,6 @@ if [[ ${1:-} == --cluster ]]; then
     *Gi) quantity=${request%Gi}; [[ $quantity =~ ^[0-9]+$ ]] && (( quantity >= 5 )) ;;
     *Ti) quantity=${request%Ti}; [[ $quantity =~ ^[0-9]+$ ]] && (( quantity >= 1 )) ;;
     *) false ;;
-  esac || { echo '[FAIL] existing database claim is below 5 GiB; run bash scripts/upgrade-local-db-volume.sh' >&2; exit 1; }
+  esac || { echo '[FAIL] existing database claim is below 5 GiB; stop installation and prepare a separate backup and storage-migration plan as described in docs/local-deployment.md' >&2; exit 1; }
   echo '[OK] database volume meets the 5-GiB allocation floor'
 fi
