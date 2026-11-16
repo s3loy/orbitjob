@@ -56,7 +56,7 @@ type WorkflowWalker struct {
 	ObserveResource func(context.Context, string, workflow.Run) (bool, error)
 	// Outcomes, when set, supplies a terminal step's attempt timing so
 	// duration_ms conditions evaluate against the same fact the read models
-	// see. A duration rule without a reader is refused.
+	// see. Evaluating a duration rule without a reader is refused.
 	Outcomes controlplane.OutcomeReader
 	Tenants  []string
 	// Actor is the identity recorded against every step this walker creates.
@@ -190,10 +190,7 @@ func (w WorkflowWalker) advanceRun(ctx context.Context, tenant string, run workf
 	if err := w.repairStepObjects(ctx, tenant, namespace, run, steps, index); err != nil {
 		return 0, err
 	}
-	stepByTask, states, err := w.stepFacts(ctx, tenant, run, dag, steps)
-	if err != nil {
-		return 0, err
-	}
+	stepByTask, states := stepFacts(run, dag, steps)
 
 	// A stopping run creates no new steps. CancelUnknown retains unresolved
 	// stop intent; retained trusted evidence may later confirm cancellation,
@@ -253,7 +250,7 @@ func (w WorkflowWalker) advanceRun(ctx context.Context, tenant string, run workf
 
 		reason := sweepStopReason(canceling, failFastTripped, false)
 		if reason == "" {
-			reason, err = taskSkipReason(task, states, run.TaskDecisions, decisions, run)
+			reason, err = w.taskSkipReason(ctx, tenant, task, stepByTask, states, run.TaskDecisions, decisions, run)
 			if err != nil {
 				return created, err
 			}
@@ -316,19 +313,13 @@ func (w WorkflowWalker) pinnedDAG(ctx context.Context, tenant string, run workfl
 // over. The set holds a task's state only once the step has resolved: a
 // terminal phase, or CancelUnknown, which is terminal-but-undecided and
 // dominates the roll-up. A step still running is absent, which is what keeps
-// the workflow Running. A resolved step's attempt timing is not on its row, so
-// duration_ms operands are enriched from the same terminal-outcome read the
-// read models use, only when the walker was wired with a reader.
-func (w WorkflowWalker) stepFacts(ctx context.Context, tenant string, run workflow.Run, dag workflow.DAG, steps []workflow.StepRun) (map[string]workflow.StepRun, map[string]workflow.StepState, error) {
+// the workflow Running. Attempt timing is loaded only for conditions that the
+// walker evaluates; cancellation and phase derivation need no timing operand.
+func stepFacts(run workflow.Run, dag workflow.DAG, steps []workflow.StepRun) (map[string]workflow.StepRun, map[string]workflow.StepState) {
 	byKey := make(map[string]workflow.StepRun, len(steps))
 	for _, step := range steps {
 		byKey[step.OccurrenceKey] = step
 	}
-	needDurations := dagHasDurationRules(dag)
-	if needDurations && w.Outcomes == nil {
-		return nil, nil, fmt.Errorf("workflow duration rules require outcome reader")
-	}
-
 	stepByTask := make(map[string]workflow.StepRun, len(steps))
 	states := make(map[string]workflow.StepState, len(steps))
 	for _, task := range dag.Tasks {
@@ -340,22 +331,9 @@ func (w WorkflowWalker) stepFacts(ctx context.Context, tenant string, run workfl
 		if !jobrun.Terminal(step.Phase) && step.Phase != jobrun.CancelUnknown && step.Phase != jobrun.ExecutionUnknown {
 			continue
 		}
-		state := workflow.StepState{Phase: step.Phase, Attempt: step.Attempt}
-		if needDurations && jobrun.Terminal(step.Phase) {
-			outcome, err := w.Outcomes.TerminalOutcome(ctx, tenant, step.ID)
-			if err != nil {
-				return nil, nil, err
-			}
-			if outcome.StartedAt.IsZero() || outcome.CompletedAt.IsZero() {
-				return nil, nil, fmt.Errorf("terminal step %d has no measured duration", step.ID)
-			}
-			if !outcome.StartedAt.IsZero() && !outcome.CompletedAt.IsZero() {
-				state.DurationMs = outcome.CompletedAt.Sub(outcome.StartedAt).Milliseconds()
-			}
-		}
-		states[task.Name] = state
+		states[task.Name] = workflow.StepState{Phase: step.Phase, Attempt: step.Attempt}
 	}
-	return stepByTask, states, nil
+	return stepByTask, states
 }
 
 // sweepStopReason decides whether a sweep-level stop applies to a task that
@@ -408,8 +386,9 @@ func dependenciesResolved(
 // recorded state, and since validation pins rules to dependencies and
 // resolution pins dependencies to states, an error is a walker bug and is
 // surfaced, never swallowed into a skip.
-func taskSkipReason(
-	task workflow.Task, states map[string]workflow.StepState,
+func (w WorkflowWalker) taskSkipReason(
+	ctx context.Context, tenant string, task workflow.Task,
+	steps map[string]workflow.StepRun, states map[string]workflow.StepState,
 	storedDecisions map[string]workflow.TaskDecision,
 	passDecisions map[string]workflow.TaskDecision, run workflow.Run,
 ) (string, error) {
@@ -426,6 +405,28 @@ func taskSkipReason(
 	}
 	if task.Condition == nil {
 		return "", nil
+	}
+	for _, rule := range task.Condition.Rules {
+		if rule.Field != workflow.FieldDurationMs {
+			continue
+		}
+		if w.Outcomes == nil {
+			return "", fmt.Errorf("workflow duration rules require outcome reader")
+		}
+		step, found := steps[rule.Task]
+		if !found || !jobrun.Terminal(step.Phase) {
+			return "", fmt.Errorf("duration operand for task %s has no terminal step", rule.Task)
+		}
+		outcome, err := w.Outcomes.TerminalOutcome(ctx, tenant, step.ID)
+		if err != nil {
+			return "", fmt.Errorf("read duration for terminal step %d: %w", step.ID, err)
+		}
+		if outcome.StartedAt.IsZero() || outcome.CompletedAt.IsZero() {
+			return "", fmt.Errorf("terminal step %d has no measured duration", step.ID)
+		}
+		state := states[rule.Task]
+		state.DurationMs = outcome.CompletedAt.Sub(outcome.StartedAt).Milliseconds()
+		states[rule.Task] = state
 	}
 	pass, err := workflow.EvaluateCondition(task.Condition, states)
 	if err != nil {
@@ -609,20 +610,6 @@ func (w WorkflowWalker) fanCancel(ctx context.Context, tenant string, run workfl
 		}
 	}
 	return nil
-}
-
-func dagHasDurationRules(dag workflow.DAG) bool {
-	for _, task := range dag.Tasks {
-		if task.Condition == nil {
-			continue
-		}
-		for _, rule := range task.Condition.Rules {
-			if rule.Field == workflow.FieldDurationMs {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func ptr[T any](v T) *T { return &v }
