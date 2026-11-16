@@ -4,6 +4,7 @@ package postgres
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -14,6 +15,38 @@ import (
 	"orbitjob/internal/platform/postgrestest"
 	"orbitjob/internal/platform/scan"
 )
+
+func TestDefinitionOperationAuditsFullNamespacedIdentity(t *testing.T) {
+	db := postgrestest.Open(t)
+	ctx := context.Background()
+	subject := definition.Subject{TenantID: scan.GenerateID(), ActorID: scan.GenerateID()}
+	if _, err := db.Exec(`INSERT INTO tenants(id,slug,name,status)VALUES($1,$2,'Long definition identity','active')`, subject.TenantID, "identity-"+subject.TenantID); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	op := definition.Operation{
+		RequestID: uuid.NewString(), ActorID: subject.ActorID, Kind: "jobs",
+		Namespace: strings.Repeat("n", 63), Name: strings.Repeat("j", 63),
+		PayloadHash: strings.Repeat("a", 64), State: "checked",
+		Request:      definition.ApplyRequest{SpecJSON: `{}`},
+		CheckedUntil: now.Add(time.Minute), ExpiresAt: now.Add(time.Hour), CreatedAt: now, UpdatedAt: now,
+	}
+	repo := DefinitionOperations{DB: queryAdminConnection(t, db)}
+	if err := repo.Register(ctx, subject, op); err != nil {
+		t.Fatalf("check with a valid namespaced identity: %v", err)
+	}
+	if _, claimed, err := repo.Claim(ctx, subject, op.RequestID, op.PayloadHash, now); err != nil || !claimed {
+		t.Fatalf("claim checked identity: claimed=%t err=%v", claimed, err)
+	}
+	result := definition.Result{RequestID: op.RequestID, Kind: op.Kind, Namespace: op.Namespace, Name: op.Name, State: "accepted", UID: uuid.NewString()}
+	if err := repo.Finish(ctx, subject, op.RequestID, "accepted", &result, now); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := db.QueryRow(`SELECT count(*) FROM audit_events WHERE tenant_id=$1 AND resource_id=$2 AND resource_type='jobs'`, subject.TenantID, op.Namespace+"/"+op.Name).Scan(&count); err != nil || count != 3 {
+		t.Fatalf("full resource identity must survive all three audit events: count=%d err=%v", count, err)
+	}
+}
 
 func TestDefinitionOperationClaimsAndHistoryUseRealTenantTransactions(t *testing.T) {
 	db := postgrestest.Open(t)
