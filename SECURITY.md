@@ -1,347 +1,311 @@
 # Security policy
 
-This policy describes the current source. When operating a published version,
-use the security policy at that version's tag. Installation administrators manage
-personal accounts, workspace memberships and access policies. Personal accounts use password-authenticated sessions; scripts receive separate
-named API keys.
+OrbitJob uses personal-account sessions for the Console and named API keys for
+automation. Workspace membership, action/resource policies, PostgreSQL roles/RLS
+and Kubernetes namespace controls provide separate authorization boundaries.
+This policy describes the current source; use the policy at the corresponding
+tag when operating a published version.
 
 ## Reporting vulnerabilities
 
-Please do not disclose vulnerabilities in public Issues, Discussions or PRs.
-Email <justs3loy@gmail.com> with the subject `[OrbitJob Security]`.
+Report vulnerabilities privately to <justs3loy@gmail.com> with the subject
+`[OrbitJob Security]`. Do not disclose a working exploit or sensitive installation
+data in a public Issue, Discussion or pull request.
 
-Include the affected commit/version, required privileges, minimal reproduction,
-tenant/database-role/namespace boundary, actual impact and a suggested fix.
-Test only in authorized environments. Do not send real API keys, passwords,
-Secret contents or production data.
+Include the affected version/commit, required privileges, a minimal reproduction,
+the crossed tenant/database-role/namespace boundary, observed impact and any
+suggested correction. Test only in an authorized environment. Exclude real keys,
+passwords, DSNs, Secret contents and production output.
 
 Maintainers coordinate a fix and disclosure after acknowledging a reproducible
-report. No fixed response-time SLA or long-term-support line is promised here.
-Recorded releases are in [CHANGELOG.md](CHANGELOG.md); the packaged chart/app
-version is defined in [Chart.yaml](charts/orbitjob/Chart.yaml). Security updates
-are identified by their release. Reporters are credited after a fix is
-public unless they request anonymity.
+report. There is no fixed response-time SLA or promised long-term-support line.
+Security updates are identified by their release in [CHANGELOG](CHANGELOG.md).
+Reporters are credited after public disclosure unless they request anonymity.
 
-## Current security model
+## API keys and authorization
 
-The boundaries are personal-account sessions or automation Bearer authentication,
-explicit workspace memberships and policy grants, trusted tenant/group handling,
-PostgreSQL least-privilege roles/RLS, and Kubernetes
-namespace RBAC/admission/Secret controls. Each addresses a different failure;
-database RLS does not authorize an HTTP action or validate Kubernetes ownership.
-[Verification](docs/verification.md) records the tested boundaries and remaining
-qualification work.
+API keys begin with `otj_`. The database stores a bcrypt digest; normal creation
+returns plaintext once and later reads expose metadata. A key with no grants
+can authenticate while every protected capability remains denied. Unknown,
+revoked, expired and inactive-tenant credentials receive the same authentication
+failure response. Authentication/permission-store outages can instead return
+503 and do not establish that the credential is invalid.
 
-### API keys and authorization
+Use dedicated named keys with the actions and resources needed by each
+caller. Keep bootstrap credentials out of ordinary clients and workloads.
+Revocation authorizes the target key's persisted owner/group and audits the
+actual authenticated actor. Delegation and boundary propagation cannot expand
+the caller's effective grants. Explicit Deny wins over Allow; unsupported or
+unprovable containment fails closed.
 
-API keys use the `otj_` prefix. PostgreSQL stores a bcrypt digest, not recoverable
-plaintext. Normal key creation returns plaintext once; list operations return
-metadata. Bootstrap can retry delivery of the same configured plaintext after a
-committed key and failed Secret write: it first verifies the existing bcrypt
-digest, and refuses a conflicting file or Secret. It does not recover plaintext
-from the database or rotate an existing credential silently.
+Authenticated identity introspection returns credential metadata and exact
+policy decisions, without credentials, policy documents or resource-existence
+probes.
 
-Bootstrap Secret delivery grants namespaced create and a `resourceNames`-scoped
-get of `bootstrap-api-key` for matching-data retries. It has no Secret list,
-update or patch grant. The legacy `bootstrap.secretName` chart value is
-deprecated and ignored; remove the override rather than treating it as a writer
-destination setting. The application has always used the fixed delivery name.
+Tenant-authored policies use known exact actions and the supported whole-segment
+resource wildcards. Platform presets own wildcard-action capability. Every
+protected route declares its action and target. Trusted tenant, group, actor
+and path identity come from server/authentication context; client binding cannot
+replace them. Platform requests select one authorized tenant for both policy
+and data scope. Ordinary tenant credentials cannot select another business tenant.
 
-`orbitjob_auth_api_key` resolves candidate digests before a tenant is known. It
-is SECURITY DEFINER with a fixed search path and a restricted execution grant;
-the application performs bcrypt comparison. Unknown, revoked, expired and
-inactive-tenant credentials receive the same authentication failure response.
+Group-aware reads and mutations resolve the persisted parent group. Routes
+without a supported group restriction refuse group-bound callers. API keys,
+policies, resource groups, definition authoring, trigger, ordinary history and
+logs have independent grants. A resource ID or request reference grants no
+access. [Manage access](docs/tasks/manage-access.md) lists task prerequisites.
 
-Admin API routes enforce explicit action/resource policy grants. A key without
-grants authenticates but cannot access protected capabilities. Explicit Deny
-wins; delegation and boundary intersection must not expand the caller's grants.
-Tenant policies use the supported exact actions and resource-segment semantics;
-platform presets own wildcard capabilities. The
-[architecture](docs/architecture.md#tenant-and-authorization-boundaries)
-describes policy evaluation and trusted request identity.
+Bootstrap can retry delivery of a configured plaintext key after a committed
+key and failed delivery. It verifies the existing digest and refuses conflicting
+file/Secret contents; it cannot recover plaintext from the database or silently
+rotate it. Its Role permits namespaced Secret creation and a name-restricted
+get of `bootstrap-api-key`, without list/update/patch. The deprecated
+`bootstrap.secretName` value does not change that fixed destination.
 
-Policy documents accept only lowercase `version` and `statement` at the root,
-and `effect`, `action` and `resource` in statements. Parsing rejects duplicate
-members, case variants, unsupported fields such as `Condition` and `NotAction`,
-and trailing JSON values. Boundary intersections retain explicit Deny from
-both the grants and boundaries, including nested constraints; a boundary does
-not grant access without a source grant.
+## Browser Console
 
-Request bodies cannot replace server-owned tenant/group/path identities.
-Group-aware checks, SLIs, SLOs and their derived reads retain group scope; a
-surface unable to enforce a group restriction refuses a group-scoped key.
-Cross-tenant management requires a policy grant reaching the actual target;
-bootstrap tenant identity is not an implicit grant. Revoke authorizes the target
-key's owner/group and audits the authenticated actor.
-
-Keep bootstrap credentials out of ordinary business clients. Use dedicated keys
-with required grants, and add ingress/gateway access control before exposing
-management endpoints to untrusted networks.
-
-### Browser console
-
-Console users obtain a workspace invitation and use a personal account. The
-installer issues the first administrator's single-use setup link through
-`/orbitjob-identity` using the installation's Admin DSN. The claimed installation
-marker never automatically reopens setup. Lost administration requires an
-operator-issued recovery capability. Legacy API keys do not identify account
-owners. See [accounts and recovery](docs/accounts.md).
+Users obtain personal accounts through single-use installation capabilities or
+workspace invitations. API keys do not identify account owners and cannot sign
+in to the Console. Initial setup requires `/orbitjob-identity` with the
+installation's Admin DSN. A persistent claimed marker prevents setup from
+reopening automatically; lost installation administration requires an operator
+recovery capability. See [accounts and recovery](docs/accounts.md).
 
 Passwords use Argon2id with 64 MiB memory, three iterations and parallelism one.
-The server requires at least 15 characters, at most 1,024 UTF-8 bytes, and rejects
-its local common-password blocklist and short repeated patterns. It stores no
-recoverable password. There is no email delivery or multifactor authentication
-in this source. Invitation acceptance for an existing account requires that
-account's live session and never changes its password. Only installation
-administrators can issue global password-reset links. Password changes and
-resets revoke all sessions for that account.
+They require at least 15 characters and at most 1,024 UTF-8 bytes, with a local
+common-password blocklist and rejection of short repeated patterns. This source
+provides no email reset service, OIDC, passkeys or multifactor authentication.
+Existing-account invitation acceptance requires that account's live session and
+never changes its password. Only installation administrators issue global reset
+links. Password changes/resets revoke all sessions for the affected account.
 
-The backend Admin image provides the account routes without a compiled Console
-bundle. When browser assets are absent, `/console/` returns 503 while API routes
-remain available. The public navigation route does not bypass protected API
-authentication, policy grants, tenant rate limits, body limits or trace/metrics
-middleware. Enter passwords only through a trusted account client and origin.
+Production cookies use `__Host-orbitjob_session`, `HttpOnly`, `Secure`,
+`SameSite=Strict`, `Path=/` and no `Domain`. Only the session-secret hash is stored
+in PostgreSQL. Remembered sessions have a seven-day absolute lifetime; unchecked
+remember creates a browser-session cookie with an eight-hour server lifetime.
+Polling does not extend expiry. Browser restoration can retain session cookies;
+shared-device users must sign out.
 
-Production sessions use `__Host-orbitjob_session` with `HttpOnly`, `Secure`,
-`SameSite=Strict`, `Path=/` and no `Domain`. PostgreSQL stores only a hash of the
-session secret. `remember: true` selects a seven-day absolute persistent
-session; `remember: false` selects a browser-session cookie and an eight-hour
-server lifetime. Requests and polling do not extend expiry. Browser session restoration
-may retain session cookies, so shared-device users must sign out explicitly.
-The separate CSRF token is returned in the session snapshot. Every cookie-authenticated write
-requires exact Origin validation and `X-CSRF-Token`; login and capability
-submission also check Origin. An explicit invalid Bearer credential never falls
-back to cookie authentication.
+A separate CSRF token stays in page memory. Cookie-authenticated writes require
+an exact allowed Origin and `X-CSRF-Token`; login and capability submission also
+validate Origin. Explicit invalid Bearer authentication does not fall back to a
+session cookie. `CONSOLE_PUBLIC_ORIGIN` can fix the exact HTTPS origin; otherwise
+Admin expects HTTPS plus request Host. Reverse proxies must preserve public
+Host. Forwarded headers do not relax this boundary.
 
-`CONSOLE_PUBLIC_ORIGIN` optionally fixes the exact public HTTPS origin. Otherwise
-the expected origin is `https://` plus request Host. Reverse proxies must preserve
-the public Host; forwarded headers cannot relax origin or cookie security.
 `CONSOLE_ALLOW_INSECURE_LOCALHOST=false` is the default. Explicit local mode
-allows HTTP loopback only, using `orbitjob_session_local`; non-loopback HTTP
-addresses cannot sign in. See [origin settings](docs/accounts.md#https-and-local-development)
-for Helm and local development configuration.
+permits HTTP loopback only and uses `orbitjob_session_local` without Secure.
+It does not permit sign-in through node/public HTTP addresses. See
+[origin configuration](docs/accounts.md#https-and-local-development).
 
-Treat session cookies and capability results as credentials. Same-origin script
-execution can act through an `HttpOnly` session; HTTPS and client/device
-protection remain necessary.
+Console assets/navigation are public. `/healthz`, `/openapi.json` and `/metrics`
+are also unauthenticated; control their external exposure at the installation
+network/gateway. Protected API routes retain authentication, policy, body limits,
+rate limits and request correlation. Missing assets and
+unknown API paths do not fall back to the browser application. Console responses
+set a same-origin CSP, nosniff, frame exclusion and no-referrer. Scripts, fonts
+and styles are local; inline styles are permitted for the component library.
+The installed bundle excludes the demo client. Enter credentials only at the
+trusted installation origin. Same-origin script execution can act through an
+HttpOnly session; HTTPS, CSP and device protection remain necessary.
 
-Each request rechecks active user and workspace membership state and effective
-policy grants. Installation-administrator status controls global accounts and
-workspace metadata; it grants no implicit workload access. Workspace creators
-receive explicit owner memberships. Account disablement revokes sessions, and
-membership disablement or role changes affect subsequent workspace requests.
-Privileged account changes and browser API-key, policy and resource-group writes
-require password confirmation within 15 minutes. Stable user actor IDs are
-separate from key IDs. Installation security events use a separate append-only
-audit stream; workspace changes retain transactional tenant audit records.
+Each workspace request checks active account, membership and effective grants.
+Installation administrators manage global accounts and workspace metadata with
+no implicit workload access. Workspace creators receive explicit owner
+membership. Account disablement revokes sessions; membership disablement and
+role changes affect subsequent workspace requests. Privileged account changes
+and browser API-key/policy/group writes require password confirmation within
+15 minutes. User actor IDs remain separate from key IDs.
 
-Save one-time API key creation results in an approved secret store. Reconcile
-unknown create results before retrying; list operations cannot recover key
-plaintext. Identity introspection returns metadata and exact policy
-decisions, never credentials, policy documents or resource-existence probes.
-Platform requests use one explicitly selected tenant for both authorization
-and data access; ordinary tenant credentials cannot select another tenant.
+The browser stores the non-secret selected workspace ID and unconfirmed
+source-control intent in `sessionStorage`. Retained source-control intent is
+scoped to the authenticated subject, workspace and source; the same subject can
+review it after reconnecting. Protected in-memory query and operation state
+clears on sign-out, a 401 or identity/workspace change.
+Setup/invitation/reset fragments are removed from the address bar and
+held in page memory. One-time key results use a separate volatile store outside
+query/mutation caches; discard/disconnect removes them, and disconnected clients
+drop late creation responses. A lost creation result requires reconciliation,
+without automatic replacement-key creation.
 
-For Bearer clients, the authenticated `/workspaces` directory exposes only name,
-slug, status and immutable ID. Tenant keys can read their own identity labels; foreign
-rows require exact effective `tenant:Get` grants. Group-bound credentials cannot
-discover foreign workspaces. Platform credentials have no implicit own row.
-The policy package computes the exact finite/cofinite visibility set, including
-recursive boundaries and explicit Deny. Migration 0011's Admin-only metadata
-reader applies that trusted scope and literal name/slug search before pagination;
-`has_more` describes visible results and no global total is returned. The reader
-uses a fixed search_path and does not widen table RLS or grant workload access.
-Directory requests cannot select a business tenant. Administration selection
-changes only the existing explicit management target; ordinary tenant business
-queries retain their credential-bound scope. Human sessions list their active
-memberships separately; installation metadata discovery does not create one.
+Console Job, Workflow and Function authoring drafts remain in page memory for
+the current connection. Reloading, signing out, receiving a 401 or changing
+identity/workspace clears them. Server-side private draft persistence and
+recovery are unavailable. Save unfinished content outside the Console before
+ending or changing the connection.
 
-Online definition reads and writes use typed routes restricted to
-installation-mapped tenant namespaces and ungrouped credentials. Independent
-Apply grants protect both dry-run and persistence. Only spec and server request
-annotations are written; UID/resourceVersion comparison prevents silent
-replacement of concurrent edits. Reconcile unknown writes by reading their
-recorded request identity before retrying.
+Accepted definition-save and Function-create operations retain server-side
+actor/request identity for reconciliation. Their operation receipts identify
+accepted writes; they do not recover unsaved authoring drafts. A request UUID
+alone does not authorize access to an operation.
 
-Log reads require independent parent-specific grants and immutable recorded
-JobRun/Job/Pod ownership. Admin has only namespaced definition get/create/patch,
-Job get, Pod get/list and pods/log get in addition to its run publication grants.
-There is no generic Kubernetes proxy or secret/exec/attach access. Independent
-archive routes provide bounded cursor reads, cursor-based search/download
-and audited DeleteLogs requests. A trusted Fluent Bit collector reads node CRI
-paths in mapped namespaces and uses collector mTLS; Admin uses reader mTLS.
-The single archive writer uses Runtime database credentials, not a new narrow
-DB login. Archive output and events live on a dedicated bounded PVC and remain
-sensitive. See [execution logs](docs/execution-logs.md).
-Snapshots have byte/line/time bounds.
-Legacy Jobs without a JobRun controller reference are unavailable, and
-Kubernetes garbage collection can remove diagnostic logs with their owner.
+## Definitions, discovery and monitoring evidence
 
-Platform policy documents are loaded through the migration 0007 Admin-only
-SECURITY DEFINER reader for the already authenticated key ID. It returns only
-live tenant-NULL platform credentials' bound presets and boundary documents;
-PUBLIC/runtime/operator cannot execute it. Invalid configured boundaries fail
-closed. Policy boundaries are evaluated against each actual request, retaining
-explicit Deny across grant documents. The selected tenant never expands preset
-self semantics or changes ordinary tenant-key RLS.
+Online authoring accepts typed ScheduledJob/WorkflowJob specs in mapped tenant
+namespaces, with independent Apply permission. Both checking and persistence
+are authorized. Kubernetes dry-run checks the reviewed payload; persistence
+requires its digest, stable request identity and expected UID/resourceVersion.
+Concurrent replacement conflicts. Unknown writes retain identity and reconcile
+against their operation history instead of automatically writing again. The
+API does not provide arbitrary Kubernetes metadata/resource writes.
 
-Function management has independent Create/Update grants. Group-scoped writes
-and reads resolve the actual persisted group; explicit Deny remains authoritative.
-Create receipts bind tenant, actor, key and payload. Updates compare the reviewed
-version atomically; version-pinned invocations also check the active revision.
-Definition writes and audit records commit together. New actions update only the
-named TenantAdminAccess preset; existing explicit tenant policies gain no writes.
+The default chart enables a fail-closed validating webhook for Job/Workflow
+definitions in mapped namespaces. It verifies the final typed spec, reviewed
+digest and live server operation. Explicitly configured native writers bypass
+the checked-save receipt requirement while retaining typed-spec validation.
+Treat native-writer configuration as installation authority. An unavailable
+webhook can block definition persistence; disabling it removes that final-object
+check.
 
-Workflow automatic starts use a durable occurrence ledger, exact CR identity and
-atomic overlap checks shared with manual starts. A WorkflowRun must be bound to
-its original UID and observed live before steps begin. Publication repair rejects
-foreign or replacement resources. Retention deletes only terminal resources after
-full tenant/source/revision/occurrence identity checks, using UID/resourceVersion
-preconditions, before pruning records. Operator `workflowruns` delete is granted
-only in installation-mapped tenant namespaces. No new cluster-wide write grant
-is added. Rejected scheduled starts retain a receipt through the trigger minute
-and cannot be replayed from a stale Schedule CR after ledger pruning.
+Function Create/Update actions are independent of reads and invocation. Creates
+bind tenant, actor, request key and normalized payload. Updates compare a
+reviewed definition version atomically; version-pinned invocations reject an
+unready or changed version. Definition changes and audit commit together.
+Preset migrations extend only their named presets; custom policies do not
+implicitly acquire new actions.
 
-### Console monitoring evidence scope
+The Bearer workspace directory returns only authorized name, slug, status and
+immutable ID. Tenant keys see their own labels; foreign rows require effective
+`tenant:Get`, and group-bound credentials cannot discover foreign workspaces.
+Platform credentials have no implicit own row. Visibility incorporates explicit
+Deny and recursive boundaries before pagination. It returns visible `has_more`
+without a global total. The Admin-only metadata reader does not widen ordinary
+tenant-table RLS or grant workloads. Human sessions list active memberships
+separately; metadata discovery never creates membership.
 
-Check results, SLO budgets/history and SLO alerts apply the authenticated
-credential's group through their parent Check or SLO. Detail and single-SLO
-budget/history reads authorize the actual parent group and ID even for ungrouped
-credentials, preserving group-specific Deny. Other-group parents return 404,
-including budget history. CheckRun/Alert collection permission must cover the
-whole tenant or credential-group query domain. A relevant per-ID/group Deny,
-boundary restriction or exhausted proof budget returns 403 before items/counts
-are read; filters and pagination cannot bypass this proof. Denied items/counts
-are not silently removed. A group ARN grant must not widen into tenant-wide
-evidence. Each read still needs its independent grant. Embedded SLO
-`current_budget` remains omitted for group keys; ungrouped callers require
-`slo:GetBudget` on the actual SLO group and ID, including explicit Deny.
-Check/SLI/SLO definitions retain their group filters. SLO creation validates its
-SLI reference inside the write transaction: same tenant, live row and matching
-caller group when scoped. Missing or inaccessible references return not-found.
+### Monitoring evidence
 
-### PostgreSQL roles and RLS
+CheckRun, SLO budget/history and alert reads authorize their actual parent Check
+or SLO group and ID, including group-specific Deny for ungrouped credentials.
+Another group's parent appears unavailable. CheckRun/alert collection permission
+must cover the entire requested query domain. A relevant per-ID/group Deny,
+boundary restriction or exhausted work budget for the containment proof rejects
+the request before reading items or counts; pagination cannot bypass it. Successful
+collection responses do not silently omit denied rows or counts.
+
+Each derived read requires its own action. Embedded SLO `current_budget` is
+omitted for group keys; ungrouped access still requires `slo:GetBudget` on the
+actual parent group/ID. SLO creation validates a live SLI in the same tenant and,
+for scoped callers, the same group inside the write transaction. Missing or
+inaccessible references return not-found.
+
+## PostgreSQL roles and RLS
 
 | Role | Purpose |
 |---|---|
-| `orbitjob_table_owner` | NOLOGIN owner of schema objects and security functions |
-| `orbitjob_migrator` | Migration identity allowed to assume the table owner |
-| `orbitjob_admin` | Admin API/bootstrap management writes, reviewed account-security functions and read-only access to execution history |
-| `orbitjob_runtime` | Scheduler/operator login identity with required runtime writes |
-| `orbitjob_operator` | NOLOGIN execution-role grants; not a separate deployed login credential |
+| `orbitjob_table_owner` | NOLOGIN owner of schema objects and reviewed security functions |
+| `orbitjob_migrator` | Migration login allowed to assume the table owner |
+| `orbitjob_admin` | Management writes, reviewed account-security calls and read-only execution history |
+| `orbitjob_runtime` | Operator/scheduler/admission/archive login with required runtime writes |
+| `orbitjob_operator` | NOLOGIN execution grants; not a separately deployed login |
 
-Runtime processes must not use the installation owner, table-owner or superuser
-DSN. The operator resolves `OPERATOR_DSN` before the runtime fallback; Secret
-names/keys and connection examples are defined in [chart values](charts/orbitjob/values.yaml)
-and [deploy/env/](deploy/env/). See [database setup](docs/database-setup.md).
+Runtime processes must not use installation-owner, table-owner or superuser
+credentials. Operator resolves `OPERATOR_DSN` before its Runtime fallback.
+Use the installation's configured Secret names/keys and migration input channel;
+see [database setup](docs/database-setup.md).
 
-Review the complete [migration directory](db/migrations/) for RLS,
-grants and functions, including `sli_snapshot_events` added by migration 0012.
-Application roles do not own tenant tables. ENABLE RLS therefore applies to
-them without FORCE RLS; the NOLOGIN owner remains the maintenance boundary.
-Repositories set transaction-local `app.tenant_id` in the same transaction as
-queries. Session-level tenant settings are unsafe with pooled connections.
+Application roles do not own tenant tables. ENABLE RLS applies without FORCE
+RLS; the NOLOGIN owner remains the maintenance boundary. Repositories set
+transaction-local `app.tenant_id` in the same transaction as queries. Session-level
+tenant settings are unsafe with pooled connections. Audit parents and direct
+partitions grant append/read as required, without application UPDATE, DELETE or
+TRUNCATE. A domain mutation and its audit commit atomically.
 
-Audit parents and direct partitions allow application append/read as granted,
-but not UPDATE, DELETE or TRUNCATE. Domain changes and their audit facts commit
-together. SLI/SLO references enforce tenant ownership through constraints and
-transactional source/group checks. Projection acknowledgement follows successful
-idempotent derivatives; retained deduplication facts must not be pruned without preserving deduplication guarantees.
+Narrow SECURITY DEFINER operations cover authentication, bootstrap, active-tenant
+enumeration, key-owner discovery, platform presets, workspace metadata and
+account operations that precede ordinary tenant scoping. They fix search_path,
+revoke PUBLIC execution and grant specific roles. The baseline also revokes
+PUBLIC CREATE on schema public. A new cross-tenant operation needs equivalent
+review and real PostgreSQL boundary tests.
 
-Narrow reviewed SECURITY DEFINER entrypoints handle authentication, active tenant
-enumeration, bootstrap and revoke-owner discovery before a scoped transaction is
-available. They fix search paths, revoke PUBLIC execution and grant only to
-specific roles. The platform-preset and authorized workspace-metadata readers
-have this same narrow contract. New cross-tenant paths require the same review
-and real PostgreSQL tests; prefer a scoped transaction when it can answer the
-query. The baseline revokes `CREATE` on schema `public` from `PUBLIC`; new
-security functions must explicitly revoke public execution as well.
+Terminal projection acknowledgement follows successful idempotent derivatives.
+SLI increment/deduplication facts commit together and outlive ordinary run pruning.
+Migration 0012 preserves old aggregates instead of replaying old terminal rows;
+old Operators must stop before cutover. Published migration bytes are immutable,
+including comments. See the [migration procedure](docs/database-setup.md#migration-execution-and-compatibility).
 
-### Kubernetes workloads
+## Kubernetes workloads and execution recovery
 
-The operator resolves the tenant from the configured namespace mapping, not a
-tenant claim supplied in a workload resource. Admin's per-namespace Role permits
-create/get/patch on JobRun and WorkflowRun resources. Typed authoring adds
-namespaced definition get/create/patch; retained log reads add Job get, Pod
-get/list and pods/log get. These grants provide no Job/Pod lifecycle writes,
-status write, Secret, exec or attach access. Operator RBAC owns execution and
-retention operations within configured namespaces.
+Namespace mappings determine tenant identity; a workload's own tenant claim
+does not. Admin has namespaced definition get/create/patch, run create/get/patch,
+Job get, Pod get/list and pods/log get. It has no Job/Pod lifecycle writes,
+status writes, Secret, exec or attach access. Operator owns execution/status and
+retention operations only in mapped namespaces; its Lease permissions are in
+the installation namespace. JobRun actor attribution trusts the resource writer:
+a principal allowed to write JobRun CRs can choose its actor field. Restrict
+direct CR writes to the intended control-plane identities.
 
-Rendered workload Pods set `automountServiceAccountToken: false` and
-`restartPolicy: Never`. Token mounting must remain disabled; Kubernetes API access
-would require a reviewed template extension and a dedicated narrow identity.
-Never widen the operator or default namespace ServiceAccount for workload use.
+Workload Pods disable service-account token mounting and use
+`restartPolicy: Never`. Execution policy version 1 adds non-root UID 65532,
+RuntimeDefault seccomp, no privilege escalation and dropped capabilities, plus
+pinned CPU/memory/ephemeral-storage requests and limits. Images must work under
+those settings. Legacy version 0 does not acquire all version 1 protections
+merely by upgrading the Operator. Never widen a default workload ServiceAccount
+to compensate for an unsupported application requirement.
 
-Images execute arbitrary container code within namespace admission, Pod Security
-and network controls. Pin images at the registry/admission layer when immutable
-content is required, and constrain workload/probe egress through NetworkPolicy or
-an egress proxy. Check probes make outbound requests to their configured URLs;
-the removed in-process HTTP/webhook handler protections do not apply to them.
+Containers still execute workload-supplied code. Apply namespace admission,
+Pod Security, approved images and network controls for the installation's trust
+model. The chart's restricted-v1 NetworkPolicy selects version 1 workload Pods,
+denies ingress and limits egress to configured DNS and allowed destinations.
+Enforcement depends on the CNI. Production rendering requires an administrator's
+successful enforcement declaration; Helm rendering cannot verify packet denial.
+Legacy Pods outside that selector need separate network policy. HTTP probes
+also make outbound requests from their workload namespace; configure their
+allowed destinations accordingly.
 
-Run/attempt adoption requires full identity and immutable Job UID. Cancellation
-patches and retention deletes use UID/resourceVersion preconditions. A committed
-workflow stop prevents new child creation; uncertain creation remains observable as
-`CancelUnknown` until ownership and termination can be confirmed. A Job's backoff
-or another platform attempt can repeat external effects despite Pod restartPolicy;
-workloads must tolerate repeated execution.
+Run/Attempt adoption requires complete identity and immutable Job UID.
+Cancellation patches and retention deletes use identity/version preconditions.
+Workflow stops prevent new child creation. Current names preserve full occurrence
+digests; matching historical names remain lookup-only compatibility candidates.
+Retention verifies the original tenant/source/revision/occurrence before deleting
+terminal resources and then pruning records.
 
-New workload Pods retain termination evidence with an Operator-owned finalizer.
-The Operator has Pod `patch` permission only in mapped workload namespaces and
-removes only its own finalizer after durable proof, with UID/resourceVersion
-checks. Admin and collector credentials receive no Pod mutation permission.
-Cancellation requires controller stop acknowledgement before accepting a
-complete Pod inventory; a Job deletion timestamp is insufficient. Proof
-persistence and evidence release precede deletion of the original Job.
-This protocol preserves observations across controller and database outages;
-it does not prove termination after node loss or external removal of the hold.
+A missing bound Job produces nonterminal `ExecutionUnknown`, retains its
+concurrency slot and prevents automatic replacement. Cancellation can remain
+`CancelUnknown` until complete stop evidence is available. An empty Pod list,
+a deletion timestamp, node loss or external force removal cannot prove that
+workload code stopped. There is no public force-resolution API.
 
-Execution recovery retains a missing bound Job as
-`ExecutionUnknown`, holding its concurrency slot and forbidding automatic
-replacement. Full namespace Pod observation and immutable owner identities
-are required for termination evidence; empty inventories, force deletion and
-node loss do not prove that workload code stopped. Client-go Lease sessions
-coordinate singleton work, while transactional source admission enforces Forbid.
-See [execution recovery and concurrent admission](docs/architecture.md#execution-recovery-and-concurrent-admission)
-for these guarantees and their limits.
-Admin retains read-only execution-ledger access. There is no force-resolution API.
+New workload Pods hold termination evidence with an Operator-owned finalizer.
+The Operator persists complete owned-container evidence before releasing its
+hold with Pod UID/resourceVersion checks. Cancellation also requires controller
+stop acknowledgement, then proof persistence/release before original-Job deletion.
+Admin and collector have no Pod patch permission. This preserves available
+observations across outages without proving termination after evidence loss.
+Client-go leadership coordinates singleton work; transactional source admission
+provides a separate concurrency boundary. See
+[execution recovery](docs/architecture.md#execution-recovery-and-concurrent-admission).
 
-### Secrets, logs and test environments
+Kubernetes backoff and platform Attempts can repeat external effects despite
+Never restart policy. Version 1 requires retrySafe before enabling repetition.
+Request idempotency does not make those external effects exactly once.
 
-Do not commit installation state under `.runtime/`, generated credentials under
-`.kind/`, API keys, passwords/DSNs, Secret plaintext or smoke output containing
-real identifiers/errors. Database installation files use restrictive permissions;
-bootstrap uses a local secret file or the `bootstrap-api-key` Secret. For the
-documented release namespace, retrieve it privately with:
+## Execution logs and installation secrets
 
-```bash
-kubectl -n orbitjob-system get secret bootstrap-api-key \
-  -o jsonpath='{.data.api-key}' | base64 --decode
-```
+Log reads use independent parent-specific ReadLogs grants and immutable recorded
+JobRun/Job/Pod ownership. Instance routes refuse group-scoped credentials;
+Function routes resolve the actual parent group and history UUID. The legacy
+snapshot route has byte/line/time bounds and no durable retention promise.
+Kubernetes garbage collection can remove that source evidence.
 
-Never put that output in CI logs or public reports. Log messages must not include
-Authorization headers, API keys, DSNs, full request bodies or Secret data. Rotate
-role passwords, Secret values and workload environments as a coordinated operation;
-updating one does not update the others.
+A trusted Fluent Bit collector reads mapped task CRI paths and forwards output
+to the archive over collector mTLS; Admin uses reader mTLS. The single archive
+writer uses Runtime database
+credentials and a dedicated bounded PVC. Cursor reads, follow/search/export
+and audited DeleteLogs requests remain independently authorized. Output is inert
+text and may contain secrets. Capacity or collection failures produce gaps;
+sealed archives do not prove complete coverage. See
+[execution logs](docs/execution-logs.md) for retention, integrity and recovery.
 
-Integration tests require a dedicated disposable PostgreSQL database. They may
-rebuild schema and provision roles; never point `TEST_DATABASE_DSN` at an installed
-environment. Test results and their applicable environments are recorded in
-[verification](docs/verification.md).
+Keep generated installation state, keys, passwords, DSNs, Secret plaintext and
+sensitive smoke output out of source control and public reports. Protect
+`.runtime/`, `.kind/`, local credential files, backups and administrator devices.
+Use restrictive file permissions and an approved secret-delivery process. Do not
+put keys in URLs, frontend build variables or public documentation-site inputs.
+Back up the database, archive volume and installation configuration together and
+exercise restoration in an isolated environment.
 
-## Known contract and compatibility limits
-
-- OpenAPI declares automation Bearer authentication through `APIKey` and Console
-  cookie authentication through `ConsoleSession`. Middleware enforces the
-  corresponding authentication, CSRF and policy requirements. Check/SLI/SLO DELETE requests require
-  the versioned JSON bodies declared in [OpenAPI](api/openapi.yaml).
-- Migration 0027 adds human accounts without assigning account ownership from
-  existing API keys. Deploy its matching Admin image and chart, then complete
-  explicit account setup; see [migration guidance](docs/database-setup.md#personal-account-migration).
-- Migration 0012 preserves historical aggregates rather than replaying old
-  terminal rows. Stop old operators before migration and start the new version
-  afterwards. See [migration compatibility](docs/database-setup.md#migration-lineage-and-compatibility).
-- New run resource names preserve complete occurrence digests; matching historical
-  names remain readable after full identity checks. See
-  [the upgrade procedure](docs/local-deployment.md#upgrading-an-existing-installation).
-- Current verification gaps, including independent fault recovery and a bounded
-  deduplication archive policy, remain in [known issues](docs/known-issues.md).
+Recorded verification is scoped to its source and environment. It does not
+prove an arbitrary deployment's security or outage recovery. Current evidence
+and limits are recorded in [verification](docs/verification.md) and
+[known issues](docs/known-issues.md).

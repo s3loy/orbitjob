@@ -62,10 +62,10 @@ Connection flags:
   --json          print the raw API response instead of a table
 
 Environment:
-  ORBITJOB_API_URL, ORBITJOB_API   admin API base URL and key, used when the
-                                   flags are absent (make kind-env exports
-                                   both); "doctor" also reads the key from the
-                                   bootstrap-api-key secret as a last resort
+  ORBITJOB_API_URL, ORBITJOB_API   admin API URL, in that order, when --api-url
+                                   is absent
+  ORBITJOB_API_KEY                bearer key when --api-key is absent; doctor
+                                   can also read bootstrap-api-key as a fallback
 
 Exit codes:
   0  success (doctor: no [FAIL] lines; WARN is tolerated)

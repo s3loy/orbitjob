@@ -1,0 +1,21 @@
+---
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import catalogEn from '../generated/catalog.json';
+import catalogZh from '../generated/catalog.zh-cn.json';
+import { uiLocale } from '../i18n';
+const { base, zh, t } = uiLocale(Astro.url.pathname);
+const catalog = zh ? catalogZh : catalogEn;
+const guides = catalog.pages.filter((page) => page.route.includes('/docs/contribute/load-testing/'));
+const hasArchive = Boolean(process.env.BENCHMARK_ARCHIVE);
+---
+<StarlightPage frontmatter={{ title: t('Benchmark process', '基准测试'), description: t('OrbitJob benchmark sources and reproducible load-test documentation.', 'OrbitJob 基准测试来源与可复现的负载测试文档。'), tableOfContents: false, prev: false, next: false }}>
+  <p>{hasArchive ? t('This build includes the existing benchmark archive. These recorded measurements depend on their source revision, hardware and configuration.', '本次构建包含现有的基准测试存档。解读这些记录时，需要同时考虑代码版本、硬件与配置。') : t('No measurement results are bundled in this site build. The repository’s Benchmark workflow defines automated measurements; results depend on their hardware and configuration.', '本次站点构建未附带测量结果。仓库中的 Benchmark 工作流定义自动化测量；结果取决于测试硬件与配置。')}</p>
+  {hasArchive && <p><a href={`${base}/dev/bench/`}>{t('Open the recorded benchmark history', '查看原始基准测试历史')}</a></p>}
+  <ul>
+    <li><a href="https://github.com/s3loy/orbitjob/actions/workflows/benchmark.yml">{t('View the benchmark workflow', '查看基准测试工作流')}</a></li>
+    <li><a href="https://github.com/s3loy/orbitjob/blob/main/Makefile">{t('Read the measurement targets', '查看测量命令')}</a></li>
+  </ul>
+  <h2>{t('Run a documented test', '按文档复现测试')}</h2>
+  <p>{t('The load-testing guide records setup, workloads and interpretation. Use the source and environment of a measurement when comparing results.', '负载测试指南说明环境准备、测试负载与结果解读。比较测量结果时，应核对其代码来源与运行环境。')}</p>
+  <ul>{guides.map((page) => <li><a href={page.route}>{page.title}</a></li>)}</ul>
+</StarlightPage>

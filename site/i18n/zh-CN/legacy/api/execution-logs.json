@@ -1,0 +1,11 @@
+{
+  "read durable execution logs": "读取持久执行日志",
+  "delete durable execution logs": "请求删除持久执行日志",
+  "download durable execution logs": "下载持久执行日志",
+  "Authenticated execution evidence across attempts. Cursor reads support bounded reconnectable follow; logs have per-execution and installation byte limits. Protected archives survive Pod cleanup for 15 days after completion/seal. Gaps and capacity rejection are explicit. Delete commits an audited cleanup request and does not claim immediate deletion.": "跨重试读取经过授权的执行证据。游标支持有界读取和断线后继续跟随；单次执行和整个安装都有日志容量上限。受保护的归档在完成或封存后保留 15 天，Pod 清理不影响归档。缺失范围和容量拒收会明确提示。删除操作提交带审计的清理请求，不表示已经删除。",
+  "Archive page, retained output export or cleanup receipt": "归档分页、保留输出导出或清理请求收据",
+  "Invalid cursor or request": "游标或请求无效",
+  "Independent log permission denied": "缺少独立的日志权限",
+  "Archive not registered": "尚未登记日志归档",
+  "Archive unavailable": "日志归档暂时不可用"
+}

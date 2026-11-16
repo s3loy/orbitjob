@@ -1,203 +1,211 @@
-# Personal accounts and workspace access
+# Console accounts and workspace access
 
-The Admin API supports personal usernames and passwords through server-managed
-sessions. HTTP clients and scripts also use separate named API keys with
-`Authorization: Bearer <key>`. API keys, including the bootstrap key, cannot
-administer personal accounts. Accounts have stable user IDs independent of
-API-key IDs. OIDC, passkeys, email delivery and multifactor authentication are
-not implemented in this source.
+Console users sign in with personal usernames and passwords. Scripts and
+services use separate named API keys in `Authorization: Bearer <key>`. API keys,
+including the installation bootstrap key, cannot sign in to the Console.
+Personal accounts have stable user IDs independent of API-key IDs.
 
-These instructions apply to a source build containing migration
-`0027_personal_accounts.up.sql` and its matching Admin image and chart. The
-backend image provides account endpoints and `/orbitjob-identity` without a
-compiled Console bundle; `/console/` returns 503 when that bundle is absent.
-The account HTTP routes remain available. Upgrading source files does not
-upgrade a running installation. See
-[database compatibility](database-setup.md#personal-account-migration).
+For an ordinary user, begin with [sign-in](#sign-in-and-choose-a-workspace).
+Installation operators create the first administrator and perform out-of-band
+recovery. Workspace administrators invite members and assign workload access.
+This source implements no OIDC, passkeys, email delivery or multifactor
+authentication.
+
+These procedures require migration `0027_personal_accounts.up.sql` and the
+matching Admin image/chart. Updating a checkout does not update a running
+installation. Follow the [account migration procedure](database-setup.md#schema-privileges-and-account-changes)
+before enabling accounts on an existing installation.
 
 ## Create the first administrator
 
-The installer needs Kubernetes access to execute a command in the installed
-Admin container, whose `ADMIN_DSN` uses the `orbitjob_admin` database role.
-Complete database bootstrap and all migrations first. The Default workspace
-must exist and be active. Configure the allowed origin as described under
+The installation operator needs Kubernetes permission to execute the identity
+command in the installed Admin container. That container's `ADMIN_DSN` must
+use the `orbitjob_admin` database role. Complete database bootstrap and all
+migrations first; the Default workspace must exist and be active. Configure
+the exact Console origin as described in
 [HTTPS and local development](#https-and-local-development).
 
-Confirm the Kubernetes context, replace the example HTTPS origin with the
-installation's actual origin, and run:
+Confirm the intended cluster/context, set the installation namespace and use
+its actual public origin:
 
-```bash
+```sh
 INSTALLATION_NAMESPACE='orbitjob-system'
 kubectl -n "$INSTALLATION_NAMESPACE" exec deploy/orbitjob-admin-api -c admin-api -- \
   /orbitjob-identity -action setup -origin https://orbitjob.example.com
 ```
 
-For an explicitly configured local development installation, use
-`-origin http://localhost:18080` instead. An origin includes only the scheme,
-host and optional port, without a path or trailing slash. The command can also
-run outside Kubernetes with the same build and a privately supplied `ADMIN_DSN`.
-It accepts `-origin` or defaults to `CONSOLE_PUBLIC_ORIGIN`.
+For explicitly configured local development, the origin can be
+`http://localhost:18080`. An origin contains only scheme, host and optional
+port, without a path or trailing slash. The command can also run outside
+Kubernetes with the same build and a privately supplied `ADMIN_DSN`. If
+`-origin` is omitted, it reads `CONSOLE_PUBLIC_ORIGIN`.
 
-The private JSON result contains `id`, `token`, `expires_at` and, when an origin
-is supplied, `url`. The URL has the form
-`https://orbitjob.example.com/console/connection#setup=<token>`. This URL requires
-separately installed compatible browser assets. For the backend image, consume
-`token` through `POST /api/v1/auth/setup` using a same-origin account client.
-Send JSON fields `token`, `username`, `password` and optional `display_name`,
-and the exact allowed `Origin` header. Store the returned session cookie
-privately; the response contains the session snapshot and CSRF token.
+The private JSON result contains `id`, `token`, `expires_at` and, when an
+origin is supplied, `url`. The link has the form
+`https://orbitjob.example.com/console/connection#setup=<token>`. Its default
+lifetime is 15 minutes; `-expires-in` accepts a positive duration up to one
+hour. Issuing a setup or recovery capability invalidates earlier unconsumed
+installation capabilities. The database stores the token hash.
 
-The capability expires after 15 minutes by default; `-expires-in` may select a
-positive duration up to one hour. Issuing another setup or recovery capability
-invalidates earlier unconsumed installation capabilities. The database stores
-only the token hash. Treat the command output as a credential and deliver it
-only through an approved private channel.
+Deliver the result through an approved private channel. In a trusted browser,
+open the link, enter a username, optional display name and password, and select
+**Create administrator account**.
 
-Usernames contain 3-64 ASCII letters, digits, dots, hyphens or underscores,
-begin with a letter or digit, and are normalized to lowercase. Passwords require
-at least 15 characters and at most 1,024 UTF-8 bytes. Common passwords and short
-repeated patterns are rejected. Use a unique password from a password manager.
+Usernames contain 3–64 ASCII letters, digits, dots, hyphens or underscores,
+begin with a letter or digit and normalize to lowercase. Passwords require
+at least 15 characters and at most 1,024 UTF-8 bytes. The local common-password
+blocklist and short repeated patterns are rejected. Use a unique password.
 
-The server consumes the capability, creates the installation administrator and
-grants an explicit administrator membership with the owner policy in Default in
-one transaction. A successful setup returns a session. The installation marker
-remains claimed even if account rows are later removed; setup never reopens
-automatically. Registration requires an installation capability or invitation.
+Setup consumes the capability, creates the installation administrator and
+grants explicit owner membership in Default in one transaction. The Console
+then signs in that account. The installation remains claimed even if account
+rows are later removed; setup does not reopen automatically. There is no open
+registration without an installation capability or invitation.
+
+The Console removes the link fragment from the address bar and holds its token
+in page memory. Reloading or choosing **Discard link** clears that copy. An
+unused capability remains valid until expiration or replacement.
 
 ## Sign in and choose a workspace
 
-`POST /api/v1/auth/login` accepts `username`, `password` and `remember`.
-`remember: true` creates a persistent cookie with a seven-day absolute server
-lifetime. `remember: false` creates a browser-session cookie with an eight-hour
-absolute server lifetime. Browser session restoration can retain session
-cookies; sign out explicitly on shared devices. Ordinary requests do not extend
-either lifetime. At expiry, sign in again.
+Open the installation's trusted `/console/` address. Enter your username and
+password and select **Sign in**. Obtain a workspace invitation from its
+administrator if you do not yet have an account or active membership.
 
-`GET /api/v1/auth/session` returns initialization state and, when authenticated,
-the account, session expiry, CSRF token and active workspace memberships. A
-workload request selects the workspace with `tenant_id` in its query; it requires
-an active membership and its effective policy grants. Installation-administrator
-status permits global account and workspace-metadata management; it grants no
-automatic access to workspace workloads. Creating a workspace grants its creator
-an explicit owner membership. A new workspace still needs an execution namespace
-mapping and Kubernetes RBAC before tasks can run; see
-[namespace topology](../USAGE.md#71-namespace-topology).
+**Keep me signed in for 7 days** is selected by default. It creates a persistent
+cookie and a seven-day absolute server session. Clearing it creates a
+browser-session cookie with an eight-hour absolute server lifetime. Requests
+and polling do not extend either lifetime. At expiry, sign in again. Browser
+session restoration can retain session cookies; sign out explicitly on shared
+devices.
 
-A 403 denies the operation without establishing that the session has expired.
-Stable user actor IDs identify account actions independently of API-key IDs.
-The account API returns credentials and session snapshots with
-`Cache-Control: no-store`; clients must protect cookies, CSRF tokens and capability
-results.
+Under **Account**, select an active workspace and choose **Open workspace**.
+Each workload request requires current active membership and effective policy
+grants. Installation-administrator status permits global account and workspace
+metadata management; it grants no automatic workload access. Workspace creation
+gives its creator an explicit owner membership, but execution still requires
+an installation namespace mapping and Kubernetes RBAC. Ask the installation
+operator to configure them before running work.
+
+The browser stores the non-secret selected workspace ID and unconfirmed
+source-control intent in `sessionStorage`. Retained source-control intent is
+scoped to the authenticated subject, workspace and source so the same account
+can review it after reconnecting. Protected in-memory query and operation state
+clears on sign-out, a 401, or an identity/workspace change. A 403 denies the
+operation without establishing session expiry.
+
+Job, Workflow and Function authoring drafts remain only in page memory for the
+current connection. Reloading, ending or changing that connection clears them;
+server-side private draft persistence and recovery are unavailable. Save
+unfinished content outside the Console before doing so. Accepted definition-save
+and Function-create operations retain actor/request identity for reconciliation
+after reconnecting; their receipts do not recover unsaved authoring drafts.
 
 ## Invite and manage members
 
-An authorized workspace administrator issues an invitation through
-`POST /api/v1/auth/invitations`, providing `tenant_id`, `role` and the intended
-policy scope. A username may bind the invitation to one account. Review the
-assigned role and policy scope; delegation cannot exceed the administrator's
-effective grants or policy boundary. Request schemas are in
-[OpenAPI](../api/openapi.yaml).
+A workspace administrator opens the intended workspace and navigates to
+**Administration → Accounts**. Choose a role, optionally bind the invitation
+to a username, and select **Create invitation**. The default presets differ:
 
-Role defaults use explicit policy presets: Viewer uses `ReadOnlyAccess`,
-Operator uses `JobOperator`, and Administrator uses `TenantAdminAccess`.
-The existing administrator preset does not include Job/Workflow `Apply` or
-execution-log read grants. Those actions require an explicit policy grant.
-The first administrator and each workspace creator instead receive the
-workspace-scoped `ConsoleOwnerAccess` policy, which includes those actions.
+| Invitation role | Default policy | Workload implications |
+|---|---|---|
+| Viewer | `ReadOnlyAccess` | Read operations from the preset; no trigger or log read grant. |
+| Operator | `JobOperator` | Existing-workload reads, job/workflow trigger, run cancellation, Function invocation and log reads; no Job/Workflow Apply. |
+| Administrator | `TenantAdminAccess` | Workspace access administration and configured management actions; no Job/Workflow Apply or execution-log read grant. |
 
-The returned one-time invitation capability must be delivered privately.
-Invitations expire after 24 hours and grant membership only in their recorded
-workspace. `POST /api/v1/auth/invitations/accept` accepts the capability token.
-A recipient creating a new account supplies a username and password. An existing
-account must first authenticate, then accept with its live session and CSRF
-token. A supplied username must match that session. Invitation acceptance never
-replaces an existing account's password. Expired, consumed or mismatched
-capabilities are rejected.
+The initial administrator and each workspace creator receive the explicit
+`ConsoleOwnerAccess` policy in their workspace, which includes authoring and
+log actions. Custom policies, explicit Deny and boundaries can further change
+effective access. Review the actual grants before promising a member that a
+role can perform a task. Delegation cannot exceed the administrator's effective
+grants or policy boundary. [Manage access](tasks/manage-access.md) maps common
+tasks to actions.
 
-`GET /api/v1/auth/members?tenant_id=<workspace_id>` lists workspace members;
-`PATCH /api/v1/auth/members/{user_id}` changes the selected membership's role,
-status or grants. Disabled membership blocks subsequent requests to that
-workspace. Installation administrators use `GET /api/v1/auth/users` and
-`PATCH /api/v1/auth/users/{id}` for global account status and
-installation-administrator roles. Disabling an account revokes its sessions.
-The final active installation administrator cannot be disabled or demoted.
+Copy the one-time **Invitation link** and deliver it privately. It expires after
+24 hours and applies only to its recorded workspace. A new user creates an
+account through the link. An existing user selects **I already have an account**,
+signs in and accepts using that account's live session. For a username-bound
+invitation, the username must match. An invitation does not replace an existing
+password. Expired, consumed and mismatched links are rejected.
+
+The member table can change roles or disable membership. Membership disablement
+blocks subsequent requests to that workspace. Under **Installation accounts**,
+an installation administrator can change global account status and installation
+administrator roles. Disabling an account revokes its sessions. The final active
+installation administrator cannot be disabled or demoted.
 
 Access changes require password confirmation within the preceding 15 minutes.
-Submit the current password to `POST /api/v1/auth/reauth`, then retry the intended
-action with the refreshed session snapshot. The same requirement protects
-API-key, policy and resource-group writes made with a session. Each request
-checks the current account, membership and policies; role changes and revocation
-affect subsequent requests.
+Complete **Confirm your password** and retry the intended action when prompted.
+The same requirement protects API-key, policy and resource-group writes made
+through a browser session. Each request rechecks current account, membership
+and policy state, so revocation and role changes affect subsequent requests.
 
 ## Change or reset a password
 
-`POST /api/v1/auth/password/change` accepts `current_password` and the new
-`password`. A successful change revokes every session for that account,
-including the current session. Sign in again with the new password.
+Under **Account → Change password**, supply the current password and new
+password and select **Change password and sign out**. Success revokes every
+session for that account, including this browser. Sign in again.
 
-After recent password confirmation, an installation administrator issues a
-reset through `POST /api/v1/auth/members/{user_id}/password-reset`. This controls
-a global identity, so workspace-administrator status alone cannot issue a reset.
-The returned capability expires after one hour, is single use and is shown once.
-Issuing another reset invalidates the earlier unconsumed reset for that account.
-The recipient submits `token` and the new `password` to
-`POST /api/v1/auth/password/reset`. Success revokes all of that account's
-sessions; the recipient must sign in again. There is no email reset service.
+An installation administrator can select **Create password reset link** for an
+account after recent password confirmation. This changes a global identity;
+workspace-administrator status alone cannot issue it. The link is shown once,
+is single use and expires after one hour. Issuing a new reset invalidates the
+previous unconsumed reset for that account. Successful reset revokes all of
+that account's sessions. There is no email reset service.
 
-`GET /api/v1/auth/sessions` lists the current account's sessions and expiration
-times. `DELETE /api/v1/auth/sessions/{id}` revokes one of those sessions.
-`POST /api/v1/auth/logout` revokes the current session and clears its cookie.
-Sign out when leaving a shared device, even with `remember: false`.
+Expand **Signed-in sessions** under **Account** to inspect expiration times and
+revoke a session. Revoking the current one signs this browser out. Sign out
+before leaving a shared device, including when the remember option is cleared.
 
 ## Recover installation administration
 
-If no installation administrator can sign in, an operator with the installation's
-Admin database access can issue a recovery capability:
+An operator with the installation's Admin database access can issue an
+out-of-band recovery capability when no installation administrator can sign in:
 
-```bash
+```sh
 INSTALLATION_NAMESPACE='orbitjob-system'
 kubectl -n "$INSTALLATION_NAMESPACE" exec deploy/orbitjob-admin-api -c admin-api -- \
   /orbitjob-identity -action recovery -username administrator \
   -origin https://orbitjob.example.com
 ```
 
-Replace `administrator` with the account to recover. `-username` is optional;
-binding it limits which username may consume the capability. Recovery uses
-`POST /api/v1/auth/setup` and the same lifetime controls as initial setup. It can
-reactivate an existing account, reset its password and installation-administrator
-role, or create a replacement account. It grants explicit owner membership in
-Default and revokes existing sessions for a recovered account. It requires an
-already claimed installation and an active Default workspace. This is an
-operator-level recovery procedure; legacy API keys do not prove ownership of
-an account or reopen setup.
+Replace `administrator` and the origin with the intended account and trusted
+installation origin. `-username` is optional; supplying it restricts which
+username can consume the capability. The setup form and lifetime controls are
+the same as initial setup.
+
+Recovery requires an already claimed installation and active Default workspace.
+It can reactivate an existing account, reset its password and restore its
+installation-administrator status, or create a replacement account. It grants
+explicit owner membership in Default and revokes the recovered account's
+existing sessions. Treat this command's output as an installation credential.
+Legacy API keys do not establish personal-account ownership or reopen setup.
 
 ## HTTPS and local development
 
-Production sessions use `__Host-orbitjob_session` with `HttpOnly`, `Secure`,
-`SameSite=Strict`, `Path=/` and no `Domain`. The session secret is stored only as
-a hash in PostgreSQL. The session snapshot returns a CSRF token separate from
-the session credential. Cookie-authenticated writes require both an exact
-allowed `Origin` and `X-CSRF-Token`. Login and capability submission also enforce
-the allowed origin. An explicit invalid Bearer header fails without falling
-back to a session cookie. Account endpoints reject automation Authorization
-headers.
+Production uses `__Host-orbitjob_session` with `HttpOnly`, `Secure`,
+`SameSite=Strict`, `Path=/` and no `Domain`. PostgreSQL stores the hash of the
+session secret. A separate CSRF token remains in page memory. Cookie-authenticated
+writes require an exact allowed `Origin` and `X-CSRF-Token`; login and capability
+submission also check Origin. An explicit invalid Bearer header fails without
+falling back to the session cookie.
 
-Set `CONSOLE_PUBLIC_ORIGIN` on Admin, or Helm
-`adminapi.console.publicOrigin`, to the exact public HTTPS origin. When omitted,
-the server derives `https://` plus the request Host. Preserve the public Host
-through a reverse proxy. Forwarded headers do not select a trusted origin or
-disable cookie security. Review this setting when the public address changes.
+Set `CONSOLE_PUBLIC_ORIGIN`, or Helm `adminapi.console.publicOrigin`, to the
+exact public HTTPS origin. If omitted, Admin expects `https://` plus request
+Host. Preserve the public Host through a reverse proxy. Forwarded headers do
+not select a trusted origin or relax cookie security. Review this setting when
+the address changes; rebuilding the frontend is unnecessary.
 
-`CONSOLE_ALLOW_INSECURE_LOCALHOST` defaults to `false`. For HTTP development,
-set it to `true`, or set Helm `adminapi.console.allowInsecureLocalhost: true`.
-Only loopback hosts such as `localhost`, `127.0.0.1` and `::1` qualify. That mode
-uses `orbitjob_session_local` without `Secure`; it does not permit HTTP login
-through a node IP or public address. The kind development values explicitly
-enable this local mode. Keep the client Host and Origin consistent.
+`CONSOLE_ALLOW_INSECURE_LOCALHOST` defaults to `false`. Explicit HTTP development
+uses `true`, or Helm `adminapi.console.allowInsecureLocalhost: true`, and permits
+only loopback hosts such as `localhost`, `127.0.0.1` and `::1`. It uses
+`orbitjob_session_local` without `Secure`. A node IP or public HTTP address cannot
+sign in through that exception. For the frontend development proxy, keep browser
+Host and Origin consistent and leave `publicOrigin` empty or set it to the
+frontend origin. See [frontend development](local-deployment.md#change-check-and-redeploy).
 
-An `HttpOnly` cookie still authorizes its holder. Serve account clients over
-HTTPS, protect administrator devices and limit session lifetime on shared
-browsers. A script running in the account client's origin can act through that
-session despite `HttpOnly`. Passwords use Argon2id with 64 MiB memory, three
-iterations and parallelism one. API keys retain their separate bcrypt
-verification and automation policies.
+An HttpOnly cookie still authorizes its holder, and same-origin script execution
+can act through it. Serve the Console over HTTPS, preserve its CSP and protect
+administrator devices. Password hashes use Argon2id with 64 MiB memory, three
+iterations and parallelism one. API keys retain separate bcrypt verification
+and automation policies.

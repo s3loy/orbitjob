@@ -1,234 +1,192 @@
 # Architecture
 
-OrbitJob separates workload execution, durable execution facts and management
-operations. This document describes the implemented components and their
-contracts. [Verification](verification.md) records tested behavior and limits.
+OrbitJob uses Kubernetes Jobs to execute container workloads, PostgreSQL to
+record durable execution facts, and the Admin API to manage definitions and
+access. The Operator controls execution. The scheduler evaluates SLOs from
+recorded observations. These responsibilities remain separate during failures
+and recovery.
 
 ## Components
 
-OrbitJob executes tenant workloads through Kubernetes Jobs and records execution
-facts in PostgreSQL. Kubernetes resources request work and carry desired state;
-the run ledger records pinned revisions, attempts, identities and outcomes.
-The removed in-process dispatcher/worker pipeline is not an execution fallback.
-
-| Entrypoint | Responsibility |
+| Component | Responsibility |
 |---|---|
-| `cmd/admin-api` | Authenticated management API; reads definitions and history; creates/patches run CRs for trigger, invoke and cancellation. It writes management tables, but cannot write the execution ledger. |
-| `cmd/operator` | Projects definitions, creates scheduled/check runs, synchronizes Functions, advances Workflows, ensures container Jobs, observes attempts, recovers projections and prunes history. |
-| `cmd/scheduler` | Evaluates tenant SLI snapshots into SLO budgets and burn alerts. It does not create workload Jobs. |
-| `cmd/admission` | Validates ScheduledJob and WorkflowJob writes against configured namespace ownership and definition-operation proofs. |
-| `cmd/orbitjob-identity` | Installation operator tool that issues single-use account setup and recovery capabilities through the Admin database role. |
-| `cmd/configure` | Generates installation database state and role credentials. |
-| `cmd/migrate` | Applies ordered, checksummed SQL migrations under the migration identity. |
-| `cmd/bootstrap` | Ensures the initial tenant/key and delivers the configured key to a local file or Kubernetes Secret. |
-| `cmd/orbitjob` | HTTP/kubectl client for checks, jobs, runs, status and diagnostics; no direct database access. |
-| `cmd/openapi-gen` | Generates or checks the OpenAPI document from route metadata and DTOs. |
-| `cmd/healthcheck` | Health endpoint helper. |
-| `cmd/log-archive` | Single-writer bounded execution evidence on a dedicated PVC; compact tenant-scoped PostgreSQL directory; node collector ingestion and internal reader access over mTLS. |
+| Admin API | Authenticates callers, enforces policies, writes management state and its transactional audit, publishes/cancels run resources, and reads execution history. It cannot write the execution ledger. |
+| Operator | Projects immutable revisions, admits runs, creates and observes Kubernetes Jobs, schedules jobs and Checks, synchronizes Functions, advances Workflows, recovers derived outcomes and prunes eligible history. |
+| Scheduler | Evaluates SLI snapshots into SLO budgets and burn alerts. It does not create workload Jobs. |
+| Definition admission | Validates final Job/Workflow definitions against checked-save identity before Kubernetes persistence, with explicit trusted native-writer exceptions. |
+| Log archive | Stores bounded execution evidence on a dedicated PVC and maintains a tenant-scoped PostgreSQL identity directory. It admits collector output and serves internal readers over mTLS. |
+| Fluent Bit collector | Reads mapped workload namespaces' node CRI output and forwards verified-source records to the archive. |
+| Console | Serves the browser authoring, execution, monitoring and access-management interface under the Admin API's `/console/` origin. |
+| CLI | Calls the HTTP API and uses kubectl for installation diagnostics; it has no database access. |
 
-The archive uses the trusted Runtime DB identity; the Admin API has directory
-read and audited cleanup-request privileges. Container output, lifecycle events
-and manifests live on the log PVC. [Execution logs](execution-logs.md) defines
-the collection, retention, quotas and operational boundaries.
+Installation commands generate database credentials (`configure`), apply ordered
+checksummed migrations (`migrate`), deliver the bootstrap key (`bootstrap`) and
+issue personal-account setup/recovery capabilities (`orbitjob-identity`). They
+require installation authority and are separate from ordinary workload clients.
+See [database setup](database-setup.md), [accounts](accounts.md) and
+[local deployment](local-deployment.md).
 
-## Account sessions and API packaging
+## Definitions and execution
 
-The Admin API supports password-authenticated human sessions independently of
-Bearer automation keys. Session writes require exact Origin and CSRF checks;
-workspace workload access requires an explicit active membership and effective
-policy grants. Installation-administrator status controls global accounts and
-workspace metadata without granting implicit workload access. See
-[accounts](accounts.md) and [credential boundaries](../SECURITY.md#browser-console).
+ScheduledJob and WorkflowJob are Kubernetes custom resources. Checks and
+Functions are stored through the Admin API. The Operator projects these
+configurations into immutable execution revisions. A JobRun represents a
+logical occurrence; a WorkflowRun coordinates its step Runs. Each platform
+Attempt binds to one Kubernetes Job. Kubernetes backoff can create multiple
+Pods within that Attempt.
 
-The backend Docker image contains the Admin API and identity tool without a
-compiled Console bundle. The optional `/console/` handler returns 503 if assets
-are absent; API routes remain available. Backend source builds do not require
-Node.js or frontend assets.
+Manual job triggers and Function invocations publish JobRun resources;
+Workflow triggers publish WorkflowRun resources. The response references the
+resource and occurrence key, while ledger materialization follows asynchronously.
+Scheduled occurrences and workflow steps record their durable identity before
+publication. Reconciliation uses that stored identity after interruptions.
 
-Typed definition routes apply only within configured tenant namespaces and
-compare UID/resourceVersion. They publish Kubernetes desired state; the Operator
-owns ledger writes. Separate log routes resolve immutable execution ownership
-and return bounded retained text. Neither surface provides a generic Kubernetes
-proxy. Platform preset documents use the narrowly granted migration 0007
-reader; workspace discovery uses migration 0011's authorized metadata reader.
-See [API usage](../USAGE.md#calling-the-api).
+The platform has one execution backend, Kubernetes Jobs. There is no
+in-process worker fallback. `timeoutSeconds` becomes a Kubernetes Job deadline
+for each Attempt; it does not bound the combined wall-clock time of all
+Attempts. [Execution model](concepts/execution-model.md) describes phases,
+retry budgets, concurrency and cancellation from a workload user's perspective.
 
-## Code boundaries
+## Management and tenant boundaries
 
-`internal/admin/http` adapts requests to admin application use cases and
-repositories. `internal/operator` adapts Kubernetes events to core application
-services and the ledger. `internal/core/domain` contains business models;
-`internal/core/app` contains use cases and dependency interfaces;
-`internal/core/store/postgres` implements persistence. Shared validation/resource
-types live in `internal/domain`; infrastructure lives in `internal/platform`.
+A browser session identifies a personal user; an API key identifies an automation
+caller. Workspace membership and effective action/resource grants authorize
+workload requests. Installation-administrator status authorizes global account
+and workspace-metadata administration, with no implicit workload access.
 
-Admin and operator may import core. Production core code must not import admin
-or operator. External-package integration tests may exercise both sides of that
-boundary.
+The API resolves trusted tenant, group and actor identity from authentication
+and the authorized target. Client JSON cannot replace those identities. Explicit
+Deny takes precedence. Missing grants deny access. Policy-boundary intersection
+and delegation containment fail closed when supported resource/action semantics
+cannot establish containment.
 
-## Tenant and authorization boundaries
+Group-aware resources and evidence resolve their actual parent group. Routes
+that cannot enforce group scope reject group-bound credentials. Platform callers
+select one authorized target tenant for both authorization and data access;
+a selector never grants cross-tenant access by itself. See
+[manage access](tasks/manage-access.md) and [security](../SECURITY.md).
 
-Bearer authentication resolves the key, tenant, resource group and effective
-policy documents once per request. Protected routes declare an action and target
-resource. Explicit Deny takes precedence; absent grants deny access. Boundary
-intersection and delegation containment preserve the supported exact-action and
-whole-segment resource-wildcard semantics and fail closed when proof limits are
-exhausted. The bootstrap tenant does not itself confer cross-tenant access.
+## Persistent state and database roles
 
-Trusted tenant/group/path fields are assigned by the server after client binding
-or excluded from binding. Group-aware read models preserve their parent scope;
-surfaces with no supported group restriction refuse scoped callers. SLI/SLO
-references are checked within the write transaction and tenant foreign keys.
-See [API keys and authorization](../SECURITY.md#api-keys-and-authorization).
+PostgreSQL stores management state, immutable revisions, execution history,
+projection acknowledgements, audit events and the log identity directory.
 
-## Persistent state
+- `job_definition_revisions` stores executable snapshots.
+- `job_run_control_plane` and `job_run_attempts_control_plane` store Run and
+  Attempt facts; `workflow_run_control_plane` stores parent/step decisions.
+- Checks, Functions and their derived history expose management/query models.
+- SLI snapshots, SLO budgets and alerts record monitoring evidence.
+- Audit changes commit in the same transaction as their domain change.
+- `outcome_recorded_at` acknowledges required terminal projections;
+  `sli_snapshot_events` deduplicates a tenant/run/SLI increment with its snapshot
+  write. Deduplication facts outlive normal run pruning.
 
-The complete [migration directory](../db/migrations/) defines schema, roles,
-functions, RLS and grants. The [chart migration copy](../charts/orbitjob/migrations/)
-is synchronized and checked; it is not a second schema definition.
+Application roles do not own tenant tables. Repositories set transaction-local
+`app.tenant_id` before scoped queries, and RLS applies to those roles. The table
+owner is NOLOGIN; the migration identity can assume it. Admin has management
+writes and read-only execution history. Operator, scheduler, admission and archive use the Runtime
+login with their required runtime grants. Narrow SECURITY DEFINER operations
+cover identity resolution that must occur before a normal tenant transaction.
 
-- `job_definition_revisions` stores immutable executable snapshots. ScheduledJob
-  and WorkflowJob projections, checks and Function synchronization use revisions.
-- `job_run_control_plane` and `job_run_attempts_control_plane` store runs and
-  attempts. `workflow_run_control_plane` stores parent runs and task decisions.
-- `checks`, `check_runs`, `functions`, `function_runs`, SLIs, SLOs, snapshots,
-  budgets and alerts provide management state and derived query models.
-- `audit_events` and its partitions are append-only for application roles.
-  A management/ledger write and its audit event commit together.
-- `outcome_recorded_at` tracks completed terminal projections;
-  `sli_snapshot_events` deduplicates each tenant/run/SLI increment in the same
-  transaction as its snapshot update. These facts survive run pruning.
+The log archive uses the trusted Runtime DB identity. Admin reads its directory
+and commits audited cleanup requests; container output, manifests and lifecycle
+events live on the archive PVC. The database and filesystem do not share a
+transaction. [Execution logs](execution-logs.md) explains replay, capacity,
+retention and coordinated backup.
 
-Repositories set transaction-local `app.tenant_id`; RLS filters application
-roles, which do not own the tables. The table owner is NOLOGIN, the migrator
-can assume it, and runtime processes use separate login identities. Admin has
-read-only access to execution history, while retaining management-table writes.
-Reviewed SECURITY DEFINER functions cover narrowly defined operations that must
-resolve a tenant before a normal scoped transaction is available.
+## Creation and immutable identity
 
-## Creation, observation and cancellation
+Before an external Job creation request, the Operator commits an empty-UID
+`CreatingAttempt` intent. A subsequent transaction locks the Run/Attempt, checks
+current state and performs bounded Job Ensure. An uncertain Kubernetes response
+cannot prove that no Job was created. Recovery resolves the original address,
+verifies complete identity and binds the confirmed UID.
 
-1. Every entry point resolves a pinned revision and stable occurrence identity.
-   API manual triggers and Function invocations publish run CRs for Operator
-   admission. Scheduled executions and Workflow steps record their durable
-   occurrence or step before publishing the CR. Idempotent publication and
-   recovery converge on the stored identity after an interrupted operation.
-2. Before an external creation request, the repository commits an empty-UID
-   `CreatingAttempt` intent. A second transaction locks the run/attempt, checks
-   current state and performs the bounded Job Ensure. PostgreSQL and Kubernetes
-   do not share a transaction; the durable intent makes uncertain results visible.
-3. A confirmed UID binds the attempt. Subsequent observations must match that
-   immutable identity and advance resourceVersion/phase monotonically. Recovery
-   uses the stored actual Job address, including a compatible historical name.
-4. Workflow steps lock parent before child/attempt. A stopped or terminal parent
-   refuses new steps, reservation and Ensure; cancellation cannot be overwritten
-   by a stale Running update.
-5. Cancellation patches run intent with UID/resourceVersion tests. The Operator
-   shortens the original Job's deadline and waits for controller stop
-   acknowledgement, commits verified owned-Pod termination evidence, releases
-   its Pod evidence finalizers, then requests foreground Job deletion. An ambiguous
-   creation remains `CancelUnknown`; absence of a known UID is not proof that
-   nothing executed. Terminal outcomes remain final.
+Later observations must match that immutable identity and preserve monotonic
+resourceVersion/phase processing. Names alone are insufficient. Current names
+retain complete occurrence digests; historical short names remain bounded lookup
+candidates only after complete identity checks. Mutation and retention use UID
+and resourceVersion guards against replacement resources.
 
-New run names retain complete occurrence digests. Historical short names are
-bounded lookup candidates, accepted only after full identity checks. Retention
-uses UID/resourceVersion delete preconditions and includes inactive sources and
-workflow parent/child resources. See
-[migration compatibility](database-setup.md#migration-lineage-and-compatibility).
-
-External execution is at least once. `restartPolicy: Never` prevents restarts
-inside a Pod; a Job's configured backoff and platform attempts may still start
-workload code again. Workloads must tolerate repeated effects. Rendered Pods
-disable service-account token mounting.
-
-## Terminal recovery and SLOs
-
-Terminal phase commits before derived check/function/SLI writes. Acknowledgement
-follows all required idempotent projections. Failed projections remain pending
-and protected from retention; per-tenant keyset scanning prevents a full failing
-page from blocking later healthy rows. This recovery loop does not require
-leadership because duplicate delivery is safe.
-
-Migration 0012 preserves existing statistics and acknowledges old terminal rows;
-newly terminal runs participate in automatic recovery after cutover. Old operators
-must stop before migration. Recovery does not reconstruct unprovable historical
-counts. The [database guide](database-setup.md#audit-permissions-and-outcome-recovery)
-defines the cutover, rollback and deduplication-retention requirements.
-
-HTTP checks run as digest-pinned container probes. Their actual run outcomes
-produce check results and five-minute SLI buckets. The scheduler evaluates SLO
-windows and burn alerts from those buckets. Supported criteria describe only
-produced status/duration facts; schedule adherence has no dedicated SLI derivation.
-
-## Interfaces and deployment
-
-The HTTP contract is [OpenAPI](../api/openapi.yaml), served at `/openapi.json`.
-`make openapi-check` verifies generated freshness; contract tests additionally
-exercise JSON field names, required fields and versioned request bodies. The
-generated `APIKey` security scheme declares the Bearer header; middleware and
-policy evaluation enforce authentication and authorization.
-
-Observability uses structured logs, Prometheus metrics and an echoed/generated
-`X-Trace-ID` for request correlation. Distributed tracing spans and an
-OpenTelemetry exporter are not implemented.
-
-The four CRDs are `ScheduledJob`, `JobRun`, `WorkflowJob` and `WorkflowRun`, defined
-under [api/kubernetes/](../api/kubernetes/) and installed from the [chart CRDs](../charts/orbitjob/crds/).
-The operator watches these resources and Kubernetes Jobs. Its schedule/check,
-Function synchronization, workflow and retention loops run under Kubernetes Lease
-leadership. The scheduler has a separate optional, build-tagged etcd path.
-
-Helm orders owner initialization, migration and bootstrap hooks around deployment
-startup. Database Secret name/key settings come from chart values. Tenant workload
-namespaces must appear in `operator.namespaceTenants`; RBAC is granted in those
-namespaces. Admin can create/get/patch run CRs; operator owns Job lifecycle,
-status and history deletion. See [database setup](database-setup.md),
-[local deployment](local-deployment.md) and [usage](../USAGE.md).
-
-<a id="accepted-correctness-work-in-progress"></a>
+Source admission and revision/lifecycle writes serialize through PostgreSQL
+locks in READ COMMITTED transactions. Replays resolve their original occurrence
+before admitting new work. Manual JobRun requests blocked by Forbid remain
+pending without a new ledger row. Scheduled skip/misfire handling and rejected
+Workflow occurrence receipts are separate admission contracts. Unknown
+executions retain their concurrency slot.
 
 ## Execution recovery and concurrent admission
 
-The operator retains a missing bound Job as nonterminal `ExecutionUnknown`.
-Its original Job/JobRun identity
-and durable observations are the recovery authority. Missing resources do not
-prove termination or authorize another attempt. Unknown steps block new
-Workflow work while already running siblings remain observable. Explicit
-cancellation requires retained termination evidence to establish `Canceled`.
-New workload Pod templates include an Operator-owned evidence finalizer.
-Cancellation shortens the original Job's deadline with UID/resourceVersion
-checks and waits for a controller stop condition before collecting a complete
-Pod inventory. A deletion timestamp cannot establish that in-flight Pod creation
-has ended. Retained Pods preserve exit evidence during controller cleanup.
-The Operator commits complete owned-container evidence before releasing its own
-finalizer with Pod UID/resourceVersion preconditions. Success, failure, retries
-and configured deadlines use the same persistence and release ordering before
-ledger progression. Recovery includes pending releases on historical attempts;
-retention cannot remove their ownership records first. Cancellation deletes the
-original Job only after proof persistence and release, and confirms `Canceled`
-after its removal and a final transactional proof check.
+A missing bound Job becomes nonterminal `ExecutionUnknown`. OrbitJob retains
+its original identity and observations; missing resources do not authorize
+another Attempt, a terminal outcome or release of a Forbid slot. Unknown
+Workflow steps block new work while already running siblings remain observable.
 
-Canceling runs cannot acquire stop proof from a Job or attempt phase alone.
-The five-minute confirmation window uses the persisted cancellation timestamp,
-so a restart cannot extend it. Pure timeout remains uncertain and can recover
-from a complete retained inventory. A definite evidence gap atomically revokes
-proof and isolates the attempt under the parent/run/attempt lock order; a later
-narrower inventory cannot clear that isolation. Legacy workloads without the
-evidence finalizer keep conservative recovery semantics.
+Cancellation patches intent with UID/resourceVersion checks. The Operator
+shortens the original Job deadline and requires controller stop acknowledgement
+before accepting a complete owned-Pod inventory. A deletion timestamp cannot
+establish that in-flight Pod creation ended. New workload Pods retain an
+Operator-owned termination-evidence finalizer so exit observations can survive
+controller cleanup.
 
-Client-go leadership sessions determine authority without comparing remote
-wall-clock Lease expiry. After a leadership term is lost, its work must be canceled and drained before
-the same process campaigns again. This coordinates leadership without providing
-universal writer fencing.
+The Operator commits complete owned-container evidence before releasing its
+finalizer with Pod UID/resourceVersion preconditions. Success, failure, retry
+and deadline handling preserve this persistence/release ordering before ledger
+progression. Cancellation deletes the original Job only after proof persistence
+and release, then checks proof transactionally before recording `Canceled`.
+A stopped or terminal Workflow parent blocks new child reservation/creation.
 
-Source admission and revision/lifecycle writes serialize under the same PostgreSQL lock in a
-READ COMMITTED transaction. Replays return the original occurrence first.
-Accepted manual run CRs blocked by Forbid remain pending without a new ledger
-row; existing scheduled skip/misfire rules and Workflow scheduled rejection
-receipts remain separate contracts. Unknown executions retain their slot.
-The operator and PostgreSQL repositories implement these contracts. Leadership
-coordinates singleton loops; it does not provide a universal fencing token
-across PostgreSQL and Kubernetes. See [verification](verification.md) for the
-covered failure and concurrency scenarios.
+The cancellation confirmation window uses the persisted request timestamp; a
+restart does not extend it. A timeout preserves uncertainty and can recover from
+complete retained evidence. A definite evidence gap revokes proof and isolates
+the Attempt; a later narrower inventory cannot erase that gap. Legacy workloads
+without the evidence hold retain conservative recovery semantics. Node loss or
+external removal of evidence does not prove workload termination.
 
-<a id="sources-of-truth"></a>
+Client-go Lease leadership coordinates singleton schedule, Check, Function,
+Workflow and retention loops. Lost leadership cancels and drains that term's
+work before recampaigning. Lease sessions do not provide universal fencing
+across PostgreSQL and Kubernetes. Transactional admission supplies the separate
+source-level concurrency boundary. Idempotent terminal-projection replay runs
+without requiring leadership.
+
+## Terminal recovery and SLOs
+
+Terminal execution facts commit before derived Check, Function and SLI writes.
+Acknowledgement follows all required idempotent projections. Failed projections
+remain pending and protected from pruning. Per-tenant keyset scanning allows
+later healthy rows to progress despite earlier failures.
+
+Migration 0012 preserves historical aggregates and acknowledges pre-cutover
+terminal rows. It does not reconstruct unprovable historical counts. Old
+operators must stop before that migration; see the
+[database cutover procedure](database-setup.md#writer-cutover).
+
+HTTP Checks execute digest-pinned probe containers. Confirmed outcomes produce
+Check results and five-minute SLI buckets. The scheduler evaluates SLO windows
+and burn alerts from those buckets. Criteria use produced status/duration facts;
+schedule adherence has no dedicated SLI derivation.
+
+## Browser and external interfaces
+
+The Admin image builds and serves a static Console. Its browser requests use a
+same-origin HttpOnly session cookie and an in-memory CSRF token. API keys remain
+separate automation credentials. The public documentation site accepts no
+installation credentials. Go-only API development can run without a frontend
+bundle; that does not establish a usable installed Console.
+
+Online definition routes accept typed Job/Workflow specs in mapped namespaces,
+with independent Apply permission, dry-run admission and UID/resourceVersion
+comparison. The default chart enables a fail-closed validating webhook that
+checks the final admitted spec against the reviewed digest and live operation.
+Explicit native writers still need a supported typed spec and bypass the
+checked-save receipt requirement. They do not expose arbitrary Kubernetes writes. Log reads resolve
+immutable ownership through retained history and require separate ReadLogs
+permission. The Admin API exposes no generic Kubernetes proxy, Secret, exec or
+attach interface.
+
+The HTTP contract is [OpenAPI](../api/openapi.yaml), served at `/openapi.json`.
+Structured logs, Prometheus metrics and `X-Trace-ID` support observation and
+request correlation. Distributed tracing spans and an OpenTelemetry exporter
+are not implemented. [Verification](verification.md) records scoped test and
+installation evidence; [known issues](known-issues.md) records remaining limits.

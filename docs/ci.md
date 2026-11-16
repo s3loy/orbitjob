@@ -16,30 +16,33 @@ toolchain, scanner and vulnerability database at execution time.
 
 | Workflow | Trigger | Checks | Outputs |
 |---|---|---|---|
-| CI (`ci.yml`) | push, PR → `main`/`dev` | unit + race tests, the 60% per-package coverage bar, OpenAPI freshness, `make build-all`, configured image targets for `linux/amd64` **and** `linux/arm64` (no push); `CI / Gate` requires this chain to succeed | `binaries` artifact (7 days), Codecov upload |
-| Integration (`integration.yml`) | push, PR → `main`/`dev`, manual | seven packages: migrations, Postgres helpers, admin/core repositories, bootstrap, admin HTTP and load-tool isolation, using the workflow's PostgreSQL service image and provisioned deployment roles | — |
+| CI (`ci.yml`) | push, PR → `main`/`dev` | unit + race tests, the 60% per-package coverage bar, OpenAPI freshness, Console verification, `make build-all`, configured image targets for `linux/amd64` **and** `linux/arm64` (no push); `CI / Gate` requires this chain to succeed | `binaries` artifact (7 days), Codecov upload |
+| Documentation (`docs.yml`) | push/PR → `main`/`dev`, manual, successful main Benchmark | same-source OpenAPI freshness, English/Chinese topic and API build, links, localized search and browser usability; main-only Pages deployment | Pages artifact, failed browser diagnostics (7 days) |
+| Console (`console.yml`) | called by CI and release verification | locked dependencies, generated contracts, TypeScript, ESLint, unit tests, production build, formatting and fixture/mocked-HTTP browser tests | failure diagnostics (7 days) |
+| Integration (`integration.yml`) | push, PR → `main`/`dev`, manual, release verification | eight packages: migrations, Postgres helpers, admin/core repositories, bootstrap, admin HTTP, load-tool isolation and installed-fixture credential retirement, using the workflow's PostgreSQL service image and provisioned deployment roles | — |
 | Lint (`lint.yml`) | push, PR → `main`/`dev`, manual | golangci-lint | — |
-| Govulncheck (`govulncheck.yml`) | push, PR → `main`/`dev`, manual | reachable vulnerabilities for `linux/amd64` and `linux/arm64`, using the configured scanner and database at run time | — |
+| Govulncheck (`govulncheck.yml`) | push, PR → `main`/`dev`, manual, release verification | reachable vulnerabilities for `linux/amd64` and `linux/arm64`, using the configured scanner and database at run time | — |
 | Dependency Review (`dependency-review.yml`) | PR → `main`/`dev` | dependency diff against the action's high-severity failure threshold | — |
 | Benchmark (`benchmark.yml`) | push, PR → `main` | push stores `bench.txt` per commit; PR posts a comparison comment | benchmark history (committed by the workflow) |
 | Load Test (`loadtest.yml`) | manual | installs kind and attempts advisory end-to-end evidence collection; workflow success is not a qualification verdict | `loadtest-<profile>-<run_id>` artifact (14 days) + run-page job summary |
-| Pre-release Images (`prerelease.yml`) | push to `dev`, manual | quality gate, then the configured component matrix pushed to GHCR as `rc-<run>-<sha>`; no repository tag is created | versioned prerelease images and mutable `rc` aliases |
-| Release (`release.yml`) | tag `v*` | checks tag/chart version agreement, requires the tag to resolve to the configured default branch's current commit and version tags to be unused, runs quality and Helm checks, publishes versioned images and packages the chart; no `latest` alias | `helm-chart` artifact (90 days), published images |
+| Release verification (`verification.yml`) | called by release and prerelease with one source commit | backend quality, coverage, Helm, PostgreSQL, vulnerabilities and Console checks, followed by installation lifecycle and complete installed Console tests | safe installed-verification receipt |
+| Pre-release Images (`prerelease.yml`) | push to `dev`, manual | shared release verification, then the configured component matrix pushed to GHCR as `rc-<run>-<sha>`; no repository tag is created | versioned prerelease images and mutable `rc` aliases |
+| Release (`release.yml`) | tag `v*` | checks tag/chart version agreement, requires the tag to resolve to the configured default branch's current commit and version tags to be unused, completes shared release verification, publishes versioned images and packages the chart; no `latest` alias | `helm-chart` artifact (90 days), published images |
 
 `DOCKER_COMPONENTS` in the [Makefile](../Makefile) defines the image targets for
 the PR build and `make docker-build`, including the execution-log archive.
 Release/prerelease workflows define their publication matrices; component
-changes must keep those and the chart aligned. The current release and prerelease
-matrices publish six components and omit Admission, which the source chart enables
-by default. Neither workflow currently publishes a complete matching set for this
-chart. Image builds, installation verification and registry publication are
-separate steps.
+changes must keep those and the chart aligned. Image builds, installation
+verification and registry publication are separate steps.
 
-Publication workflows have their own component matrices. The backend build list
-and a successful CI image build do not establish that a complete matching set
-has been published. Inspect the selected workflow's matrix and registry tags
-before installing. Installed recovery and released-version upgrade checks remain
-separate evidence.
+Release verification checks out the same commit in every required job. Its
+installation job creates an isolated kind cluster and kubeconfig, runs the
+installation lifecycle gate, then prepares and runs all installed Console
+cases against that installation. The runner rejects skipped, retried or
+incomplete results. Cleanup retires fixture credentials and removes the owned
+cluster even after a failure. Credentials and raw request/response logs are not
+uploaded. Controlled business recovery and old-version upgrade exercises remain
+additional release evidence; the fresh-install lifecycle gate does not prove them.
 
 The mutable `rc` aliases are updated one component at a time after all versioned
 images publish. An interruption can leave mixed aliases. Use the explicit
@@ -74,12 +77,9 @@ does not establish that all CRs completed or produce a qualification verdict.
 
 A successful Load Test workflow reports successful harness steps. The verifier
 writes `result.json` and returns success even when its product verdict is
-`FAIL` or `INCONCLUSIVE`; read that verdict and its individual checks. Current
-tooling implements independent recovery canaries for Operator, Admin API,
-PostgreSQL and Scheduler faults. Qualification requires their complete prepared
-evidence, including ledger/Kubernetes checks and a continuous fixture journal;
-readiness alone cannot produce a recovery `PASS`. Installed fault scenarios for
-the actual candidate remain pending. See [verification](verification.md) for
+`FAIL` or `INCONCLUSIVE`; read that verdict and its individual checks. Independent recovery evidence checks require prepared canaries, source observations
+and continuous fixture journals; missing or contradictory observations remain
+`INCONCLUSIVE`. Ready replicas alone do not produce qualification `PASS`. See [verification](verification.md) for
 executed checks and [known issues](known-issues.md) for qualification gaps.
 
 ## Manual triggers
@@ -112,21 +112,23 @@ images and uploads the packaged Helm chart; it does not create a GitHub Release.
 | golangci-lint | `make lint` with the version pinned in `lint.yml` |
 | Component image build (amd64 + arm64) | `make docker-build` (native arch only) |
 | Benchmark store/compare | `make bench` |
-| Load profile | `scripts/quickstart.sh` then `scripts/loadtest-ci.sh smoke` against the kind cluster |
+| Console verification | `npm --prefix web ci`, `npm --prefix web run check`, `npm --prefix web run format:check`, `npm --prefix web run test:browser` |
+| Installation and real Console | `make kind-verify`, then [installed Console verification](local-deployment.md#isolated-installation-and-console-checks) in the same disposable installation |
+| Load profile | The isolated setup and commands in [load testing](loadtest-guide.md) |
 
 `make check` combines lint, vet, race tests, OpenAPI freshness and
 `go mod tidy -diff`. The tidy check does not modify module files or require a
 clean Git tree. Coverage, tagged integration and Helm checks are separate
 targets. The general PR CI chain does not invoke every `make check` prerequisite
-as a standalone job. Release and prerelease run their configured quality gates
-before publishing images; these do not establish installed acceptance.
+as a standalone job; release and prerelease use the shared verification workflow
+and require all its jobs before publishing images.
 
-`make integration` runs the same seven packages serially with `-count=1`.
+`make integration` runs the same eight packages serially with `-count=1`.
 The workflow invokes that same target. An empty `TEST_DATABASE_DSN` fails before
 Go starts, so skipped database suites cannot satisfy the target. Set the variable
 to a disposable PostgreSQL server: some suites rebuild
 `public`, and managed login roles are server-wide. See
-[local deployment](local-deployment.md#change-test-redeploy). The local load
+[local deployment](local-deployment.md#change-check-and-redeploy). The local load
 runner resets all tool-owned load tenants/namespaces on its target installation
 before generating a new run; review that scope before invoking it.
 
@@ -140,4 +142,4 @@ before setup. An early setup or verifier failure cannot use a PASS result from a
 Manual trigger receipts are reconciled individually with projected ledger rows;
 rejections, skips and missing projections remain `INCONCLUSIVE`. Execution config
 and source identity are recorded when the workload starts, with details in
-[the load guide](loadtest-guide.md#5-verify).
+[the load guide](loadtest-guide.md).

@@ -1,0 +1,61 @@
+* { box-sizing: border-box; }
+:root {
+  color-scheme: light;
+  --ink: #172e46;
+  --muted: #52677d;
+  --blue: #365f9b;
+  --line: #dbe4ed;
+  --surface: #fcfdff;
+  --pale: #edf3fa;
+  --scalar-font: Geist, ui-sans-serif, system-ui, sans-serif;
+}
+body { margin: 0; background: var(--surface); color: var(--ink); font-family: Geist, ui-sans-serif, system-ui, sans-serif; font-size: 16px; line-height: 1.65; }
+body.dark-mode { color-scheme: dark; --ink: #e5edf6; --muted: #adbdd0; --blue: #9cc2f3; --line: #334356; --surface: #141a22; --pale: #1d2b3d; }
+a { color: var(--blue); text-underline-offset: 3px; }
+a:hover { text-decoration-thickness: 2px; }
+button, input, select { font: inherit; }
+:is(a, button, input, select, summary):focus-visible { outline: 3px solid var(--blue); outline-offset: 4px; }
+.site-header { min-height: 80px; padding: 16px 30px; display: flex; align-items: center; justify-content: space-between; gap: 24px; border-bottom: 1px solid var(--line); }
+.wordmark { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; font-size: 22px; font-weight: 500; letter-spacing: -.03em; color: var(--ink); }
+.wordmark svg { color: var(--blue); }
+.site-header nav { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 24px; font-size: 13px; }
+.site-header nav a { color: var(--ink); }
+.site-header nav a[aria-current] { font-weight: 600; }
+.skip { position: fixed; left: 16px; top: -100px; padding: 10px; background: var(--surface); color: var(--ink); z-index: 100000; }
+.skip:focus { top: 10px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.api-intro, .operation-index, .api-load-status { max-width: 1200px; margin: 28px auto; padding: 0 30px; }
+.api-intro h1 { font-size: clamp(1.8rem, 4vw, 2.3rem); line-height: 1.2; letter-spacing: -.035em; font-weight: 500; margin: 24px 0 14px; }
+.api-intro p { color: var(--muted); max-width: 78ch; margin: 0; }
+.reference-links { padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 8px 24px; font-size: 14px; margin-block: 20px 0; }
+.operation-index { padding-block: 16px; border-block: 1px solid var(--line); }
+.operation-index summary { cursor: pointer; font-size: 15px; font-weight: 500; }
+.operation-index > p { max-width: 78ch; color: var(--muted); font-size: 14px; }
+.operation-filters { display: flex; flex-wrap: wrap; gap: 16px; margin-block: 20px; }
+.operation-filters > div { flex: 1 1 12rem; max-width: 28rem; }
+.operation-filters label { display: block; font-size: 13px; margin-bottom: 6px; font-weight: 500; }
+.operation-filters :is(input, select) { width: 100%; padding: 9px 11px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); color: var(--ink); font-size: 14px; }
+.operation-count { font-size: 13px; color: var(--muted); }
+.operation-group h2 { font-size: 18px; font-weight: 500; letter-spacing: -.02em; margin: 26px 0 12px; }
+.operation-group ul { padding: 0; margin: 0; list-style: none; }
+.operation-group li { border-top: 1px solid var(--line); padding-block: 14px; }
+.operation-name { display: flex; align-items: baseline; gap: 12px; }
+.operation-name > a { overflow-wrap: anywhere; min-width: 0; font-size: 14px; }
+.method { display: inline-block; min-width: 4.1rem; flex-shrink: 0; font-size: 11px; font-weight: 500; background: var(--pale); color: var(--ink); border: 1px solid var(--line); border-radius: 3px; text-align: center; padding: 2px 5px; }
+.operation-group li p { margin: 6px 0; color: var(--muted); font-size: 13px; }
+.operation-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 24px; font-size: 12px; }
+.operation-meta > span { color: var(--muted); }
+.api-load-status { font-size: 14px; }
+[hidden] { display: none !important; }
+@media (max-width: 700px) {
+  .site-header { align-items: flex-start; flex-direction: column; gap: 16px; padding: 20px; }
+  .site-header nav { gap: 10px 18px; font-size: 12px; }
+  .api-intro, .operation-index, .api-load-status { padding-inline: 20px; }
+  .api-intro p { font-size: 14px; }
+  .reference-links { flex-direction: column; }
+  .operation-name { gap: 8px; }
+  .operation-name > a { font-size: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; }
+}

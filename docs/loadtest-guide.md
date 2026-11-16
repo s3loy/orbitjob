@@ -1,268 +1,208 @@
 # Load testing
 
-Run controlled workloads against an isolated Kubernetes installation, from
-preflight through verification and cleanup.
+Run a controlled ScheduledJob corpus against an isolated Kubernetes installation.
+The load tool generates declarations, prepares tenants and namespaces, drives
+manual triggers, injects configured faults and verifies independent execution
+evidence. Read the verdict for the exact run; a workflow completing or a profile
+being named `standard` does not establish qualification.
 
-The tooling drives the Kubernetes control plane: definitions are ScheduledJob
-custom resources and every run is a ledger row under
-`job_run_control_plane`. Load tests are operator-run, advisory evidence. They
-do not block PRs or merges, and a completed workflow only means the harness
-produced its evidence; the operator reads the verdict in `result.json` and
-decides how to use it.
+Load tests are operator-run evidence and do not themselves block merges. They
+modify installation state and can stop control plane or database components.
+Use a dedicated installation, run one profile at a time and preserve its
+artifacts before cleanup.
 
-## Profiles
+## Profiles and configuration
 
-| Profile | Config | Schedule duration | Qualification requested |
-|---|---|---|---|
-| `smoke` | `test/load/config/smoke.yaml` | 30m | no |
-| `standard` | `test/load/config/standard.yaml` | 4h | yes |
-| `long` | `test/load/config/long.yaml` | 8h | no |
+| Config under `test/load/config/` | `--profile` | Virtual schedule | Qualification requested | In-range faults |
+|---|---|---|---|---|
+| `smoke.yaml` | `smoke` | 30 minutes | No | None |
+| `smoke-faults.yaml` | `smoke` | 30 minutes | No | Operator at 25m, PostgreSQL at 27m |
+| `standard.yaml` | `standard` | 4 hours | Yes, at least 10,000 qualified runs | Scheduler at 180m, Operator at 190m, Admin at 210m, PostgreSQL at 220m |
+| `standard-dynamic.yaml` | `standard` | 4 hours before pacing extensions | Yes, at least 10,000 qualified runs | Standard plan |
+| `long.yaml` | `long` | 8 hours | No | Scheduler at 370m, Operator at 390m, Admin at 400m, PostgreSQL at 410m |
 
-The config's internal `profile` and the command's profile flag must agree:
-`smoke.yaml` declares `profile: smoke`, and passing `--profile standard` with
-it is rejected. Filenames are not profile identifiers: `smoke-faults.yaml`
-also declares `smoke`, and `standard-dynamic.yaml` declares `standard`.
+The flag must match the config's internal `profile`; the filename is not the
+profile identifier. Standard requires a clean source/configuration tree and
+Docker capacity of at least 10 CPU / 8 GiB. Smoke requires 6 CPU / 8 GiB; long
+uses 10 CPU / 8 GiB. These checks inspect configured Docker capacity rather
+than measuring the resources available throughout a run.
 
-`smoke.yaml` has no faults inside its thirty-minute schedule;
-`smoke-faults.yaml` adds a custom in-range plan. Dynamic pacing can extend
-wall-clock duration beyond the configured virtual schedule. Fault-bearing
-profiles require the recovery canaries and independent evidence described below.
+All supplied configs declare 1,200 definitions across four generated tenants:
+280 data-processing, 220 database, 240 HTTP/webhook, 140 operations, 220 failure
+and 100 external-probe definitions. Product trigger types are 840 manual and
+360 cron; the origin labels include 120 webhook cases within that manual
+surface. The ScheduledJob workload does not qualify Function or Workflow
+execution merely because the installation supports them.
 
-There is one execution path — the Kubernetes control plane — so profiles no
-longer declare execution modes. The `*-dual.yaml` and `smoke-k8s.yaml` configs
-that exercised a legacy-versus-kubernetes split are deleted: the execution paths they
-were designed to compare no longer coexist. Profiles declare `tenant_count: 4`. The generator
-uses the project's ULID generator and persists the mapping in each run's
-`tenant-ids.json`; prepare, run and verify read that same mapping. Different
-runs receive different tenants. A slug such as `default` is a name, never a
-tenant identifier. Custom profiles with explicit tenant IDs remain supported,
-but generated declarations still include a full run-identity digest so their
-revisions and evidence stay separate between runs.
+The generator persists real tenant ULIDs in `tenant-ids.json`; prepare, run and
+verify must reuse that mapping. New run IDs get separate tenants and declaration
+identity digests. A slug such as `default` is not a tenant ID. Explicit tenant-ID
+configs remain subject to the tool's validation and ownership checks.
 
-`standard` is called a qualification profile because it applies the full
-four-hour workload and minimum-instance rule. It describes the requested
-workload, not a successful qualification. Missing recovery canaries, source
-observations or continuous journal evidence produce `INCONCLUSIVE` even when
-deployments become ready. See the evidence rules below and
-[verification](verification.md). Use a
-specific run's artifacts as evidence, not the profile name or workflow status.
+Static standard uses ten-minute cron intervals. Smoke and long use hourly cron.
+Dynamic standard computes rates and active limits from inspected resources,
+then adjusts trigger pacing from Prometheus. The current `run` flag
+`--prometheus-url` defaults to `http://localhost:9090`; set that flag explicitly
+for another endpoint. Prometheus failures freeze pacing with warnings rather
+than failing the run. Do not infer live feedback from the config file alone.
 
-## Before you start
+## Before you begin
 
-The load test modifies an installation: it creates tenants/namespaces, extends
-the operator mapping, restarts components and may inject database/component
-faults. Use an isolated development installation and run one profile at a time;
-the fixture's state and the reset scope are shared by load runs.
+Install the current source using [local development](local-deployment.md) in a
+dedicated cluster. The harness assumes the repository's local PostgreSQL
+Deployment named `orbitjob-postgres`, database/user `orbitjob` / `postgres` and
+`psql` access inside that Pod. Its prepare/reset/fault paths are not a general
+external-database harness.
 
-Follow [local deployment](local-deployment.md) for prerequisites, a source
-installation and the separate stop-old-writers upgrade boundary. For a new
-development installation, its shortcut is:
+Obtain cluster administration access and the installation bootstrap API key.
+The tool creates tenants/namespaces, extends the Operator mapping, applies CRs,
+creates tenant keys and may restart or fault components. It updates the
+Operator's mapping directly; it does not establish a complete production tenant
+installation with matching Admin/admission/archive mappings and policies.
+The additional fixture grants below supply its manual-trigger CR surface.
+Do not use this procedure as production tenant onboarding or network-isolation
+qualification.
 
-```bash
-bash scripts/quickstart.sh
-```
+Install Docker, kind, kubectl, Helm, Go, curl, Git, OpenSSL and Bash. Keep the
+host awake for the full run. On macOS the engine uses a process-bound
+`caffeinate -i -s` assertion, and standard preflight requires AC power. Other
+platforms need their own no-suspend arrangement. Suspension stretches schedules
+and invalidates latency measurements. Dynamic pacing and fault restoration can
+extend wall time beyond the configured virtual schedule.
 
-Then the fixtures and three port-forwards:
-
-```bash
-make loadtest-prepare     # deploys shared fixture/task infrastructure
-kubectl rollout status -n orbitjob-load deployment/load-fixture --timeout=5m
-kubectl rollout status -n orbitjob-load deployment/load-postgres --timeout=5m
-
-kubectl port-forward -n orbitjob-system svc/orbitjob-admin-api 18080:8080 &
-kubectl port-forward -n orbitjob-load  svc/load-fixture        18081:8080 &
-kubectl port-forward -n monitoring     svc/kube-prometheus-stack-prometheus 9090:9090 &
-```
-
-The Prometheus forward is only needed by the dynamic profile
-(`standard-dynamic.yaml`): its feedback controller reads live pressure metrics
-from Prometheus at `prometheus_url`, which defaults to `localhost:9090`. When
-Prometheus is unreachable the controller does not fail the run — it freezes
-the pace multiplier and logs warnings. A missing port-forward therefore leaves
-the last multiplier unchanged and does not fail setup. The static profiles never contact
-Prometheus and ignore the forward.
-
-`make loadtest-prepare` deploys manifests into `orbitjob-load`, `orbitjob-tasks`
-and the default control-plane namespace. It does not seed tenants. The
-tenants, namespaces, ScheduledJob definitions and API keys are created later by
-the tool's own `prepare` command, which also applies fixture infrastructure.
-That Go command and `scripts/loadtest-ci.sh` render operations RBAC for
-`ORBITJOB_NAMESPACE`; the Makefile fixture target applies the default manifest
-directly. For a namespace override, use those rendered paths.
-
-Reapplying a ConfigMap/TLS Secret is not a fixture-code rollout. If reusing an
-installation after fixture changes, restart `deployment/load-fixture` and wait
-for it before starting a run. A restart during a run loses its in-memory journal.
-The versioned `/journal` envelope includes a boot identity and complete sequence.
-Verification rejects a changed boot identity or a sequence gap even when the
-restarted fixture has produced new entries for this run.
-The CI script performs this restart itself. Host-side settling and verification
-read PostgreSQL through the load tool's Go driver. Tenant setup/reset use `psql`
-inside the database Pod.
-
-Check the fixtures are up before continuing:
+Run all commands from the selected repository root. Set one configuration and
+run identity for the complete sequence:
 
 ```bash
-curl -s -o /dev/null -w "%{http_code}\n" http://localhost:18080/healthz   # 200
-curl -s -o /dev/null -w "%{http_code}\n" http://localhost:18081/ledger    # 200
-```
-
-### The host has to stay awake
-
-The engine paces the schedule against the monotonic clock, and that clock
-stops while a machine is suspended. A 30-minute profile requires 30 minutes of
-awake time. Suspension stretches the wall-clock schedule and invalidates its
-latency measurements.
-
-`run` holds a sleep assertion itself on macOS, through `caffeinate`, for as
-long as the run lasts. Keep the host on AC power; qualification preflight
-rejects battery power on macOS. Other hosts still need an environment that
-will remain awake and available. If the host is
-suspended anyway — the assertion needs AC power on macOS — the run reports suspension on
-exit so the extended wall-clock duration can be distinguished from system
-latency:
-
-```
-loadtest: the host was suspended for about 1h35m0s; the schedule stretched to
-1h46m12s of wall clock and the latency numbers are not usable
-```
-
-## Running
-
-```bash
+export CONFIG=test/load/config/smoke.yaml
+export PROFILE=smoke
 export RUN_ID="smoke-$(date -u +%Y%m%dT%H%M%SZ)"
-RELEASE_NAMESPACE="${ORBITJOB_NAMESPACE:-orbitjob-system}"
-DB_NAMESPACE="${ORBITJOB_DB_NAMESPACE:-orbitjob}"
-export ORBITJOB_API_KEY=$(kubectl get secret bootstrap-api-key \
-  -n "$RELEASE_NAMESPACE" -o jsonpath='{.data.api-key}' | base64 -d)
-CONFIG=test/load/config/smoke.yaml
-PROFILE=smoke
+export ORBITJOB_NAMESPACE=orbitjob-system
+export ORBITJOB_DB_NAMESPACE=orbitjob
+export ORBITJOB_API_URL=http://localhost:18080
+kubectl config current-context
 ```
 
-`bootstrap-api-key` is the Secret holding the plaintext key.
-`orbitjob-database` holds the database credentials and is a different Secret.
+Use `standard` / `test/load/config/standard.yaml` together for qualification.
+Never reuse a run ID after execution has started. Run artifacts include
+plaintext API keys; `test/load/runs/` is ignored by Git, and generated files
+containing secrets use private permissions. Keep artifacts out of public logs.
 
-### 1. Preflight
+## 1. Validate and generate
 
 ```bash
 go run ./scripts/loadtest preflight --config "$CONFIG" \
-  --images test/load/config/images.lock.yaml --profile "$PROFILE"
+  --images test/load/config/images.lock.yaml --profile "$PROFILE" --check-only
+go run ./scripts/loadtest generate --config "$CONFIG" \
+  --images test/load/config/images.lock.yaml --profile "$PROFILE" --run-id "$RUN_ID"
 ```
 
-```
-preflight: profile=smoke Docker capacity >= 6 CPU / 8 GiB
-preflight: configuration and image lock valid
-```
+Preflight checks configuration, the six-entry digest image lock, required tools,
+Docker capacity, profile rules, source cleanliness where required and static
+minimum-instance feasibility. The current implementation does not pull images
+or mutate the cluster even without `--check-only`; independently ensure that
+nodes can obtain the locked images. `--images-only` validates only the lock and
+does not establish environment readiness.
 
-Preflight validates config/image-lock structure, required tools, Docker
-capacity, and profile-specific workspace/power/static-volume constraints. The
-current implementation does not pull images or check their availability,
-including without `--check-only`. It does not prove the cluster is ready or
-that any workload ran. `--images-only` checks only the lock file without Docker.
+Generation writes `generated/definitions.json`, a category summary, tenant IDs
+and separate fault-recovery canaries. Review the generated workload before
+preparation. Canaries are outside the offered workload, coverage and minimum
+instance count. A config/image/corpus error stops here before cluster mutation.
 
-The Makefile shortcuts `loadtest-smoke` and `loadtest-long` invoke preflight
-only. `loadtest-full` invokes preflight and generation, then prints a manual
-review instruction; `loadtest-run` prints guidance. None executes a full profile.
+## 2. Prepare shared fixtures and access
 
-### 2. Generate
+For default namespaces, the Make target deploys fixture infrastructure:
 
 ```bash
-go run ./scripts/loadtest generate --config "$CONFIG" \
-  --images test/load/config/images.lock.yaml --profile "$PROFILE" \
-  --run-id "$RUN_ID"
+make loadtest-prepare
+kubectl rollout status -n orbitjob-load deployment/load-fixture --timeout=5m
+kubectl rollout status -n orbitjob-load deployment/load-postgres --timeout=5m
 ```
 
-Writes `test/load/runs/$RUN_ID/generated/` — 1200 ScheduledJob declarations
-for the smoke profile, plus a summary of their distribution by category.
+The target creates the shared load/task namespaces, operations RBAC, HTTP/TLS
+fixture and separate fixture PostgreSQL. It does not create the run's tenants.
+For a custom control plane namespace, use
+`scripts/render-local-manifest.sh load-operations "$ORBITJOB_NAMESPACE"` for
+the operations RBAC instead of applying the default binding unchanged. The
+Go prepare command also renders that override and applies the infrastructure.
 
-Repeating generation reuses the recorded tenant mapping and requires an
-identical complete definition corpus, including images and workload arguments.
-Changes to image/scenario inputs that alter the generated definitions require
-a new run ID, even before execution, so prepared revision IDs cannot silently
-address an older workload.
-A run's
-first execution exclusively creates `run-started.json`; generation, prepare
-and a second execution refuse to overwrite evidence after that point. Use a
-new run ID for another attempt. Trigger idempotency keys also include the run
-ID, so retries within one run converge without reusing another run's work.
-The tenant record also binds the full resolved input config from generation.
-Prepare, run and verify reject a changed corpus, cron interval, rate or other
-config field even when profile/seed/tenant count are unchanged. Changing the
-workload requires a new run ID and generation; explicit tenant IDs cannot be
-silently replaced by an older mapping.
+When fixture code or its generated certificate changed between runs, restart
+`deployment/load-fixture` and wait before starting the next run. Applying a
+ConfigMap/Secret does not restart an existing fixture Pod. Never restart the
+fixture during a run: its counters, dedupe set and append-only journal are
+process memory. The single-replica fixture's boot identity and journal sequence
+are continuity evidence.
 
-A declaration is a full ScheduledJob spec. Cron definitions carry the interval
-the config sets; manual-only definitions carry `0 0 30 2 *` — February 30th,
-which parses as a standard cron expression but matches no instant, so the
-CRD's non-empty-schedule rule is satisfied while the scheduler never fires the
-definition. Every declaration raises its history limits to the corpus size so
-the retainer cannot prune evidence while the run is still going. Because the
-operator renders Kubernetes Jobs with image, command and args only — no env
-block, no service account — each workload body has its case id, the fixture
-addresses and the database DSN stored as literal arguments.
+Start the following forwards in separate terminals:
 
-### 3. Prepare
+```bash
+kubectl port-forward -n "$ORBITJOB_NAMESPACE" svc/orbitjob-admin-api 18080:8080
+```
+
+```bash
+kubectl port-forward -n orbitjob-load svc/load-fixture 18081:8080
+```
+
+```bash
+kubectl port-forward -n "$ORBITJOB_DB_NAMESPACE" deployment/orbitjob-postgres 15432:5432
+```
+
+Confirm that each forward bound its port, and stop if a different process is
+already listening. Check `http://localhost:18080/healthz` and
+`http://localhost:18081/ledger` return HTTP 200. Those checks are prerequisites,
+not execution evidence.
+
+Load credentials without putting their values in argv:
+
+```bash
+export ORBITJOB_API_KEY="$(kubectl get secret bootstrap-api-key \
+  -n "$ORBITJOB_NAMESPACE" -o jsonpath='{.data.api-key}' | base64 -d)"
+ORBITJOB_DSN="$(kubectl get secret orbitjob-database \
+  -n "$ORBITJOB_NAMESPACE" -o jsonpath='{.data.admin-dsn}' | base64 -d)"
+export ORBITJOB_DSN="${ORBITJOB_DSN/orbitjob-postgres.${ORBITJOB_DB_NAMESPACE}.svc:5432/127.0.0.1:15432}"
+```
+
+This endpoint substitution matches the local installation's DSN. Inspect the
+actual endpoint privately if customized. The admin login supplies the
+revision-scoped evidence reads with transaction-local tenant context; the
+bootstrap owner is not an interchangeable read identity.
+
+For dynamic standard, install and check [monitoring](operations/monitoring.md),
+then keep its Prometheus forward active on 9090. Static profiles do not use
+Prometheus feedback.
+
+## 3. Prepare the run
 
 ```bash
 go run ./scripts/loadtest prepare --config "$CONFIG" --profile "$PROFILE" \
-  --run-id "$RUN_ID" --api-url http://localhost:18080
+  --run-id "$RUN_ID" --api-url "$ORBITJOB_API_URL"
 ```
 
-```
-prepare: declared 1200 definitions across 4 tenants
-```
+Preparation performs these mutations:
 
-Prepare provisions everything the run depends on:
+1. Seeds owned tenant rows with the persisted IDs in the installation database.
+2. Creates one labelled `orbitjob-tasks-<tenant-id>` namespace per tenant, with
+   LimitRange and quota for the generated corpus.
+3. Extends `OPERATOR_NAMESPACE_TENANTS` without replacing prior mappings and
+   restarts the Operator when that table changes.
+4. Applies ScheduledJob declarations, waits for each actual active revision
+   and saves case-to-revision/namespace records.
+5. Creates or reuses a tenant key with the `TenantAdminAccess` preset and
+   resolves independent recovery canary identities.
 
-`ORBITJOB_NAMESPACE` selects the control-plane namespace, and
-`ORBITJOB_DB_NAMESPACE` selects the installation PostgreSQL namespace.
-Prepare and the CI runner render the operations Role and RoleBinding for the
-selected control plane; their task ServiceAccount stays in `orbitjob-tasks`.
+An unstarted preparation can be retried: unchanged declarations retain their
+revisions and valid recorded keys are reused. Once execution starts, preparation
+refuses that run ID. If reset removed an unstarted run's cluster state,
+preparation must refresh its revisions and key records before use.
 
-1. Tenant rows with the run's persisted generated ULIDs are seeded into the installation
-   database (`INSERT ... ON CONFLICT DO NOTHING` through `kubectl exec psql`;
-   the API generates its own IDs, and the namespace table needs these exact ids).
-2. One namespace per tenant is created — `orbitjob-tasks-<tenant-ULID>`,
-   labelled `orbitjob.io/managed-by=orbitjob-loadtest` — carrying the same
-   LimitRange and a run-specific ResourceQuota from
-   `tenantNamespaceManifest` in `scripts/loadtest/prepare.go`, because this is
-   where rendered Kubernetes Jobs execute.
-3. The operator's namespace table (`OPERATOR_NAMESPACE_TENANTS`) is extended
-   with one `namespace=tenant` entry per load tenant and the operator is
-   restarted only if the table changed. Existing mappings are preserved.
-4. The corpus is declared: one ScheduledJob custom resource per definition,
-   batched into one multi-document manifest per tenant (kept under
-   `cr-manifests/` in the run directory as evidence).
-5. Prepare waits until every declaration has an active revision — read from
-   each CR's `status.activeRevision` — and records the case-to-revision
-   mapping in `created-definitions.json`. The trigger route addresses
-   revisions, so this mapping is what the run engine triggers.
-6. A tenant API key is created per tenant, bound to the `TenantAdminAccess`
-   policy, into `tenant-keys.json` (plaintext, which is why
-   `test/load/runs/` is gitignored), alongside `tenant-namespaces.json` for
-   the verifier.
+The generated Operator Role includes Pod `patch` so the Operator can release
+the protected finalizer after recording durable termination evidence. Without
+that grant, terminal projection and cleanup can remain blocked.
 
-Tenancy comes from the API key on every call; there is no tenant header. The
-load-test flow declares definitions as custom resources and waits for the
-operator to materialize their revisions. The separate typed definition API
-does not replace this fixture-generation path.
+### Grant fixture trigger publication
 
-Before execution, prepare can be retried: unchanged ScheduledJobs keep their
-revision and still-valid recorded tenant keys are reused. After execution has
-started, prepare refuses that run ID. After `reset`, preserve started runs as
-historical artifacts and generate/prepare a new run ID. An unstarted run can
-reuse its tenant mapping, but prepare must refresh its CR revision/key records
-because reset removed their database and namespace state.
-
-### 3.5 Grant the admin API its trigger surface
-
-`prepare` creates the tenants' namespaces after the chart was installed, and
-the chart grants the admin API's CR surface one scheduling namespace at a
-time (`operator.namespaceTenants`). A namespace with no Role denies every
-manual trigger's JobRun publish: the run rejects with 500 and nothing
-executes. Apply the chart's own Role and binding to the namespaces this tool
-created — they carry the `orbitjob.io/managed-by=orbitjob-loadtest` label,
-the same one `reset` cleans by:
+The namespaces were created after chart installation. Give the Admin API only
+the fixture CR publication surface in those tool-owned namespaces:
 
 ```bash
 for namespace in $(kubectl get namespace \
@@ -275,10 +215,7 @@ metadata:
   name: orbitjob-admin-api
 rules:
   - apiGroups: ["workloads.orbitjob.io"]
-    resources: ["jobruns"]
-    verbs: ["create", "get", "patch"]
-  - apiGroups: ["workloads.orbitjob.io"]
-    resources: ["workflowruns"]
+    resources: ["jobruns", "workflowruns"]
     verbs: ["create", "get", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -289,298 +226,166 @@ roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: orbitjob-admin-
 subjects:
   - kind: ServiceAccount
     name: orbitjob-admin-api
-    namespace: ${RELEASE_NAMESPACE}
+    namespace: ${ORBITJOB_NAMESPACE}
 MANIFEST
 done
 ```
 
-`scripts/loadtest-ci.sh` performs this step between prepare and the run.
-Widening a real installation stays a helm upgrade of
-`operator.namespaceTenants`; this loop configures fixtures in namespaces
-the tool itself created and deletes again.
+Without these grants, manual publication can fail after the API receives a
+trigger. This loop is fixture infrastructure restricted by the ownership label;
+normal installation namespace changes belong in reviewed Helm values.
 
-### 4. Run
+## 4. Execute
 
 ```bash
 go run ./scripts/loadtest run --config "$CONFIG" --profile "$PROFILE" \
-  --run-id "$RUN_ID" --api-url http://localhost:18080
-```
-
-Fault recovery also requires the protected `ORBITJOB_DSN` environment variable
-used by verification. Do not place credentials in command arguments. Generation
-writes separate `generated/recovery.json` canaries; preparation writes their
-resolved identities in `recovery-prepared.json`. These resources do not contribute
-to the offered workload, coverage or minimum-instance count. Override the local
-fixture endpoint with `--fixture-url` when it differs from the default.
-
-The smoke profile has a thirty-minute virtual schedule. Throttling, capacity
-waits and fault restoration can extend wall-clock time. It prints progress:
-
-```
-loadtest progress: triggered=290 accepted=289 rejected=0 skipped=0 pace=1.00
-```
-
-Example final counters (values depend on the run):
-
-```
-run: triggered=500 accepted=500 rejected=0 skipped=0
-```
-
-`pace` is the feedback controller's multiplier against the profile's target
-rate; `1.00` means it tracked the plan without throttling.
-
-At execution start the tool captures the resolved config's SHA-256 and the
-checkout's commit/dirty flag. `run-stats.json` stores these alongside final
-counters and one receipt per accepted manual trigger (tenant, revision and
-occurrence key). HTTP 200/201 requires a complete manual-run identity; HTTP 409
-is a rejection. Idempotent replay is the API's HTTP 200 with the same identity.
-
-A scenario that expects `canceled` is cancelled by the generator itself: after
-the trigger, the engine resolves the run's ledger id from the response's
-occurrence key and calls `POST /api/v1/instances/{run_id}/cancel`. The API
-patches `spec.cancelRequested` on the run's JobRun; the operator deletes the
-Kubernetes Job; the run ends `Canceled`. The workload body sleeps long enough
-that the cancellation request arrives while the Job is still running.
-
-### 5. Verify
-
-The verifier runs on this machine, so it needs a DSN it can reach. The Secret
-stores an in-cluster host, which has to be rewritten to the port-forward:
-
-```bash
-kubectl port-forward -n "$DB_NAMESPACE" deploy/orbitjob-postgres 15432:5432 &
-
-ORBITJOB_DSN=$(kubectl get secret orbitjob-database -n "$RELEASE_NAMESPACE" \
-  -o jsonpath='{.data.admin-dsn}' | base64 -d)
-export ORBITJOB_DSN="${ORBITJOB_DSN/orbitjob-postgres.${DB_NAMESPACE}.svc:5432/127.0.0.1:15432}"
-
-go run ./scripts/loadtest verify --run-id "$RUN_ID" --config "$CONFIG" \
-  --api-url http://localhost:18080 \
+  --run-id "$RUN_ID" --api-url "$ORBITJOB_API_URL" \
   --fixture-url http://localhost:18081
 ```
 
-**Pass the original `--config`.** It defaults to `standard.yaml`. Verification
-rejects a different run ID or config fingerprint, including changes within the
-same profile to rates, duration, seed, fault plan or minimum count. Source
-identity comes from execution-time stats, rather than the checkout used later
-to verify. The generated corpus, created revisions, tenant keys and namespace
-mapping must agree before evidence collection starts; missing actors or duplicate
-revision/case records cannot silently reduce the tested scope.
+Fault recovery uses the exported `ORBITJOB_DSN`. Dynamic tuning additionally
+uses `--prometheus-url`; `--tune-deployments` explicitly patches the Admin API's
+trigger-rate environment and restarts it. That flag requires a dynamic config.
+Review `--dry-run-tuning` output before opting into deployment changes.
 
-Evidence comes from the database, Kubernetes, fixture journal and API. The
-ledger: expected runs are rows in
-`job_run_control_plane`, with their attempt trail in
-`job_run_attempts_control_plane`, scoped to the revisions this run created.
-The cluster: every terminal run's JobRun custom resource — named
-`<bounded-definition-prefix>-<complete occurrence digest>`, in the tenant's
-namespace — must be present with the expected source UID, revision, occurrence
-and trigger. Matching legacy names are accepted only with that complete identity. The API: cross-tenant probes where each tenant's
-key tries to read another tenant's definitions.
+The engine persists its execution config hash, source commit/dirty state,
+planned faults, final counters and one identity receipt per accepted manual
+trigger. HTTP 200/201 must contain a complete run identity; HTTP 409 is a
+rejection. Idempotent replay returns the same accepted identity.
 
-The ledger is row-level-security protected, so every per-tenant query runs in
-a transaction that first sets `app.tenant_id` to that tenant's ULID; the
-setting is transaction-local and rolled back with the read. The queries also
-filter by this run's revision ids, so leftovers from earlier runs can never
-feed the gates.
+A scenario expecting cancellation is canceled by the generator through the API,
+not by its workload body. The fixture's workload runs long enough for the
+request to arrive. An accepted cancellation still requires the Operator's
+physical stop and terminal ledger evidence.
 
-The verifier runs these checks, plus the configured fault checks:
+Faults follow the same virtual phase clock as pacing. The injector performs
+bounded restoration before final stats are written. The PostgreSQL fault
+observes an in-flight owned canary across the outage and probes fresh work
+later. Scheduler recovery requires actual SLI/SLO evaluation evidence, while
+Admin and Operator recovery require the independent canary's exact source,
+revision, ledger, Kubernetes objects and journal effect. Deployment readiness
+alone does not establish business recovery. Lease loss and arbitrary network
+partitions are outside these four fault types.
 
-| Check | What it catches |
-|---|---|
-| `duplicate-succeeded-attempt` | one run with two succeeded attempts — the same occurrence executing twice |
-| `tenant-leak` | one tenant reading another's definition through the API |
-| `duplicate-idempotent-side-effect` | the same idempotency key doing work twice |
-| `terminal-regression` | a run leaving a terminal phase (`job_run.status_changed` audit events) |
-| `expected-terminal-state` | a run ending in a phase other than the one its scenario declares |
-| `jobrun-cr-present` | a terminal ledger run whose JobRun is missing or lacks the expected namespace/full identity |
-| `manual-trigger-accounting` | offered events, accepted receipts and observed manual ledger rows must reconcile by tenant, revision and occurrence |
+Interrupting a run preserves truncated evidence. Inspect the actual component
+state and fault restoration records before cleanup or another run. Do not reuse
+the run ID to overwrite an interrupted execution.
 
-Rejected or skipped triggers make the offered workload incomplete and produce
-`INCONCLUSIVE`; no failure budget is inferred from a few healthy remaining rows.
-Every accepted manual receipt requires exactly one matching ledger row. Cron
-rows cannot substitute for missing manual work. Historical stats without the
-execution config/source record or accepted receipts cannot establish a new
-`PASS`; preserve their old reports as dated evidence and use a new run ID.
+## 5. Settle and verify
 
-Empty attempts, phase-transition observations, tenant probes or fixture side-effect
-journals are evidence gaps, including on smoke runs. They produce `INCONCLUSIVE`,
-and the corresponding check does not print `PASS`. The transition scan reads this
-run's revision-scoped audit facts before looking for terminal regressions. The
-fixture exposes an append-only side-effect journal independently of its dedupe
-set; a broken dedupe guard can therefore produce duplicate observations. Only
-entries carrying this run's generated case IDs count, and fixture restart loses
-this in-memory evidence rather than proving correctness.
-
-Faults use the engine's same virtual phase clock under dynamic pacing. The run
-persists its planned faults, cancels and joins the injector (including bounded
-restoration) before writing final stats, and checks that every planned fault has
-one successful injection/restore record. An injection failure or absent record is
-`INCONCLUSIVE`; a readiness recovery timeout is `FAIL`, while a canceled
-observation remains `INCONCLUSIVE`.
-
-Recovery checks require the component's specific business result:
-
-- Operator and Admin API faults require a separate canary's accepted identity,
-  exact source/revision, ledger run, owned Kubernetes objects and journal effect.
-  Admin replay must return the same accepted identity.
-- PostgreSQL faults additionally require an original in-flight canary whose
-  owned Job completes during the observed outage, subsequent terminal persistence,
-  and a new canary after recovery.
-- Scheduler faults require a real canary SLI event and a newly evaluated SLO
-  budget with the expected calculation. Job success alone is insufficient.
-
-Fixture-assigned, versioned checkpoints bind fault, restoration, readiness,
-submission and observation to the same run, fault and canary nonce. Independent
-database clock samples constrain cross-source timestamps; ambiguous timing
-remains `INCONCLUSIVE`. Verification rereads source facts rather than accepting
-`business_recovered` or free-text claims in stats. Missing or unsupported evidence
-cannot enable `PASS`. Lease-loss and arbitrary network-partition behavior are
-outside these four fault types.
-
-Recovery deadlines use wall time while scheduled fault offsets use the engine's
-virtual phase clock. Normal load completion permits bounded probe draining;
-user cancellation stops observations while restoration retains its own bounded
-cleanup deadline. Installed fault tests of the candidate and a complete standard
-run remain necessary before claiming qualification.
-
-The last Jobs may still be executing when `run` returns; verification reports
-that incomplete evidence as `INCONCLUSIVE`. With `ORBITJOB_DSN` exported as above,
-sample the current run's projected ledger with:
+The last accepted Jobs can still be executing when the schedule ends. Sample
+the current run's projected ledger:
 
 ```bash
 go run ./scripts/loadtest settle --run-id "$RUN_ID"
 ```
 
-This command performs one sample and prints only the nonterminal count on success;
-it does not wait. It loads `created-definitions.json` from `test/load/runs/$RUN_ID`
-(or `--run-root`), groups revisions by tenant, and reads each group in a transaction
-with transaction-local `app.tenant_id`, rolled back afterwards. Invalid or empty definitions,
-a tenant with no matching ledger observations, and database/transaction errors
-exit nonzero without printing a count. Connection details remain outside argv and
-raw driver errors are not logged. Each sample has a bounded database timeout.
+`settle` performs one bounded sample and prints a nonterminal count. It is not
+a waiting command. Failed/malformed samples are unknown, never zero. A tenant
+with no observed matching rows is an evidence gap. A zero sample does not
+establish that all CRs projected or no future cron occurrence can start; collect
+verification promptly while preserving the run's sources.
 
-`scripts/loadtest-ci.sh` polls this command up to 60 times, sleeping 15 seconds
-between nonzero or unknown samples; a failed command or malformed output is
-`unknown`, never zero. On exhaustion it warns and still runs the independent
-verifier to preserve the final missing-evidence verdict and report.
+Run the verifier with the original config:
 
-Settling is not qualification evidence by itself. It samples the ScheduledJob
-corpus's projected JobRun ledger, not unprojected CRs or Workflow completion.
-Cron definitions remain active after the generator finishes, so observe the
-run-scoped ledger and collect verification promptly. A zero sample is not a
-promise that no later occurrence can start. Empty sources stay inconclusive.
+```bash
+go run ./scripts/loadtest verify --run-id "$RUN_ID" --config "$CONFIG" \
+  --api-url "$ORBITJOB_API_URL" --fixture-url http://localhost:18081
+```
 
-### 6. Report
+The verifier reconciles generated definitions, revisions, tenant keys,
+namespaces, execution stats and accepted receipts before collecting evidence.
+It reads tenant-scoped database rows, JobRun identities, API isolation probes,
+fixture journal and fault-specific sources. Every accepted manual receipt needs
+exactly one corresponding manual ledger row; cron activity cannot fill that
+gap. It checks duplicate successful attempts, duplicate idempotent effects,
+terminal regression, expected terminal states and full JobRun identity.
+
+The fixture journal is independent of its dedupe set. Its boot identity and
+complete sequence interval must remain intact; a restart loses evidence rather
+than proving no duplicate effect. Fault checkpoints bind injection,
+restoration, readiness, submission and observation to the same run/fault/canary.
+Independent database clock samples bound timing uncertainty. Unsupported or
+missing sources cannot produce a PASS.
+
+## 6. Read and retain the result
 
 ```bash
 go run ./scripts/loadtest report --run-id "$RUN_ID"
 ```
 
-Writes `report.md` and `checksums.txt` into the run directory. A non-qualifying
-run says so on the first line:
+The command writes `report.md` and `checksums.txt` alongside `result.json`,
+`run-record.json` and `run-stats.json`. It rejects missing, corrupt or
+inconsistent artifact identity. Nonqualification reports begin with
+`NON-STANDARD RUN - NOT A RELEASE QUALIFICATION`.
 
-```
-NON-STANDARD RUN - NOT A RELEASE QUALIFICATION
-```
-
-Reporting requires readable `run-record.json`, `run-stats.json` and `result.json`
-with consistent run, qualification, profile, seed, start and source identities.
-Missing/corrupt artifacts stop report generation. A saved PASS also requires
-completed, reconciled execution stats and all required checks to be present and
-PASS; it cannot coexist with `completed=false` or missing execution identity.
-Docker CPU/memory values are
-labeled as configured requirements, not an observed allocation. The hosted job
-summary uses the exact attempted run directory recorded before setup; it never
-selects another run's newest report after an early failure.
-
-## Reading the output
-
-Run counts can exceed trigger counts. The smoke profile contains cron definitions
-that fire on their own schedule, before, during and after the phases the `run`
-command drives, and every occurrence is a ledger row. Compare the particular
-run's trigger counters with its revision-scoped database evidence; historical
-counts from a different architecture do not establish a current baseline.
-
-In the smoke profile the `failure` category is 220 of the 1200 definitions, so
-a substantial `Failed` count can be an expected test outcome rather than a system failure.
-
-### Scenario families
-
-A scenario family's name describes the workload behavior. Every
-family has a distinct workload body that implements that behavior, and
-a test fails if a family is added without one
-(`TestCurlFamiliesReachTheirOwnEndpoint`, `TestNonCurlFamiliesMatchTheirBody`).
-
-| Family | What it runs |
+| Verdict | Meaning |
 |---|---|
-| `sha256-json-document` | python, hashes a 128-element JSON document |
-| `sha256-text` | alpine, hashes the case id |
-| `select-one` | postgres, `SELECT 1` over a connection URI in the args |
-| `invalid-sql` | postgres, a statement that does not parse — fails |
-| `dns-resolution` | busybox, resolves the load PostgreSQL by DNS |
-| `service-account-token-absent` | busybox, succeeds only when the projected ServiceAccount token path is absent |
-| `forced-exit-nonzero`, `exit-nonzero-message` | a message then a non-zero exit — fails |
-| `cancel-while-running` | python, runs long enough for cancellation to arrive |
-| `plain-success` | python, the ordinary hash body |
-| `dns-lookup` | busybox, `nslookup` of the load PostgreSQL |
+| `PASS` | Required checks passed for this recorded run and scope; smoke/long remain nonqualification runs |
+| `FAIL` | A checked correctness/recovery condition failed, or a qualification run did not meet its minimum qualified-run count |
+| `INCONCLUSIVE` | Missing/incomplete evidence, rejected/skipped workload, truncation, in-flight runs, coverage gaps or unsupported recovery observations prevent the requested conclusion |
 
-`invalid-sql` appears in both `database` and `failure`: the same body, counted
-under each category's own total because the categories test different things
-around it — one is doing database work, the other is producing a failure.
+Qualification also requires every created definition to have observed runs and
+at least 10,000 qualified terminal runs with their required CR evidence. Smoke
+can leave some corpus definitions untriggered without failing its coverage
+rule; empty attempts, transitions, tenant probes or journal evidence still
+prevent a complete verdict.
 
-Operator-rendered Jobs set `automountServiceAccountToken: false`. The old
-`pods-list` family, which needed the operations Role, became the
-`dns-resolution` family above. `service-account-token-absent` directly checks
-that the standard projected token file does not exist, so the scenario proves
-the tokenless workload boundary instead of inferring it from an API failure.
+Run totals can exceed offered manual trigger counts because cron declarations
+run independently. Expected failure scenarios should end `Failed`; that count
+alone is not a product failure. Compare actual terminal outcomes with each
+scenario's declared expectation. Do not use an old report or a newer checkout
+to relabel historical execution source or incomplete evidence.
 
-The `curl` families reach the fixture at `deploy/load/fixture-configmap.yaml`,
-one endpoint each:
+The corpus includes JSON hashing, SQL success/invalid SQL, DNS, token absence,
+HTTP pagination/downloads, webhooks, retries, timeouts, TLS handshakes and
+explicit failure/cancellation. Rendered workload Pods disable projected
+ServiceAccount tokens. The HTTPS fixture uses a generated self-signed
+certificate and clients use `--insecure`; those cases test a handshake, not
+certificate-chain validation. Keep these limits with reported results.
 
-| Family | Endpoint | Behaviour |
-|---|---|---|
-| `paginated-api` | `/api/pages?page=1` | 200 |
-| `webhook-delivery` | `POST /webhook-origin` | 201, records an idempotency key |
-| `idempotent-webhook` | `POST /ledger` twice | 201 then `duplicate: true`, one ledger entry |
-| `file-download` | `/fixtures/json/events.json` | 200 |
-| `rate-limit-then-success` | `/api/rate-limit-then-success` | 429 twice, then 200 |
-| `server-error-then-success`, `retry-until-success` | `/api/fail-then-succeed` | 500 twice, then 200 |
-| `retry-exhausted` | `/api/always-fail` | 500 every time |
-| `slow-response-timeout` | `/api/slow` | holds the response for 30s |
-| `invalid-json-content-type` | `POST /api/require-json` | 415 unless `Content-Type: application/json` |
-| `tls-handshake` | `GET https://…:8443/healthz` | TLS handshake, no body |
-| `tls-json-body` | `GET https://…:8443/api/pages?page=1` | TLS handshake plus a body |
-| `fixture-json-download` | `/fixtures/json/events.json` | 200 |
+## Convenience commands
 
-The fixture answers HTTPS on 8443 with a self-signed certificate generated by
-`deploy/load/make-tls-cert.sh`. The clients pass `--insecure`, so the `tls-*`
-families prove a handshake completes, not that a chain validates.
+`scripts/loadtest-ci.sh smoke` or `standard` automates the local fixture,
+forwarding, reset, generation, prepare, trigger grants, run, settle, verify and
+report sequence. It resets all positively owned prior load tenants before
+starting, so use it only in the dedicated installation after preserving needed
+evidence. It accepts only those two profiles, not arbitrary config variants.
+Its settle loop samples up to 60 times at 15-second intervals, then still runs
+the independent verifier when the wait expires. It does not convert unknown
+settling into success.
 
-The fixture runs a single replica because its attempt counters and side-effect
-journal are process memory. Multiple replicas would split that state and make
-retry scenarios depend on which replica receives each request.
+`make loadtest-smoke` and `make loadtest-long` run preflight only.
+`make loadtest-full` runs standard preflight and generation, then requires
+manual review; it does not execute four-hour qualification.
 
-## Resetting
+## Reset and cleanup
+
+After retaining the report and required private artifacts, remove owned live
+load state with:
 
 ```bash
 go run ./scripts/loadtest reset --confirm
 ```
 
-Deletes only tenants with both a `load-` slug and the
-`orbitjob.io/managed-by=orbitjob-loadtest` metadata marker written by prepare.
-The dependent history, audit rows and SLI deduplication facts are removed
-before those tenants in one database transaction. Unmarked tenants, including
-older fixtures without ownership metadata, are preserved for explicit manual
-review. A name or an ID alone is not proof of ownership.
+Reset discovers labelled load namespaces, deletes them and waits for their
+workloads to stop before purging owned database state transactionally. Tenant
+ownership requires both the `load-` slug and the metadata marker
+`orbitjob.io/managed-by=orbitjob-loadtest`; names alone do not authorize deletion.
+Unmarked historical fixtures require manual review. Any namespace deletion or
+SQL failure stops the reset; do not force evidence finalizers to finish it.
 
-Reset first deletes the labelled load namespaces and waits for their workloads
-to stop, then purges the owned database rows. Shared fixture infrastructure and
-the `monitoring` namespace remain under their installation/removal commands.
+Reset does not remove shared fixtures, monitoring or local artifacts. It leaves
+Operator mapping entries for deleted namespaces; they no longer resolve live
+work there. A new run adds its own persisted tenants. Keep that fixture behavior
+separate from maintained production values.
 
-The operator deployment's namespace table keeps entries for the deleted
-namespaces. They are harmless — nothing is scheduled into a namespace that
-does not exist. Preparing the same unstarted run reuses its persisted tenant
-identities; a new run adds new mappings for its new tenants.
+Remove one run's local artifacts only when no longer needed:
 
-It does not touch `test/load/runs/`. Use `clean --run-id "$RUN_ID" --confirm`
-to remove only that run's local artifacts, or remove the directory manually when that storage is no longer required.
+```bash
+go run ./scripts/loadtest clean --run-id "$RUN_ID" --confirm
+```
+
+`clean` removes that run directory only. Stop only the forwards started for
+this run. Remove shared fixture manifests or the isolated cluster separately
+after reviewing ownership and preserving any needed execution evidence.

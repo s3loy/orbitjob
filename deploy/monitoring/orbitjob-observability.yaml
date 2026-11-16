@@ -94,11 +94,8 @@ spec:
       path: /metrics
       interval: 30s
 ---
-# Alert rules from the observability design (docs/superpowers/plans/
-# observability-design.md section 7), plus the admin-api 5xx alert that the
-# design marked as not-yet-expressible and which orbitjob_http_requests_total
-# now makes real. All metric names are from the audited catalog in
-# internal/platform/metrics or kube-state-metrics builtins.
+# Alert rules for metrics emitted by internal/platform/metrics and
+# kube-state-metrics. This manifest owns the installed rule definitions.
 #
 # jobrun_phase is a StateSet: every run carries one series per known phase,
 # value 1 on the current phase and 0 on the rest, so "currently in phase X" is

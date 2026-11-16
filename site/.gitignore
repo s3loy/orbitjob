@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.astro/
+src/content/docs/generated/
+src/content/docs/zh-cn/generated/
+src/generated/
+public/openapi.json
+public/zh-cn/openapi.json
+public/zh-cn/search-titles.json
+test-results/
+playwright-report/

@@ -5,9 +5,7 @@
 # referenced seven metric names with no producer after the dispatcher/worker
 # refactor.
 #
-# Implements the 17-panel spec in docs/superpowers/plans/observability-design.md
-# section 6 (compound spec rows are split into adjacent sub-panels). Query
-# discipline follows the shared-registry caveat in that document: counters are
+# This manifest owns the dashboard panels and queries. Counters are
 # summed across targets, gauges that can appear on several processes are pinned
 # to the producing job, and jobrun_phase uses value==1 for "currently in this
 # phase" because the StateSet keeps one series per known phase.

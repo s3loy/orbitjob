@@ -6,13 +6,6 @@ This page records implementation gaps and operating constraints.
 
 ## Current implementation gaps
 
-### Private authoring drafts have no persistent API
-
-Migration 0026 and the draft service define storage fields, validation, encryption
-and draft recovery primitives. No persistent Store adapter or HTTP routes connect
-them to the Admin API. The declared `RecoverDraft` policy actions do not establish
-an available save or recovery operation.
-
 ### Fault qualification requires complete installed recovery evidence
 
 The load harness prepares separate recovery canaries for Operator, Admin API,
@@ -46,7 +39,7 @@ may require manual isolation and a separately reviewed recovery procedure.
 New workload Pods retain container exit evidence until the Operator commits it.
 An Operator or database outage can therefore leave exited Pods and their Jobs
 present. Restore the compatible Operator and database before removing the
-installation; follow [the drain checks](../USAGE.md#74-upgrade-and-uninstall).
+installation; follow [the upgrade checks](operations/upgrading.md).
 Historical workloads without this protection do not gain missing evidence
 during upgrade.
 
@@ -77,29 +70,30 @@ retired plans cannot authorize another counter increment. Maintenance includes
 inactive sources and suspended tenants still in the Operator namespace mapping.
 Removing a tenant from that mapping also removes it from automatic maintenance.
 Preserve its data for explicit review. See
-[outcome recovery](database-setup.md#audit-permissions-and-outcome-recovery).
+[outcome recovery](database-setup.md#writer-cutover).
 
 ## Operational and compatibility constraints
 
+- **Long definition identities require migration 0028.** Older schemas restrict
+  the audit `resource_id` to 64 characters and can reject an otherwise valid
+  `namespace/name` during checked saves. The current migration widens that
+  column across existing partitions without truncating audit identities.
+  Follow the [database migration procedure](database-setup.md#migration-execution-and-compatibility)
+  before deploying the matching application.
+
 - **Account rollout requires installed acceptance.** The personal-account
   candidate includes migration 0027, session-origin configuration and the
-  out-of-band setup/recovery tool. It has not been deployed to the working kind
-  installation. PostgreSQL and HTTP checks do not
+  out-of-band setup/recovery tool. PostgreSQL and browser-fixture checks do not
   establish an upgraded installation. Preserve the original API-key and migration
   input channels, stop old writers and verify human sessions, existing automation
   and retained history after the coordinated cutover.
-- **The working development cluster still needs its maintenance window.** Native
+- **Existing installations require their own maintenance verification.** Native
   kind network-policy enforcement and a bounded collector filesystem were
-  exercised in a disposable cluster. The working installation's verified flags
+  exercised in a disposable cluster. An installation's verified flags
   must remain unset until its own traffic, mount, capacity and restart checks
   pass. Host backing-filesystem space must meet the 40-GiB prerequisite. Follow
   [local maintenance](local-maintenance.md) before scheduling the change.
-- **Publication matrices omit Admission.** The source chart enables the Admission
-  service, and the backend build list includes its image. The retained release
-  and prerelease workflows publish six components and omit `orbitjob-admission`.
-  Their published set cannot by itself install this source chart. Use reviewed
-  source-built images for all seven components; release qualification requires
-  a matching publication matrix and installed evidence.
+
 - **Settling observes the projected JobRun ledger.** The hosted runner now uses
   `loadtest settle`, with transaction-local tenant context and this run's recorded
   revision IDs. Missing observations or query errors remain unknown. A zero count
@@ -116,7 +110,7 @@ Preserve its data for explicit review. See
   Raw-directory and Helm-mounted SQL therefore are not interchangeable checksum
   channels for an existing ledger. Keep its original input channel and preserve
   both source/projected manifests; never rewrite recorded checksums. See
-  [database setup](database-setup.md#audit-permissions-and-outcome-recovery).
+  [database setup](database-setup.md#writer-cutover).
 - **Credential rotation is coordinated work.** Changing an installation Secret
   alone does not change PostgreSQL role passwords or the environment of running
   Pods. Follow the owner-init/upgrade workflow in [database setup](database-setup.md)
@@ -130,8 +124,11 @@ Preserve its data for explicit review. See
 - **Namespace onboarding is explicit.** Workload namespaces must be in
   `operator.namespaceTenants` and receive the matching RBAC. A new tenant row
   alone does not provision a namespace or expand operator authority.
-- **External work can repeat.** Job backoff and platform retries have at-least-once
-  effects. A successful trigger response acknowledges a run resource, not a
+- **External work can repeat.** Job backoff and platform retries can execute
+  workload code again and repeat external effects. Workloads must make repeated
+  effects safe through idempotency where needed. Work can also fail before
+  application code executes, so retries do not guarantee that a business effect
+  occurs. A successful trigger response acknowledges a run resource, not a
   completed workload or a ledger row already visible to queries.
 
 ## Live evidence still required

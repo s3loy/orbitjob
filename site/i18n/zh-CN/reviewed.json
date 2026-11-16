@@ -1,0 +1,178 @@
+{
+  "topics": {
+    "getting-started": {
+      "source": "docs/getting-started.md",
+      "englishSha256": "cd86a7e89e396ff3dfb0fb2cc79beb8c2e32a042c46064bfa448f89a7757ca13",
+      "chineseSha256": "2ddc65b48bec283f18352b3c196d982a71761334940dcf34185f8c97c1b1ec26"
+    },
+    "concepts/architecture": {
+      "source": "docs/architecture.md",
+      "englishSha256": "a489dc01647187800577f6385a8f068ccacf1d852821df75e69b9f57bccd8ec2",
+      "chineseSha256": "4af32ed1b779280b1bc025f0f9440eb61a7c9f3aabc94595e99886ff79e06762"
+    },
+    "concepts/execution-model": {
+      "source": "docs/concepts/execution-model.md",
+      "englishSha256": "a411383ddc9dd41c42d33d0368709b3b36a88218730130f54edd6d73cf199258",
+      "chineseSha256": "54e71b0605fba9370e98149d9cbbe64ee88af90769df027492592e3f1b57a0de"
+    },
+    "concepts/security": {
+      "source": "SECURITY.md",
+      "englishSha256": "7a10349b1750c4846068b4d75b81e19a28e0f4f90996ac0fb64c1d3de5f84010",
+      "chineseSha256": "e22b0597eb82835f81423a44ebfb51da8efc2c3717953a67981573f2da4f1382"
+    },
+    "tasks/manage-jobs": {
+      "source": "docs/tasks/manage-jobs.md",
+      "englishSha256": "3ed230baee4460ad3877bdb2182a6ad1ed27e1f3d77ff325a3b753e7d0e08d21",
+      "chineseSha256": "b2ad8a59f6a63346a3ec8873b3cedeb88f416713a49027942bd9d5cb787e67d3"
+    },
+    "tasks/trigger-and-observe": {
+      "source": "docs/tasks/trigger-and-observe.md",
+      "englishSha256": "c9d0160b1c0876eec469c96d07a5d824103e2304f4f381324c630384238523c1",
+      "chineseSha256": "9d00de26c44e63f4d87c46d9cc9d8b52f92ba1ddb0934a2e3199b9c14d9ff68f"
+    },
+    "tasks/cancel-a-run": {
+      "source": "docs/tasks/cancel-a-run.md",
+      "englishSha256": "32dee8fd8cc8f6a893f40680ba90f9434f4a54d7aca2cf1fb06b1e94b8f392f8",
+      "chineseSha256": "a4e63b4bd4ca14e8025352f0459376643ac8f66ba67387a8099dff0fb94f98ed"
+    },
+    "tasks/read-logs": {
+      "source": "docs/tasks/read-logs.md",
+      "englishSha256": "6a0586edab71f6f18548b5c9c408eed65699610ebf190018d0c1a3cfc5a1bc78",
+      "chineseSha256": "c2f4af2918f661479a06f36ff0f59469fbea847cfa12e336bb2cc386999a5e04"
+    },
+    "tasks/manage-access": {
+      "source": "docs/tasks/manage-access.md",
+      "englishSha256": "34ace3e8c318178acea2d971427c6f4e3119150505cc01d568363ecaa18b23ea",
+      "chineseSha256": "f1668eaeb5c2da3a3fa8aa3048a789fe202a0a3ed94e1d03a1c8179129eef0c4"
+    },
+    "tasks/call-api": {
+      "source": "docs/tasks/call-api.md",
+      "englishSha256": "98f6621f7870a62e34281fcbabf2d8482c6ea0bd7ae370c9b5e33c0f9f3670f3",
+      "chineseSha256": "1c172d117b9979d1104348194422c0218821060a5ed4130e3e016462973c0282"
+    },
+    "tasks/checks-and-slos": {
+      "source": "docs/tasks/checks-and-slos.md",
+      "englishSha256": "fbbe4ffbdf654cb6960119cedc4bfcd7852b26396f1aafe3145b6306c1744030",
+      "chineseSha256": "5fd22934969df50dd720e80bf4cbdaadb9a0dd3473f39a6b05ed64c5cc2247fb"
+    },
+    "tasks/functions-and-workflows": {
+      "source": "docs/tasks/functions-and-workflows.md",
+      "englishSha256": "4aee7cb54eca937946fb28ac6ee43e4bb132f331c7575200b1a7567521320a60",
+      "chineseSha256": "65c45bf706f1e8aed6a12f79cd2468688c5890665aae83c2c6ff61c7cb39a06d"
+    },
+    "tutorials/first-job": {
+      "source": "docs/tutorials/first-job.md",
+      "englishSha256": "a0c4eb0eb6088f01e394284b05bee6170c51a0d5c411e7c4b4f4dae9fe67978f",
+      "chineseSha256": "385f22fc950be90156b24288df0685be47c19be218b409cfeecd35198189dd15"
+    },
+    "reference/cli": {
+      "source": "docs/cli.md",
+      "englishSha256": "4add49b8ff10bfb730f9d7c7c1bf206672b9de1235abecb3082172d6f3107457",
+      "chineseSha256": "4b3d6884e610f01904e0a2543d4ad90ca60d69651521ee101ed882f41634a593"
+    },
+    "reference/database": {
+      "source": "docs/database-setup.md",
+      "englishSha256": "4fa2a6940d3ece5d7efbdbfb40f6642ca8eb36752c6c1d221af91d2f677b1bc5",
+      "chineseSha256": "a3c4939771348246c4c89cad0696e70a4be1b7497c2e4860de5460365a1e90d0"
+    },
+    "reference/execution-logs": {
+      "source": "docs/execution-logs.md",
+      "englishSha256": "7dfdb9ead349941f89f8debf0ebb683d6a9dba8d7421d136cc2af6c2999db6af",
+      "chineseSha256": "0c9be7e18076590331a2bc16b340084d7921e79c035cc86a7e00db5afae5e694"
+    },
+    "reference/configuration": {
+      "source": "docs/reference/configuration.md",
+      "englishSha256": "020002d1ea4eddfe7866a222b074bfb97aa5d1b2bdf36ea457f6806c01b7ca7d",
+      "chineseSha256": "8906ac33db02d255dd176ad6939cfcac301d82d08befea17a905c77b5f57d77c"
+    },
+    "reference/http-conventions": {
+      "source": "docs/reference/http-conventions.md",
+      "englishSha256": "252a0282a75ce9d4ef899426cc752ddd95041862106e80f8fa68807e251036d9",
+      "chineseSha256": "3defda3d6e0e1c46144349afd9a1860aa0d195dc85c877d3571317b362b4d4e4"
+    },
+    "reference/access-policies": {
+      "source": "docs/reference/access-policies.md",
+      "englishSha256": "8a6206a1a715580a52f2d67834461ee36943fba324f3ff952089b1192e379354",
+      "chineseSha256": "81441bb84c2d2688eca91f4fb39268ebfa328fbabcc32cbe34c8d8c8ad1bc222"
+    },
+    "reference/workload-resources": {
+      "source": "docs/reference/workload-resources.md",
+      "englishSha256": "27e0a81fc015ba7a7fb3f02f8c06825d2a968e79692f5889ebdf1fb622264c5e",
+      "chineseSha256": "a4fe26a94341c04e496faab4b79dac3c3e1f2a13ef01a857142fbf3acb778829"
+    },
+    "setup/prerequisites": {
+      "source": "docs/setup/prerequisites.md",
+      "englishSha256": "01e1649461aaa190ce7661c6cd747351963ba8188a2679494ac879bc82949f8f",
+      "chineseSha256": "eacb4f2da773f2d6efeebd455ae7514e983f0ff48f98bac12208a43d31643c33"
+    },
+    "setup/installation": {
+      "source": "docs/setup/installation.md",
+      "englishSha256": "cb11f6483119236e211cd1be6a8100f26566369a7bc5ac071c4be1a1a74709f6",
+      "chineseSha256": "cd75065c5361e58b59c972f87e82093a740159b0fe05cccd576f05939816f4ad"
+    },
+    "operations/accounts": {
+      "source": "docs/accounts.md",
+      "englishSha256": "06162f2f2f0ae3761c3cb7bf06344de63f99f4f37f78fc541a8db6451e8a9831",
+      "chineseSha256": "65b98cc5180868a0a800bcbe4108a56e969f9b35d40d4d916d82e822a2ea9e73"
+    },
+    "operations/upgrading": {
+      "source": "docs/operations/upgrading.md",
+      "englishSha256": "7284ddabb66c390c95e01eefd8b6b5621098ab942dd16bcd6ea8c3535bef3ea0",
+      "chineseSha256": "2bcb5c541256c3d24d0cc89078e043b16b14f2d854597f70f2dc1b22e253a7d7"
+    },
+    "operations/backup-and-recovery": {
+      "source": "docs/operations/backup-and-recovery.md",
+      "englishSha256": "526921fd8d3d72e30411d1917e9ad37b154689cc6e7667d970b8774bc6b9c4a6",
+      "chineseSha256": "08d774c2f30c39485a616f10adedf5e1bbcd0410e6721dbd19e484f274077e7f"
+    },
+    "operations/monitoring": {
+      "source": "docs/operations/monitoring.md",
+      "englishSha256": "4080be81afa668c404053357b3e56ec87b0e98dc33930c65bd74db2183d7d330",
+      "chineseSha256": "bfaa0e01c6153ef121b1b53af4da44966c84a73e4831b57519a53389c180f80e"
+    },
+    "operations/troubleshooting": {
+      "source": "docs/operations/troubleshooting.md",
+      "englishSha256": "53df6a73345f8148885edb3190ebcbabaac2ecc43271fb1f786423f0f835a8c7",
+      "chineseSha256": "c94a10f230e862a04d851ef2f20f43955f62606f39b37ba8bc5005e7890870ed"
+    },
+    "operations/limitations": {
+      "source": "docs/known-issues.md",
+      "englishSha256": "866564b4259b8488e8ec825bcf23acf5c88d8a9a18b4dcf162bd4dd73898ab6c",
+      "chineseSha256": "5edd6b462adca4ccd8d01350565280ad5e3fa2bd394309db7dea7ff0be501b9f"
+    },
+    "operations/maintenance": {
+      "source": "docs/local-maintenance.md",
+      "englishSha256": "52c13eccb7396c32246b0a7b14a2c8738bf2785112448209cf7a71bc56f1121a",
+      "chineseSha256": "5daafee35789ca9317ad905aa76974201c9b44ba38b7c1c19e60ef65d231332e"
+    },
+    "contribute/overview": {
+      "source": "CONTRIBUTING.md",
+      "englishSha256": "fe421816aa5104d2b116653ff5a914cbaa2c89ddb576c7b870b1182298140d47",
+      "chineseSha256": "cafc20d3c81e25c7c7d4df575a391bbf57aba15edcefdb65a32c55c142bc4372"
+    },
+    "contribute/local-development": {
+      "source": "docs/local-deployment.md",
+      "englishSha256": "6dbefe67c49d6baef9b1f68bc437b60daef01e15b1ee09e918c116cc4d4a5b4b",
+      "chineseSha256": "91783cf9b7fc6163dfbc8a5eb9cdb33da205cbea7cf5a0e92f7fe6117dbbe838"
+    },
+    "contribute/load-testing": {
+      "source": "docs/loadtest-guide.md",
+      "englishSha256": "09845a52b74306c237fcf76f8a658f0ca99afe10aafa454e9b98ee2ca4c4125e",
+      "chineseSha256": "8588f29a625eaa5febe47c93a66f3bd6d6cafb69be507df8bd109dff590ddd63"
+    },
+    "contribute/ci": {
+      "source": "docs/ci.md",
+      "englishSha256": "662d9aa0806d4fc3c344b779d08089bd3a1ae4c43d0ceb08b590123159871940",
+      "chineseSha256": "f2282e81a380efaf16e380ce4c0f8a8c1772b952994766a0c9ab27b62221917d"
+    },
+    "contribute/documentation": {
+      "source": "docs/project-site.md",
+      "englishSha256": "70a749a9e01a295604afe0e2a9ccb59c49dc8757d602a2a2a0b8322529165c17",
+      "chineseSha256": "a94fe476bcfc35ffd78a726cafabb487361135f11ba0b195807f84e03422bbf7"
+    }
+  },
+  "references": {
+    "api/openapi.yaml": "7616b15bc6f9c4166bf5c51340c9f84e1ddb4c8a2f603816134e7b94ddd48a82",
+    "site/i18n/zh-CN/api/current.json": "ede1a7b3cb05977edef0ef80a4adfc870796058c540f427bc068cb47ade3410f"
+  }
+}

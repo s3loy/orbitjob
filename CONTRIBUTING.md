@@ -1,4 +1,4 @@
-# Contribution Guide
+# Contribution guide
 
 Discuss major features or interface changes with the maintainer first, describing
 the problem scope, edge cases and verification plan. An Issue or PR can carry
@@ -12,9 +12,9 @@ breaking changes are always classified by a maintainer.
 
 ## Development environment
 
-- Go 1.27.3+ as required by [`go.mod`](go.mod); image build stages are in [`Dockerfile`](Dockerfile).
-- PostgreSQL 17 for integration tests: use the service image in [the Integration workflow](.github/workflows/integration.yml), on a disposable instance.
-- golangci-lint 2.15.0, pinned in [the Lint workflow](.github/workflows/lint.yml).
+- Go: use the version in [`go.mod`](go.mod); image build stages are in [`Dockerfile`](Dockerfile).
+- PostgreSQL for integration tests: use the service image in [the Integration workflow](.github/workflows/integration.yml), on a disposable instance.
+- golangci-lint: install the version pinned in [the Lint workflow](.github/workflows/lint.yml), rather than assuming the latest release matches CI.
 - Helm, kind and kubectl for chart or Kubernetes changes. The [Load Test workflow](.github/workflows/loadtest.yml) records its Helm/kind pins; [the local guide](docs/local-deployment.md) explains prerequisites and side effects.
 
 ```bash
@@ -55,6 +55,7 @@ go list -f '{{.ImportPath}} -> {{join .Imports " "}}' ./internal/core/... \
 
 No matches are expected; grep exits 1 when the output is empty.
 
+
 Submitted code must:
 
 - Use context-first APIs, with external dependencies injected through function variables
@@ -94,10 +95,10 @@ Changes touching roles, RLS, ownership or `SECURITY DEFINER` functions must stat
 - why `SECURITY DEFINER` instead of a tenant-scoped query
 - whether rollback is reversible
 
-The [migration and compatibility requirements](docs/database-setup.md#migration-lineage-and-compatibility)
+The [migration and compatibility requirements](docs/database-setup.md#migration-execution-and-compatibility)
 require stopping older writers before migration/deployment. A Helm
 rolling upgrade alone does not implement that boundary. See
-[database setup](docs/database-setup.md#audit-permissions-and-outcome-recovery).
+[database setup](docs/database-setup.md#writer-cutover).
 
 ## Testing
 
@@ -146,6 +147,21 @@ reinstall paths, so use a disposable cluster. A cluster created by the script
 is removed on success and retained on failure; an existing cluster is retained.
 State in the PR whether it actually ran and against which checkout. Helm
 rendering and local tests do not prove a real installation or upgrade passed.
+
+### Frontend checks
+
+For `web/` changes, run `npm ci`, `npm run check`, `npm run format:check` and
+`npm run test:browser` in that directory. Package scripts and the lockfile own
+the frontend toolchain. See [frontend development](docs/local-deployment.md#change-check-and-redeploy)
+for the browser install and API proxy. Generated declarations follow
+`api/openapi.yaml`; `npm run generate` updates them and `types:check` detects
+drift. Demo/mocked HTTP browser evidence does not replace installed-cluster
+execution checks. Keep Go gates as well for API, routing or repository changes.
+The nested `web/go.mod` excludes npm dependencies from root Go package discovery.
+The real-cluster suite is prepared and run by `scripts/console-installed.py`, as documented in
+[installed Console verification](docs/local-deployment.md#isolated-installation-and-console-checks).
+It uses an explicit disposable kind kubeconfig and private credential file;
+traces/video are disabled to keep Authorization out of test recordings.
 
 ### Benchmarks
 
@@ -197,7 +213,7 @@ commit again.
 | ggshield | staged changes | GitGuardian detects a possible secret or the scan cannot complete |
 | go-fmt | staged `*.go` | `gofmt` rewrote a staged file (fixed; re-stage) |
 | go-vet | staged `*.go` | `go vet` flags a package containing staged files |
-| no-cjk | every commit | CJK characters appear outside `README.zh.md` |
+| no-cjk | every commit | CJK characters appear outside `README.zh.md` and `site/` |
 | no-artifacts | every commit | root binaries (`operator`, `orbitjob`), `smoke-test-results.md` or `bench.txt`/`bench-*.txt` are staged |
 | openapi-drift | `api/openapi.yaml`, `internal/admin/http/` or a domain `create_input.go` staged | `make openapi-check` reports spec drift |
 | chart-gate | `charts/` staged | `make helm-check` fails |
@@ -213,18 +229,17 @@ the specific exception; document any authorized bypass in the commit or PR.
 
 ## CI
 
-The [pipeline map](docs/ci.md) describes configured checks, outputs and their
-limits. PRs into `dev` run unit/race/coverage tests, the integration suites, lint,
-govulncheck, dependency review and builds of the Makefile's configured image
-targets for both release platforms without pushing. Benchmark comparison runs
-on PRs into `main`. Load tests are manually dispatched advisory operator evidence,
-not a required merge check.
-
-Release and prerelease workflows run their own quality gates and publication
-matrices. They currently omit the Admission image required by the source chart;
-a successful backend build does not establish a complete published installation.
-Installed migration, execution and recovery acceptance must identify the actual
-source and artifacts independently of those build results.
+The pipeline map — which workflow runs when, what each one proves, and where
+artifacts land — is `docs/ci.md`. On PRs into `dev`: unit/race/coverage, the
+integration suites, lint, govulncheck, dependency review, and a build of the
+configured component images for both release platforms (no push), plus the
+Console type, lint, format, unit, browser and build checks. Release and
+pre-release publication additionally require the shared verification workflow
+on the exact source revision, including disposable installation and complete
+real Console execution. The Makefile
+and release workflows define the component list. Benchmark comparison runs on
+PRs into `main`. Load tests are manually dispatched advisory operator evidence,
+never a required merge check.
 
 ## OpenAPI
 
@@ -239,22 +254,34 @@ Runtime documentation is at `GET /openapi.json`. If handler behavior temporarily
 
 ## Documentation
 
-Update affected documentation with the behavior change, in the same development
-unit. Documentation and code comments are written in English. Existing localized
-content is preserved; translation is a separate, explicitly requested task under
-`AGENTS.md`.
+Maintain the complete English topic affected by a behavior change. Check prose,
+commands, prerequisites, permissions and failure handling against the owning
+implementation. README introduces the project; [USAGE](USAGE.md) indexes tasks.
+Topic sources live under `docs/`, with security policy in `SECURITY.md`.
 
-- Project positioning and quick start: `README.md`; `README.zh.md` is an existing localized variant
-- Operating steps and curl examples: `USAGE.md`
-- Security boundaries: `SECURITY.md`
-- API schema: `api/openapi.yaml`
+The site maps explicit topic sources to structured routes. Follow the
+[documentation workflow](docs/project-site.md) for topic registration, source
+links, generated HTTP reference and browser checks. Run:
 
-Public documentation must be complete in the distributed source tree. Keep
-operational requirements in the maintained guides and verify local links against
-the files included in the release. Internal plans, decision records and raw
-verification output are not prerequisites for following a public procedure.
+```bash
+make openapi-check
+npm --prefix site run build
+npm --prefix site run test:browser
+```
 
-The README does not record the version roadmap. Roadmaps and architecture plans live in Issues, PRs or maintainer-designated design documents.
+Use the production artifact for reading and navigation checks. Execute affected
+installation, API or recovery procedures separately in the appropriate isolated
+environment; a successful site build does not establish operational correctness.
+Update the distributed workload-assistant package when its references change.
+
+Public procedures must work from the distributed source tree without internal
+plans, decision records or raw logs. Write documentation and comments in English.
+Maintain reviewed Chinese counterparts under `site/i18n/zh-CN/topics/` and the
+current API dictionary alongside English changes. Check semantic equivalence
+before updating the translation review baseline; hashes do not perform review.
+
+The README does not record the version roadmap. Requirements and current
+implementation/verification records retain their separate purposes.
 
 ## Commit format
 

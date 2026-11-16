@@ -1,0 +1,37 @@
+---
+import { uiLocale } from '../i18n';
+const { base, zh, prefix, link, t, counterpart } = uiLocale(Astro.url.pathname);
+const currentPath = Astro.url.pathname.replace(/\/$/, '');
+const links = [
+  { path: '', label: t('Documentation', '文档首页') },
+  { path: 'docs/tasks/call-api', label: t('Calling the API', 'API 调用指南') },
+  { path: 'docs/reference/http', label: t('Complete API reference', '完整 API 参考') },
+  { path: 'docs/concepts/architecture', label: t('Architecture', '架构设计') },
+];
+---
+<header class="site-header">
+  <a class="wordmark" href={link()} aria-label={t('OrbitJob documentation home', 'OrbitJob 文档首页')}>
+    <svg width="28" height="28" viewBox="0 0 32 32" fill="none" aria-hidden="true"><circle cx="16" cy="16" r="6" stroke="currentColor" stroke-width="2"/><ellipse cx="16" cy="16" rx="15" ry="9" transform="rotate(-35 16 16)" stroke="currentColor" stroke-width="1.5"/><circle cx="27" cy="8" r="3" fill="currentColor"/></svg>
+    OrbitJob
+  </a>
+  <nav aria-label={t('Documentation navigation', '文档导航')}>
+    {links.map(({ path, label }) => <a href={link(path)} aria-current={currentPath === `${prefix}${path ? `/${path}` : ''}` ? 'page' : undefined}>{label}</a>)}
+    <a href="https://github.com/s3loy/orbitjob">GitHub</a>
+    <a href={zh ? counterpart : Astro.url.pathname} lang="en" hreflang="en" aria-current={!zh ? 'page' : undefined} data-language-link>English</a>
+    <a href={zh ? Astro.url.pathname : counterpart} lang="zh-CN" hreflang="zh-CN" aria-current={zh ? 'page' : undefined} data-language-link>简体中文</a>
+  </nav>
+</header>
+<script>
+  document.querySelectorAll<HTMLAnchorElement>('[data-language-link]').forEach(link => {
+    const preserveLocation = () => {
+      const target = new URL(link.href);
+      target.search = location.search;
+      target.hash = location.hash;
+      link.href = target.href;
+    };
+    preserveLocation();
+    window.addEventListener('hashchange', preserveLocation);
+    // The schema viewer can replace history without emitting hashchange.
+    link.addEventListener('click', preserveLocation);
+  });
+</script>

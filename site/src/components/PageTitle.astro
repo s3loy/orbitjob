@@ -1,0 +1,21 @@
+---
+import DefaultPageTitle from '@astrojs/starlight/components/PageTitle.astro';
+import { groups, chineseGroups } from '../../scripts/guide-sources.mjs';
+import { uiLocale } from '../i18n';
+const { prefix, zh, t } = uiLocale(Astro.url.pathname);
+const parts = Astro.url.pathname.slice(prefix.length).split('/').filter(Boolean);
+const title = Astro.locals.starlightRoute.entry.data.title;
+const group = groups.find(group => group.id === parts[1]);
+const crumbs = [{ title: t('Documentation', '文档首页'), href: `${prefix}/` }];
+if (group && parts.length > 2) crumbs.push({ title: zh ? chineseGroups[group.id][0] : group.title, href: `${prefix}/docs/${group.id}/` });
+if (parts[1] === 'reference' && parts[2] === 'http' && parts.length > 3) crumbs.push({ title: 'HTTP API', href: `${prefix}/docs/reference/http/` });
+---
+{parts[0] === 'docs' && <nav class="breadcrumbs" aria-label={t('Breadcrumb', '面包屑导航')}><ol>{crumbs.map(crumb => <li><a href={crumb.href}>{crumb.title}</a><span aria-hidden="true">/</span></li>)}<li aria-current="page">{title}</li></ol></nav>}
+<DefaultPageTitle {...Astro.props} />
+<style>
+  .breadcrumbs { font-size: .85rem; color: var(--sl-color-gray-2); }
+  ol { display: flex; flex-wrap: wrap; gap: .4rem; padding: 0; margin: 0; list-style: none; }
+  li { display: inline-flex; align-items: baseline; gap: .4rem; }
+  a { color: var(--sl-color-text-accent); text-underline-offset: 3px; }
+  a:focus-visible { outline: 3px solid var(--sl-color-accent); outline-offset: 3px; }
+</style>

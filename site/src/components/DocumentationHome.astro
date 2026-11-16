@@ -1,0 +1,41 @@
+---
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import { groups, chineseGroups } from '../../scripts/guide-sources.mjs';
+import { uiLocale } from '../i18n';
+const { base, prefix, zh, t } = uiLocale(Astro.url.pathname);
+const link = (route: string) => `${prefix}/docs/${route}/`;
+const starts = [
+  { title: 'Use an existing installation', href: 'getting-started', text: 'Sign in to a workspace, select a task and follow one execution to its outcome.', action: 'Start using OrbitJob' },
+  { title: 'Install OrbitJob', href: 'setup/prerequisites', text: 'Prepare Kubernetes, PostgreSQL and storage, then install matching components.', action: 'Plan your installation' },
+  { title: 'Integrate with the API', href: 'tasks/call-api', text: 'Check access, submit a request safely and find the resulting execution.', action: 'Make an API call' },
+  { title: 'Understand execution', href: 'concepts/execution-model', text: 'Learn how definitions, revisions, runs and attempts relate, including retries and uncertainty.', action: 'Read the execution model' },
+];
+if (zh) {
+  const translated = [
+    ['使用已有安装', '登录工作区，选择作业，并跟踪一次执行直到结果确认。', '开始使用 OrbitJob'],
+    ['安装 OrbitJob', '准备 Kubernetes、PostgreSQL 和存储，再安装版本一致的组件。', '规划安装'],
+    ['调用 API', '核对访问权限，安全地提交请求，并找到对应的执行记录。', '发起 API 调用'],
+    ['理解执行行为', '了解定义、修订版本、执行和尝试之间的关系，以及重试和不确定状态。', '阅读执行模型'],
+  ];
+  starts.forEach((item, i) => { [item.title, item.text, item.action] = translated[i]; });
+}
+---
+<StarlightPage frontmatter={{ title: t('OrbitJob documentation', 'OrbitJob 文档'), description: t('Install, use and operate OrbitJob on Kubernetes.', '在 Kubernetes 上安装、使用和运维 OrbitJob。'), tableOfContents: false, prev: false, next: false }}>
+  <div class="documentation-home">
+    <p class="docs-lead">{t('OrbitJob manages scheduled and on-demand container tasks on Kubernetes. It records the definition revision, trigger, attempts and outcome of each execution, with access controls and retained diagnostic output.', 'OrbitJob 在 Kubernetes 上管理定时和按需容器任务，记录每次执行的定义修订版本、触发方式、尝试与结果，并提供访问控制和诊断输出保留。')}</p>
+    <aside class="version-notice" aria-label={t('Documentation version', '文档版本')}><strong>{t('Current source', '当前源码')}</strong><p>{t('These guides describe development toward v0.3.0. Use images and chart files from the same source revision. Check ', '这些指南描述面向 v0.3.0 的开发中源码。请使用同一源码修订版本的镜像和 Chart。采用已发布制品前，请核对')}<a href="https://github.com/s3loy/orbitjob/blob/dev/CHANGELOG.md">{t('release availability', '发布情况')}</a>{t(' before using published artifacts.', '。')}</p></aside>
+    <section aria-labelledby="choose-a-path">
+      <h2 id="choose-a-path">{t('Choose a path', '选择使用路径')}</h2>
+      <div class="start-paths">{starts.map(item => <article><h3><a href={link(item.href)}>{item.title}</a></h3><p>{item.text}</p><a class="path-action" href={link(item.href)}>{item.action}</a></article>)}</div>
+    </section>
+    <section aria-labelledby="browse-documentation">
+      <h2 id="browse-documentation">{t('Browse documentation', '浏览文档')}</h2>
+      <dl class="topic-directory">{groups.map(group => <div><dt><a href={link(group.id)}>{zh ? chineseGroups[group.id][0] : group.title}</a></dt><dd>{zh ? chineseGroups[group.id][1] : group.description}</dd></div>)}</dl>
+    </section>
+    <section aria-labelledby="common-tasks">
+      <h2 id="common-tasks">{t('Common tasks', '常见任务')}</h2>
+      <ul class="common-tasks"><li><a href={link('tasks/manage-jobs')}>{t('Create or update a job', '创建或更新作业')}</a></li><li><a href={link('tasks/trigger-and-observe')}>{t('Trigger a run and inspect its result', '触发执行并检查结果')}</a></li><li><a href={link('tasks/read-logs')}>{t('Read execution logs', '读取执行日志')}</a></li><li><a href={link('tasks/cancel-a-run')}>{t('Cancel an execution', '取消执行')}</a></li><li><a href={link('operations/accounts')}>{t('Set up accounts and workspace access', '设置账户和工作区访问')}</a></li><li><a href={link('operations/troubleshooting')}>{t('Troubleshoot an installation', '排查安装环境故障')}</a></li></ul>
+    </section>
+    <p class="docs-footnote">{t("Use your installation's Console or API to execute work. This documentation site accepts no installation credentials.", '请通过实际安装的 Console 或 API 执行任务。本文档站不接收安装环境的凭据。')} <a href={`${prefix}/docs/reference/http/`}>{t('HTTP API reference', 'HTTP API 参考')}</a> · <a href={`${base}/openapi.json`} download>{t('Download OpenAPI', '下载原始 OpenAPI')}</a></p>
+  </div>
+</StarlightPage>

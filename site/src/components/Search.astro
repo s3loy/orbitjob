@@ -1,0 +1,114 @@
+---
+import DefaultSearch from '@astrojs/starlight/components/Search.astro';
+const chinese = Astro.locals.starlightRoute.lang.toLowerCase().startsWith('zh');
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const chineseLabels = {
+  language: 'zh-CN',
+  placeholder: '搜索',
+  clear_search: '清除',
+  load_more: '加载更多结果',
+  search_label: '站内搜索',
+  filters_label: '筛选',
+  zero_results: '未找到 [SEARCH_TERM] 的相关结果',
+  many_results: '找到 [COUNT] 个 [SEARCH_TERM] 的相关结果',
+  one_result: '找到 [COUNT] 个 [SEARCH_TERM] 的相关结果',
+  total_zero_results: '无结果',
+  total_one_result: '[COUNT] 个结果',
+  total_many_results: '[COUNT] 个结果',
+  alt_search: '未找到 [SEARCH_TERM] 的相关结果。改为显示 [DIFFERENT_TERM] 的结果',
+  search_suggestion: '未找到 [SEARCH_TERM] 的相关结果。请尝试以下搜索。',
+  searching: '正在搜索 [SEARCH_TERM]…',
+  results_label: '搜索结果',
+  keyboard_navigate: '导航',
+  keyboard_select: '选择',
+  keyboard_clear: '清除',
+  keyboard_close: '关闭',
+  keyboard_search: '搜索',
+  error_search: '搜索失败',
+  filter_selected_one: '已选择 [COUNT] 个',
+  filter_selected_many: '已选择 [COUNT] 个',
+  input_hint: '输入时将显示结果',
+  loading: '加载中',
+};
+---
+<orbitjob-search-focus data-title-index={chinese ? `${base}/zh-cn/search-titles.json` : undefined}>
+  <DefaultSearch {...Astro.props} />
+  {chinese && <script is:inline define:vars={{ chineseLabels }}>
+    // Set the documented Pagefind translation overrides before the upstream
+    // custom element initializes its lazy UI.
+    (() => {
+      const search = document.currentScript?.closest('orbitjob-search-focus')?.querySelector('site-search');
+      if (search) search.dataset.translations = JSON.stringify({ ...JSON.parse(search.dataset.translations || '{}'), ...chineseLabels });
+    })();
+  </script>}
+</orbitjob-search-focus>
+<script>
+  import { supplementChineseTitles } from './search-titles';
+  // Pagefind loads on idle. A dialog opened before its input exists needs one
+  // deferred focus, unless the user has moved focus or closed the dialog.
+  class OrbitJobSearchFocus extends HTMLElement {
+    private dispose?: () => void;
+
+    connectedCallback() {
+      if (this.dispose) return;
+      const dialog = this.querySelector('dialog');
+      if (!dialog) return;
+      const disposeTitles = supplementChineseTitles(this);
+      let inputObserver: MutationObserver | undefined;
+      let focusAtOpen: Element | null = null;
+      const stopWaiting = () => {
+        inputObserver?.disconnect();
+        inputObserver = undefined;
+        document.removeEventListener('focusin', onFocusChange, true);
+      };
+      const onFocusChange = (event: FocusEvent) => {
+        if (event.target !== focusAtOpen) stopWaiting();
+      };
+      const focusWhenReady = () => {
+        if (!dialog.open || document.activeElement !== focusAtOpen) {
+          stopWaiting();
+          return true;
+        }
+        const input = dialog.querySelector<HTMLInputElement>('input');
+        if (!input) return false;
+        stopWaiting();
+        input.focus();
+        return true;
+      };
+      const onOpenChange = () => {
+        stopWaiting();
+        if (!dialog.open) return;
+        focusAtOpen = document.activeElement;
+        if (focusWhenReady()) return;
+        inputObserver = new MutationObserver(focusWhenReady);
+        inputObserver.observe(dialog, { childList: true, subtree: true });
+        document.addEventListener('focusin', onFocusChange, true);
+      };
+      const openObserver = new MutationObserver(onOpenChange);
+      openObserver.observe(dialog, { attributes: true, attributeFilter: ['open'] });
+      dialog.addEventListener('close', stopWaiting);
+      this.dispose = () => {
+        disposeTitles();
+        stopWaiting();
+        openObserver.disconnect();
+        dialog.removeEventListener('close', stopWaiting);
+      };
+    }
+
+    disconnectedCallback() {
+      this.dispose?.();
+      this.dispose = undefined;
+    }
+  }
+  if (!customElements.get('orbitjob-search-focus')) customElements.define('orbitjob-search-focus', OrbitJobSearchFocus);
+</script>
+<style>
+  orbitjob-search-focus { display: contents; }
+  :global(.title-search-fallback) { padding: 1rem 1.5rem; }
+  :global(.title-search-fallback h2) { margin: 0 0 .75rem; font-size: 1rem; }
+  :global(.title-search-fallback ul) { list-style: none; padding: 0; margin: 0; }
+  :global(.title-search-fallback li + li) { margin-top: .75rem; }
+  :global(.title-search-fallback a) { color: var(--sl-color-text-accent); text-underline-offset: 3px; }
+  :global(.title-search-fallback a:focus-visible) { outline: 3px solid var(--sl-color-accent); outline-offset: 4px; }
+  :global(.pagefind-ui__message[hidden]) { display: none !important; }
+</style>

@@ -21,9 +21,8 @@ type ScheduledJobSpec struct {
 	Suspend           bool              `json:"suspend,omitempty"`
 	ConcurrencyPolicy ConcurrencyPolicy `json:"concurrencyPolicy,omitempty"`
 	MisfirePolicy     MisfirePolicy     `json:"misfirePolicy,omitempty"`
-	// TimeoutSeconds is the default deadline for every run of this definition.
-	// The scheduler copies it into each JobRun so a run's own spec stays
-	// authoritative even after the definition is edited.
+	// TimeoutSeconds is the per-attempt Kubernetes Job deadline. The scheduler
+	// copies it into each JobRun, preserving the accepted value after edits.
 	TimeoutSeconds int32           `json:"timeoutSeconds,omitempty"`
 	JobTemplate    JobTemplateSpec `json:"jobTemplate"`
 	RetryPolicy    RetryPolicy     `json:"retryPolicy,omitempty"`
@@ -98,8 +97,8 @@ type JobRunSpec struct {
 	// writer.
 	Actor         string `json:"actor"`
 	OccurrenceKey string `json:"occurrenceKey"`
-	// TimeoutSeconds bounds this run. The platform sets it on the Kubernetes
-	// Job as activeDeadlineSeconds, so enforcement survives an operator outage.
+	// TimeoutSeconds applies to each attempt's Kubernetes Job as
+	// activeDeadlineSeconds. Multiple attempts can exceed this duration in total.
 	TimeoutSeconds int32 `json:"timeoutSeconds,omitempty"`
 	// CancelRequested is the user's stop intent. It is a request, not a fact:
 	// the run only reaches Canceled once the Kubernetes Job is observed gone.

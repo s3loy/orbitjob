@@ -35,4 +35,4 @@ body:
     id: compatibility
     attributes:
       label: Compatibility and migration
-      description: Call out API, schema, chart, or operational compatibility concerns.
+      description: Describe API, schema, chart, or operational compatibility concerns.
