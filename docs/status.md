@@ -1,7 +1,7 @@
 # Project status
 
-This page describes the backend capabilities in the current source. It does not
-establish deployment or release acceptance. Release availability is recorded in the
+Implementation inventory checked against the current source on 2026-11-16. This page describes the repository's
+current capabilities. Release availability is recorded in the
 [Changelog](../CHANGELOG.md); test results and their scope are maintained in
 [verification](verification.md).
 
@@ -13,11 +13,13 @@ establish deployment or release acceptance. Release availability is recorded in 
 | Workflows | WorkflowJob DAGs, automatic and manual starts, dependency conditions, failure policies and cancellation fan-out |
 | Functions | Versioned definition management, invocation, active revision synchronization and invocation history |
 | Reliability | Container-based HTTP checks, supported status/duration SLI criteria, SLO windows, error budgets and burn alerts |
-| Administration | Personal accounts, workspace memberships, revocable HTTP sessions, API keys, explicit policy grants, resource groups and authorized workspace discovery |
+| Administration | Personal accounts, workspace memberships, revocable Console sessions, API keys, explicit policy grants, resource groups and authorized workspace discovery |
 | Personal accounts | Invite-only accounts, password authentication, revocable browser sessions, explicit workspace memberships and installation-administrator recovery |
+| Console | Same-origin management UI with guided task templates, Job runtime presets, configuration reuse, schedule generation and live draft explanations; guided Workflow authoring, Function management, execution history, retained logs and Administration |
 | Execution logs | Bounded stdout/stderr and lifecycle evidence retained independently of Job, Pod and run-resource cleanup; authorized reading and audited deletion |
+| Execution policy | Version 1 pins accepted CPU/memory/ephemeral-storage resources and requires retry-safety declaration before repeated execution |
 | Interfaces | Admin HTTP API, generated OpenAPI, Kubernetes CRDs and CLI |
-| Delivery | Helm installation with an internal Admin Service, source builds and development-cluster tooling |
+| Delivery | Helm installation with configurable Service exposure and optional same-origin Ingress, source builds and development-cluster tooling |
 | Maintenance | Bounded tenant-scoped SLI replay-detail retirement, ledger-based execution-isolation inventory, and fault-recovery canaries with independent evidence checks |
 
 The [architecture](architecture.md) defines component responsibilities and
@@ -53,36 +55,39 @@ a definite evidence gap remains isolated.
 Operator singleton work uses client-go Lease sessions. Source admission uses
 transaction-scoped PostgreSQL locks shared with revision and lifecycle updates.
 Leadership coordinates work; it does not provide universal fencing across
-PostgreSQL and Kubernetes. External workload effects are at least once, so
-workloads must provide idempotency where repeated effects are unsafe.
+PostgreSQL and Kubernetes. Job backoff and platform retries can repeat external
+workload effects; workloads must provide idempotency where repeated effects are
+unsafe. Execution can fail before application code runs, so the platform does
+not guarantee that a business effect occurs.
 
 ## Compatibility and operations
 
 Use the chart and environment examples for configuration, the migration files
 for database schema, and OpenAPI for HTTP contracts. The
-[deployment guide](local-deployment.md) and [database guide](database-setup.md)
+[installation guide](setup/installation.md) and [database guide](database-setup.md)
 define installation, credentials and migration procedures.
 
-Personal accounts require migration 0027 and its matching Admin image.
+Personal Console accounts require migration 0027 and its matching Admin image.
 Operators issue single-use setup or recovery links; ordinary users join through
 workspace invitations and sign in with their own accounts. Remembered sessions
 expire after seven days. Existing API keys retain their automation semantics and
 do not become personal accounts. See [account setup and access](accounts.md).
 
-The backend Admin image contains the account API and identity tool without a
-compiled Console bundle. `/console/` returns 503 when assets are absent; API
-routes remain available. The chart exposes Admin through an internal ClusterIP
-Service on port 8080. Administrators provide any external HTTPS proxy, routing
-and certificates. See [installation access](../USAGE.md#72-first-install).
+The installed Console follows the installation's IP or domain and port. Optional
+Ingress routes the Console, API and schema through one origin and can reference
+an existing TLS Secret. The chart does not install an ingress controller or
+provision certificates. See [installation access](setup/installation.md)
+for external access and the [verification record](verification.md) for tested
+origin and upgrade scenarios.
 
 Older execution writers must stop before the recovery and resource-identity
 migration cutover. Preserve recorded migration checksums and the installation's
 migration input channel. The database and log archive require durable storage;
 resource cleanup must preserve their data unless deletion is explicitly intended.
-The personal-account candidate adds migration 0027. Its installed cutover and
-the existing development cluster's network/storage maintenance follow the
-[maintenance procedure](local-maintenance.md); repository implementation does not
-establish completion of that window.
+Migration 0027 introduces personal accounts. A working installation's account,
+network-policy and storage changes require its own maintenance and verification;
+this source inventory does not establish deployment of those changes. Follow the
+[maintenance procedure](local-maintenance.md).
 
 ## Remaining limitations
 
@@ -90,11 +95,7 @@ Unknown execution can retain a concurrency slot indefinitely when termination
 cannot be proven. SLI retirement preserves incomplete plans and queryable missing
 evidence; it covers tenants still assigned to the Operator. Missing timestamps can
 prevent automatic retirement.
-
-Private authoring drafts currently have migration 0026 and service primitives
-for validation, encryption and recovery. A persistent Store adapter and HTTP
-routes are not implemented, so users cannot save or recover drafts through the
-API. Schedule-adherence SLI derivation, general workflow dataflow and cross-cluster
+Schedule-adherence SLI derivation, general workflow dataflow and cross-cluster
 scheduling are outside the implemented scope.
 
 The documented installation profile and controlled recovery tests do not define

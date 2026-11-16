@@ -1,214 +1,97 @@
-# OrbitJob — Product Requirements
+# OrbitJob product requirements
 
-| | |
-|---|---|
-| Status | Draft — awaiting s3's review |
-| Date | 2026-09-17 |
-| Supersedes | `docs/superpowers/PRD-OrbitJob-Platform.md` (2026-07-12). That document described a much larger product — Workflow, Serverless, cross-cluster scheduling — and is the source of the "Kubernetes-first, deliver everything" identity this one narrows. |
-| Decisions | Product shape settled by s3 on 2026-09-17: open-source product, one execution path (Kubernetes), checks/SLI/SLO kept as a differentiator. Amended by s3 on 2026-09-18: Functions and Workflows are approved in (designs at `docs/superpowers/plans/serverless-design.md` and `docs/superpowers/plans/workflow-design.md`; implementation in flight — the schema migrations are in the tree, the API surface is not). Amended by s3 on 2026-09-19: the Functions and Workflows implementation landed the same day it was approved — the schema migrations, the workflow CRDs and the HTTP surface (`/api/v1/functions/*`, `/api/v1/workflows/*` in `api/openapi.yaml`) are in the tree. |
+OrbitJob provides task scheduling, execution management and reliability
+monitoring for teams operating tenant workloads on Kubernetes. This document
+defines product scope and acceptance requirements. An implementation or test result
+does not by itself change a requirement. [Project status](status.md)
+tracks implementation; [verification](verification.md) records test results.
 
-## 1. What OrbitJob is
+## Product and users
 
-A multi-tenant job scheduler for Kubernetes. Tenants declare scheduled and
-manual work as Custom Resources; an operator projects each declaration into a
-Kubernetes Job; PostgreSQL holds the transaction state — who ran, when, with
-what outcome, and what was retried.
+Platform teams need to declare work, control access, inspect attempts and
+outcomes, retain diagnostic output and evaluate service objectives. Operators
+need to identify who requested a run, which revision executed and why an
+execution succeeded, failed or remains uncertain.
 
-It also does something schedulers usually do not: it records service level
-indicators, evaluates SLOs against them, and reports error budgets and alerts
-from inside the scheduler rather than beside it.
+Kubernetes executes containers. PostgreSQL stores pinned definitions, execution
+facts, management state and derived SLO models. Application grants, database RLS
+and namespace RBAC enforce different parts of isolation; see
+[architecture](architecture.md) and [security](../SECURITY.md).
 
-## 2. Who uses it
+## Product scope
 
-Platform teams who run scheduled workloads for several internal tenants on
-Kubernetes, and who want tenant isolation enforced somewhere stronger than
-application code.
+- Same-origin Console, HTTP API and developer CLI for workload management and
+  operational inspection.
+- Tenant, API-key, policy and resource-group management with explicit grants,
+  delegation boundaries and tenant/group-scoped queries.
+- ScheduledJob cron/manual runs, concurrency and misfire policies, pinned
+  revisions, deadlines, retries, cancellation and run/attempt history.
+- Workflow DAGs with dependencies, conditional gating, timezone-aware automatic
+  schedules and cancellation across child executions.
+- Versioned container Functions with create/edit, pause/resume, parameterless
+  invocation and history.
+- API-managed HTTP checks executed as Jobs, SLI snapshots, SLO evaluation,
+  error budgets and burn alerts.
+- Bounded execution-log archives with retention, visible collection gaps,
+  independent read/delete permissions and audited cleanup.
+- Generated OpenAPI, Prometheus metrics, structured logs and Helm deployment.
 
-They are not data engineers building DAGs. There is no pipeline concept here,
-no data passing between steps, no backfill of a dependency graph.
+ScheduledJob and WorkflowJob definitions remain Kubernetes custom resources.
+Typed Admin API routes read, validate and apply them within configured tenant
+namespaces. Function definitions are managed through their dedicated API.
+Definition acceptance and asynchronous operator projection are separate states.
 
-## 3. The one execution path
+## Onboarding
 
-**Every tenant runs in Kubernetes mode. The legacy mode is removed, not kept as
-a compatibility path.**
+The [first-use guide](getting-started.md) guides a user through joining an existing installation and running an authorized job; authoring
+requires separate definition permissions. The [development guide](local-deployment.md)
+provisions a separate kind cluster, prepares PostgreSQL and credentials, builds
+the images and installs the chart. Existing clusters use Helm with an explicitly
+configured database and tenant namespace mapping.
+Installation duration depends on the environment and image-build cache.
 
-This resolves the dual-mode design that produced the largest share of the
-current defects: two state locations, a runtime switch, a writer epoch, and
-verification split across two shapes. After this change there is one
-declaration surface (the CRD), one state location (`job_run_control_plane` and
-its attempt table), and one thing to reason about per tenant.
+## Execution and ownership requirements
 
-Consequences that must be implemented, not assumed:
+External execution is at least once. Retries, ambiguous transport results and
+Kubernetes Job backoff can repeat workload effects. Workloads must make effects
+idempotent when repetition is unacceptable.
 
-- The operator reads the tenant's mode. Today it does not, and the runtime
-  switch therefore changes only the legacy half.
-- `control_plane_tenant_mode`, the writer epoch and the switch endpoint are
-  deleted rather than left half-wired.
-- Anything that currently reaches state through `job_instances` — the load
-  tool, the verifier, the admin API's instance endpoints — is rewritten against
-  the control-plane tables or removed.
+The Admin API writes management state and publishes desired state; the runtime
+owns execution facts. Before reporting cancellation complete, the operator must
+confirm that the owned workload stopped. Missing resources alone cannot prove
+termination. Unknown executions retain their concurrency slot and block
+new dependent workflow work.
 
-All three are done as of 2026-09-18, and they were done by deletion: the
-legacy half the bullets describe is gone outright, so there is no tenant mode
-left to read, `control_plane_tenant_mode`, the writer epoch and the switch
-endpoint have no trace in the tree, and `grep -rn "job_instances"
---include='*.go' internal cmd` matches only comments.
+Source admission must serialize concurrent requests with definition lifecycle
+changes. Replays return the original occurrence. Workflow parent stop must
+prevent new child execution. Terminal projection retries must preserve failures
+and avoid double-counting SLI events.
 
-## 4. What we are betting on
+Historical aggregates are preserved at the migration cutover. Automatic recovery
+covers post-cutover terminal transitions; missing historical projections require
+an offline assessment. Deduplication facts outlive ordinary run pruning. See
+[database upgrade requirements](database-setup.md#writer-cutover).
 
-Two properties, and only these two, are the reason someone would choose this
-over Kestra or Argo Workflows.
+## Acceptance requirements
 
-**4.1 Tenant isolation enforced by the database.** Not "we are multi-tenant" —
-that is table stakes — but "isolation holds even when a query forgets its
-tenant predicate, because the database refuses the row". Row level security,
-not application-level filtering. A competitor cannot copy this without
-changing where their state lives.
+Acceptance covers authorization and tenant isolation, transactional auditing,
+concurrent admission, creation and cancellation recovery, retained output,
+SLI/SLO calculations and installation behavior. Database boundaries require
+real PostgreSQL tests; Kubernetes behavior requires controlled cluster scenarios.
+Console workflows require browser checks against the applicable API profile.
 
-**4.2 SLIs, SLOs and error budgets inside the scheduler.** Elsewhere this is a
-second stack — Prometheus, Sloth, Grafana — wired to the first by hand. Here it
-is one system and one query surface.
+Each result records its source, environment and exercised behavior in
+[verification](verification.md). Missing observations remain unknown, and
+readiness alone does not establish business recovery.
 
-When this was written both were claims rather than properties. Section 8
-defines what makes them real, and its table records where each stands.
+## Deliberate limits and open work
 
-## 5. The five-minute path
+Cross-cluster scheduling, arbitrary workflow dataflow, a general integration
+marketplace, sub-millisecond scheduling and exactly-once external effects are
+outside the product scope. Workflow dependencies do not automatically pass task
+output to downstream tasks. Function invocation accepts no arbitrary payload.
 
-An open-source product is judged in its first five minutes. This is a hard
-requirement, and it is the constraint that decides what must exist:
-
-> One command brings up a working OrbitJob with no prerequisite beyond a
-> Kubernetes cluster and a container runtime. It opens a page. That page shows
-> the system running — tenants, schedules, runs, their states — and lets the
-> reader submit a job and watch it succeed.
-
-Today the path is one command (`bash scripts/quickstart.sh`), whose seven steps
-need Docker, kind, kubectl, helm, make, Go and netcat on the machine
-(`scripts/quickstart.sh:9`). It still depends on a Secret that only a separate
-helper creates (`make kind-db`) — the dependency is real, and it is now stated
-where it bites: `docs/local-deployment.md` step 2 says to run it before
-`helm install` and names the hook failure skipping it causes. It ends at a
-port-forward and a `curl`. There is no page at all: no templates, no embedded
-assets, no frontend of any kind in the repository.
-
-Making the sentence above true is a larger piece of work than any single defect
-in `docs/status.md`, and it is the one that decides adoption.
-
-## 6. Scope
-
-**In.** Tenant and API key management; cron and manual triggers; per-job
-concurrency and misfire policy; container job execution as a Kubernetes Job;
-retries with backoff, timeouts, cancellation; run history and attempt records;
-checks; SLIs, SLOs, budgets and alerts; authorization by explicit grant.
-
-**Out, deliberately.** Cross-cluster scheduling; dual authentication; storing
-per-attempt state, leases or logs in the CRD; anything that makes this a
-message queue or an event store.
-
-"Out" here means we will not build it and will not carry scaffolding for it.
-
-Workflow and Serverless were in this list when it was written. The previous PRD
-listed them as future versions; on 2026-09-17 that roadmap was withdrawn and
-both were out. On 2026-09-18 s3 approved both back in — Workflow as DAG
-execution on the run ledger, Functions as HTTP-invoked one-shot runs — with the
-designs at `docs/superpowers/plans/workflow-design.md` and
-`docs/superpowers/plans/serverless-design.md`. Implementation is landed as of
-2026-09-19: the schema migrations and the workflow CRDs are in the tree
-(`db/migrations/0004_functions.up.sql`, `0005_workflows.up.sql`), and the HTTP
-surface for both is live in `api/openapi.yaml` (`/api/v1/functions/*`,
-`/api/v1/workflows/*`). For what remains out, the original meaning holds.
-
-## 7. What is explicitly not a requirement
-
-- Exactly-once execution. The semantics are at-least-once; handlers must
-  tolerate duplicate invocation with a stable idempotency key.
-- Sub-millisecond scheduling.
-- Horizontal scale beyond what one PostgreSQL and one operator can express.
-- A plugin or integration ecosystem. Kestra ships 1900+ integrations; we are
-  not competing on that axis.
-
-## 8. Definition of done
-
-**None of these checks existed when the table was written (2026-09-17).** The
-first version of this table named six checks as if they were gates; every one
-of them was work to build. What follows is therefore a work list, not a
-scoreboard. Each row names the command that settles it, and the state column is
-dated, so a row is falsifiable from the moment it is written rather than from
-the moment it is finished. State as of 2026-09-18:
-
-| Property | The check that must exist | State on 2026-09-18 |
-|---|---|---|
-| Tenant isolation is real | `make integration` runs against a schema built from `db/migrations/`, not from `internal/platform/postgrestest/schema.sql` | Check exists and passes. `postgrestest/schema.sql` is deleted; the suite builds from the migrations, and partition RLS is asserted — `db/migrations/schema_security_integration_test.go`, `db/migrations/tenant_visibility_integration_test.go` (`TestPartitionScopingIsLoadBearing`) |
-| The five-minute path works | A timed job from a clean machine, one command to a running system with a page | Red. The path is one script (`scripts/quickstart.sh`) needing seven tools, and it ends at `curl`. No page exists in the repository |
-| One execution path | No route to run state other than the control-plane tables | Check exists and passes. `grep -rn "job_instances" --include='*.go' internal cmd` matches only comments |
-| SLIs and SLOs are a product, not a table | A run that overspends a budget produces an alert through the documented surface | Surface now exists — budget and alert endpoints in `api/openapi.yaml` (`/slos/{id}/budget`, `/slo-alerts`), and the scheduler's evaluation loop raises burn alerts (`cmd/scheduler/main.go`). Whether the original bar — an overspend demonstrated end to end — is met is not re-established here |
-| The instruments can fail | A negative test per gate, proving it goes red when it should | Fixed. `printf 'mode: set\n' > /tmp/c.out && bash scripts/check-coverage.sh /tmp/c.out` exits 1 because an empty profile carries no evidence; `scripts/check-coverage-gate_test.go` pins the red and green paths without hard-coding the repository's current package count. |
-| Nothing is half-wired | Every exported function reachable from a running process has a production caller, or is deleted | The named examples are gone or wired: the epoch fence is deleted with the legacy path, operator cancellation is implemented (`internal/operator/cancel.go`), the etcd stack is behind its opt-in gate (`ETCD_ENABLED`, `cmd/scheduler/main.go`). The property remains a standing rule |
-
-Two rules for this table, learned the hard way in this repository:
-
-1. **A row may not cite a plan or a document as its check.** ADR 0007's status
-   is accepted-but-not-yet-implemented. Citing it as proof that a
-   gate exists is how the previous version of this table came to be wrong.
-2. **A check that passes with no input is not a check.** If the source it reads
-   can be empty, the check must say so rather than report success. See
-   `docs/superpowers/adr/0008`.
-
-## 9. Where we are
-
-The gap between section 1 and the running system is the substance of
-`docs/status.md`. The three findings below bore most directly on this PRD when
-it was written; each carries its state as of 2026-09-18.
-
-- **The chosen execution path is the least verified.** The operator carried two
-  CRITICAL findings, could not be driven by the project's own load tool, and
-  the integration schema did not contain its tables — while the legacy path,
-  the one this PRD removes, was the only one that had completed an end-to-end
-  smoke run. **State:** the premise dissolved by deletion. The legacy path is
-  gone, the operator path is the only path, and the tooling now drives it end
-  to end: the load tool declares `ScheduledJob` custom resources and verifies
-  against `job_run_control_plane` and the JobRun CRs
-  (`scripts/loadtest/generate.go`, `scripts/loadtest/verify.go`), and the
-  integration suite builds its schema from `db/migrations/`.
-- **The isolation claim is unproven, and the one test that touches it tests a
-  different question.** The file this finding named
-  (`internal/core/store/postgres/scheduler_repository_rls_test.go`) built its
-  own ENABLE-and-FORCE policies on two legacy relations, and the shared test
-  database was built from a schema with no RLS at all. **State:** resolved. The
-  test file is deleted, `postgrestest/schema.sql` with it; the suite builds
-  from `db/migrations/` under the production ENABLE-only policies, and the
-  isolation tests are structural —
-  `db/migrations/tenant_visibility_integration_test.go` asserts every
-  tenant-owned table filters cross-tenant reads and that partition scoping is
-  load-bearing; `db/migrations/schema_security_integration_test.go` asserts
-  each partition carries its own RLS and policy.
-- **The product has no surface.** There is no page, no SDK, no CLI for users.
-  The API is the only way in, which means the five-minute path cannot currently
-  be written. **State:** still true.
-
-This section is a statement of position, not a plan. Its purpose is that the
-distance is not discovered later.
-
-## 10. Risks
-
-**We are deleting the only path that works.** That is a deliberate trade: two
-half-working paths have cost more than one working path would have. The
-mitigation was ordering — the end-to-end gate a prerequisite for deleting
-legacy, not a consequence of it — and as of 2026-09-18 the ordering held:
-legacy is deleted, and the Kubernetes path is the one the load tool, the
-integration suite and the smoke test all run against. What remains of this risk
-is the narrower one the load-test record still shows: beyond the smoke profile,
-the path's evidence is thin.
-
-**The five-minute path is the largest single item here**, larger than any
-defect, and it is the one nobody has started. If it slips, the product stays
-unusable regardless of how correct it becomes.
-
-## 11. Open questions
-
-- Which namespace does the operator watch, and how does a tenant get one? The
-  current answer is a hand-maintained namespace-to-tenant mapping passed as an
-  environment variable, which does not scale to an open-source adopter with
-  twenty tenants.
-- Is the five-minute path a Helm install, or a single binary for a laptop? The
-  answer decides whether "only a Kubernetes cluster" is honest.
+[Known issues](known-issues.md) tracks implementation gaps and operating
+constraints, including installed fault qualification, schedule-adherence SLI derivation
+and retirement conditions for deduplication facts. Namespace provisioning
+remains an explicit installation operation.
