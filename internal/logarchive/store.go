@@ -19,6 +19,7 @@ type Store struct {
 	root         *os.Root
 	lock         *os.File
 	limits       Limits
+	statfs       func(string, *syscall.Statfs_t) error
 	items        map[string]*Manifest
 	used         int64
 	metadata     int64
@@ -41,7 +42,7 @@ func Open(directory string, limits Limits) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{root: r, limits: limits, items: make(map[string]*Manifest), quarantined: make(map[string]string)}
+	s := &Store{root: r, limits: limits, statfs: syscall.Statfs, items: make(map[string]*Manifest), quarantined: make(map[string]string)}
 	if info, e := r.Lstat(".lock"); e == nil && !info.Mode().IsRegular() {
 		_ = r.Close()
 		return nil, fmt.Errorf("untrusted archive writer lock")
@@ -235,11 +236,12 @@ func (s *Store) roomLocked(need int64) bool {
 		return false
 	}
 	var st syscall.Statfs_t
-	if syscall.Statfs(s.root.Name(), &st) != nil {
+	if s.statfs(s.root.Name(), &st) != nil {
 		return false
 	}
 	available := int64(st.Bavail) * int64(st.Bsize)
-	return available-need >= s.limits.ReserveBytes && st.Ffree > 64
+	// A zero inode total means the filesystem does not report a finite count.
+	return available-need >= s.limits.ReserveBytes && (st.Files == 0 || st.Ffree > 64)
 }
 
 func (s *Store) atomicLocked(name string, data []byte) error {
