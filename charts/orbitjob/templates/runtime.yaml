@@ -96,9 +96,17 @@ kind: Service
 metadata:
   name: orbitjob-admin-api
   namespace: {{ .Release.Namespace }}
+  {{- with .Values.adminapi.service.annotations }}
+  annotations:
+{{ toYaml . | indent 4 }}
+  {{- end }}
 spec:
+  type: {{ .Values.adminapi.service.type }}
   selector: {app.kubernetes.io/name: orbitjob-admin-api}
   ports:
     - name: http
-      port: 8080
+      port: {{ .Values.adminapi.service.port }}
       targetPort: health
+      {{- with .Values.adminapi.service.nodePort }}
+      nodePort: {{ . }}
+      {{- end }}

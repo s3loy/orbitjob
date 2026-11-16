@@ -138,6 +138,28 @@ adminapi:
     publicOrigin: ""
     # Permit HTTP sessions only on loopback origins for local development.
     allowInsecureLocalhost: false
+  service:
+    # ClusterIP preserves the internal installation default. NodePort and
+    # LoadBalancer expose the entire HTTP service, including operational routes.
+    type: ClusterIP
+    port: 8080
+    # Leave null for allocation by Kubernetes. An explicit port must be in the
+    # cluster's configured service-node-port-range.
+    nodePort: null
+    annotations: {}
+  ingress:
+    # Requires an existing Ingress controller. Only Console and API routes are
+    # forwarded; the chart does not install a controller or issue certificates.
+    enabled: false
+    className: ""
+    # A DNS hostname, or empty for a rule addressed through an IP or gateway.
+    host: ""
+    annotations: {}
+    tls:
+      enabled: false
+      # Existing kubernetes.io/tls Secret in the release namespace. TLS requires
+      # ingress.host; the rendered TLS hosts list uses that same hostname.
+      secretName: ""
   rateLimits:
     readRPS: 100
     writeRPS: 100

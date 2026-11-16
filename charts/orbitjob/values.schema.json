@@ -1,16 +1,48 @@
 {
   "$schema": "https://json-schema.org/draft-07/schema#",
   "type": "object",
-  "required": [
-    "database"
-  ],
+  "required": ["database"],
   "properties": {
+    "logs": {
+      "type": "object",
+      "properties": {
+        "collectorPersistence": {
+          "type": "object",
+          "required": [
+            "mode",
+            "profile",
+            "hostPathBase",
+            "quotaVerified",
+            "quotaBytes"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": ["hostPath", "ephemeral"]
+            },
+            "profile": {
+              "type": "string",
+              "enum": ["development", "production"]
+            },
+            "hostPathBase": {
+              "type": "string",
+              "pattern": "^/([A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+$"
+            },
+            "quotaVerified": {
+              "type": "boolean"
+            },
+            "quotaBytes": {
+              "type": "integer",
+              "minimum": 67108864
+            }
+          }
+        }
+      }
+    },
     "database": {
       "type": "object",
-      "required": [
-        "secretName",
-        "keys"
-      ],
+      "required": ["secretName", "keys"],
       "properties": {
         "secretName": {
           "type": "string",
@@ -82,10 +114,7 @@
         },
         "profile": {
           "type": "string",
-          "enum": [
-            "development",
-            "production"
-          ]
+          "enum": ["development", "production"]
         },
         "enforcementVerified": {
           "type": "boolean"
@@ -107,11 +136,7 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": [
-              "namespace",
-              "cidrs",
-              "ports"
-            ],
+            "required": ["namespace", "cidrs", "ports"],
             "properties": {
               "namespace": {
                 "type": "string",
@@ -133,10 +158,7 @@
                 "items": {
                   "type": "object",
                   "additionalProperties": false,
-                  "required": [
-                    "port",
-                    "protocol"
-                  ],
+                  "required": ["port", "protocol"],
                   "properties": {
                     "port": {
                       "type": "integer",
@@ -145,10 +167,7 @@
                     },
                     "protocol": {
                       "type": "string",
-                      "enum": [
-                        "TCP",
-                        "UDP"
-                      ]
+                      "enum": ["TCP", "UDP"]
                     }
                   }
                 }
@@ -160,14 +179,12 @@
     },
     "adminapi": {
       "type": "object",
+      "required": ["service", "ingress"],
       "properties": {
         "console": {
           "type": "object",
           "additionalProperties": false,
-          "required": [
-            "publicOrigin",
-            "allowInsecureLocalhost"
-          ],
+          "required": ["publicOrigin", "allowInsecureLocalhost"],
           "properties": {
             "publicOrigin": {
               "type": "string",
@@ -177,51 +194,180 @@
               "type": "boolean"
             }
           }
-        }
-      }
-    },
-    "logs": {
-      "type": "object",
-      "properties": {
-        "collectorPersistence": {
+        },
+        "service": {
           "type": "object",
-          "required": [
-            "mode",
-            "profile",
-            "hostPathBase",
-            "quotaVerified",
-            "quotaBytes"
-          ],
           "additionalProperties": false,
+          "required": ["type", "port", "annotations"],
           "properties": {
-            "mode": {
+            "type": {
               "type": "string",
-              "enum": [
-                "hostPath",
-                "ephemeral"
-              ]
+              "enum": ["ClusterIP", "NodePort", "LoadBalancer"]
             },
-            "profile": {
-              "type": "string",
-              "enum": [
-                "development",
-                "production"
-              ]
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
             },
-            "hostPathBase": {
-              "type": "string",
-              "pattern": "^/([A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+$"
+            "nodePort": {
+              "type": ["integer", "null"],
+              "minimum": 1,
+              "maximum": 65535
             },
-            "quotaVerified": {
+            "annotations": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "required": ["nodePort"],
+                "properties": {
+                  "nodePort": {
+                    "type": "integer"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "type": {
+                    "enum": ["NodePort", "LoadBalancer"]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "ingress": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "className", "host", "annotations", "tls"],
+          "properties": {
+            "enabled": {
               "type": "boolean"
             },
-            "quotaBytes": {
-              "type": "integer",
-              "minimum": 67108864
+            "className": {
+              "anyOf": [
+                {
+                  "const": ""
+                },
+                {
+                  "$ref": "#/definitions/dnsName"
+                }
+              ]
+            },
+            "host": {
+              "anyOf": [
+                {
+                  "const": ""
+                },
+                {
+                  "$ref": "#/definitions/ingressHost"
+                }
+              ]
+            },
+            "annotations": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "tls": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["enabled", "secretName"],
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "secretName": {
+                  "anyOf": [
+                    {
+                      "const": ""
+                    },
+                    {
+                      "$ref": "#/definitions/dnsName"
+                    }
+                  ]
+                }
+              },
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "enabled": {
+                        "const": true
+                      }
+                    }
+                  },
+                  "then": {
+                    "properties": {
+                      "secretName": {
+                        "minLength": 1
+                      }
+                    }
+                  },
+                  "else": {
+                    "properties": {
+                      "secretName": {
+                        "maxLength": 0
+                      }
+                    }
+                  }
+                }
+              ]
             }
-          }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "tls": {
+                    "properties": {
+                      "enabled": {
+                        "const": true
+                      }
+                    }
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "enabled": {
+                    "const": true
+                  },
+                  "host": {
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          ]
         }
       }
+    }
+  },
+  "definitions": {
+    "dnsName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 253,
+      "pattern": "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$"
+    },
+    "ingressHost": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/dnsName"
+        },
+        {
+          "not": {
+            "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$"
+          }
+        }
+      ]
     }
   }
 }

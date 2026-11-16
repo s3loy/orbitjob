@@ -1,3 +1,47 @@
+Console and Admin API
+{{- if .Values.adminapi.ingress.enabled }}
+Ingress: {{ .Release.Namespace }}/orbitjob-admin-api
+{{- if .Values.adminapi.ingress.host }}
+Console URL: http{{ if .Values.adminapi.ingress.tls.enabled }}s{{ end }}://{{ .Values.adminapi.ingress.host }}/console/
+Point this hostname to the existing Ingress controller's reachable address.
+{{- else }}
+Discover the Ingress controller address:
+  kubectl -n {{ .Release.Namespace }} get ingress orbitjob-admin-api -o jsonpath='{range .status.loadBalancer.ingress[*]}{.ip}{.hostname}{"\n"}{end}'
+Open http://<gateway-address>/console/ using the assigned address or the address supplied by your gateway administrator. An empty status does not provide an address.
+{{- end }}
+The chart requires an existing Ingress controller. Only /, /console, /api/v1 and /openapi.json are forwarded; /metrics and /healthz are excluded.
+{{- if .Values.adminapi.ingress.tls.enabled }}
+TLS terminates at the controller using the existing Secret {{ .Values.adminapi.ingress.tls.secretName }} in namespace {{ .Release.Namespace }}. Certificate provisioning and renewal are managed separately.
+{{- else }}
+Configure HTTPS and access controls at the gateway before sending credentials over a public network. This Ingress does not configure TLS.
+{{- end }}
+{{- else if eq .Values.adminapi.service.type "LoadBalancer" }}
+Discover the assigned load balancer hostname or IP:
+  kubectl -n {{ .Release.Namespace }} get service orbitjob-admin-api -o jsonpath='{range .status.loadBalancer.ingress[*]}{.ip}{.hostname}{"\n"}{end}'
+Open http://<load-balancer-address>:{{ .Values.adminapi.service.port }}/console/ after the load balancer is provisioned. An empty status means no address is available from Kubernetes yet.
+{{- else if eq .Values.adminapi.service.type "NodePort" }}
+Discover the allocated node port:
+  kubectl -n {{ .Release.Namespace }} get service orbitjob-admin-api -o jsonpath='{.spec.ports[?(@.name=="http")].nodePort}{"\n"}'
+Open http://<reachable-node-address>:<node-port>/console/ using a node address reachable from your network. Obtain that address from your cluster administrator; Kubernetes does not assign a public node address through this chart.
+{{- else }}
+The Admin API Service is internal to the cluster.
+{{- end }}
+{{- if ne .Values.adminapi.service.type "ClusterIP" }}
+Direct {{ .Values.adminapi.service.type }} access exposes the entire HTTP service, including /metrics and /healthz. Apply gateway HTTPS and network access controls before public use; enable Ingress when path filtering is required.
+{{- end }}
+
+Local access:
+  kubectl -n {{ .Release.Namespace }} port-forward service/orbitjob-admin-api 8080:{{ .Values.adminapi.service.port }}
+  http://127.0.0.1:8080/console/
+Use the same origin for the Console and Admin API. API authentication and authorization remain required.
+{{- if not .Values.adminapi.console.allowInsecureLocalhost }}
+Browser sessions require HTTPS. For local HTTP port-forward access, explicitly set
+adminapi.console.allowInsecureLocalhost=true. This exception accepts loopback origins only.
+{{- end }}
+{{- if .Values.adminapi.console.publicOrigin }}
+Configured browser origin: {{ .Values.adminapi.console.publicOrigin }}
+{{- end }}
+
 {{- if and .Values.logs.enabled .Values.operator.enabled }}
 Collector state: {{ .Values.logs.collectorPersistence.mode }}
 {{- if eq .Values.logs.collectorPersistence.mode "hostPath" }}
