@@ -237,8 +237,10 @@ func (uc *UseCase) Invoke(ctx context.Context, in Input) (Result, error) {
 	}
 
 	if normalized.WaitSeconds > 0 && !jobrun.Terminal(jobrun.Phase(result.Phase)) {
-		result.Phase = uc.awaitTerminalPhase(ctx, stored.Namespace, stored.Name,
-			start.Add(time.Duration(normalized.WaitSeconds)*time.Second))
+		if phase := uc.awaitTerminalPhase(ctx, stored.Namespace, stored.Name,
+			start.Add(time.Duration(normalized.WaitSeconds)*time.Second)); phase != "" {
+			result.Phase = phase
+		}
 	}
 	return result, nil
 }

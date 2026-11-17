@@ -382,6 +382,7 @@ func TestInvokeWaitPollsToTerminalPhase(t *testing.T) {
 	// observed, and drains the publisher's reads doing it.
 	pub := &fakePublisher{
 		created: true,
+		stored:  v1alpha1.JobRun{Status: v1alpha1.JobRunStatus{Phase: "Pending"}},
 		getQueue: []v1alpha1.JobRun{
 			{Status: v1alpha1.JobRunStatus{Phase: "Running"}},
 			{Status: v1alpha1.JobRunStatus{Phase: ""}},
@@ -414,6 +415,7 @@ func TestInvokeWaitExpiryStillReturnsReference(t *testing.T) {
 	// phase.
 	pub := &fakePublisher{
 		created: true,
+		stored:  v1alpha1.JobRun{Status: v1alpha1.JobRunStatus{Phase: "Pending"}},
 		getQueue: []v1alpha1.JobRun{
 			{Status: v1alpha1.JobRunStatus{Phase: "Running"}},
 		},

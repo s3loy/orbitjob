@@ -46,7 +46,8 @@ implementation scope and [verification](docs/verification.md) for test results.
 - Validate the same member grants that are persisted, and bind JSON API writes
   to the tenant authorized for the request regardless of Content-Type.
 - Preserve verified historical Function invocation addresses during replay and
-  finish Workflow cancellation without requiring unused duration operands.
+  retain the last observed phase when waiting ends without a newer observation.
+  Finish Workflow cancellation without requiring unused duration operands.
 - Include collection changes and gaps from every Console log export page and
   label unavailable archives as incomplete downloads.
 - Refresh newly created workspace memberships, isolate unconfirmed controls by

@@ -2,9 +2,10 @@ package functioninvoke
 
 import (
 	"context"
-	v1alpha1 "orbitjob/api/kubernetes/workloads/v1alpha1"
 	"testing"
 	"time"
+
+	v1alpha1 "orbitjob/api/kubernetes/workloads/v1alpha1"
 )
 
 type blockingPublisher struct {
@@ -30,5 +31,49 @@ func TestSynchronousWaitBoundsSlowObservation(t *testing.T) {
 	}
 	if pub.getDeadline.IsZero() || pub.getDeadline.After(deadline) {
 		t.Fatal("Get did not inherit wait deadline")
+	}
+}
+
+func TestInvokeWaitDeadlineRetainsPublishedPhase(t *testing.T) {
+	for _, phase := range []string{"Pending", "Running"} {
+		t.Run(phase, func(t *testing.T) {
+			pub := &blockingPublisher{fakePublisher: fakePublisher{
+				stored: v1alpha1.JobRun{Status: v1alpha1.JobRunStatus{Phase: phase}},
+			}}
+			uc := New(
+				&fakeFunctions{def: activeDefinition(12), found: true},
+				&fakeRevisions{rev: Revision{ID: 4, Namespace: "tasks"}, found: true},
+				pub,
+			)
+			in := invokeInput(12)
+			in.WaitSeconds = MaxInvokeWaitSeconds
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
+			defer cancel()
+			deadline, _ := ctx.Deadline()
+			type response struct {
+				result Result
+				err    error
+			}
+			done := make(chan response, 1)
+			go func() {
+				got, err := uc.Invoke(ctx, in)
+				done <- response{result: got, err: err}
+			}()
+
+			select {
+			case got := <-done:
+				if got.err != nil {
+					t.Fatalf("invoke: %v", got.err)
+				}
+				if got.result.Phase != phase || got.result.Name == "" || got.result.Namespace != "tasks" {
+					t.Fatalf("expired wait lost the accepted invocation: %+v", got.result)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("invoke ignored the caller's earlier deadline")
+			}
+			if pub.getDeadline.IsZero() || !pub.getDeadline.Equal(deadline) {
+				t.Fatalf("Get deadline = %v, want caller deadline %v", pub.getDeadline, deadline)
+			}
+		})
 	}
 }
