@@ -269,7 +269,7 @@ func matchesExecution(labels map[string]string, m *manifest) (bool, error) {
 	revision, _ := strconv.ParseInt(labels[execution.LabelRevisionID], 10, 64)
 	for _, run := range m.Runs {
 		if string(run.UID) == labels[execution.LabelRunUID] {
-			if run.Name != labels[execution.LabelRunName] || revision != run.Revision {
+			if execution.RunLabel(run.Name) != labels[execution.LabelRunName] || revision != run.Revision {
 				return false, errors.New("execution labels disagree with recorded JobRun ownership")
 			}
 			return true, nil

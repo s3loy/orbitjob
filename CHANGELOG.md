@@ -47,6 +47,8 @@ implementation scope and [verification](docs/verification.md) for test results.
 
 ### Fixed
 
+- Verify long JobRun names through their canonical labels during installed
+  Console fixture cleanup, retaining UID and revision ownership checks.
 - Count log-search limits consistently as Unicode code points in the Console,
   public API and archive; accept valid non-ASCII searches and reject oversized
   internal queries as client errors.
