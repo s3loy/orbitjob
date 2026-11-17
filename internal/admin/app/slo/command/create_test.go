@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"orbitjob/internal/core/domain/slo"
+	"orbitjob/internal/domain/validation"
 
 	"orbitjob/internal/platform/scan"
 )
@@ -197,3 +198,57 @@ func TestResumeSLO_SetsActiveStatus(t *testing.T) {
 }
 
 var sloCreateFixtureTenantID = scan.GenerateID()
+
+type precisionSLOWriter struct {
+	calls    int
+	duration time.Duration
+}
+
+func (s *precisionSLOWriter) Create(_ context.Context, _ string, spec slo.CreateSpec) (slo.Snapshot, error) {
+	s.calls++
+	s.duration = spec.WindowDuration
+	return slo.Snapshot{ID: 1, WindowDuration: spec.WindowDuration}, nil
+}
+
+func TestCreateSLO_WindowDurationPrecision(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		duration time.Duration
+		valid    bool
+	}{
+		{name: "zero", duration: 0},
+		{name: "negative", duration: -time.Second},
+		{name: "nanosecond", duration: time.Nanosecond},
+		{name: "millisecond", duration: time.Millisecond},
+		{name: "below one second", duration: 999 * time.Millisecond},
+		{name: "fractional seconds", duration: 1500 * time.Millisecond},
+		{name: "above maximum", duration: slo.MaxWindowDuration + time.Second},
+		{name: "one second", duration: time.Second, valid: true},
+		{name: "two seconds", duration: 2 * time.Second, valid: true},
+		{name: "one day", duration: 24 * time.Hour, valid: true},
+		{name: "maximum", duration: slo.MaxWindowDuration, valid: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &precisionSLOWriter{}
+			in := validSLOInput()
+			in.WindowDuration = tc.duration
+			out, err := NewCreateSLOUseCase(repo).Create(context.Background(), in)
+			if tc.valid {
+				if err != nil {
+					t.Fatalf("valid duration rejected: %v", err)
+				}
+				if repo.calls != 1 || repo.duration != tc.duration || out.WindowDuration != tc.duration.String() {
+					t.Fatalf("duration changed: calls=%d stored=%v output=%q, want %v", repo.calls, repo.duration, out.WindowDuration, tc.duration)
+				}
+				return
+			}
+			var validationErr *validation.Error
+			if !validation.As(err, &validationErr) || validationErr.Field != "window_duration" {
+				t.Fatalf("expected window_duration validation error, got %v", err)
+			}
+			if repo.calls != 0 {
+				t.Fatalf("invalid duration reached repository %d times", repo.calls)
+			}
+		})
+	}
+}

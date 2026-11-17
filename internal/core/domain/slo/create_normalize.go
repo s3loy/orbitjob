@@ -35,11 +35,8 @@ func NormalizeCreate(in CreateInput) (CreateSpec, error) {
 	}
 
 	windowDuration := in.WindowDuration
-	if windowDuration <= 0 {
-		return CreateSpec{}, validation.New("window_duration", "window_duration must be positive")
-	}
-	if windowDuration > MaxWindowDuration {
-		return CreateSpec{}, validation.New("window_duration", "window_duration must be at most 1 year")
+	if err := ValidateWindowDuration(windowDuration); err != nil {
+		return CreateSpec{}, err
 	}
 
 	if math.IsNaN(in.AlertFastBurnRate) || math.IsInf(in.AlertFastBurnRate, 0) || math.IsNaN(in.AlertSlowBurnRate) || math.IsInf(in.AlertSlowBurnRate, 0) {

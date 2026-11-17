@@ -61,7 +61,7 @@ func applyInputSchemaMetadata(t reflect.Type, mode schemaMode, schema *Schema) {
 		schema.Properties["good_event_criteria"] = criteria
 	case reflect.TypeOf(CreateSLORequest{}):
 		describeProperty(schema, "window_type", "Budget evaluation window type.", slodomain.WindowTypeRolling)
-		describeProperty(schema, "window_duration", "Positive Go duration, at most 8760h; for example 24h or 720h. The d suffix is not supported.", nil)
+		describeProperty(schema, "window_duration", "Go duration that resolves to whole seconds, from 1s through 8760h; for example 24h or 720h. Values below 1s or with a fractional-second remainder are rejected with HTTP 400. The d suffix is not supported.", nil)
 		describeProperty(schema, "alert_fast_burn_rate", "Omitted or zero uses the default. Must exceed the effective slow burn rate.", slodomain.DefaultFastBurnRate)
 		describeProperty(schema, "alert_slow_burn_rate", "Omitted or zero uses the default. Must be less than the effective fast burn rate.", slodomain.DefaultSlowBurnRate)
 	case reflect.TypeOf(CreatePolicyRequest{}):

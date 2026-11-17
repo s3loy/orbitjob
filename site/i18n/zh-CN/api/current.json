@@ -372,7 +372,7 @@
   "SLI events derive from recorded run outcomes.": "SLI 事件来自已记录的运行结果。",
   "Omitted or zero uses the default. Must exceed the effective slow burn rate.": "省略或设为零时使用默认值。必须大于实际生效的慢速燃烧率。",
   "Omitted or zero uses the default. Must be less than the effective fast burn rate.": "省略或设为零时使用默认值。必须小于实际生效的快速燃烧率。",
-  "Positive Go duration, at most 8760h; for example 24h or 720h. The d suffix is not supported.": "正数 Go 时长，最多 8760h，例如 24h 或 720h。不支持 d 后缀。",
+  "Go duration that resolves to whole seconds, from 1s through 8760h; for example 24h or 720h. Values below 1s or with a fractional-second remainder are rejected with HTTP 400. The d suffix is not supported.": "解析后为整秒的 Go 时长，范围为 1s 至 8760h，例如 24h 或 720h。小于一秒或包含不足一秒余量的值会被拒绝，返回 HTTP 400。不支持 d 后缀。",
   "Budget evaluation window type.": "错误预算评估的窗口类型。",
   "Container argument array; values are passed literally.": "容器参数数组，所有值均按字面值传递。",
   "Container command array; preserve each literal argument. No implicit shell expansion is added.": "容器命令数组，保留每一个字面参数，不会隐式进行 shell 展开。",

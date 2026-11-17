@@ -67,6 +67,12 @@ same group. Set the target and supported evaluation window: rolling, calendar
 month or quarter. The scheduler evaluates snapshots into budgets and burn
 alerts; it does not execute probe Jobs.
 
+Set `window_duration` to a Go duration from `1s` through `8760h` that resolves to
+a whole number of seconds, such as `24h` or `720h`. Values below one second or
+with a fractional-second remainder return HTTP 400 with field `window_duration`.
+The `d` suffix is not supported; use `24h` for one day. Valid durations retain
+their exact value when stored.
+
 Read the current budget, budget history and alerts using their separate grants
 (`slo:GetBudget`, `slo:ListBudgets`, `sloalert:Get`, `sloalert:List`). Collection
 authorization must cover the complete query scope. A restrictive Deny or boundary
@@ -77,6 +83,13 @@ measurements also produce unevaluated budgets rather than a healthy result.
 A target of 100% has no allowed errors; observed errors exhaust its budget.
 Inspect totals and evaluation reasons alongside the budget. Pausing an SLO
 stops normal evaluation while preserving its stored definition and prior evidence.
+
+The duration check applies only to creation; it does not rewrite existing SLOs.
+If an existing SLO reports `0s`, a previously truncated duration cannot be
+recovered from that value. Pause it with `slo:Pause` and its current version,
+retain it and its history, then create a replacement with a reviewed window
+that meets the creation requirements. Pausing or deleting an existing SLO
+still uses the normal permission and version checks.
 
 ## Change or remove monitoring resources
 

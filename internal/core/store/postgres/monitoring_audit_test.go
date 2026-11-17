@@ -16,6 +16,7 @@ import (
 	"orbitjob/internal/core/domain/check"
 	"orbitjob/internal/core/domain/sli"
 	"orbitjob/internal/core/domain/slo"
+	"orbitjob/internal/domain/validation"
 	"orbitjob/internal/platform/scan"
 )
 
@@ -212,5 +213,21 @@ func TestMonitoringMutationsAuditVerifiedActorAndRollback(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestSLORepositoryRejectsUnrepresentableWindowBeforeSQL(t *testing.T) {
+	for _, duration := range []time.Duration{0, -time.Second, time.Millisecond, time.Second + time.Nanosecond, 8760*time.Hour + time.Second} {
+		t.Run(duration.String(), func(t *testing.T) {
+			repo, mock := newSLORepoMock(t)
+			_, err := repo.Create(monitoringActorContext(), coreFixtureSloRepositoryTenantID, slo.CreateSpec{WindowDuration: duration})
+			var invalid *validation.Error
+			if !errors.As(err, &invalid) || invalid.Field != "window_duration" {
+				t.Fatalf("invalid window error = %v", err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

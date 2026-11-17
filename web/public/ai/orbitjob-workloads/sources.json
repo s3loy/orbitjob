@@ -3,8 +3,8 @@
   "files": {
     "references/openapi.yaml": {
       "source": "api/openapi.yaml",
-      "sourceSha256": "7616b15bc6f9c4166bf5c51340c9f84e1ddb4c8a2f603816134e7b94ddd48a82",
-      "generatedSha256": "7616b15bc6f9c4166bf5c51340c9f84e1ddb4c8a2f603816134e7b94ddd48a82"
+      "sourceSha256": "fe31422297cc274cb98e5673125b4fb72a5c3d9e8e5580d1086d921fc60428c5",
+      "generatedSha256": "fe31422297cc274cb98e5673125b4fb72a5c3d9e8e5580d1086d921fc60428c5"
     },
     "references/scheduledjob-crd.yaml": {
       "source": "charts/orbitjob/crds/workloads.orbitjob.io_scheduledjobs.yaml",
@@ -78,8 +78,8 @@
     },
     "references/docs/tasks/checks-and-slos.md": {
       "source": "docs/tasks/checks-and-slos.md",
-      "sourceSha256": "fbbe4ffbdf654cb6960119cedc4bfcd7852b26396f1aafe3145b6306c1744030",
-      "generatedSha256": "f55f1268dc9ae2ae78f684262be3e8920a1d9b538bd919ba956dd99e63dec6f9"
+      "sourceSha256": "92325dc066ba0e7096a600d7dca1d99e16f6d2ee7f8c01893591a7fcbf9f79be",
+      "generatedSha256": "ceaf2436957e64c5b07320c2e8a767e97faa75e4014aaeecdece7943d83f30ed"
     },
     "references/docs/tasks/functions-and-workflows.md": {
       "source": "docs/tasks/functions-and-workflows.md",

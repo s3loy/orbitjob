@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
 	"orbitjob/internal/core/domain/sli"
@@ -19,7 +20,7 @@ func TestSLOCreateRejectsUnavailableScopedSLI(t *testing.T) {
 	expectSetConfig(mock, tenant)
 	mock.ExpectQuery("SELECT id FROM slis").WithArgs(tenant, int64(9), group).WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	mock.ExpectRollback()
-	_, err := repo.Create(context.Background(), tenant, slo.CreateSpec{SLIID: 9, ResourceGroupID: group})
+	_, err := repo.Create(context.Background(), tenant, slo.CreateSpec{SLIID: 9, ResourceGroupID: group, WindowDuration: time.Hour})
 	var missing *resource.NotFoundError
 	if !errors.As(err, &missing) {
 		t.Fatalf("error=%v, want scoped not-found", err)

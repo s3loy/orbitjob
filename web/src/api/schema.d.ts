@@ -2126,7 +2126,7 @@ export interface components {
             /** Format: int64 */
             sli_id: number | string;
             target: number;
-            /** @description Positive Go duration, at most 8760h; for example 24h or 720h. The d suffix is not supported. */
+            /** @description Go duration that resolves to whole seconds, from 1s through 8760h; for example 24h or 720h. Values below 1s or with a fractional-second remainder are rejected with HTTP 400. The d suffix is not supported. */
             window_duration: string;
             /**
              * @description Budget evaluation window type.

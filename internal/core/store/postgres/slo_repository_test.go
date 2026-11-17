@@ -107,7 +107,7 @@ func TestSLORepository_Create_Error(t *testing.T) {
 		WillReturnError(errors.New("insert failed"))
 	mock.ExpectRollback()
 
-	if _, err := repo.Create(monitoringActorContext(), coreFixtureSloRepositoryTenantID, slo.CreateSpec{}); err == nil {
+	if _, err := repo.Create(monitoringActorContext(), coreFixtureSloRepositoryTenantID, slo.CreateSpec{WindowDuration: time.Hour}); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -343,7 +343,7 @@ func TestSLORepository_Create_InaccessibleSLI(t *testing.T) {
 	expectSetConfig(mock, coreFixtureSloRepositoryTenantID)
 	mock.ExpectQuery("SELECT id FROM slis").WithArgs(coreFixtureSloRepositoryTenantID, int64(99), nil).WillReturnError(sql.ErrNoRows)
 	mock.ExpectRollback()
-	_, err := repo.Create(monitoringActorContext(), coreFixtureSloRepositoryTenantID, slo.CreateSpec{SLIID: 99})
+	_, err := repo.Create(monitoringActorContext(), coreFixtureSloRepositoryTenantID, slo.CreateSpec{SLIID: 99, WindowDuration: time.Hour})
 	var missing *resource.NotFoundError
 	if !errors.As(err, &missing) || missing.Resource != "sli" {
 		t.Fatalf("expected hidden SLI, got %v", err)

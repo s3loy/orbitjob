@@ -32,6 +32,10 @@ func (r *SLORepository) Create(ctx context.Context, tenantID string, spec slo.Cr
 	var snap slo.Snapshot
 	var windowSecs int64
 
+	if err := slo.ValidateWindowDuration(spec.WindowDuration); err != nil {
+		return snap, err
+	}
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return snap, fmt.Errorf("begin slo create tx: %w", err)
