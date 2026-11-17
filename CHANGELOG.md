@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
-Changes prepared for 0.3.0. See [project status](docs/status.md) for
+## [0.3.0] - 2026-11-18
+
+See [project status](docs/status.md) for
 implementation scope and [verification](docs/verification.md) for test results.
 
 ### Added
