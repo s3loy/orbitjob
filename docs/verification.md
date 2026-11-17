@@ -5,6 +5,53 @@ This page records verification scope separately from product behavior.
 [known issues](known-issues.md) lists unresolved limitations.
 [CONTRIBUTING](../CONTRIBUTING.md#testing) defines the required quality gates.
 
+## Installation and upgrade acceptance at 878d13f (2026-11-18)
+
+Seven Linux arm64 component images were rebuilt from the 1,675 tracked files
+at `878d13fa830096d7ba6e8298c7f7d6f71d65484a`, using tag
+`head-878d13f-20261117`. The isolated single-node kind installations used
+Kubernetes and kubectl 1.37.0 with PostgreSQL 17. Untracked working files were
+excluded from the build source. The installation gate rebuilt the same snapshot;
+its final filesystem layers matched the initial builds. OCI index, platform
+manifest, config and layer identities were checked separately and bound to CRI
+and the observed Pods. All ten binary locations reported Go 1.27.4, Linux arm64
+and CGO disabled; the Admin image contained the installed Console assets.
+
+| Check | Result and scope |
+|---|---|
+| Fresh installation | The unmodified installation gate passed migration, role and RLS checks, repeated upgrade, an expected failing migration with transaction rollback, and retention of the `retain-marker` tenant through uninstall and reinstall. |
+| Complete installed Console | All ten spec files and 40 cases passed with one result per case, zero retries, skips, expected failures or report errors. The first-job tutorial saved a 63-character Shell definition, checked it against the cluster, completed one successful Attempt and read exact stdout from a sealed archive with no gaps and 15-day protection. |
+| Installed monitoring corrections | Real API-key and personal-session requests preserved the authenticated actor for Check, SLI and SLO management. Forged actor fields did not enter the audit. Stale writes and invalid durations preserved configuration and audit state. Ten management operations failed under an isolated actor-scoped audit constraint and rolled back; PostgreSQL logged ten matching constraint errors. The constraint was removed and normal writes recovered. |
+| Installed SLO precision | Both actor types accepted `1s`, `1.0s`, `1000ms`, `2s` and `8760h` with exact integer seconds in PostgreSQL; `0s`, `1ms`, `1.5s` and `8760h1s` returned HTTP 400. A manually reproduced zero-second row could be paused and deleted with the correct audit. This row was seeded after fresh installation and is not evidence of a historical row crossing the upgrade. |
+| Installed Unicode search | A real Function produced 256-code-point ASCII, Chinese and emoji output. All four instance/Function archive read/download routes returned matching retained output and rejected 257-code-point queries. Six browser checks against the installed API verified Chinese and emoji boundaries, intact surrogate pairs, no-match results and clearing the query. No API routes were mocked; the checked desktop viewport had no horizontal page overflow. |
+| Published-release upgrade | Five published Linux arm64 v0.2.1 payloads and their running components were checked against recorded immutable manifest, config and filesystem identities. The old installation created real Job, Function, Workflow and Check history. Pausing, natural CR convergence, complete drain and stopping all three old writers preceded backup. An isolated restore verified 21 tables, 14 sequences, six migrations and old-key access to all four histories before forward migration. |
+| Candidate after upgrade | Migration advanced from 6 to 28 while retaining the original six migration names, checksums and application times and the old mounted migration bytes. The original key, grants and four workload histories were preserved. Retained legacy Job, Function, Workflow and Check executions succeeded on the candidate; new v1 Job and Workflow execution, durable logs, caller audits and personal-account setup/login also passed. The originally paused Check stayed paused. Normal repeated Helm upgrade reached deployed revision 3. |
+| Final state | The old-reader recovery copy still matched its complete table and sequence baseline after candidate verification. Current deployments, archive and collector were ready before retirement. Ledger, CR and workload drain checks passed; both dedicated clusters were removed, fresh-fixture credentials revoked, original container identities and states retained, and the original 71 image identities and five data volumes preserved. |
+
+The first fresh-fixture cleanup returned a generic child-command failure. Its
+child stderr was not retained, so the failure cannot be assigned a unique cause.
+A separate regression found that the cleanup helper compared a full JobRun name
+with a label that the execution code hashes when the name exceeds 63 characters.
+All nine recorded 75-character names reproduced that rejection when production
+`BuildJob` generated their Job and Pod labels.
+
+The local helper correction uses the same `RunLabel` conversion and retains UID
+and revision checks. The same nine cases then passed, together with short-name,
+boundary and ownership-rejection cases, scoped race/vet checks and `make check`.
+The original helper completed after natural resource retirement; the corrected
+helper also completed on that drained cluster. Those replays did not exercise
+live Job/Pod label comparison; the recorded-name regression supplies that check.
+The correction is outside the frozen image source and is not an image input.
+
+This pass qualifies the recorded local arm64 installation and upgrade paths.
+The mixed v1 Workflow to legacy v0 Job reference remained
+`Pending/workflow_reference_not_ready` before admission and was canceled through
+the supported request; it is not a successful compatibility case. Recovery
+covered the pre-upgrade database, roles and configuration, not a post-upgrade
+database downgrade or archive recovery. Hosted CI, registry publication,
+production load, HA and NetworkPolicy enforcement were not qualified here.
+No push, PR, tag or release was performed.
+
 ## Monitoring audit, duration and Unicode corrections (2026-11-17)
 
 This pass checks the local working tree after `0da16fd8ed41`. It fixes four
