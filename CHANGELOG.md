@@ -57,6 +57,8 @@ implementation scope and [verification](docs/verification.md) for test results.
   independently selected authorized workspace.
 - Publish the admission image in pre-releases and restrict webhook matching to
   the installation's mapped execution namespaces.
+- Generate pre-release installation instructions with required configuration,
+  matching source guides and explicit tags for all seven component images.
 - Authorize the dedicated kind fixture writer before installed Console checks,
   with cluster, context and administrator identity guards.
 - Report failed control-plane recovery during local volume maintenance and

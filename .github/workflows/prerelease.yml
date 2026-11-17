@@ -134,17 +134,52 @@ jobs:
       - name: Print install command
         env:
           VERSION: ${{ needs.images.outputs.version }}
+          SOURCE_SHA: ${{ github.sha }}
         run: |
+          set -eu
           owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
-          # shellcheck disable=SC2153 # VERSION is injected through the step env above.
-          cat <<EOF
+          source_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${SOURCE_SHA}"
+          cat <<EOF | tee -a "$GITHUB_STEP_SUMMARY"
 
           Images pushed: ghcr.io/${owner}/orbitjob-*:${VERSION} (alias :rc)
+          Source revision: ${SOURCE_SHA}
 
-          Install on any cluster:
-            helm upgrade --install orbitjob charts/orbitjob \\
-              --set global.imageTag=${VERSION}
+          Follow the installation guide from this source revision:
+          ${source_url}/docs/setup/installation.md
+          For an existing database, workload CR or release, follow the upgrade guide first:
+          ${source_url}/docs/operations/upgrading.md
 
-          Use the explicit run tag above; mutable :rc aliases are not an atomic component set.
+          Use the published images above in place of the guide's build-and-push step.
+          Run the chart commands from the repository root at the source revision above.
+          Before Helm, prepare the release and execution namespaces, PostgreSQL and the
+          database Secret in the release namespace (orbitjob-database by default).
+          Review a private values file for the real namespace-to-workspace mapping,
+          archive storage, execution networking and Console routing. Confirm that every
+          node can pull all seven images from ghcr.io/${owner} with the explicit run tag.
+          Component-specific tags override global.imageTag. Clear them in the reviewed
+          values file or update all seven to ${VERSION}; the command below also pins them.
+          Clear or update component repository overrides to the published component names.
+          During render review, verify that all seven component image references use
+          ghcr.io/${owner}/orbitjob-{component}:${VERSION} from this run.
+
+          After completing the guide's preparation and render review, set RELEASE_NAMESPACE
+          and VALUES_FILE to the prepared release namespace and reviewed values file:
+
+          \`\`\`bash
+          helm upgrade --install orbitjob ./charts/orbitjob \\
+            --namespace "\$RELEASE_NAMESPACE" -f "\$VALUES_FILE" \\
+            --set-string global.imageRegistry=ghcr.io/${owner} \\
+            --set-string global.imageTag=${VERSION} \\
+            --set-string images.admin.tag=${VERSION} \\
+            --set-string images.scheduler.tag=${VERSION} \\
+            --set-string operator.image.tag=${VERSION} \\
+            --set-string images.migrate.tag=${VERSION} \\
+            --set-string images.bootstrap.tag=${VERSION} \\
+            --set-string logs.image.tag=${VERSION} \\
+            --set-string admission.image.tag=${VERSION} \\
+            --wait --wait-for-jobs --timeout 10m
+          \`\`\`
+
+          Use the explicit run tag above; mutable :rc aliases can contain different component builds.
 
           EOF
