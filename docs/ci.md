@@ -17,7 +17,8 @@ toolchain, scanner and vulnerability database at execution time.
 | Workflow | Trigger | Checks | Outputs |
 |---|---|---|---|
 | CI (`ci.yml`) | push, PR → `main`/`dev` | unit + race tests, the 60% per-package coverage bar, OpenAPI freshness, Console verification, `make build-all`, configured image targets for `linux/amd64` **and** `linux/arm64` (no push); `CI / Gate` requires this chain to succeed | `binaries` artifact (7 days), Codecov upload |
-| Documentation (`docs.yml`) | push/PR → `main`/`dev`, manual, successful main Benchmark | same-source OpenAPI freshness, English/Chinese topic and API build, links, localized search and browser usability; main-only Pages deployment | Pages artifact, failed browser diagnostics (7 days) |
+| Documentation (`docs.yml`) | push/PR → `main`/`dev`, manual, successful main Benchmark | shared documentation verification at a resolved source commit; main-only Pages deployment | verified site artifact (1 day), Pages artifact, failed browser diagnostics (7 days) |
+| Documentation verification (`docs-verification.yml`) | called by Documentation and release verification with one source commit | OpenAPI freshness, English/Chinese topic and API build, links, localized search and browser usability | failed browser diagnostics (7 days); optional verified site artifact for the standalone workflow |
 | Console (`console.yml`) | called by CI and release verification | locked dependencies, generated contracts, TypeScript, ESLint, unit tests, production build, formatting and fixture/mocked-HTTP browser tests | failure diagnostics (7 days) |
 | Integration (`integration.yml`) | push, PR → `main`/`dev`, manual, release verification | eight packages: migrations, Postgres helpers, admin/core repositories, bootstrap, admin HTTP, load-tool isolation and installed-fixture credential retirement, using the workflow's PostgreSQL service image and provisioned deployment roles | — |
 | Lint (`lint.yml`) | push, PR → `main`/`dev`, manual | golangci-lint | — |
@@ -25,7 +26,7 @@ toolchain, scanner and vulnerability database at execution time.
 | Dependency Review (`dependency-review.yml`) | PR → `main`/`dev` | dependency diff against the action's high-severity failure threshold | — |
 | Benchmark (`benchmark.yml`) | push, PR → `main` | push stores `bench.txt` per commit; PR posts a comparison comment | benchmark history (committed by the workflow) |
 | Load Test (`loadtest.yml`) | manual | installs kind and attempts advisory end-to-end evidence collection; workflow success is not a qualification verdict | `loadtest-<profile>-<run_id>` artifact (14 days) + run-page job summary |
-| Release verification (`verification.yml`) | called by release and prerelease with one source commit | backend quality, coverage, Helm, PostgreSQL, vulnerabilities and Console checks, followed by installation lifecycle and complete installed Console tests | safe installed-verification receipt |
+| Release verification (`verification.yml`) | called by release and prerelease with one source commit | backend quality, coverage, Helm, PostgreSQL, vulnerabilities, Console and documentation checks, followed by installation lifecycle and complete installed Console tests | safe installed-verification receipt, failed documentation browser diagnostics (7 days) |
 | Pre-release Images (`prerelease.yml`) | push to `dev`, manual | shared release verification, then the configured component matrix pushed to GHCR as `rc-<run>-<sha>`; no repository tag is created | versioned prerelease images and mutable `rc` aliases |
 | Release (`release.yml`) | tag `v*` | checks tag/chart version agreement, requires the tag to resolve to the configured default branch's current commit and version tags to be unused, completes shared release verification, publishes versioned images and packages the chart; no `latest` alias | `helm-chart` artifact (90 days), published images |
 
@@ -35,8 +36,16 @@ Release/prerelease workflows define their publication matrices; component
 changes must keep those and the chart aligned. Image builds, installation
 verification and registry publication are separate steps.
 
-Release verification checks out the same commit in every required job. Its
-installation job creates an isolated kind cluster and kubeconfig, runs the
+Release verification checks out the same commit in every required job.
+Documentation verification uses read-only repository permissions and confirms
+that its checkout matches the requested full commit SHA. Its OpenAPI, build and
+browser checks must pass before installation starts; a failure prevents both
+release and prerelease image publication. The standalone Documentation workflow
+uses the same checks for pushes and pull requests. A successful main Benchmark
+refresh resolves the current `main` commit before calling them. Only that
+standalone workflow can upload the Pages artifact and deploy it from `main`.
+
+The installation job creates an isolated kind cluster and kubeconfig, runs the
 installation lifecycle gate, then prepares and runs all installed Console
 cases against that installation. The runner rejects skipped, retried or
 incomplete results. Cleanup retires fixture credentials and removes the owned

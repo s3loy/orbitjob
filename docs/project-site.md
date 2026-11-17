@@ -136,12 +136,22 @@ materials and are excluded from publication.
 
 ## CI and publication
 
-The Documentation workflow validates `main` and `dev` changes and pull requests.
-It checks OpenAPI freshness at the same source revision, builds the site and
-runs browser checks before uploading the Pages artifact. Failure diagnostics
-are retained for seven days. Only `main` can enter the deployment job, with
-separate Pages write permissions. Workflow configuration does not establish that
-a public deployment exists or passed; check its actual run before announcing a URL.
+The Documentation workflow validates `main` and `dev` changes and pull requests
+through the shared Documentation verification workflow. The shared workflow
+checks out the requested full commit SHA, confirms it, checks OpenAPI freshness,
+builds the site and runs browser checks with read-only repository permissions.
+Release and prerelease verification require the same checks at their selected
+source commit before installation and image publication. The shared workflow
+does not upload Pages artifacts or deploy the site. Failure diagnostics are
+retained for seven days.
+
+The standalone Documentation workflow requests a verified site artifact,
+retained for one day. Only its `main` path uploads that artifact to Pages and
+enters the deployment job, which has separate Pages write permissions. After a
+successful main Benchmark run, the workflow resolves the current `main` commit
+before verification so a late result cannot republish an older source tree.
+Workflow configuration does not establish that a public deployment exists or
+passed; check its actual run before announcing a URL.
 
 Existing benchmark archives can be included with `BENCHMARK_ARCHIVE`. Their
 source, hardware and configuration limits remain attached to the measurements;

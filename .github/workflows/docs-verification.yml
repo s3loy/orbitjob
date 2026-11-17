@@ -1,0 +1,104 @@
+name: Documentation verification
+
+on:
+  workflow_call:
+    inputs:
+      source_ref:
+        required: true
+        type: string
+      include_benchmark_history:
+        default: false
+        type: boolean
+      build_artifact_name:
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  documentation:
+    name: OpenAPI, site and browser checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
+        with:
+          ref: ${{ inputs.source_ref }}
+          persist-credentials: false
+
+      - name: Confirm source commit
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+        shell: bash
+        run: |
+          if [[ ! "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "source_ref must be a full commit SHA" >&2
+            exit 1
+          fi
+          test "$(git rev-parse HEAD)" = "$SOURCE_REF"
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '26'
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+
+      - name: Install documentation dependencies
+        run: npm --prefix site ci --no-audit --no-fund
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify the HTTP contract matches this source
+        run: make openapi-check
+
+      - name: Locate existing benchmark history
+        if: inputs.include_benchmark_history
+        id: history
+        shell: bash
+        run: |
+          if git ls-remote --exit-code --heads origin gh-pages >/dev/null; then
+            git fetch --depth=1 origin gh-pages
+            if git cat-file -e FETCH_HEAD:dev/bench/index.html 2>/dev/null; then
+              mkdir -p "$RUNNER_TEMP/benchmark-history"
+              git archive FETCH_HEAD dev/bench | tar -x -C "$RUNNER_TEMP/benchmark-history"
+              echo "archive=$RUNNER_TEMP/benchmark-history/dev/bench" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            status=$?
+            if [ "$status" -ne 2 ]; then exit "$status"; fi
+          fi
+
+      - name: Build and check complete documentation
+        env:
+          BENCHMARK_ARCHIVE: ${{ steps.history.outputs.archive }}
+        run: npm --prefix site run build
+
+      - name: Install browser for usability checks
+        run: npm --prefix site exec -- playwright install --with-deps chromium
+
+      - name: Verify documentation usability
+        run: npm --prefix site run test:browser
+
+      - name: Retain failed browser diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: documentation-browser-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            site/playwright-report
+            site/test-results
+          retention-days: 7
+
+      - name: Retain verified documentation for publication
+        if: inputs.build_artifact_name != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs.build_artifact_name }}
+          path: site/dist
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1

@@ -27,9 +27,10 @@ implementation scope and [verification](docs/verification.md) for test results.
   Simplified Chinese tasks, tutorials, concepts and references, with structured
   routes, localized navigation and search, and same-page language switching.
   Keep commands and contract data consistent and reject unreviewed input changes.
-
 - Release and pre-release publication require backend, PostgreSQL, vulnerability,
-  Console and installed-cluster verification against the selected source revision.
+  Console, documentation and installed-cluster verification against the selected
+  source revision. Documentation checks use the same read-only workflow as the
+  standalone site validation; Pages deployment remains separate.
 - Upgrading execution recovery requires a maintenance window: stop older writers,
   preserve the existing migration input channel, apply forward migrations and
   start the new components. See [migration requirements](docs/database-setup.md#migration-execution-and-compatibility).

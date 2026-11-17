@@ -62,9 +62,16 @@ jobs:
     with:
       source_ref: ${{ inputs.source_ref }}
 
+  documentation:
+    uses: ./.github/workflows/docs-verification.yml
+    permissions:
+      contents: read
+    with:
+      source_ref: ${{ inputs.source_ref }}
+
   installation:
     name: Installation and real Console
-    needs: [backend, postgres, vulnerabilities, console]
+    needs: [backend, postgres, vulnerabilities, console, documentation]
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
