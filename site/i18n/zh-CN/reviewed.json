@@ -117,8 +117,8 @@
     },
     "operations/upgrading": {
       "source": "docs/operations/upgrading.md",
-      "englishSha256": "7284ddabb66c390c95e01eefd8b6b5621098ab942dd16bcd6ea8c3535bef3ea0",
-      "chineseSha256": "2bcb5c541256c3d24d0cc89078e043b16b14f2d854597f70f2dc1b22e253a7d7"
+      "englishSha256": "078bafff769960ee43a370f57981ae5f58a0c804c6885f13a70c9c0c1ab7c120",
+      "chineseSha256": "8b867494811d54495cfaaf43b70bcd3b89c74b78ce66f962135d7958028a91e2"
     },
     "operations/backup-and-recovery": {
       "source": "docs/operations/backup-and-recovery.md",

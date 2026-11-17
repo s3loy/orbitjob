@@ -36,6 +36,10 @@ implementation scope and [verification](docs/verification.md) for test results.
   start the new components. See [migration requirements](docs/database-setup.md#migration-execution-and-compatibility).
 - Database and execution archives require separate durable volumes. Preserve both
   in a coordinated backup and restore; see [execution logs](docs/execution-logs.md).
+- Review retained v0.2.1 Workflow schedules before resuming them: the old release
+  did not execute those cron schedules. New version 1 Workflows require resolved
+  version 1 Job policies and immutable image digests for referenced Jobs. See the
+  [upgrade procedure](docs/operations/upgrading.md) for both compatibility paths.
 
 ### Fixed
 
@@ -61,6 +65,10 @@ implementation scope and [verification](docs/verification.md) for test results.
   matching source guides and explicit tags for all seven component images.
 - Authorize the dedicated kind fixture writer before installed Console checks,
   with cluster, context and administrator identity guards.
+- Document the v0.2.1 drain and restore path using its available interfaces,
+  separate legacy pauses from candidate controls and require review before
+  enabling previously inactive Workflow schedules. Clarify the Job-reference
+  requirements for new version 1 Workflows.
 - Report failed control-plane recovery during local volume maintenance and
   retire interrupted fixture credentials and paginated workload definitions.
 - Clarify volatile authoring drafts and Workflow reference-readiness checks in
