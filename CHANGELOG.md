@@ -49,7 +49,8 @@ implementation scope and [verification](docs/verification.md) for test results.
   retain the last observed phase when waiting ends without a newer observation.
   Finish Workflow cancellation without requiring unused duration operands.
 - Include collection changes and gaps from every Console log export page and
-  label unavailable archives as incomplete downloads.
+  retain incomplete-download warnings after archive loss on an earlier page.
+  Label missing gap bounds as unknown instead of displaying an empty range.
 - Refresh newly created workspace memberships, isolate unconfirmed controls by
   authenticated subject, accept zero Check retries and manage API keys in an
   independently selected authorized workspace.

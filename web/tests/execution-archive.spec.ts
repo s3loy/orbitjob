@@ -155,11 +155,86 @@ test('log downloads retain collection changes and gaps reported on later pages',
           reason: later ? 'window rotated' : 'initial retained window',
           outcome: 'Succeeded',
           records: later ? [row(4, 'remaining output\n')] : [row(1, 'first output\n')],
-          gaps: later ? [{ from: 2, through: 3, reason: 'ROTATION_GAP' }] : [],
+          gaps: [
+            { from: 0, through: 0, reason: 'exact missing source range is unavailable' },
+            ...(later ? [{ from: 2, through: 3, reason: 'ROTATION_GAP' }] : []),
+          ],
           next: later ? 4 : 1,
           has_more: exporting && !later,
           output_bytes: 40,
           retained_bytes: 40,
+          limit_bytes: 1024,
+        },
+      });
+    }
+    return route.fulfill({ json: { items: [] } });
+  });
+  await page.goto('/console/runs/77');
+  await signIn(page);
+  const logs = page.getByRole('region', { name: 'Execution logs', exact: true });
+  await expect(logs.getByRole('button', { name: 'Download logs', exact: true })).toBeEnabled();
+  await expect(logs).toContainText('Output gap (range unknown)');
+  const downloading = page.waitForEvent('download');
+  await logs.getByRole('button', { name: 'Download logs', exact: true }).click();
+  const download = await downloading;
+  const text = await readFile((await download.path())!, 'utf8');
+  expect(exportCursors).toEqual([0, 1]);
+  expect(text).toContain('# Collection: collecting — initial retained window');
+  expect(text).toContain('# Collection: partial — window rotated');
+  expect(text).toContain('# OUTPUT GAP 2-3: ROTATION_GAP');
+  expect(
+    text.match(/# OUTPUT GAP \(range unknown\): exact missing source range is unavailable/g),
+  ).toHaveLength(1);
+  expect(text).not.toContain('# OUTPUT GAP 0-0:');
+  expect(text).toContain('remaining output\n');
+  expect(text).toContain('# END OF RETAINED LOG EXPORT');
+  await expect(logs).toContainText(
+    'Reported collection changes and omitted ranges are included in the file.',
+  );
+});
+
+test('log downloads report an archive lost during pagination as incomplete', async ({ page }) => {
+  const demo = demoClient();
+  const run = { ...(await demo.run('1042')), id: 77, phase: 'Succeeded' };
+  demo.dispose();
+  const exportCursors: number[] = [];
+  await page.route('**/api/v1/**', (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.startsWith('/api/v1/auth/') || url.pathname === '/api/v1/identity')
+      return route.fallback();
+    if (url.pathname === '/api/v1/instances/77') return route.fulfill({ json: run });
+    if (url.pathname.endsWith('/logs/archive')) {
+      const after = Number(url.searchParams.get('after') || 0);
+      const exporting = url.searchParams.get('limit') === '1000';
+      if (exporting) exportCursors.push(after);
+      const lost = exporting && after > 0;
+      return route.fulfill({
+        json: {
+          state: lost ? 'expired' : 'sealed',
+          reason: lost ? 'retention elapsed during export' : 'retained evidence',
+          outcome: 'Succeeded',
+          records: lost
+            ? []
+            : [
+                {
+                  id: 'row-1',
+                  sequence: 1,
+                  time: '2026-11-17T00:00:00Z',
+                  observed_at: '2026-11-17T00:00:00Z',
+                  kind: 'stdout',
+                  stage: 'running',
+                  attempt: 1,
+                  pod_uid: 'pod-first',
+                  container: 'task',
+                  restart: 0,
+                  text: 'retained before expiration\n',
+                },
+              ],
+          gaps: lost ? [{ from: 2, through: 9, reason: 'retention expired' }] : [],
+          next: 1,
+          has_more: exporting && !lost,
+          output_bytes: 40,
+          retained_bytes: lost ? 0 : 40,
           limit_bytes: 1024,
         },
       });
@@ -175,12 +250,10 @@ test('log downloads retain collection changes and gaps reported on later pages',
   const download = await downloading;
   const text = await readFile((await download.path())!, 'utf8');
   expect(exportCursors).toEqual([0, 1]);
-  expect(text).toContain('# Collection: collecting — initial retained window');
-  expect(text).toContain('# Collection: partial — window rotated');
-  expect(text).toContain('# OUTPUT GAP 2-3: ROTATION_GAP');
-  expect(text).toContain('remaining output\n');
-  expect(text).toContain('# END OF RETAINED LOG EXPORT');
-  await expect(logs).toContainText(
-    'Reported collection changes and omitted ranges are included in the file.',
-  );
+  expect(text).toContain('retained before expiration\n');
+  expect(text).toContain('# Collection: expired — retention elapsed during export');
+  expect(text).toContain('# OUTPUT GAP 2-9: retention expired');
+  expect(text).toContain('# EXPORT INCOMPLETE: logs expired');
+  expect(text).not.toContain('# END OF RETAINED LOG EXPORT');
+  await expect(logs).toContainText('Download incomplete: logs expired.');
 });

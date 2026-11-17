@@ -30,7 +30,8 @@ export async function prepareArchiveExport(
     for (const gap of result.gaps) {
       const key = JSON.stringify([gap.from, gap.through, gap.reason]);
       if (gaps.has(key)) continue;
-      append(`# OUTPUT GAP ${gap.from}-${gap.through}: ${gap.reason}\n`);
+      const extent = gap.from > 0 ? `${gap.from}-${gap.through}` : '(range unknown)';
+      append(`# OUTPUT GAP ${extent}: ${gap.reason}\n`);
       gaps.add(key);
     }
     for (const row of result.records) {

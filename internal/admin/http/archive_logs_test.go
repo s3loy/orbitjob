@@ -86,11 +86,13 @@ func TestArchivePermissionsAndBoundedQueries(t *testing.T) {
 
 type pagedArchiveFixture struct {
 	archiveFixture
-	pages []logarchive.Page
-	index int
+	pages   []logarchive.Page
+	queries []logarchive.Query
+	index   int
 }
 
-func (f *pagedArchiveFixture) Read(context.Context, logarchive.Identity, logarchive.Query) (logarchive.Page, error) {
+func (f *pagedArchiveFixture) Read(_ context.Context, _ logarchive.Identity, q logarchive.Query) (logarchive.Page, error) {
+	f.queries = append(f.queries, q)
 	if f.index >= len(f.pages) {
 		return logarchive.Page{}, fmt.Errorf("unexpected extra archive page")
 	}
@@ -132,5 +134,112 @@ func TestArchiveDownloadStopsOnNonAdvancingCursor(t *testing.T) {
 	h.readArchive(true)(c)
 	if !strings.Contains(w.Body.String(), "cursor did not advance") || strings.Contains(w.Body.String(), "# END OF RETAINED LOG EXPORT") {
 		t.Fatalf("stalled export looked complete: %s", w.Body.String())
+	}
+}
+
+func TestArchiveDownloadMarksLostArchivesIncomplete(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, state := range []string{"expired", "deleted", "unavailable"} {
+		for _, scenario := range []struct {
+			name    string
+			initial bool
+			recover bool
+		}{
+			{name: "initial", initial: true},
+			{name: "later"},
+			{name: "initial then recovered", initial: true, recover: true},
+			{name: "later then recovered", recover: true},
+		} {
+			t.Run(state+"/"+scenario.name, func(t *testing.T) {
+				pages := []logarchive.Page{}
+				if !scenario.initial {
+					pages = append(pages, logarchive.Page{State: "sealed", Reason: "retained evidence", Records: []logarchive.Record{{Sequence: 1, Kind: "stdout", Text: "before loss\n"}}, Next: 1, HasMore: true})
+				}
+				pages = append(pages, logarchive.Page{State: state, Reason: "archive lost", Records: []logarchive.Record{{Sequence: 2, Kind: "stdout", Text: "fetched during loss\n"}}, Gaps: []logarchive.Gap{{From: 3, Through: 4, Reason: "lost output"}}, Next: 4, HasMore: scenario.recover})
+				if scenario.recover {
+					pages = append(pages, logarchive.Page{State: "sealed", Reason: "archive recovered", Records: []logarchive.Record{{Sequence: 5, Kind: "stdout", Text: "after recovery\n"}}, Next: 5})
+				}
+				backend := &pagedArchiveFixture{pages: pages}
+				h := NewHandler(nil, nil, nil)
+				h.SetArchiveBackend(backend, backend)
+				w := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(w)
+				c.Request = httptest.NewRequest("GET", "/archive/download?attempt=2&search=needle&limit=123", nil)
+				c.Set("authorized_archive_identity", logarchive.Identity{RunID: 11})
+				h.readArchive(true)(c)
+				body := w.Body.String()
+				for _, text := range []string{"# Collection: " + state + " — archive lost", "fetched during loss\n", "# OUTPUT GAP 3-4: lost output", "# EXPORT INCOMPLETE: logs " + state} {
+					if !strings.Contains(body, text) {
+						t.Errorf("missing %q in export: %s", text, body)
+					}
+				}
+				if strings.Contains(body, "# END OF RETAINED LOG EXPORT") {
+					t.Errorf("lost archive export looked complete: %s", body)
+				}
+				if !scenario.initial && !strings.Contains(body, "before loss\n") {
+					t.Errorf("previously fetched output was lost: %s", body)
+				}
+				if scenario.recover && (!strings.Contains(body, "# Collection: sealed — archive recovered") || !strings.Contains(body, "after recovery\n")) {
+					t.Errorf("later recovered evidence was lost: %s", body)
+				}
+				if backend.index != len(pages) || len(backend.queries) != len(pages) {
+					t.Fatalf("read %d pages with %d queries, want %d", backend.index, len(backend.queries), len(pages))
+				}
+				for i, q := range backend.queries {
+					var after int64
+					if i > 0 {
+						after = pages[i-1].Next
+					}
+					if q.After != after || q.Attempt != 2 || q.Search != "needle" || q.Limit != 123 {
+						t.Errorf("page %d query = %+v, want after=%d and original filters", i, q, after)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestArchiveDownloadPreservesUnknownAndKnownGapRanges(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gaps := []logarchive.Gap{{Reason: "exact missing source range is unavailable"}, {From: 2, Through: 9, Reason: "retained segment rotated"}}
+	backend := &pagedArchiveFixture{pages: []logarchive.Page{
+		{State: "partial", Gaps: gaps, Next: 1, HasMore: true},
+		{State: "partial", Gaps: gaps, Next: 1},
+	}}
+	h := NewHandler(nil, nil, nil)
+	h.SetArchiveBackend(backend, backend)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/archive/download", nil)
+	c.Set("authorized_archive_identity", logarchive.Identity{RunID: 11})
+	h.readArchive(true)(c)
+	body := w.Body.String()
+	for _, text := range []string{"# OUTPUT GAP (range unknown): exact missing source range is unavailable", "# OUTPUT GAP 2-9: retained segment rotated"} {
+		if strings.Count(body, text) != 1 {
+			t.Errorf("want exactly one %q in export: %s", text, body)
+		}
+	}
+	if strings.Contains(body, "# OUTPUT GAP 0-0:") {
+		t.Fatalf("unknown omission extent was presented as exact: %s", body)
+	}
+}
+
+func TestArchiveDownloadBoundsUnknownGapMetadata(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gaps := make([]logarchive.Gap, 1025)
+	for i := range gaps {
+		gaps[i].Reason = fmt.Sprintf("unknown source range %d", i)
+	}
+	backend := &pagedArchiveFixture{pages: []logarchive.Page{{State: "partial", Gaps: gaps}}}
+	h := NewHandler(nil, nil, nil)
+	h.SetArchiveBackend(backend, backend)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/archive/download", nil)
+	c.Set("authorized_archive_identity", logarchive.Identity{RunID: 11})
+	h.readArchive(true)(c)
+	body := w.Body.String()
+	if strings.Count(body, "# OUTPUT GAP (range unknown):") != 1024 || !strings.Contains(body, "# EXPORT INCOMPLETE: omission metadata limit") || strings.Contains(body, "unknown source range 1024") || strings.Contains(body, "# END OF RETAINED LOG EXPORT") {
+		t.Fatalf("omission metadata bound was not preserved: %s", body)
 	}
 }

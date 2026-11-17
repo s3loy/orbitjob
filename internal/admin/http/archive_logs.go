@@ -110,8 +110,12 @@ func (h *Handler) readArchive(download bool) gin.HandlerFunc {
 		c.Header("Content-Disposition", `attachment; filename="execution-logs.txt"`)
 		_, _ = fmt.Fprintf(c.Writer, "# OrbitJob execution %d\n# Collection: %s — %s\n", id.RunID, page.State, page.Reason)
 		state, reason := page.State, page.Reason
+		lostState := ""
 		seenGaps := make(map[logarchive.Gap]bool)
 		for pages := 0; pages < 100000; pages++ {
+			if lostState == "" && (page.State == "expired" || page.State == "deleted" || page.State == "unavailable") {
+				lostState = page.State
+			}
 			if page.State != state || page.Reason != reason {
 				if _, e = fmt.Fprintf(c.Writer, "\n# Collection: %s — %s\n", page.State, page.Reason); e != nil {
 					return
@@ -127,7 +131,11 @@ func (h *Handler) readArchive(download bool) gin.HandlerFunc {
 					return
 				}
 				seenGaps[gap] = true
-				if _, e = fmt.Fprintf(c.Writer, "# OUTPUT GAP %d-%d: %s\n", gap.From, gap.Through, gap.Reason); e != nil {
+				extent := "(range unknown)"
+				if gap.From > 0 {
+					extent = fmt.Sprintf("%d-%d", gap.From, gap.Through)
+				}
+				if _, e = fmt.Fprintf(c.Writer, "# OUTPUT GAP %s: %s\n", extent, gap.Reason); e != nil {
 					return
 				}
 			}
@@ -142,7 +150,11 @@ func (h *Handler) readArchive(download bool) gin.HandlerFunc {
 				}
 			}
 			if !page.HasMore {
-				_, _ = fmt.Fprint(c.Writer, "\n# END OF RETAINED LOG EXPORT\n")
+				if lostState != "" {
+					_, _ = fmt.Fprintf(c.Writer, "\n# EXPORT INCOMPLETE: logs %s; only output fetched above is included.\n", lostState)
+				} else {
+					_, _ = fmt.Fprint(c.Writer, "\n# END OF RETAINED LOG EXPORT\n")
+				}
 				return
 			}
 			if c.Request.Context().Err() != nil {
