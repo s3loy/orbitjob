@@ -205,7 +205,7 @@ unreferenced-file cleanup and continue to consume capacity.
 Inspect `orbitjob_archive_corruption_total` and preserve the affected directory.
 Do not delete its evidence or manufacture an empty manifest to clear the error.
 Validate a coordinated backup in an isolated environment before replacement.
-With Go 1.27.3 or later from the matching source checkout, inspect a stopped
+With Go 1.27.4 or later from the matching source checkout, inspect a stopped
 archive or a consistent isolated volume copy:
 
 ```sh

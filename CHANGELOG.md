@@ -38,6 +38,8 @@ implementation scope and [verification](docs/verification.md) for test results.
 
 ### Fixed
 
+- Require Go 1.27.4 and pin the Docker builder to the same patch version to
+  resolve the standard-library HTTP/1 header race reported as GO-2026-6859.
 - Validate the same member grants that are persisted, and bind JSON API writes
   to the tenant authorized for the request regardless of Content-Type.
 - Preserve verified historical Function invocation addresses during replay and

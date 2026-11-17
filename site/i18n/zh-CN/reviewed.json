@@ -67,8 +67,8 @@
     },
     "reference/cli": {
       "source": "docs/cli.md",
-      "englishSha256": "4add49b8ff10bfb730f9d7c7c1bf206672b9de1235abecb3082172d6f3107457",
-      "chineseSha256": "4b3d6884e610f01904e0a2543d4ad90ca60d69651521ee101ed882f41634a593"
+      "englishSha256": "fb0b9202d75643cd7c2b3edba58127c5e19aa6d07f6a8c8041f9bc21c6bd541e",
+      "chineseSha256": "09357296c01729487b49dbc9ab23087da418058ac8ea3b95eb3cc797b4024392"
     },
     "reference/database": {
       "source": "docs/database-setup.md",
@@ -77,8 +77,8 @@
     },
     "reference/execution-logs": {
       "source": "docs/execution-logs.md",
-      "englishSha256": "7dfdb9ead349941f89f8debf0ebb683d6a9dba8d7421d136cc2af6c2999db6af",
-      "chineseSha256": "0c9be7e18076590331a2bc16b340084d7921e79c035cc86a7e00db5afae5e694"
+      "englishSha256": "eaca313ce3ea109958cd1800d11700d9be8d041a6dda177b5ab0a633dfb89d3b",
+      "chineseSha256": "655b5877daca9a502e3b9ab7a05f020fc85eaace562f5b9df6a1ae8250c63a8c"
     },
     "reference/configuration": {
       "source": "docs/reference/configuration.md",
@@ -102,8 +102,8 @@
     },
     "setup/prerequisites": {
       "source": "docs/setup/prerequisites.md",
-      "englishSha256": "01e1649461aaa190ce7661c6cd747351963ba8188a2679494ac879bc82949f8f",
-      "chineseSha256": "eacb4f2da773f2d6efeebd455ae7514e983f0ff48f98bac12208a43d31643c33"
+      "englishSha256": "8d05fef98f0b3e8fae793eb4eecc8fb4ceb92a822dc3b87fc12ac0439d474515",
+      "chineseSha256": "7a406093164586344b0ee352cec3f81050dd874134dbd81935d4f8d252e1a3f9"
     },
     "setup/installation": {
       "source": "docs/setup/installation.md",
@@ -152,8 +152,8 @@
     },
     "contribute/local-development": {
       "source": "docs/local-deployment.md",
-      "englishSha256": "6dbefe67c49d6baef9b1f68bc437b60daef01e15b1ee09e918c116cc4d4a5b4b",
-      "chineseSha256": "91783cf9b7fc6163dfbc8a5eb9cdb33da205cbea7cf5a0e92f7fe6117dbbe838"
+      "englishSha256": "77624947677150e1ebb3590726b324daaa339a24176f5a7b1b8314364564e353",
+      "chineseSha256": "72dc1d26965c02da6609dbebda2cd3ce678330d5f6e337ffee89ea86cd330406"
     },
     "contribute/load-testing": {
       "source": "docs/loadtest-guide.md",

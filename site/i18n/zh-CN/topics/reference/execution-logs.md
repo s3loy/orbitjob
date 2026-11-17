@@ -91,7 +91,7 @@ DELETE /api/v1/instances/{run_id}/logs/archive
 
 新清单包含内容校验和。没有校验和的旧清单继续执行结构和 gzip 完整性检查，不追溯保证内容校验和。校验和可检测损坏，但不能认证控制该卷的管理员所做的编辑。隔离目录不参与自动清理无引用文件，并继续占用容量。
 
-检查 `orbitjob_archive_corruption_total` 并保留受影响目录。不要删除证据或构造空清单来清除错误。替换前应在隔离环境中验证协调备份。在匹配的源码检出中使用 Go 1.27.3 或更高版本，检查已停止的归档或一致的隔离卷副本：
+检查 `orbitjob_archive_corruption_total` 并保留受影响目录。不要删除证据或构造空清单来清除错误。替换前应在隔离环境中验证协调备份。在匹配的源码检出中使用 Go 1.27.4 或更高版本，检查已停止的归档或一致的隔离卷副本：
 
 ```sh
 go run ./internal/logarchive/inspectcmd --directory /path/to/archive-copy --timeout 1m

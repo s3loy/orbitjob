@@ -6,7 +6,7 @@ Use the Console or API for authoring and administration beyond its command set.
 
 ## Install
 
-From the source checkout, use Go 1.27.3 or later, matching the minimum in
+From the source checkout, use Go 1.27.4 or later, matching the minimum in
 [`go.mod`](../go.mod):
 
 ```sh

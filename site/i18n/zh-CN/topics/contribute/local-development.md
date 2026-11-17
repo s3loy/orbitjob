@@ -8,7 +8,7 @@
 
 Docker 主机至少需要 4 vCPU、8 GiB 内存和初始 40 GiB 可用底层存储。数据库申请 5-GiB PVC；执行日志使用单独的 10-GiB 归档 PVC 和节点采集器状态。这些要求覆盖本地组合配置，不是生产容量规划承诺。
 
-安装 Go 1.27.3+、支持 BuildKit 的 Docker、kind、Helm 4、与集群 Kubernetes 次版本匹配的 kubectl、Bash、GNU make、netcat、OpenSSL 和 `shasum`。托管安装工作流固定使用 kind 0.32.0 和 Helm 4.2.4 作为参考输入。主机上的 Console 开发还需要 npm，以及工具链支持的 Node.js 版本：22.x 中的 22.13.0 及后续版本、24.x，或 26.0.0 及后续版本。数据库集成检查需要 PostgreSQL 客户端工具，已安装 Console 和网络检查需要 Python 3。存储、网络、权限和证书约束参见[安装前提条件](setup/prerequisites.md)。
+安装 Go 1.27.4+、支持 BuildKit 的 Docker、kind、Helm 4、与集群 Kubernetes 次版本匹配的 kubectl、Bash、GNU make、netcat、OpenSSL 和 `shasum`。托管安装工作流固定使用 kind 0.32.0 和 Helm 4.2.4 作为参考输入。主机上的 Console 开发还需要 npm，以及工具链支持的 Node.js 版本：22.x 中的 22.13.0 及后续版本、24.x，或 26.0.0 及后续版本。数据库集成检查需要 PostgreSQL 客户端工具，已安装 Console 和网络检查需要 Python 3。存储、网络、权限和证书约束参见[安装前提条件](setup/prerequisites.md)。
 
 ## 获取源码
 

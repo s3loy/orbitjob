@@ -17,7 +17,7 @@ backing storage. The database requests a 5-GiB PVC; execution logs use a separat
 10-GiB archive PVC and node collector state. These requirements cover the local
 combined profile, not a production sizing promise.
 
-Install Go 1.27.3+, Docker with BuildKit, kind, Helm 4, kubectl matching the
+Install Go 1.27.4+, Docker with BuildKit, kind, Helm 4, kubectl matching the
 cluster's Kubernetes minor, Bash, GNU make, netcat, OpenSSL and `shasum`.
 The hosted installation workflow pins kind 0.32.0 and Helm 4.2.4 as reference
 inputs. Host Console development also requires npm and a Node.js version supported

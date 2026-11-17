@@ -49,7 +49,7 @@ Run repository commands from the root of the selected source checkout.
 
 | Tool | Requirement | Used for |
 |---|---|---|
-| Go | 1.27.3+ | Database configuration and source tools |
+| Go | 1.27.4+ | Database configuration and source tools |
 | Docker | BuildKit and registry push support | Building current-source images |
 | kubectl | Same major/minor as the target cluster for these procedures | Installation and diagnosis |
 | Helm | Helm 4; repository CI uses 4.2.4 | Rendering and release hooks |
