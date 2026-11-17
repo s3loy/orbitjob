@@ -56,6 +56,8 @@ implementation scope and [verification](docs/verification.md) for test results.
   independently selected authorized workspace.
 - Publish the admission image in pre-releases and restrict webhook matching to
   the installation's mapped execution namespaces.
+- Authorize the dedicated kind fixture writer before installed Console checks,
+  with cluster, context and administrator identity guards.
 - Report failed control-plane recovery during local volume maintenance and
   retire interrupted fixture credentials and paginated workload definitions.
 - Clarify volatile authoring drafts and Workflow reference-readiness checks in

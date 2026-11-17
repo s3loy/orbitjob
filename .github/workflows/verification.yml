@@ -120,6 +120,18 @@ jobs:
       - name: Verify installation lifecycle
         run: make kind-verify
 
+      - name: Authorize dedicated kind fixture writer
+        run: |
+          test "$KIND_CLUSTER_NAME" = orbitjob-console-e2e
+          context="$(kubectl config current-context)"
+          test "$context" = "kind-$KIND_CLUSTER_NAME"
+          username="$(kubectl auth whoami -o jsonpath='{.status.userInfo.username}')"
+          test "$username" = kubernetes-admin
+          helm upgrade orbitjob ./charts/orbitjob -n orbitjob \
+            --kube-context "kind-$KIND_CLUSTER_NAME" --reuse-values \
+            --set-json 'admission.nativeWriters=["kubernetes-admin"]' \
+            --wait --wait-for-jobs --timeout 8m
+
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '26'
