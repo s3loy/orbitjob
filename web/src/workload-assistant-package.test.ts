@@ -2,9 +2,8 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { posix } from 'node:path';
-import { execPath } from 'node:process';
+import { env, execPath } from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { inflateRawSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 
@@ -47,10 +46,10 @@ while (bytes.readUInt32LE(offset) === 0x04034b50) {
   const extraLength = bytes.readUInt16LE(offset + 28);
   const name = bytes.subarray(offset + 30, offset + 30 + nameLength).toString();
   const start = offset + 30 + nameLength + extraLength;
-  if (bytes.readUInt16LE(offset + 8) !== 8) throw new Error('Expected deflated ZIP entry');
+  if (bytes.readUInt16LE(offset + 8) !== 0) throw new Error('Expected stored ZIP entry');
   if (!name.startsWith('orbitjob-workloads/') || entries.has(name))
     throw new Error(`Invalid or duplicate ZIP entry: ${name}`);
-  const data = inflateRawSync(bytes.subarray(start, start + size));
+  const data = bytes.subarray(start, start + size);
   if (data.length !== bytes.readUInt32LE(offset + 22)) throw new Error(`Invalid ZIP size: ${name}`);
   entries.set(name, data);
   offset = start + size;
@@ -75,13 +74,23 @@ const isLocal = (target: string) => !/^(?:[a-z][a-z\d+.-]*:|\/\/|#)/i.test(targe
 describe('downloadable workload assistant', () => {
   it('ships the generated files unchanged inside the ZIP', () => {
     expect(bytes.readUInt32LE(offset)).toBe(0x02014b50);
-    expect([...entries.keys()].sort()).toEqual(
-      expectedFiles.map((name) => `orbitjob-workloads/${name}`),
-    );
+    expect([...entries.keys()]).toEqual(expectedFiles.map((name) => `orbitjob-workloads/${name}`));
     for (const [name, data] of entries)
       expect(
         data.equals(readFileSync(new URL(name.slice('orbitjob-workloads/'.length), output))),
       ).toBe(true);
+  });
+
+  it('fixes archive metadata independently of the host clock and file attributes', () => {
+    let position = 0;
+    for (const [name, data] of entries) {
+      expect(bytes.readUInt16LE(position + 6), name).toBe(0x800);
+      expect(bytes.readUInt16LE(position + 10), name).toBe(0);
+      expect(bytes.readUInt16LE(position + 12), name).toBe(33);
+      expect(bytes.readUInt16LE(position + 28), name).toBe(0);
+      position += 30 + Buffer.byteLength(name) + data.length;
+    }
+    expect(position).toBe(offset);
   });
 
   it('resolves every navigable local file link within the extracted package', () => {
@@ -194,11 +203,19 @@ describe('downloadable workload assistant', () => {
     }
   });
 
-  it('reproduces the package from the current source files', () => {
-    const result = execFileSync(execPath, ['scripts/generate-workload-assistant.mjs', '--check'], {
-      cwd: fileURLToPath(new URL('../', import.meta.url)),
-      encoding: 'utf8',
-    });
-    expect(result).toContain('Workload assistant checked: 22 files; CRD examples validated');
-  });
+  it.each(['C', 'en_US.UTF-8', 'sv_SE.UTF-8'])(
+    'reproduces the package from the current source files with locale %s',
+    (locale) => {
+      const result = execFileSync(
+        execPath,
+        ['scripts/generate-workload-assistant.mjs', '--check'],
+        {
+          cwd: fileURLToPath(new URL('../', import.meta.url)),
+          encoding: 'utf8',
+          env: { ...env, LANG: locale, LC_ALL: locale },
+        },
+      );
+      expect(result).toContain('Workload assistant checked: 22 files; CRD examples validated');
+    },
+  );
 });

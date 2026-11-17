@@ -2,7 +2,6 @@ import { appendFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promise
 import { createHash } from 'node:crypto';
 import { dirname, join, posix, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { deflateRawSync } from 'node:zlib';
 import { parse } from 'yaml';
 import Ajv from 'ajv';
 
@@ -152,7 +151,7 @@ async function store(path, bytes) {
 }
 for (const [name, bytes] of files) await store(join(output, name), bytes);
 
-// A deterministic ZIP needs no shell commands, archive package or network access.
+// ZIP STORE preserves the same bytes across Node and zlib builds.
 function crc32(bytes) {
   let crc = 0xffffffff;
   for (const byte of bytes) {
@@ -167,16 +166,14 @@ function archive(entries) {
   let offset = 0;
   for (const [path, data] of entries) {
     const name = Buffer.from(`orbitjob-workloads/${path}`);
-    const compressed = deflateRawSync(data);
     const crc = crc32(data);
     const header = Buffer.alloc(30);
     header.writeUInt32LE(0x04034b50, 0);
     header.writeUInt16LE(20, 4);
     header.writeUInt16LE(0x800, 6);
-    header.writeUInt16LE(8, 8);
     header.writeUInt16LE(33, 12); // 1980-01-01, fixed for reproducibility.
     header.writeUInt32LE(crc, 14);
-    header.writeUInt32LE(compressed.length, 18);
+    header.writeUInt32LE(data.length, 18);
     header.writeUInt32LE(data.length, 22);
     header.writeUInt16LE(name.length, 26);
     const entry = Buffer.alloc(46);
@@ -184,9 +181,9 @@ function archive(entries) {
     entry.writeUInt16LE(20, 4);
     header.copy(entry, 6, 4, 30);
     entry.writeUInt32LE(offset, 42);
-    local.push(header, name, compressed);
+    local.push(header, name, data);
     central.push(entry, name);
-    offset += header.length + name.length + compressed.length;
+    offset += header.length + name.length + data.length;
   }
   const index = Buffer.concat(central);
   const end = Buffer.alloc(22);
@@ -199,7 +196,7 @@ function archive(entries) {
 }
 await store(
   join(output, 'orbitjob-workloads.zip'),
-  archive([...files].sort(([a], [b]) => a.localeCompare(b))),
+  archive([...files].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))),
 );
 
 // Refuse unnoticed packaging leftovers: every downloadable reference has one owner.
