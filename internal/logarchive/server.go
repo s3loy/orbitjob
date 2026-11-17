@@ -29,7 +29,7 @@ func (o *Observer) Handler() http.Handler {
 		var in ReadRequest
 		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16384))
 		dec.DisallowUnknownFields()
-		if dec.Decode(&in) != nil || dec.Decode(&struct{}{}) != io.EOF || in.Identity.Validate() != nil {
+		if dec.Decode(&in) != nil || dec.Decode(&struct{}{}) != io.EOF || in.Identity.Validate() != nil || in.Query.Validate() != nil {
 			http.Error(w, "invalid archive request", http.StatusBadRequest)
 			return
 		}

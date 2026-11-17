@@ -37,8 +37,8 @@
     },
     "tasks/read-logs": {
       "source": "docs/tasks/read-logs.md",
-      "englishSha256": "6a0586edab71f6f18548b5c9c408eed65699610ebf190018d0c1a3cfc5a1bc78",
-      "chineseSha256": "c2f4af2918f661479a06f36ff0f59469fbea847cfa12e336bb2cc386999a5e04"
+      "englishSha256": "778605d5b1a4876b4aea8148e55258130cc69d3617ac5b7c317a34b4972f6575",
+      "chineseSha256": "89f57e795b562d0990493ccf25cd94879d4cfad439664899492312b7a39b9e1f"
     },
     "tasks/manage-access": {
       "source": "docs/tasks/manage-access.md",

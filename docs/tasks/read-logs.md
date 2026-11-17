@@ -47,7 +47,7 @@ curl --silent --show-error --fail-with-body \
 
 Use the response's `next` cursor for a subsequent read, retaining that cursor
 when reconnecting. Query parameters are `after` (nonnegative), `limit` (1–1,000),
-`attempt` (positive Attempt number) and `search` (at most 256 characters).
+`attempt` (positive Attempt number) and `search` (at most 256 Unicode code points).
 Search covers retained evidence only. The Function route is
 `/api/v1/functions/{function_id}/runs/{history_uuid}/logs/archive`.
 

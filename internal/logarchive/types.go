@@ -7,13 +7,15 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"unicode/utf8"
 )
 
 const (
-	MiB            = int64(1024 * 1024)
-	GiB            = 1024 * MiB
-	Retention      = 15 * 24 * time.Hour
-	MaxRecordBytes = 128 * 1024
+	MiB                 = int64(1024 * 1024)
+	GiB                 = 1024 * MiB
+	Retention           = 15 * 24 * time.Hour
+	MaxRecordBytes      = 128 * 1024
+	MaxSearchCharacters = 256
 )
 
 var (
@@ -22,6 +24,7 @@ var (
 	ErrSealed        = errors.New("execution archive is sealed")
 	ErrInvalidSource = errors.New("invalid execution log source")
 	ErrQuarantined   = errors.New("execution archive is quarantined")
+	ErrInvalidQuery  = errors.New("invalid archive query")
 )
 
 // Identity is resolved by the server, never from collector-supplied labels.
@@ -123,6 +126,14 @@ type Query struct {
 	Limit   int    `form:"limit" binding:"omitempty,min=1,max=1000"`
 	Attempt int    `form:"attempt" binding:"omitempty,min=1"`
 	Search  string `form:"search" binding:"max=256"`
+}
+
+// Validate applies the same Unicode character limit as the public query schema.
+func (q Query) Validate() error {
+	if q.After < 0 || q.Limit < 0 || q.Limit > 1000 || utf8.RuneCountInString(q.Search) > MaxSearchCharacters || q.Attempt < 0 {
+		return ErrInvalidQuery
+	}
+	return nil
 }
 
 type Page struct {

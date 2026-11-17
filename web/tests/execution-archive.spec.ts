@@ -5,6 +5,55 @@ import { readFile } from 'node:fs/promises';
 
 test.use({ baseURL: process.env.ORBITJOB_BROWSER_INSTALLED_URL || 'http://127.0.0.1:4174' });
 
+test('log searches preserve Unicode characters up to the API boundary', async ({ page }) => {
+  const demo = demoClient();
+  const run = { ...(await demo.run('1042')), id: 77, phase: 'Succeeded' };
+  demo.dispose();
+  const searches: string[] = [];
+  await page.route('**/api/v1/**', (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.startsWith('/api/v1/auth/') || url.pathname === '/api/v1/identity')
+      return route.fallback();
+    if (url.pathname === '/api/v1/instances/77') return route.fulfill({ json: run });
+    if (url.pathname.endsWith('/logs/archive')) {
+      const search = url.searchParams.get('search') || '';
+      if (search) searches.push(search);
+      return route.fulfill({
+        json: {
+          state: 'sealed',
+          reason: 'Retained evidence',
+          outcome: 'Succeeded',
+          records: [],
+          gaps: [],
+          next: 0,
+          has_more: false,
+          output_bytes: 0,
+          retained_bytes: 0,
+          limit_bytes: 1024,
+        },
+      });
+    }
+    return route.fulfill({ json: { items: [] } });
+  });
+  await page.goto('/console/runs/77');
+  await signIn(page);
+  const input = page.getByRole('textbox', { name: 'Search execution logs', exact: true });
+  for (const [value, expected] of [
+    ['\u4e2d'.repeat(86), '\u4e2d'.repeat(86)],
+    ['\u4e2d'.repeat(257), '\u4e2d'.repeat(256)],
+    ['\u{1f600}'.repeat(256), '\u{1f600}'.repeat(256)],
+    ['\u{1f680}'.repeat(257), '\u{1f680}'.repeat(256)],
+  ]) {
+    searches.length = 0;
+    await input.fill('');
+    await expect(input).toHaveValue('');
+    await input.fill(value);
+    await expect(input).toHaveValue(expected);
+    await expect.poll(() => searches.includes(expected)).toBe(true);
+    expect(searches.every((search) => Array.from(search).length <= 256)).toBe(true);
+  }
+});
+
 test('archive reconnect reloads cleared history and keeps both retry choices', async ({ page }) => {
   const demo = demoClient();
   const run = { ...(await demo.run('1042')), id: 77, phase: 'Succeeded' };

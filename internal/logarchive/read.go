@@ -93,8 +93,8 @@ func (s *Store) ReadContext(ctx context.Context, id Identity, q Query) (Page, er
 	if err := id.Validate(); err != nil {
 		return Page{}, err
 	}
-	if q.After < 0 || q.Limit < 0 || q.Limit > 1000 || len(q.Search) > 256 || q.Attempt < 0 {
-		return Page{}, fmt.Errorf("invalid archive query")
+	if err := q.Validate(); err != nil {
+		return Page{}, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()

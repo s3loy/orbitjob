@@ -339,8 +339,7 @@ function LogView({ parent }: { parent: LogParent }) {
           aria-label="Search execution logs"
           placeholder="Search retained logs…"
           value={search}
-          maxLength={256}
-          onChange={(event) => setSearch(event.target.value)}
+          onChange={(event) => setSearch(Array.from(event.target.value).slice(0, 256).join(''))}
         />
         <label className="execution-attempt-label">
           Attempt{' '}

@@ -47,6 +47,9 @@ implementation scope and [verification](docs/verification.md) for test results.
 
 ### Fixed
 
+- Count log-search limits consistently as Unicode code points in the Console,
+  public API and archive; accept valid non-ASCII searches and reject oversized
+  internal queries as client errors.
 - Preserve the authenticated actor in Check management audits and record
   Check, SLI and SLO management changes in the same transaction as their audit.
   Roll back changes when a valid actor or audit write is unavailable.

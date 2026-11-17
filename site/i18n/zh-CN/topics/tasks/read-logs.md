@@ -42,7 +42,7 @@ curl --silent --show-error --fail-with-body \
 
 后续读取使用响应中的 `next` 游标，并在重新连接时保留该游标。查询参数包括
 `after`（非负值）、`limit`（1–1,000）、`attempt`（正 Attempt 编号）和
-`search`（最多 256 个字符）。搜索只覆盖保留的证据。Function 路由为
+`search`（最多 256 个 Unicode 码点）。搜索只覆盖保留的证据。Function 路由为
 `/api/v1/functions/{function_id}/runs/{history_uuid}/logs/archive`。
 
 在查询字符串前追加 `/download` 可导出文本。下载包含省略标记和显式结束标记。
