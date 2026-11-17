@@ -5,6 +5,56 @@ This page records verification scope separately from product behavior.
 [known issues](known-issues.md) lists unresolved limitations.
 [CONTRIBUTING](../CONTRIBUTING.md#testing) defines the required quality gates.
 
+## Monitoring audit, duration and Unicode corrections (2026-11-17)
+
+This pass checks the local working tree after `0da16fd8ed41`. It fixes four
+confirmed defects: archive searches used byte counts instead of the public
+Unicode character limit; Check management audits identified the scheduler
+instead of the caller; SLI and SLO management writes omitted audit records;
+and positive subsecond SLO windows were truncated to zero during persistence.
+
+Check, SLI and SLO management now read the authenticated actor from the existing
+server context and record their audit in the mutation transaction. Missing or
+invalid identities and audit-write failures roll back the mutation. Explicit
+system identities remain distinct from personal users and API keys. Audit
+summaries retain resource identities and versions without copying probe or
+source configuration, credentials, criteria or descriptions.
+
+SLO creation requires a parsed duration from `1s` through `8760h` in whole
+seconds. The domain and repository share the check, and the HTTP API rejects
+invalid values before persistence. Existing `0s` rows are not rewritten;
+the normal pause and delete paths remain available. The English and Chinese
+guides explain how to retain an old object and create a reviewed replacement.
+
+Archive reads and the Console count search text as Unicode code points. Valid
+Chinese and emoji queries at the 256-code-point boundary succeed. Oversized
+public queries and invalid internal queries return client errors. OpenAPI,
+the Console schema, packaged workload references and reviewed Chinese inputs
+were regenerated from the corrected sources.
+
+| Check | Result and scope |
+|---|---|
+| Backend | `make check` passed lint, vet, race tests, OpenAPI freshness and module consistency. The 51-package coverage gate passed with its two documented declaration-only exceptions. |
+| PostgreSQL | All eight integration packages passed serially without cached results on isolated PostgreSQL 17. New cases exercised ten management actions for user, API-key and explicit system actors, real authenticated HTTP requests, forged JSON actor fields, audit-write failure, missing or invalid identity, and tenant/group/version rejection. Business rows, SLI configuration state and audit state were checked for rollback. |
+| SLO persistence | An additional real-repository pass stored and read back `1s`, `2s` and `8760h` exactly. Invalid durations left domain and audit state unchanged. A seeded legacy `0s` row could still be paused and soft-deleted through the normal repository path. |
+| Unicode search | Store, internal HTTP and all four public instance/Function read/download routes passed ASCII, Chinese and non-BMP emoji cases at 256 code points and rejected 257. The Console browser regression preserved complete emoji and applied the same code-point limit. |
+| Console | Generated references, TypeScript, lint, 515 unit cases, formatting and production build passed. All 402 browser cases passed without retries, skips or expected failures. |
+| Documentation | All 18 script cases and 37 browser cases passed at both `/orbitjob` and `/review`. Builds checked 577 current pages, 34 reviewed topic pairs and 106 operations. The retained benchmark files kept their bytes, and the default-base artifact was restored. |
+| Vulnerabilities | Govulncheck passed for `linux/amd64` and `linux/arm64`: no vulnerable imported packages or reachable calls were reported. Three module-level advisories remain outside those scopes. |
+| Independent review | Two new reviewers checked code and English/Chinese user guidance. Additional read-only probes covered exact-second SQL values, existing zero-window management and invalid internal-query responses. No further confirmed defect was found in their reviewed scope. |
+
+The first backend gate found an unchecked close result in a new test cleanup;
+that fixture was corrected before the complete gate passed. The first Unicode
+route test omitted the Function identity from its fixture and was rejected by
+the existing authorization check. The fixture was corrected without changing
+that check, then all four routes passed.
+
+The earlier installed Console, first-job tutorial and published-release upgrade
+checks retain their original source and image scope. This pass did not rebuild
+or execute a new installed image set, repeat those cluster scenarios, run
+hosted CI or publish a release. Normal release verification is still required
+at the final revision selected by the maintainer.
+
 ## Legacy Check upgrade and release preparation (2026-11-17)
 
 A separate installed pass closes the Check coverage gap recorded in the delivery
@@ -76,7 +126,7 @@ the complete run used a new installation rather than resetting account state.
 | Backend | `make check`, the 51-package coverage gate and Helm checks passed after the Function and export corrections. The two declaration-only coverage exceptions remain documented. |
 | PostgreSQL baseline | The eight-package Go 1.27.4 integration result in the toolchain section below covers the unchanged migrations and database code. This pass additionally exercised a published-release database through upgrade and isolated restore. |
 | Vulnerabilities | Govulncheck passed for `linux/amd64` and `linux/arm64`; three module-level advisories remain outside imported vulnerable packages and reachable calls. |
-| Console | Generated references, TypeScript, lint, 515 unit cases, formatting and production build passed. All 400 browser-fixture cases passed without retries or skips. |
+| Console | Generated references, TypeScript, lint, 515 unit cases, formatting and production build passed. All 401 browser-fixture cases passed without retries or skips. |
 | Documentation | All 18 script cases and 37 browser cases passed at both `/orbitjob` and `/review`, including the final upgrade clarifications. Each build checked 577 current pages, 34 reviewed topic pairs and 106 operations. The two historical benchmark files retained their bytes, and the default-base artifact was restored. |
 | Fresh installation | A dedicated Linux arm64 kind cluster with Kubernetes and task-local kubectl 1.37 passed fresh install, repeated upgrade, expected migration failure and rollback, uninstall and reinstall. The exact corrected CI writer step then prepared the fixtures. |
 | Complete installed Console | All 10 spec files and 40 cases passed with `completeSuite=true` and `passed=true`, without skips, expected failures or retries. The harness input manifest remained equal before and after the run. |
