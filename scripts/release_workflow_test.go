@@ -69,7 +69,7 @@ func TestImagePublicationRequiresCompleteVerification(t *testing.T) {
 	requireWorkflowCommand(t, verify.Jobs["backend"], "make test-cover-check")
 	requireWorkflowCommand(t, verify.Jobs["backend"], "make helm-check")
 	requireWorkflowCommand(t, installation, "make kind-verify")
-	if installation.If != "" || installation.ContinueOnError {
+	if installation.ContinueOnError {
 		t.Fatal("installation verification is optional")
 	}
 	for gate, workflow := range map[string]string{"postgres": "integration.yml", "vulnerabilities": "govulncheck.yml", "console": "console.yml"} {

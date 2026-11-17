@@ -1,53 +1,28 @@
 name: Documentation
 
 on:
-  push:
-    branches: [main, dev]
-  pull_request:
-    branches: [main, dev]
   workflow_dispatch:
-  workflow_run:
-    workflows: [Benchmark]
-    branches: [main]
-    types: [completed]
 
 permissions:
   contents: read
 
 concurrency:
-  group: docs-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
+  group: docs-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  resolve:
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
-    runs-on: ubuntu-latest
-    outputs:
-      sha: ${{ steps.source.outputs.sha }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
-        with:
-          # A late benchmark completion must never publish an older source tree.
-          ref: ${{ github.event_name == 'workflow_run' && 'main' || github.sha }}
-          persist-credentials: false
-
-      - name: Resolve documentation source commit
-        id: source
-        run: |
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
   build:
-    needs: [resolve]
+    if: github.ref == 'refs/heads/main'
     uses: ./.github/workflows/docs-verification.yml
     permissions:
       contents: read
     with:
-      source_ref: ${{ needs.resolve.outputs.sha }}
+      source_ref: ${{ github.sha }}
       include_benchmark_history: true
       build_artifact_name: documentation-site
 
   pages:
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    if: github.ref == 'refs/heads/main'
     needs: [build]
     runs-on: ubuntu-latest
     steps:
@@ -61,7 +36,7 @@ jobs:
           path: site/dist
 
   deploy:
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    if: github.ref == 'refs/heads/main'
     needs: [pages]
     runs-on: ubuntu-latest
     permissions:

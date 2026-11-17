@@ -6,6 +6,9 @@ on:
       source_ref:
         required: true
         type: string
+      verify_documentation:
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -63,6 +66,7 @@ jobs:
       source_ref: ${{ inputs.source_ref }}
 
   documentation:
+    if: inputs.verify_documentation
     uses: ./.github/workflows/docs-verification.yml
     permissions:
       contents: read
@@ -72,12 +76,39 @@ jobs:
   installation:
     name: Installation and real Console
     needs: [backend, postgres, vulnerabilities, console, documentation]
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
       KIND_CLUSTER_NAME: orbitjob-console-e2e
       TAG: verify-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
+      - name: Require expected verification results
+        id: prerequisites
+        shell: bash
+        env:
+          BACKEND_RESULT: ${{ needs.backend.result }}
+          POSTGRES_RESULT: ${{ needs.postgres.result }}
+          VULNERABILITIES_RESULT: ${{ needs.vulnerabilities.result }}
+          CONSOLE_RESULT: ${{ needs.console.result }}
+          DOCUMENTATION_RESULT: ${{ needs.documentation.result }}
+          VERIFY_DOCUMENTATION: ${{ inputs.verify_documentation }}
+        run: |
+          for check in "backend=$BACKEND_RESULT" "postgres=$POSTGRES_RESULT" \
+            "vulnerabilities=$VULNERABILITIES_RESULT" "console=$CONSOLE_RESULT"; do
+            if [[ ${check#*=} != success ]]; then
+              echo "Required verification did not succeed: $check" >&2
+              exit 1
+            fi
+          done
+          case "$VERIFY_DOCUMENTATION:$DOCUMENTATION_RESULT" in
+            true:success|false:skipped) ;;
+            *)
+              echo "Unexpected documentation verification result: $DOCUMENTATION_RESULT (enabled: $VERIFY_DOCUMENTATION)" >&2
+              exit 1
+              ;;
+          esac
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
         with:
           ref: ${{ inputs.source_ref }}
@@ -164,7 +195,7 @@ jobs:
       # The receipt contains source hashes, image IDs and test counts only.
       # Other state files contain credentials or raw diagnostics and stay private.
       - name: Preserve installed verification receipt
-        if: always()
+        if: always() && steps.prerequisites.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: installed-console-verification
@@ -173,7 +204,7 @@ jobs:
           retention-days: 30
 
       - name: Retire owned Console fixtures
-        if: always()
+        if: always() && steps.prerequisites.outcome == 'success'
         run: |
           if [[ -d "$RUNNER_TEMP/console-installed" ]]; then
             python3 scripts/console-installed.py cleanup \
@@ -181,5 +212,5 @@ jobs:
           fi
 
       - name: Remove disposable cluster
-        if: always()
+        if: always() && steps.prerequisites.outcome == 'success'
         run: kind delete cluster --name "$KIND_CLUSTER_NAME"

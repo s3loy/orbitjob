@@ -21,6 +21,7 @@ jobs:
     uses: ./.github/workflows/verification.yml
     with:
       source_ref: ${{ needs.resolve.outputs.sha }}
+      verify_documentation: true
     permissions:
       contents: read
 

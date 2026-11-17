@@ -1,6 +1,7 @@
 package main
 
 import (
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,7 +27,6 @@ type documentationJob struct {
 	ContinueOnError bool              `yaml:"continue-on-error"`
 	Permissions     map[string]string `yaml:"permissions"`
 	Concurrency     yaml.Node         `yaml:"concurrency"`
-	Outputs         map[string]string `yaml:"outputs"`
 	Steps           []struct {
 		releaseStep `yaml:",inline"`
 		ID          string            `yaml:"id"`
@@ -34,10 +34,13 @@ type documentationJob struct {
 	} `yaml:"steps"`
 }
 
-func TestDocumentationIsMandatoryBeforeImagePublication(t *testing.T) {
-	for _, name := range []string{"release.yml", "prerelease.yml"} {
-		t.Run(name, func(t *testing.T) {
-			workflow := readReleaseWorkflow(t, name)
+func TestReleaseDocumentationVerificationPolicy(t *testing.T) {
+	for _, tc := range []struct{ workflow, source, verifyDocs string }{
+		{"release.yml", "${{ needs.resolve.outputs.sha }}", "true"},
+		{"prerelease.yml", "${{ github.sha }}", "false"},
+	} {
+		t.Run(tc.workflow, func(t *testing.T) {
+			workflow := readReleaseWorkflow(t, tc.workflow)
 			images := workflow.Jobs["images"]
 			verify := workflow.Jobs["verify"]
 			if !slices.Contains(images.Needs, "verify") || images.If != "" || images.ContinueOnError {
@@ -46,46 +49,95 @@ func TestDocumentationIsMandatoryBeforeImagePublication(t *testing.T) {
 			if verify.Uses != "./.github/workflows/verification.yml" || verify.If != "" || verify.ContinueOnError {
 				t.Fatal("image publication verification is missing or conditional")
 			}
-			wantRef := "${{ github.sha }}"
-			if name == "release.yml" {
-				wantRef = "${{ needs.resolve.outputs.sha }}"
-			}
-			if verify.With["source_ref"] != wantRef {
-				t.Fatalf("publication verifies %q, want %q", verify.With["source_ref"], wantRef)
+			if verify.With["source_ref"] != tc.source || verify.With["verify_documentation"] != tc.verifyDocs {
+				t.Fatalf("unexpected publication verification inputs: %v", verify.With)
 			}
 		})
 	}
 
 	workflow := readDocumentationWorkflow(t, "verification.yml")
-	docs, ok := workflow.Jobs["documentation"]
-	if !ok || docs.Uses != "./.github/workflows/docs-verification.yml" || docs.If != "" || docs.ContinueOnError {
-		t.Fatal("release documentation verification is missing or optional")
+	if input := readDocumentationCallInputs(t, workflow)["verify_documentation"]; input.Type != "boolean" || input.Default != true {
+		t.Fatal("release verification must require documentation by default")
 	}
-	if docs.With["source_ref"] != "${{ inputs.source_ref }}" || docs.With["build_artifact_name"] != "" || docs.With["include_benchmark_history"] != "" {
-		t.Fatal("release documentation must verify only the selected source without publication artifacts or mutable benchmark history")
+	docs, ok := workflow.Jobs["documentation"]
+	if !ok || docs.Uses != "./.github/workflows/docs-verification.yml" || docs.If != "inputs.verify_documentation" || docs.ContinueOnError {
+		t.Fatal("release documentation must run when requested and propagate failure")
+	}
+	if docs.With["source_ref"] != "${{ inputs.source_ref }}" || len(docs.With) != 1 {
+		t.Fatal("release documentation must verify only the selected source using the default build without publication artifacts or mutable benchmark history")
 	}
 	requireDocumentationReadOnly(t, docs.Permissions)
+}
+
+func TestInstallationPrerequisitesFailClosed(t *testing.T) {
+	workflow := readDocumentationWorkflow(t, "verification.yml")
 	installation := workflow.Jobs["installation"]
-	if !slices.Contains(installation.Needs, "documentation") || installation.If != "" || installation.ContinueOnError {
-		t.Fatal("installation can proceed after failed or skipped documentation verification")
+	gates := []string{"backend", "postgres", "vulnerabilities", "console", "documentation"}
+	if !slices.Equal(installation.Needs, gates) || installation.If != "${{ !cancelled() }}" || installation.ContinueOnError {
+		t.Fatal("installation must check all verification results once the prerequisites finish")
 	}
+	if len(installation.Steps) == 0 {
+		t.Fatal("installation has no steps")
+	}
+	check := installation.Steps[0]
+	if check.ID != "prerequisites" || check.If != "" || check.ContinueOnError {
+		t.Fatal("installation must require successful prerequisites before checking out source")
+	}
+	wantEnv := map[string]string{"VERIFY_DOCUMENTATION": "${{ inputs.verify_documentation }}"}
+	for _, gate := range gates {
+		wantEnv[strings.ToUpper(gate)+"_RESULT"] = "${{ needs." + gate + ".result }}"
+	}
+	if !maps.Equal(check.Env, wantEnv) {
+		t.Fatalf("incorrect inputs to installation prerequisite check: %v", check.Env)
+	}
+
+	run := func(t *testing.T, overrides map[string]string, pass bool) {
+		t.Helper()
+		results := map[string]string{"VERIFY_DOCUMENTATION": "true"}
+		for _, gate := range gates {
+			results[strings.ToUpper(gate)+"_RESULT"] = "success"
+		}
+		maps.Copy(results, overrides)
+		keys := slices.Collect(maps.Keys(results))
+		env := gateEnvironment(keys...)
+		for key, value := range results {
+			env = append(env, key+"="+value)
+		}
+		cmd := exec.Command("bash", "-e", "-c", check.Run)
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		if (err == nil) != pass {
+			t.Fatalf("results=%v pass=%v: %v %s", results, pass, err, out)
+		}
+	}
+	t.Run("all-success", func(t *testing.T) { run(t, nil, true) })
+	t.Run("prerelease-no-documentation", func(t *testing.T) {
+		run(t, map[string]string{"VERIFY_DOCUMENTATION": "false", "DOCUMENTATION_RESULT": "skipped"}, true)
+	})
+	for _, gate := range gates {
+		for _, result := range []string{"skipped", "failure", "cancelled", ""} {
+			t.Run(gate+"="+result, func(t *testing.T) {
+				run(t, map[string]string{strings.ToUpper(gate) + "_RESULT": result}, false)
+			})
+		}
+	}
+	t.Run("prerelease-unexpected-documentation", func(t *testing.T) {
+		run(t, map[string]string{"VERIFY_DOCUMENTATION": "false"}, false)
+	})
+	t.Run("prerelease-required-gate-skipped", func(t *testing.T) {
+		run(t, map[string]string{"VERIFY_DOCUMENTATION": "false", "DOCUMENTATION_RESULT": "skipped", "CONSOLE_RESULT": "skipped"}, false)
+	})
 }
 
 func TestReusableDocumentationVerifiesExactSourceWithoutPages(t *testing.T) {
 	workflow := readDocumentationWorkflow(t, "docs-verification.yml")
 	requireDocumentationReadOnly(t, workflow.Permissions)
-	var call struct {
-		Inputs map[string]struct {
-			Required bool   `yaml:"required"`
-			Type     string `yaml:"type"`
-		} `yaml:"inputs"`
-	}
-	callNode := workflow.On["workflow_call"]
-	if err := callNode.Decode(&call); err != nil {
-		t.Fatal(err)
-	}
-	if len(workflow.On) != 1 || !call.Inputs["source_ref"].Required || call.Inputs["source_ref"].Type != "string" {
+	inputs := readDocumentationCallInputs(t, workflow)
+	if len(workflow.On) != 1 || !inputs["source_ref"].Required || inputs["source_ref"].Type != "string" {
 		t.Fatal("reusable documentation must require an explicit source revision")
+	}
+	if inputs["include_benchmark_history"].Type != "boolean" || inputs["include_benchmark_history"].Default != false || inputs["build_artifact_name"].Type != "string" || inputs["build_artifact_name"].Default != "" {
+		t.Fatal("benchmark history and the publication artifact must be opt-in")
 	}
 	if workflow.Concurrency.Kind != 0 {
 		t.Fatal("reusable documentation concurrency can cancel its standalone caller")
@@ -99,6 +151,8 @@ func TestReusableDocumentationVerifiesExactSourceWithoutPages(t *testing.T) {
 	}
 	checkouts := 0
 	siteArtifacts := 0
+	history := false
+	githubBuild := false
 	for _, step := range job.Steps {
 		if strings.HasPrefix(step.Uses, "actions/checkout@") {
 			checkouts++
@@ -108,6 +162,12 @@ func TestReusableDocumentationVerifiesExactSourceWithoutPages(t *testing.T) {
 		}
 		if strings.Contains(step.Uses, "pages") || strings.Contains(step.Uses, "deploy") || strings.Contains(step.Run, "gh api") || strings.Contains(step.Run, "git push") {
 			t.Fatalf("reusable documentation has publication side effects: %+v", step)
+		}
+		if step.ID == "history" {
+			history = step.If == "inputs.include_benchmark_history" && !step.ContinueOnError && strings.Contains(step.Run, "site/scripts/fetch-benchmark-history.sh")
+		}
+		if step.Run == "npm --prefix site run build" && step.If == "" && !step.ContinueOnError {
+			githubBuild = step.Env["BENCHMARK_ARCHIVE"] == "${{ steps.history.outputs.archive }}"
 		}
 		if strings.HasPrefix(step.Uses, "actions/upload-artifact@") && step.With["path"] == "site/dist" {
 			siteArtifacts++
@@ -122,10 +182,15 @@ func TestReusableDocumentationVerifiesExactSourceWithoutPages(t *testing.T) {
 	if siteArtifacts != 1 {
 		t.Fatalf("expected one optional verified site artifact, got %d", siteArtifacts)
 	}
+	if !history {
+		t.Fatal("standalone GitHub Pages verification must use the shared benchmark history fetcher when opted in")
+	}
+	if !githubBuild {
+		t.Fatal("reusable documentation must build the site with any retrieved benchmark history")
+	}
 	for _, command := range []string{
 		"npm --prefix site ci --no-audit --no-fund",
 		"make openapi-check",
-		"npm --prefix site run build",
 		"npm --prefix site exec -- playwright install --with-deps chromium",
 		"npm --prefix site run test:browser",
 	} {
@@ -167,53 +232,27 @@ func TestDocumentationSourceConfirmationRejectsMutableOrDifferentRefs(t *testing
 	}
 }
 
-func TestStandaloneDocumentationRetainsTriggersAndOwnsPages(t *testing.T) {
+func TestManualDocumentationPublishesMainOnly(t *testing.T) {
 	workflow := readDocumentationWorkflow(t, "docs.yml")
-	for _, event := range []string{"push", "pull_request"} {
-		var trigger struct {
-			Branches []string `yaml:"branches"`
-		}
-		triggerNode := workflow.On[event]
-		if err := triggerNode.Decode(&trigger); err != nil {
-			t.Fatal(err)
-		}
-		if !slices.Equal(trigger.Branches, []string{"main", "dev"}) {
-			t.Fatalf("standalone documentation lost %s branch coverage", event)
-		}
+	requireDocumentationReadOnly(t, workflow.Permissions)
+	if _, ok := workflow.On["workflow_dispatch"]; !ok || len(workflow.On) != 1 {
+		t.Fatal("standalone documentation must run only on manual dispatch")
 	}
-	var benchmark struct {
-		Workflows []string `yaml:"workflows"`
-		Branches  []string `yaml:"branches"`
-		Types     []string `yaml:"types"`
+	if len(workflow.Jobs) != 3 {
+		t.Fatal("standalone documentation must run only the GitHub Pages publication path")
 	}
-	benchmarkNode := workflow.On["workflow_run"]
-	if err := benchmarkNode.Decode(&benchmark); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := workflow.On["workflow_dispatch"]; !ok || !slices.Equal(benchmark.Workflows, []string{"Benchmark"}) || !slices.Equal(benchmark.Branches, []string{"main"}) || !slices.Equal(benchmark.Types, []string{"completed"}) {
-		t.Fatal("standalone documentation lost manual or Benchmark coverage")
-	}
-	resolve := workflow.Jobs["resolve"]
-	if resolve.If != "github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'" || resolve.Outputs["sha"] != "${{ steps.source.outputs.sha }}" {
-		t.Fatal("standalone documentation must resolve successful Benchmark refreshes to a commit")
-	}
-	resolved := false
-	for _, step := range resolve.Steps {
-		if strings.HasPrefix(step.Uses, "actions/checkout@") && step.With["ref"] != "${{ github.event_name == 'workflow_run' && 'main' || github.sha }}" {
-			t.Fatal("standalone source selection no longer preserves current-main Benchmark refreshes")
-		}
-		if step.ID == "source" && strings.Contains(step.Run, "git rev-parse HEAD") && strings.Contains(step.Run, "GITHUB_OUTPUT") && step.If == "" && !step.ContinueOnError {
-			resolved = true
-		}
-	}
+	const mainOnly = "github.ref == 'refs/heads/main'"
 	build := workflow.Jobs["build"]
-	if !resolved || !slices.Contains(build.Needs, "resolve") || build.Uses != "./.github/workflows/docs-verification.yml" || build.If != "" || build.ContinueOnError || build.With["source_ref"] != "${{ needs.resolve.outputs.sha }}" || build.With["include_benchmark_history"] != "true" {
-		t.Fatal("standalone documentation no longer uses mandatory shared verification at its resolved commit")
+	if len(build.Needs) != 0 || build.Uses != "./.github/workflows/docs-verification.yml" || build.If != mainOnly || build.ContinueOnError {
+		t.Fatal("manual documentation must run shared verification on main")
 	}
 	requireDocumentationReadOnly(t, build.Permissions)
+	if build.With["source_ref"] != "${{ github.sha }}" || build.With["include_benchmark_history"] != "true" || build.With["build_artifact_name"] != "documentation-site" {
+		t.Fatal("manual documentation must build the dispatched commit with benchmark history")
+	}
 	for id, predecessor := range map[string]string{"pages": "build", "deploy": "pages"} {
 		job := workflow.Jobs[id]
-		if job.If != "github.ref == 'refs/heads/main' && github.event_name != 'pull_request'" || !slices.Contains(job.Needs, predecessor) || job.ContinueOnError {
+		if job.If != mainOnly || !slices.Equal(job.Needs, []string{predecessor}) || job.ContinueOnError {
 			t.Fatalf("%s no longer requires successful verification on the standalone main path", id)
 		}
 	}
@@ -238,6 +277,24 @@ func requireDocumentationReadOnly(t *testing.T, permissions map[string]string) {
 	if len(permissions) != 1 || permissions["contents"] != "read" {
 		t.Fatalf("documentation verification permissions are not restricted to contents: read: %v", permissions)
 	}
+}
+
+type documentationCallInput struct {
+	Required bool   `yaml:"required"`
+	Type     string `yaml:"type"`
+	Default  any    `yaml:"default"`
+}
+
+func readDocumentationCallInputs(t *testing.T, workflow documentationWorkflow) map[string]documentationCallInput {
+	t.Helper()
+	var call struct {
+		Inputs map[string]documentationCallInput `yaml:"inputs"`
+	}
+	node := workflow.On["workflow_call"]
+	if err := node.Decode(&call); err != nil {
+		t.Fatal(err)
+	}
+	return call.Inputs
 }
 
 func readDocumentationWorkflow(t *testing.T, name string) documentationWorkflow {

@@ -30,9 +30,12 @@ implementation scope and [verification](docs/verification.md) for test results.
   routes, localized navigation and search, and same-page language switching.
   Keep commands and contract data consistent and reject unreviewed input changes.
 - Release and pre-release publication require backend, PostgreSQL, vulnerability,
-  Console, documentation and installed-cluster verification against the selected
-  source revision. Documentation checks use the same read-only workflow as the
-  standalone site validation; Pages deployment remains separate.
+  Console and installed-cluster verification against the selected source revision.
+  Formal releases and manual GitHub Pages deployments also require the shared,
+  read-only documentation checks.
+- Support Cloudflare Pages Git builds for production from `main` and previews
+  from `dev`. Keep GitHub Pages deployment available on demand. Both sites
+  include the available benchmark history at build time.
 - Upgrading execution recovery requires a maintenance window: stop older writers,
   preserve the existing migration input channel, apply forward migrations and
   start the new components. See [migration requirements](docs/database-setup.md#migration-execution-and-compatibility).

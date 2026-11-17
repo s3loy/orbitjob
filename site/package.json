@@ -9,6 +9,7 @@
     "prepare:content": "node scripts/prepare-content.mjs",
     "dev": "npm run prepare:content && astro dev --host 127.0.0.1",
     "build": "npm test && npm run prepare:content && astro build && node scripts/assemble.mjs && node scripts/check.mjs",
+    "build:cloudflare": "bash scripts/build-cloudflare.sh",
     "test": "node --test scripts/*.test.mjs",
     "preview": "astro preview --host 127.0.0.1",
     "check": "node scripts/check.mjs",

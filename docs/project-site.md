@@ -2,8 +2,8 @@
 
 The static site publishes English and Simplified Chinese topics and HTTP, CRD
 and chart references. It is independent of the installed Console and accepts no
-installation credentials. English is published at the site root; Chinese uses
-`/zh-cn/` beneath the configured base.
+installation credentials. English uses the configured site base. Chinese uses
+`/zh-cn/` beneath that base.
 
 ## Content and navigation
 
@@ -136,24 +136,65 @@ materials and are excluded from publication.
 
 ## CI and publication
 
-The Documentation workflow validates `main` and `dev` changes and pull requests
-through the shared Documentation verification workflow. The shared workflow
-checks out the requested full commit SHA, confirms it, checks OpenAPI freshness,
-builds the site and runs browser checks with read-only repository permissions.
-Release and prerelease verification require the same checks at their selected
-source commit before installation and image publication. The shared workflow
-does not upload Pages artifacts or deploy the site. Failure diagnostics are
+The shared Documentation verification workflow runs for a manual GitHub Pages
+deployment or a formal release. With read-only repository permissions, it
+checks out and confirms the requested full commit SHA, checks OpenAPI freshness,
+builds the site and runs browser checks. Failed browser diagnostics are
 retained for seven days.
 
-The standalone Documentation workflow requests a verified site artifact,
-retained for one day. Only its `main` path uploads that artifact to Pages and
-enters the deployment job, which has separate Pages write permissions. After a
-successful main Benchmark run, the workflow resolves the current `main` commit
-before verification so a late result cannot republish an older source tree.
-Workflow configuration does not establish that a public deployment exists or
-passed; check its actual run before announcing a URL.
+Formal releases require these checks before installation verification and image
+publication. The release check uses the GitHub Pages build configuration.
+Only site publication builds import benchmark history from a separate branch.
 
-Existing benchmark archives can be included with `BENCHMARK_ARCHIVE`. Their
-source, hardware and configuration limits remain attached to the measurements;
-rebuilding documentation does not produce a new performance result. Source
-changes remain reviewable independently of publication.
+### GitHub Pages
+
+To publish to GitHub Pages, open the **Documentation** workflow in GitHub
+Actions, select **Run workflow**, choose `main` and start the run. The workflow
+builds and verifies the site at the selected commit using the `/orbitjob` base.
+It retains the verified artifact for one day. A separate job uses Pages write
+permissions to deploy the artifact.
+
+### Cloudflare Pages
+
+Connect `s3loy/orbitjob` using [Cloudflare Pages Git integration](https://developers.cloudflare.com/pages/configuration/git-integration/).
+Configure the production and preview branch settings under **Settings → Builds
+& deployments**. [Cloudflare Pages branch deployment controls](https://developers.cloudflare.com/pages/configuration/branch-build-controls/)
+
+| Setting | Value |
+|---|---|
+| Production branch | `main` |
+| Enable automatic production branch deployments | Enabled |
+| Preview deployments | **Custom branches** with `dev` as the only included branch |
+| Root directory | `site` |
+| Build command | `npm ci --no-audit --no-fund && npm run build:cloudflare` |
+| Build output directory | `dist` |
+| Environment variable `NODE_VERSION` | `26.13.1` |
+| Environment variable `SKIP_DEPENDENCY_INSTALL` | `1` |
+| Production environment variable `SITE_ORIGIN` | The production Pages origin or custom domain, including `https://` and without a path |
+
+Set `NODE_VERSION` and `SKIP_DEPENDENCY_INSTALL` in both Production and Preview.
+The explicit `npm ci` installs the locked dependencies. Set `SITE_ORIGIN` in
+Production only so that preview builds use Cloudflare's `CF_PAGES_URL` for
+canonical links. The script sets `SITE_BASE=/`, so the artifact is served from
+the domain root.
+
+Cloudflare automatically builds and deploys the site on pushes to the
+production branch and publishes a preview on pushes to `dev`. Open the `dev`
+preview to verify documentation changes before merging them into `main`.
+Cloudflare runs the site build and its artifact checks independently of GitHub
+Actions. Before announcing a public URL, confirm the deployment result on that
+host and open the published site.
+
+### Benchmark history
+
+Both hosts import the available `dev/bench/` archive from the `gh-pages` branch
+at build time. To include the newest measurements on GitHub Pages, wait until
+Benchmark succeeds before starting the manual deployment. If a Cloudflare build
+fetched the archive before Benchmark completed, retry the current production
+deployment after Benchmark succeeds or wait for the next build.
+
+To include an existing archive when running `npm --prefix site run build`
+locally, set `BENCHMARK_ARCHIVE` to the archive directory. The measurements
+retain their original source, hardware and configuration limits. A site build
+reuses recorded measurements without running benchmarks. Source changes remain
+reviewable independently of publication.

@@ -1,8 +1,8 @@
 # CI 流水线说明
 
-所有工作流位于 [`.github/workflows/`](../.github/workflows/)。以下定义描述为
-PR 和推送配置的检查；实际远端结果和分支规则执行情况必须在 GitHub 上确认。
-负载测试是手动触发的参考性操作，不在 PR 门禁链中。
+所有 GitHub Actions 工作流位于 [`.github/workflows/`](../.github/workflows/)。
+请在 GitHub 上查看运行结果并确认分支规则的执行情况。负载测试是手动触发的参考性
+操作，不在 PR 门禁链中。
 
 Go 设置步骤使用 `go-version-file` 从 [go.mod](../go.mod) 读取工具链版本；
 CI、基准和负载测试不单独保存版本常量。Govulncheck 同时检查可达模块漏洞及
@@ -14,8 +14,8 @@ CI、基准和负载测试不单独保存版本常量。Govulncheck 同时检查
 | 工作流 | 触发条件 | 检查 | 输出 |
 |---|---|---|---|
 | CI（`ci.yml`） | 推送、PR → `main`/`dev` | 单元与 race 测试、每包 60% 覆盖率门槛、OpenAPI 时效性、Console 验证、`make build-all`、`linux/amd64` **和** `linux/arm64` 的已配置镜像目标（不推送）；`CI / Gate` 要求此链成功 | `binaries` 产物（7 天）、Codecov 上传 |
-| Documentation（`docs.yml`） | 推送/PR → `main`/`dev`、手动、成功的 main Benchmark | 针对解析后的源码提交执行共享文档验证；仅 main 部署 Pages | 已验证站点产物（1 天）、Pages 产物、浏览器失败诊断（7 天） |
-| Documentation verification（`docs-verification.yml`） | 由 Documentation 和发布验证以一个源码提交调用 | OpenAPI 时效性、英文和中文主题及 API 构建、链接、本地化搜索和浏览器可用性 | 浏览器失败诊断（7 天）；可为独立工作流提供已验证站点产物 |
+| Documentation（`docs.yml`） | 选择 `main` 后手动触发 | 验证所选提交并部署至 GitHub Pages | 已验证站点产物（1 天）、Pages 产物、浏览器失败诊断（7 天） |
+| Documentation verification（`docs-verification.yml`） | 手动部署至 GitHub Pages 或正式发布时，以一个源码提交调用 | OpenAPI 时效性、英文和中文主题及 API 构建、链接、本地化搜索和浏览器可用性 | 浏览器失败诊断（7 天），以及部署工作流按需请求的已验证站点产物 |
 | Console（`console.yml`） | 由 CI 和发布验证调用 | 锁定依赖、生成契约、TypeScript、ESLint、单元测试、生产构建、格式以及 fixture 和模拟 HTTP 浏览器测试 | 失败诊断（7 天） |
 | Integration（`integration.yml`） | 推送、PR → `main`/`dev`、手动、发布验证 | 八个包：迁移、Postgres 辅助函数、Admin/Core 仓储、引导、Admin HTTP、负载工具隔离和已安装 fixture 的凭据退役，使用工作流 PostgreSQL 服务镜像和已配置部署角色 | — |
 | Lint（`lint.yml`） | 推送、PR → `main`/`dev`、手动 | golangci-lint | — |
@@ -23,7 +23,7 @@ CI、基准和负载测试不单独保存版本常量。Govulncheck 同时检查
 | Dependency Review（`dependency-review.yml`） | PR → `main`/`dev` | 根据 action 的高危失败阈值检查依赖 diff | — |
 | Benchmark（`benchmark.yml`） | 推送、PR → `main` | 推送按提交存储 `bench.txt`；PR 发布比较评论 | 基准历史（由工作流提交） |
 | Load Test（`loadtest.yml`） | 手动 | 安装 kind 并尝试采集参考性端到端证据；工作流成功不是验收结论 | `loadtest-<profile>-<run_id>` 产物（14 天）及运行页面作业摘要 |
-| Release verification（`verification.yml`） | 由正式发布和预发布以一个源码提交调用 | 后端质量、覆盖率、Helm、PostgreSQL、漏洞、Console 和文档检查，随后执行安装生命周期及完整已安装 Console 测试 | 可安全公开的已安装验证回执、文档浏览器失败诊断（7 天） |
+| Release verification（`verification.yml`） | 由正式发布和预发布以一个源码提交调用 | 检查后端质量、覆盖率、Helm、PostgreSQL、漏洞和 Console，正式发布时还检查文档。随后执行安装生命周期及完整已安装 Console 测试 | 可安全公开的已安装验证回执，正式发布的文档浏览器失败诊断（7 天） |
 | Pre-release Images（`prerelease.yml`） | 推送到 `dev`、手动 | 共享发布验证，随后将配置的组件矩阵以 `rc-<run>-<sha>` 推送到 GHCR；不创建仓库标签 | 带版本的预发布镜像和可变 `rc` 别名 |
 | Release（`release.yml`） | 标签 `v*` | 检查标签与 chart 版本一致，要求标签解析为配置默认分支的当前提交，且版本标签未被使用；完成共享发布验证，发布带版本镜像并打包 chart；不提供 `latest` 别名 | `helm-chart` 产物（90 天）、已发布镜像 |
 
@@ -32,11 +32,14 @@ CI、基准和负载测试不单独保存版本常量。Govulncheck 同时检查
 定义各自发布矩阵；组件变更必须保持这些矩阵与 chart 一致。镜像构建、安装验证
 和镜像仓库发布是独立步骤。
 
-发布验证的每个必需作业均检出同一提交。文档验证使用只读仓库权限，并确认检出结果
-与请求的完整提交 SHA 一致。OpenAPI、构建和浏览器检查全部通过后，安装作业才会
-启动；任一失败均阻止正式发布和预发布镜像发布。独立 Documentation 工作流对
-推送和拉取请求使用相同检查。main Benchmark 成功触发刷新时，工作流先解析当前
-`main` 提交，再调用检查。只有该独立工作流可以上传 Pages 产物并从 `main` 部署。
+发布验证的每个必需作业均检出同一提交。正式发布的 Documentation verification
+使用只读仓库权限，并确认检出结果与请求的完整提交 SHA 一致。OpenAPI、构建和
+浏览器检查全部通过后，安装作业才会启动。任何一项失败都会阻止正式版镜像的发布。
+从 `main` 手动部署 GitHub Pages 时，Documentation 工作流执行相同的检查。
+
+[Cloudflare Pages Git 集成](project-site.md#cloudflare-pages)自动从 `main`
+构建并部署站点，并从 `dev` 发布预览。Cloudflare 独立于 GitHub Actions 执行
+站点构建和制品检查。两个 Pages 平台在构建时导入已有的基准归档。
 
 安装作业创建隔离 kind 集群和 kubeconfig，
 运行安装生命周期门禁，再针对该安装准备并运行全部已安装 Console 用例。执行器
@@ -78,6 +81,7 @@ Load Test 工作流成功表示测试工具步骤成功。即使产品结论为 
 ```bash
 gh workflow run loadtest.yml -f profile=standard   # ad-hoc load profile
 gh workflow run integration.yml                    # re-run integration suites
+gh workflow run docs.yml --ref main                # verify and deploy GitHub Pages
 ```
 
 Actions 界面提供相同的手动触发。正式发布只由标签推送触发。任一发布镜像存在后，

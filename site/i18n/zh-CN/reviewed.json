@@ -162,13 +162,13 @@
     },
     "contribute/ci": {
       "source": "docs/ci.md",
-      "englishSha256": "d7de39e467db18e052c0a5d2b95e51559821dc7d72c4f0bd0793cdca76ba0e00",
-      "chineseSha256": "7e3e7db37dd220b4c339c58a686faa3ba263b50a59ab6da71f6c557169037944"
+      "englishSha256": "255039c6efe39449e4ad16842a2e119722611e51002c10ca531e2768cbff2d09",
+      "chineseSha256": "34f46422cd0ae03f682f65061635b27acd72309120a03b5f949475c5c013ce3f"
     },
     "contribute/documentation": {
       "source": "docs/project-site.md",
-      "englishSha256": "a759bce31ffb32a25d6b34d19ca64801b0c94f78508280c662ed164e7e55707f",
-      "chineseSha256": "12bb7a6b07ce29295dfbb13d94a8e3206195f969232295ededf59b7c3f706f1c"
+      "englishSha256": "7dea7b92874ace517b7342d2cafcf2e5a26fa53783fe42f914eb235d8f304896",
+      "chineseSha256": "2cf7a5e612fd2787a25f46998ec3a387b0d5be940de3c645a2cd1f6f040073b3"
     }
   },
   "references": {

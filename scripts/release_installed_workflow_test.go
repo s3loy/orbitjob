@@ -19,12 +19,12 @@ func TestReleaseInstallationRequiresCompleteConsoleSuite(t *testing.T) {
 	for _, command := range []string{"python3 scripts/console-installed.py cleanup", "kind delete cluster"} {
 		found := false
 		for i, step := range job.Steps {
-			if strings.Contains(step.Run, command) && step.If == "always()" && i > last {
+			if strings.Contains(step.Run, command) && step.If == "always() && steps.prerequisites.outcome == 'success'" && i > last {
 				found = true
 			}
 		}
 		if !found {
-			t.Fatalf("missing unconditional cleanup after verification: %q", command)
+			t.Fatalf("missing cleanup after installed verification starts: %q", command)
 		}
 	}
 }

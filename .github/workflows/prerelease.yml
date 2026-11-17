@@ -40,6 +40,7 @@ jobs:
     uses: ./.github/workflows/verification.yml
     with:
       source_ref: ${{ github.sha }}
+      verify_documentation: false
     permissions:
       contents: read
 

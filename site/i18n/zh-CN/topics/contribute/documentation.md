@@ -1,6 +1,6 @@
 # 文档维护
 
-静态文档站发布英文和简体中文主题，以及 HTTP、CRD 和 Chart 参考。文档站独立于已安装的 Console，不接收安装环境的凭据。英文位于站点根路径，中文位于配置的基础路径下的 `/zh-cn/`。
+静态文档站发布英文和简体中文主题，以及 HTTP、CRD 和 Chart 参考。文档站独立于已安装的 Console，不接收安装环境的凭据。英文使用站点配置的基础路径，中文位于该基础路径下的 `/zh-cn/`。
 
 ## 内容与导航
 
@@ -79,8 +79,36 @@ npm --prefix site run test:browser
 
 ## CI 与发布
 
-Documentation 工作流通过共享 Documentation verification 工作流验证 `main`、`dev` 的修改和拉取请求。共享工作流检出请求的完整提交 SHA，确认检出结果，使用只读仓库权限检查 OpenAPI 是否最新、构建站点并运行浏览器检查。正式发布和预发布验证要求在所选源码提交上通过相同检查，然后才能执行安装和镜像发布。共享工作流不上传 Pages 制品，也不部署站点。失败诊断保留七天。
+手动部署至 GitHub Pages 或执行正式发布时，会调用共享 Documentation verification 工作流。该工作流使用只读仓库权限，按请求的完整提交 SHA 检出源码并核对提交，检查 OpenAPI 是否最新，构建站点并运行浏览器检查。浏览器检查失败时，诊断信息保留七天。
 
-独立 Documentation 工作流请求已验证站点制品，保留一天。只有该工作流的 `main` 路径会将该制品上传到 Pages 并进入部署任务；部署任务使用单独的 Pages 写权限。main Benchmark 成功后，工作流先解析当前 `main` 提交，再执行验证，避免延迟完成的结果重新发布旧源码。工作流配置不能证明公开部署已存在或已经通过；宣布访问地址前应检查实际运行结果。
+正式发布须通过这些检查，才能执行安装验证和镜像发布。发布检查采用 GitHub Pages 构建配置。只有用于发布站点的构建才从单独的分支导入基准历史。
 
-可以通过 `BENCHMARK_ARCHIVE` 纳入已有的基准归档。测量结果始终保留其来源、硬件和配置限制；重新构建文档不会产生新的性能结果。源码修改可以独立于发布接受审阅。
+### GitHub Pages
+
+要发布到 GitHub Pages，请在 GitHub Actions 中打开 **Documentation** 工作流，选择 **Run workflow**，再选择 `main` 并启动运行。工作流从所选提交构建并验证站点，基础路径为 `/orbitjob`。已验证的制品保留一天。独立的部署任务使用 Pages 写权限部署制品。
+
+### Cloudflare Pages
+
+使用 [Cloudflare Pages Git 集成](https://developers.cloudflare.com/pages/configuration/git-integration/)连接 `s3loy/orbitjob`。在 **Settings → Builds & deployments** 中配置生产分支和预览分支。[Cloudflare Pages 分支部署控制](https://developers.cloudflare.com/pages/configuration/branch-build-controls/)
+
+| 设置 | 值 |
+|---|---|
+| 生产分支 | `main` |
+| Enable automatic production branch deployments（自动部署生产分支） | 启用 |
+| Preview deployments（预览部署） | **Custom branches**，仅包含 `dev` 分支 |
+| 根目录 | `site` |
+| 构建命令 | `npm ci --no-audit --no-fund && npm run build:cloudflare` |
+| 构建输出目录 | `dist` |
+| 环境变量 `NODE_VERSION` | `26.13.1` |
+| 环境变量 `SKIP_DEPENDENCY_INSTALL` | `1` |
+| 生产环境变量 `SITE_ORIGIN` | Pages 生产地址或自定义域名，带 `https://` 且不带路径 |
+
+在 Production 和 Preview 环境中都设置 `NODE_VERSION` 和 `SKIP_DEPENDENCY_INSTALL`。构建命令中的 `npm ci` 按锁文件安装依赖。仅在 Production 环境中设置 `SITE_ORIGIN`，使预览构建使用 Cloudflare 提供的 `CF_PAGES_URL` 生成规范链接。脚本设置 `SITE_BASE=/`，因此站点从域名根路径提供服务。
+
+代码推送到生产分支后，Cloudflare 自动构建并部署站点。推送到 `dev` 时，Cloudflare 发布预览站点。将文档修改合并到 `main` 前，可打开 `dev` 预览进行验证。Cloudflare 独立于 GitHub Actions 执行站点构建和制品检查。公布公开访问地址前，应在相应平台确认部署结果并访问已发布的站点。
+
+### 基准历史
+
+两个平台在构建时导入 `gh-pages` 分支中已有的 `dev/bench/` 归档。要在 GitHub Pages 中纳入最新测量结果，请等待 Benchmark 成功后再手动启动部署。如果 Cloudflare 在 Benchmark 完成前就已获取归档，可在 Benchmark 成功后重试当前生产部署，或等待下一次构建。
+
+在本地运行 `npm --prefix site run build` 时，可将 `BENCHMARK_ARCHIVE` 设为归档目录以纳入已有归档。测量结果保留原有的来源、硬件和配置限制。站点构建复用已记录的测量结果，不运行基准测试。源码修改可以独立于发布接受审阅。

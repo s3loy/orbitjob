@@ -60,17 +60,8 @@ jobs:
         id: history
         shell: bash
         run: |
-          if git ls-remote --exit-code --heads origin gh-pages >/dev/null; then
-            git fetch --depth=1 origin gh-pages
-            if git cat-file -e FETCH_HEAD:dev/bench/index.html 2>/dev/null; then
-              mkdir -p "$RUNNER_TEMP/benchmark-history"
-              git archive FETCH_HEAD dev/bench | tar -x -C "$RUNNER_TEMP/benchmark-history"
-              echo "archive=$RUNNER_TEMP/benchmark-history/dev/bench" >> "$GITHUB_OUTPUT"
-            fi
-          else
-            status=$?
-            if [ "$status" -ne 2 ]; then exit "$status"; fi
-          fi
+          archive=$(bash site/scripts/fetch-benchmark-history.sh "$RUNNER_TEMP/benchmark-history")
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
 
       - name: Build and check complete documentation
         env:
