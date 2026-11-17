@@ -3,16 +3,19 @@ import starlight from '@astrojs/starlight';
 import { satteri } from '@astrojs/markdown-satteri';
 import { groups, guides, chineseGroups } from './scripts/guide-sources.mjs';
 import { translatedHeadingIDs } from './scripts/translation.mjs';
+import { siteOrigin } from './scripts/site-config.mjs';
 
 export const base = process.env.SITE_BASE || '/orbitjob';
 export default defineConfig({
-  site: 'https://s3loy.github.io',
+  site: siteOrigin,
   base,
   trailingSlash: 'always',
   // The API explorer's CSP requires bundled scripts to remain external.
   vite: { build: { assetsInlineLimit: 0 } },
   markdown: { processor: satteri({ hastPlugins: [translatedHeadingIDs] }) },
   integrations: [starlight({
+    // Static hosts use one root 404.html for missing routes in both languages.
+    disable404Route: true,
     title: 'OrbitJob',
     defaultLocale: 'root',
     locales: {

@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 import { guides } from './guide-sources.mjs';
 import { translationFile, validateTranslationBaseline, markdownParts } from './translation.mjs';
 import { loadChineseAPI, translateOpenAPI } from './localize.mjs';
+import { checkArtifactLinks } from './check-links.mjs';
 
 const site = fileURLToPath(new URL('../', import.meta.url));
 const repo = path.resolve(site, '..');
@@ -16,6 +17,12 @@ async function files(directory) {
 }
 const output = await files(dist);
 assert(output.includes(path.join(dist, 'index.html')), 'Documentation entry is missing');
+assert(output.includes(path.join(dist, '404.html')), 'Static host recovery page is missing');
+const notFound = await readFile(path.join(dist, '404.html'), 'utf8');
+assert(!/<link\b[^>]*rel="(?:canonical|alternate)"/.test(notFound), '404 must not advertise nonexistent canonical or translated routes');
+for (const [id, language] of [['recovery-en', 'en'], ['recovery-zh', 'zh-CN']]) {
+  assert(new RegExp(`<section[^>]*id="${id}"[^>]*lang="${language}"`).test(notFound), `Static ${language} recovery is missing`);
+}
 assert(!output.some(file => file.startsWith(path.join(dist, 'demo/'))), 'The documentation artifact must not contain a Console demo');
 await validateTranslationBaseline(repo);
 assert(output.includes(path.join(dist, '.nojekyll')), 'Pages asset marker is missing');
@@ -73,46 +80,17 @@ for (const locale of ['', 'zh-cn']) {
     assert.deepEqual(headingIDs(zh), headingIDs(en), `Language switch loses heading identity: ${relative}`);
   }
 }
-const failures = new Set();
-const cache = new Map();
 let currentPages = 0;
 let historicalPages = 0;
-async function html(file) { if (!cache.has(file)) cache.set(file,await readFile(file,'utf8')); return cache.get(file); }
 for (const file of output.filter(file => file.endsWith('.html'))) {
-  const current = new URL(`${base}/${path.relative(dist,file).split(path.sep).join('/').replace(/index\.html$/,'')}`, 'https://site.invalid');
-  const content = await html(file);
+  const content = await readFile(file, 'utf8');
   const historical = path.relative(dist, file).split(path.sep).join('/').startsWith('dev/bench/');
   if (historical) historicalPages++; else currentPages++;
   if (!historical) {
     const chinesePage = path.relative(dist, file).split(path.sep).join('/').startsWith('zh-cn/');
     assert(new RegExp(`<html[^>]*lang="${chinesePage ? 'zh-CN' : 'en'}"`).test(content), `Unexpected page language: ${file}`);
   }
-  for (const match of content.matchAll(/(?:href|src)="([^"]+)"/g)) {
-    const target = match[1].replaceAll('&amp;', '&');
-    if (!target || /^(?:mailto:|tel:|data:|blob:|javascript:)/i.test(target)) continue;
-    if (/^https?:/i.test(target)) {
-      const source = target.match(/^https:\/\/github.com\/s3loy\/orbitjob\/blob\/(?:dev|main)\/([^#?]+)(?:#([^?]+))?$/);
-      if (source) {
-        const local = path.resolve(repo,decodeURIComponent(source[1]));
-        if (!local.startsWith(`${repo}${path.sep}`)) failures.add(`Unsafe repository target: ${target}`);
-        else try { await stat(local); } catch { failures.add(`Missing repository target: ${target}`); }
-      }
-      continue;
-    }
-    const url = new URL(target,current);
-    if (base && url.pathname !== base && !url.pathname.startsWith(`${base}/`)) { failures.add(`Escapes base: ${target}`); continue; }
-    const relative = decodeURIComponent(url.pathname.slice(base.length)).replace(/^\//,'');
-    let local = path.resolve(dist,relative);
-    if (!local.startsWith(`${dist}${path.sep}`) && local !== dist) { failures.add(`Unsafe target: ${target}`); continue; }
-    try {
-      if ((await stat(local)).isDirectory()) local = path.join(local,'index.html');
-      await stat(local);
-      if (url.hash && local.endsWith('.html') && !url.pathname.startsWith(`${base}/api/`) && !url.pathname.startsWith(`${base}/zh-cn/api/`)) {
-        const id = decodeURIComponent(url.hash.slice(1));
-        if (!(await html(local)).includes(`id="${id}"`)) failures.add(`${path.relative(dist,file)} has no anchor: ${target}`);
-      }
-    } catch { failures.add(`${path.relative(dist,file)} has no target: ${target}`); }
-  }
 }
-assert.equal(failures.size,0,[...failures].join('\n'));
+const failures = await checkArtifactLinks({ dist, repo, base, files: output.filter(file => file.endsWith('.html')) });
+assert.equal(failures.length, 0, failures.join('\n'));
 console.log(`Verified ${currentPages} English and Chinese pages and ${historicalPages} historical pages, ${guides.length} topics per language, ${expected.length} operations, schemas and local/repository links`);
