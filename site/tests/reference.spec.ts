@@ -50,6 +50,108 @@ test('exact operation deep link opens local schemas without credentials, executi
   expect(errors).toEqual([]);
 });
 
+for (const sourceLocale of ['', '/zh-cn']) {
+  test(`rich reference language switching retains initial, sidebar, directory and search selections ${sourceLocale || 'English'}`, async ({ page }) => {
+    const targetLocale = sourceLocale ? '' : '/zh-cn';
+    const source = `${base}${sourceLocale}/api/?source=language-regression`;
+    const target = `${base}${targetLocale}/api/?source=language-regression`;
+    const targetLanguage = sourceLocale ? 'English' : '简体中文';
+    const sourceLanguage = sourceLocale ? '简体中文' : 'English';
+    let releaseSchema!: () => void;
+    const schemaGate = new Promise<void>((resolve) => { releaseSchema = resolve; });
+    const schemaRequested = page.waitForRequest((request) => new URL(request.url()).pathname === `${base}${sourceLocale}/openapi.json`);
+    await page.route('**/openapi.json', async (route) => {
+      await schemaGate;
+      await route.continue();
+    }, { times: 1 });
+    try {
+      await page.goto(`${source}#tag/jobs/triggerJob`, { waitUntil: 'domcontentloaded' });
+      await schemaRequested;
+      await expect(page.locator('#api-load-status')).toBeVisible();
+      await expect(page.getByRole('link', { name: targetLanguage, exact: true })).toHaveAttribute('href', new URL(`${target}#tag/jobs/triggerJob`, page.url()).href);
+    } finally {
+      releaseSchema();
+    }
+    await expect(page.locator('[id$="/tag/jobs/triggerJob"]').first()).toBeInViewport();
+
+    const languageLink = page.getByRole('link', { name: targetLanguage, exact: true });
+    await languageLink.scrollIntoViewIfNeeded();
+    // Model the viewer replacing the fragment while the reader returns to the header.
+    await page.evaluate(() => { history.replaceState(history.state, '', '#description/introduction'); });
+    await expect(page).toHaveURL(`${source}#description/introduction`);
+    await languageLink.click();
+    await expect(page).toHaveURL(`${target}#tag/jobs/triggerJob`);
+    await expect(page.locator('[id$="/tag/jobs/triggerJob"]').first()).toBeInViewport();
+
+    await page.locator('#api-reference aside a[href="#tag/jobs/listJobs"]').click();
+    await expect(page.locator('[id$="/tag/jobs/listJobs"]').first()).toBeInViewport();
+    await expect(page.getByRole('link', { name: sourceLanguage, exact: true })).toHaveAttribute('href', new URL(`${source}#tag/jobs/listJobs`, page.url()).href);
+    await page.locator('.operation-index > summary').click();
+    await page.locator('.operation-index a[href="#tag/jobs/getJob"]').click();
+    const selectedOperation = page.locator('[id$="/tag/jobs/getJob"]').first();
+    await expect(selectedOperation).toBeInViewport();
+    await page.locator('.operation-index > summary').click();
+    await selectedOperation.scrollIntoViewIfNeeded();
+    await expect(selectedOperation).toBeInViewport();
+    const returnLink = page.getByRole('link', { name: sourceLanguage, exact: true });
+    await returnLink.scrollIntoViewIfNeeded();
+    await page.evaluate(() => { history.replaceState(history.state, '', '#description/introduction'); });
+    await expect(page).toHaveURL(`${target}#description/introduction`);
+    await returnLink.click();
+    await expect(page).toHaveURL(`${source}#tag/jobs/getJob`);
+    await expect(page.locator('[id$="/tag/jobs/getJob"]').first()).toBeInViewport();
+
+    await page.locator('#api-reference').getByRole('button', { name: sourceLocale ? /^打开搜索/ : /^Open Search/ }).click();
+    const dialog = page.getByRole('dialog');
+    const query = dialog.getByRole('combobox');
+    await query.fill('triggerJob');
+    const result = dialog.getByRole('option').filter({ hasText: '/api/v1/jobs/{id}/trigger' });
+    await expect(result).toBeVisible();
+    if (sourceLocale) {
+      await expect(dialog.getByRole('option').first()).toContainText('/api/v1/jobs/{id}/trigger');
+      await query.press('ArrowDown');
+      await query.press('Enter');
+    } else await result.click();
+    await expect(dialog).toBeHidden();
+    await expect(page.locator('[id$="/tag/jobs/triggerJob"]').first()).toBeInViewport();
+    await expect(languageLink).toHaveAttribute('href', new URL(`${target}#tag/jobs/triggerJob`, page.url()).href);
+    await languageLink.scrollIntoViewIfNeeded();
+    await page.evaluate(() => { history.replaceState(history.state, '', '#description/introduction'); });
+    await expect(page).toHaveURL(`${source}#description/introduction`);
+    await languageLink.click();
+    await expect(page).toHaveURL(`${target}#tag/jobs/triggerJob`);
+    await expect(page.locator('[id$="/tag/jobs/triggerJob"]').first()).toBeInViewport();
+  });
+}
+
+test('rich reference language links retain anchor and history navigation without the Navigation API', async ({ page }) => {
+  await page.addInitScript(() => { Object.defineProperty(window, 'navigation', { value: undefined }); });
+  const source = path('api/?source=history-regression');
+  let releaseSchema!: () => void;
+  const schemaGate = new Promise<void>((resolve) => { releaseSchema = resolve; });
+  await page.route('**/openapi.json', async (route) => {
+    await schemaGate;
+    await route.continue();
+  });
+  try {
+    await page.goto(`${source}#tag/jobs/triggerJob`, { waitUntil: 'domcontentloaded' });
+    const languageLink = page.getByRole('link', { name: '简体中文', exact: true });
+    const target = `${base}/zh-cn/api/?source=history-regression`;
+    await expect(languageLink).toHaveAttribute('href', new URL(`${target}#tag/jobs/triggerJob`, page.url()).href);
+    await page.goto(`${source}#tag/jobs/getJob`, { waitUntil: 'domcontentloaded' });
+    await expect(languageLink).toHaveAttribute('href', new URL(`${target}#tag/jobs/getJob`, page.url()).href);
+    await page.goBack();
+    await expect(languageLink).toHaveAttribute('href', new URL(`${target}#tag/jobs/triggerJob`, page.url()).href);
+    await page.goForward();
+    await expect(languageLink).toHaveAttribute('href', new URL(`${target}#tag/jobs/getJob`, page.url()).href);
+    await page.locator('.operation-index > summary').click();
+    await page.locator('.operation-index a[href="#tag/jobs/listJobs"]').click();
+    await expect(languageLink).toHaveAttribute('href', new URL(`${target}#tag/jobs/listJobs`, page.url()).href);
+  } finally {
+    releaseSchema();
+  }
+});
+
 test('a local schema load failure offers working static documentation recovery', async ({ page }) => {
   await page.route('**/openapi.json', (route) => route.fulfill({ status: 503, body: 'Temporarily unavailable' }));
   await page.goto(path('api/'));

@@ -1,6 +1,11 @@
-const switches = [...document.querySelectorAll('[data-language-switch]')];
+const switches = [...document.querySelectorAll('[data-language-link]')];
 let selectedHash = window.location.hash;
-const update = () => switches.forEach((link) => { link.hash = selectedHash; });
+const update = () => switches.forEach((link) => {
+  const target = new URL(link.href);
+  target.search = window.location.search;
+  target.hash = selectedHash;
+  link.href = target.href;
+});
 update();
 
 // Remember the selected section before returning to the header. Scalar updates
@@ -10,7 +15,7 @@ document.addEventListener('click', (event) => {
   const link = event.target.closest('a');
   if (!link) return;
   if (switches.includes(link)) {
-    link.hash = selectedHash || window.location.hash;
+    update();
     return;
   }
   const destination = new URL(link.href, window.location.href);
@@ -19,7 +24,13 @@ document.addEventListener('click', (event) => {
     update();
   }
 }, true);
-window.addEventListener('popstate', () => {
+const rememberLocation = () => {
   selectedHash = window.location.hash;
   update();
+};
+window.addEventListener('hashchange', rememberLocation);
+window.addEventListener('popstate', rememberLocation);
+// Programmatic selections push history; ignore the viewer's scroll replacements.
+window.navigation?.addEventListener('currententrychange', (event) => {
+  if (event.navigationType === 'push') rememberLocation();
 });
