@@ -36,6 +36,10 @@ implementation scope and [verification](docs/verification.md) for test results.
   start the new components. See [migration requirements](docs/database-setup.md#migration-execution-and-compatibility).
 - Database and execution archives require separate durable volumes. Preserve both
   in a coordinated backup and restore; see [execution logs](docs/execution-logs.md).
+- Console browser sessions use personal accounts. Existing API keys remain
+  automation credentials and are not converted to accounts or memberships;
+  complete [administrator setup](docs/accounts.md#create-the-first-administrator)
+  before browser sign-in.
 - Review retained v0.2.1 Workflow schedules before resuming them: the old release
   did not execute those cron schedules. New version 1 Workflows require resolved
   version 1 Job policies and immutable image digests for referenced Jobs. See the

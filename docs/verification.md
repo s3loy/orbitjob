@@ -5,6 +5,185 @@ This page records verification scope separately from product behavior.
 [known issues](known-issues.md) lists unresolved limitations.
 [CONTRIBUTING](../CONTRIBUTING.md#testing) defines the required quality gates.
 
+## Legacy Check upgrade and release preparation (2026-11-17)
+
+A separate installed pass closes the Check coverage gap recorded in the delivery
+candidate section below. It used the five actual published Linux arm64 v0.2.1
+payloads at `d12cca01a2e16eba808043dc98358f35ace4709e` and the same candidate
+application images as that section. The eight implementation and guide commits
+ending at `8f77723b957c` match the accepted source capsule's application,
+deployment, workflow, site and bilingual-guide inputs. Release prose and this
+verification record are recorded separately.
+
+The dedicated single-node kind cluster used Kubernetes and kubectl 1.37.0,
+PostgreSQL 17, a 5-GiB database claim and a new 10-GiB archive with the chart's
+default budgets. It used a separate kubeconfig and a namespace-local HTTP probe
+target. Old and current executions used the same pinned official probe image.
+
+| Check | Result and scope |
+|---|---|
+| Old Check interfaces | The actual old API created an active Check and an originally paused control. Create/read/pause/resume and definition-version CAS passed. A stale version returned 409 without changing the definition. The main Check reached an acknowledged paused version 4; the control remained at version 2. |
+| Old execution and drain | The old Check produced Run ID 1 / Attempt ID 1 with a successful physical Job and Pod. The run ledger, terminal Check readmodel, Attempt, Job UID, Pod UID and exit code were bound. The old JobRun CR initially lagged those facts and converged through the normal ten-minute informer resynchronization. No manual status, finalizer, cursor or run-ledger write was used to satisfy the drain. |
+| Pre-upgrade recovery | After the complete drain and old-writer stop, the backup was restored in an isolated namespace before forward migrations. All 21 table summaries, 14 sequences and six migration rows matched. The old Admin read both Checks and their actual run and attempt history using the original API key; no restored Operator or Scheduler ran. |
+| Forward upgrade | Normal Helm upgrade advanced the migration ledger from six to 28 entries. The original six ledger rows and mounted migration ConfigMap bytes remained unchanged. Both Check identities, creation times, versions, cursors and configuration, the old execution history, API-key identity and grants were retained. The candidate reported legacy execution policy version 0. |
+| Same-source execution | The candidate API resumed the same Check from version 4 to 5. It automatically produced Run ID 2 / Attempt ID 2 (attempt number 1), which succeeded with a bound new Job and Pod and exit code 0. Its readmodel reported success, one associated good SLI event existed, and the created/completed/good/snapshot metric increments were each 1. |
+| Guarded pause and repeat | The Check was paused again at version 6. No new automatic run was accepted during the following 42 seconds. The originally paused control remained unchanged. A normal repeated Helm upgrade reached revision 3 / deployed with 28 unchanged migration rows, both Checks still paused and the original key still valid. |
+| Retirement | Components were ready before retirement. Nonterminal runs and Workflows, active workload Pods, accepted-but-unpublished work and termination-evidence obligations were zero before and after stopping writers. The collector stopped before the archive; the old recovery reader stopped. The owned kind cluster was deleted, the default kubeconfig was unchanged and all three original shared-service identities and running states were preserved. The 12 private backup-file checksums were reverified after cleanup. |
+
+Two failed preparation observations were retained: the temporary driver's empty
+Job-list assumption did not account for Check projections, and its first drain
+window was shorter than the old Operator's normal resynchronization period.
+The corrected inventory allowed only the recorded Check projections; the longer
+wait preserved the drain assertions and product inputs. No product correction
+was needed for this supplementary pass.
+
+Local release preparation also reran the Function, Admin HTTP and script package
+tests without cached results, all 12 archive-export unit cases and the complete
+site build. The build passed its 18 script cases and checked 577 current pages,
+34 reviewed topic pairs and 106 operations; the two retained benchmark files
+kept their bytes. The preceding dual-base browser results apply to unchanged
+site inputs. Independent review checked each of the eight intermediate commit
+trees, all translation-input hashes, logical boundaries and SSH signatures.
+Normal local commit hooks remained enabled.
+
+This pass qualifies the recorded legacy Check path on local Linux arm64 kind.
+It does not qualify new version 1 Check creation, production throughput, HA,
+CNI NetworkPolicy enforcement, a post-upgrade database downgrade or coordinated
+archive-store recovery. Hosted CI and publication remain maintainer actions.
+
+## Delivery candidate acceptance (2026-11-17)
+
+This pass checks the local `dev` working tree after `4184f981dbf6`. Installed
+checks use frozen application inputs and recorded image IDs. The documentation
+was rebuilt after the final English and Chinese upgrade-guide corrections.
+
+Function invocation now retains its last observed phase when waiting ends
+without a newer observation. HTTP and Console exports retain an incomplete
+result after archive loss on any page and describe missing gap bounds as
+unknown. Regression cases distinguish these fixes from the preceding behavior.
+Prerelease instructions now include the required installation configuration
+and all seven component tags, including overrides of retained component tags.
+
+The installed CI path now authorizes its dedicated native fixture writer after
+the installation lifecycle, before fixture preparation. Cluster, context and
+administrator identity checks bound that authorization to the disposable kind
+environment. Production `admission.nativeWriters` remains empty by default.
+The account installer's refusal to reuse a claimed installation was preserved;
+the complete run used a new installation rather than resetting account state.
+
+| Check | Result and scope |
+|---|---|
+| Backend | `make check`, the 51-package coverage gate and Helm checks passed after the Function and export corrections. The two declaration-only coverage exceptions remain documented. |
+| PostgreSQL baseline | The eight-package Go 1.27.4 integration result in the toolchain section below covers the unchanged migrations and database code. This pass additionally exercised a published-release database through upgrade and isolated restore. |
+| Vulnerabilities | Govulncheck passed for `linux/amd64` and `linux/arm64`; three module-level advisories remain outside imported vulnerable packages and reachable calls. |
+| Console | Generated references, TypeScript, lint, 515 unit cases, formatting and production build passed. All 400 browser-fixture cases passed without retries or skips. |
+| Documentation | All 18 script cases and 37 browser cases passed at both `/orbitjob` and `/review`, including the final upgrade clarifications. Each build checked 577 current pages, 34 reviewed topic pairs and 106 operations. The two historical benchmark files retained their bytes, and the default-base artifact was restored. |
+| Fresh installation | A dedicated Linux arm64 kind cluster with Kubernetes and task-local kubectl 1.37 passed fresh install, repeated upgrade, expected migration failure and rollback, uninstall and reinstall. The exact corrected CI writer step then prepared the fixtures. |
+| Complete installed Console | All 10 spec files and 40 cases passed with `completeSuite=true` and `passed=true`, without skips, expected failures or retries. The harness input manifest remained equal before and after the run. |
+| First-job tutorial | The installed tutorial passed. A separate interactive pass used the documented 60-second timeout, one platform attempt and zero Kubernetes backoff with a 63-character name. Empty-name review sent no write; cluster checking saved no CR. Confirmed save, readiness, trigger, one successful Attempt, exact stdout, sealed archive, no recorded gaps and the 15-day protection timestamp passed. Screenshots and viewport checks covered review and output. |
+| Candidate artifacts | All seven component images built for Linux arm64. A final build produced all 11 Linux amd64 ELF binaries with Go 1.27.4 after the runtime corrections. This does not establish Linux amd64 image execution. |
+| Workflow checks | Actionlint passed all changed workflows. Focused workflow tests and independent review covered mandatory documentation, immutable source selection, component tag overrides and the guarded fixture authorization step. The language hook passed against the 42 intended paths without staging. |
+| Repeat and recovery recheck | The final normal Helm upgrade reached revision 5 / deployed without force flags. The 28-row migration ledger, retained identities, original API key and personal-account login remained valid. The isolated old database still matched its six migrations, 21 table summaries and 14 sequences. |
+
+The upgrade used the actual five published Linux arm64 images for `v0.2.1`,
+with source commit `d12cca01a2e16eba808043dc98358f35ace4709e`. All five published
+manifest byte hashes, config descriptors and rootfs diffIDs matched the node
+content. The Admin CRI record retained a synthetic alias from the initial image
+transfer; the published manifest and exact config/rootfs chain establish the
+payload identity rather than that display alias.
+
+The old Operator produced real Job, Function and Workflow history. Maintenance
+recorded CR identities, original specifications, Kubernetes version preconditions
+and acknowledged suspension writes. JobRun status initially lagged terminal
+ledger, Attempt and physical-workload observations; the old Operator's normal
+resynchronization reported the terminal CR phases. No status was patched to
+complete the drain. Nonterminal runs, active physical workloads and outstanding
+termination-evidence obligations were checked before and after stopping the old
+writers.
+
+The original Helm ConfigMap migration input channel was preserved. All 28
+migrations completed, with the original six ledger checksums and ConfigMap bytes
+unchanged. The original API key authenticated and executed the retained Job,
+Function and Workflow successfully after upgrade. The old Workflow remained
+suspended for automatic scheduling while its manual run succeeded. Historical
+run, revision, actor and Attempt identities were checked separately. New version
+1 Job and Workflow execution and personal-account setup, logout and login passed.
+
+A new version 1 Workflow referencing the retained version 0 Job stayed
+`Pending` with `workflow_reference_not_ready`, before ledger or step creation.
+The Operator confirmed cancellation after a UID/version-guarded stop request;
+no child run was created. This compatibility observation is separate from the
+successful new version 1 path. The upgrade guide now states the resolved-policy
+and immutable-image requirements for those references.
+
+Before the schema cutover, the old database backup was restored in an isolated
+namespace. All 21 public-table content summaries, 14 sequences and six migration
+rows matched the backup boundary. The actual old Admin read the retained
+history using the original API key. No restored Operator or Scheduler ran.
+The old release has no archive or collector; this establishes restoration of
+that backup, not coordinated recovery of new 0.3.0 archive and collector state.
+
+The temporary upgrade values initially requested an unsupported 1-GiB archive,
+which the application rejected after migrations. The new archive directory and
+archive catalog were verified empty before correcting only that new volume and
+its template to the supported 10-GiB/default-budget profile. Database, history,
+Secrets and collector state were preserved. A targeted field-ownership handoff
+after the temporary rebuild preserved the StatefulSet/PVC identities and
+defaulted specification. Normal Helm convergence then passed without force
+flags; failed preparation evidence was retained.
+
+Before retirement, all current Deployments, archive and collector were ready.
+Nonterminal Job and Workflow runs, active workload Pods and evidence obligations
+were zero before and after stopping writers. The collector stopped before the
+archive. Fresh-install fixture credentials were revoked. Both disposable kind
+environments, including the recovery namespace, were removed. Private backups were retained;
+the default kubeconfig and existing shared services were preserved.
+
+These are local source, browser, Linux arm64 installation and published-release
+upgrade checks. The old installation fixture contained no Check definitions,
+so its Check pause/resume procedure was checked against source but not exercised
+through an installed upgrade. Current Check execution and monitoring are covered
+by the complete fresh installed suite. Hosted workflows, registry publication,
+production load and HA qualification were not performed. No staging, commit,
+push or release was part of this pass.
+
+## Toolchain and documentation release gates (2026-11-17)
+
+The local `dev` working tree after `4184f981dbf6` raises the main Go module's
+minimum version and Docker builder to Go 1.27.4. This resolves the standard-library
+finding [GO-2026-6859](https://pkg.go.dev/vuln/GO-2026-6859) detected during the
+release audit. Matching English and Chinese prerequisites were reviewed before
+their input hashes were recorded again.
+
+Release and prerelease verification now require a shared, read-only documentation
+workflow at the selected full source SHA. The standalone Documentation workflow
+uses the same checks and retains ownership of Pages publication. Regression
+checks reject mutable or mismatched refs and preserve `.nojekyll` through its
+artifact transfer. Independent cross-review exercised failures against the old
+release graph and against an artifact upload that omitted hidden files.
+
+The root static-host 404 artifact now contains English and Chinese recovery
+links without JavaScript. With JavaScript, the original request pathname selects
+the document language, title and recovery order. Recovery targets do not reuse
+the unknown path, query or fragment. Same-site absolute links are now checked
+alongside relative links, including target files and HTML anchors.
+
+| Check | Result and scope |
+|---|---|
+| Backend | `make check`, the 51-package coverage gate and Helm checks passed with Go 1.27.4; two declaration-only coverage exceptions remain documented. |
+| Vulnerabilities | Govulncheck 1.8.0 passed for `linux/amd64` and `linux/arm64` using the module-selected toolchain, without a version override. Three module-level advisories remain outside imported vulnerable packages and reachable calls. |
+| PostgreSQL | All eight integration packages passed serially without cached results on isolated PostgreSQL 17, using an explicit twenty-minute package bound. |
+| Documentation | All 18 script tests and 37 browser cases passed at both `/orbitjob` and `/review`. Each build checked 577 current pages, 34 reviewed topic pairs and 106 operations; both historical benchmark files retained their original bytes. The default-base artifact was restored afterwards. |
+| Console | Generated inputs, TypeScript, lint, 511 unit cases, formatting and production build passed. Console browser inputs were unchanged, so the preceding 400-case result was not repeated. |
+| Images | All seven component targets built locally for Linux arm64 with the pinned builder. Their binaries report Go 1.27.4; the Admin image passed the Console asset check. This does not establish Linux amd64 image or installed execution acceptance. |
+| Workflow checks | Actionlint and the workflow regressions passed. Cross-review corrected explicit Bash 3.2 rejection of invalid source refs and verified hidden-file retention during Pages artifact transfer. |
+
+The first database run was rejected because the temporary database name lacked
+the required test marker. The verification setup was corrected and the complete
+suite passed on a fresh test database; the name guard was preserved. Test-owned
+database and browser services were removed. No cluster installation, upgrade,
+hosted workflow execution, push or release was performed in this pass.
+
 ## Audit corrections (2026-11-17)
 
 The 18 confirmed origin/dev-to-local audit findings and the Workflow reference
