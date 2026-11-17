@@ -39,7 +39,7 @@ func newCheckActivationFixture(t *testing.T) *checkActivationFixture {
 	interval := 30
 	due := f.now.Add(-time.Second)
 	var err error
-	f.check, err = NewCheckRepository(f.owner).Create(t.Context(), check.CreateSpec{
+	f.check, err = NewCheckRepository(f.owner).Create(monitoringActorContext(t.Context()), check.CreateSpec{
 		Name: "activation", TenantID: f.scope.TenantID, CheckType: check.CheckTypeHTTPHealth,
 		CheckConfig:    map[string]any{"url": "https://example.com/health"},
 		AssertionRules: []check.AssertionRule{}, Labels: map[string]any{},
@@ -92,7 +92,7 @@ func TestCheckScheduleFirstActivationSkipsStaleSlotAndExecutesNext(t *testing.T)
 				}
 				for _, action := range []string{check.ActionPause, check.ActionResume} {
 					var err error
-					f.check, err = f.checks.ChangeStatus(t.Context(), f.scope.TenantID, "", f.check.ID, f.check.Version, action)
+					f.check, err = f.checks.ChangeStatus(monitoringActorContext(t.Context()), f.scope.TenantID, "", f.check.ID, f.check.Version, action)
 					if err != nil {
 						t.Fatal(err)
 					}

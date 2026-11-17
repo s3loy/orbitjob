@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
+	"orbitjob/internal/core/domain/audit"
 	"orbitjob/internal/core/domain/check"
-	"orbitjob/internal/core/domain/tenant"
 	"orbitjob/internal/domain/resource"
 )
 
@@ -110,16 +110,14 @@ func (r *CheckRepository) Create(ctx context.Context, spec check.CreateSpec) (ch
 
 	// Audit
 	diff := map[string]any{
-		"name":          spec.Name,
-		"check_type":    spec.CheckType,
-		"schedule_type": spec.ScheduleType,
+		"name":              spec.Name,
+		"check_type":        spec.CheckType,
+		"schedule_type":     spec.ScheduleType,
+		"version":           snap.Version,
+		"resource_group_id": snap.ResourceGroupID,
 	}
-	diffBytes, _ := json.Marshal(diff)
-	if _, err = tx.ExecContext(ctx, `
-		INSERT INTO audit_events (tenant_id, actor_type, actor_id, event_type, resource_type, resource_id, diff)
-		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-	`, spec.TenantID, tenant.ActorTypeSystem, "scheduler", "check.created", "check", snap.ID, diffBytes); err != nil {
-		return check.Snapshot{}, fmt.Errorf("insert audit: %w", err)
+	if err = auditMonitoringMutation(ctx, tx, spec.TenantID, "check.created", "check", snap.ID, diff); err != nil {
+		return check.Snapshot{}, err
 	}
 
 	if err = tx.Commit(); err != nil {
@@ -222,12 +220,8 @@ func (r *CheckRepository) ChangeStatus(ctx context.Context, tenantID, resourceGr
 		"from_version": version,
 		"to_version":   snap.Version,
 	}
-	diffBytes, _ := json.Marshal(diff)
-	if _, err = tx.ExecContext(ctx, `
-		INSERT INTO audit_events (tenant_id, actor_type, actor_id, event_type, resource_type, resource_id, diff)
-		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-	`, tenantID, tenant.ActorTypeSystem, "scheduler", "check.status_changed", "check", id, diffBytes); err != nil {
-		return check.Snapshot{}, fmt.Errorf("insert audit: %w", err)
+	if err = auditMonitoringMutation(ctx, tx, tenantID, "check.status_changed", "check", id, diff); err != nil {
+		return check.Snapshot{}, err
 	}
 
 	if err = tx.Commit(); err != nil {
@@ -274,13 +268,9 @@ func (r *CheckRepository) Delete(ctx context.Context, tenantID, resourceGroupID 
 	}
 
 	// Audit
-	diff := map[string]any{"action": "delete", "from_version": version}
-	diffBytes, _ := json.Marshal(diff)
-	if _, err = tx.ExecContext(ctx, `
-		INSERT INTO audit_events (tenant_id, actor_type, actor_id, event_type, resource_type, resource_id, diff)
-		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-	`, tenantID, tenant.ActorTypeSystem, "scheduler", "check.deleted", "check", id, diffBytes); err != nil {
-		return fmt.Errorf("insert audit: %w", err)
+	diff := map[string]any{"action": "delete", "from_version": version, "to_version": version + 1}
+	if err = auditMonitoringMutation(ctx, tx, tenantID, "check.deleted", "check", id, diff); err != nil {
+		return err
 	}
 
 	if err = tx.Commit(); err != nil {
@@ -458,4 +448,22 @@ func (r *CheckRepository) GetByID(ctx context.Context, tenantID string, id int64
 		return check.Snapshot{}, fmt.Errorf("commit get check: %w", err)
 	}
 	return snap, nil
+}
+
+func auditMonitoringMutation(ctx context.Context, tx *sql.Tx, tenantID, eventType, resourceType string, resourceID int64, diff map[string]any) error {
+	actorID, actorType, err := audit.Actor(ctx)
+	if err != nil {
+		return fmt.Errorf("read mutation actor: %w", err)
+	}
+	diffBytes, err := json.Marshal(diff)
+	if err != nil {
+		return fmt.Errorf("marshal mutation audit: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO audit_events (tenant_id, actor_type, actor_id, event_type, resource_type, resource_id, diff)
+		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+	`, tenantID, actorType, actorID, eventType, resourceType, resourceID, diffBytes); err != nil {
+		return fmt.Errorf("insert mutation audit: %w", err)
+	}
+	return nil
 }

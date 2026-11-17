@@ -9,6 +9,7 @@ import (
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
 
+	"orbitjob/internal/core/domain/audit"
 	"orbitjob/internal/core/domain/check"
 	"orbitjob/internal/domain/resource"
 
@@ -66,7 +67,7 @@ func TestCheckRepository_Create(t *testing.T) {
 	expectAuditInsert(mock)
 	mock.ExpectCommit()
 
-	snap, err := repo.Create(context.Background(), check.CreateSpec{
+	snap, err := repo.Create(monitoringActorContext(), check.CreateSpec{
 		Name:         "test-check",
 		TenantID:     coreFixtureCheckRepositoryTenantID,
 		CheckType:    "http_health",
@@ -95,7 +96,7 @@ func TestCheckRepository_Create_BeginTxError(t *testing.T) {
 	repo, mock := newCheckRepoMock(t)
 	mock.ExpectBegin().WillReturnError(errors.New("boom"))
 
-	_, err := repo.Create(context.Background(), check.CreateSpec{
+	_, err := repo.Create(monitoringActorContext(), check.CreateSpec{
 		Name:         "test",
 		TenantID:     coreFixtureCheckRepositoryTenantID,
 		CheckType:    "http_health",
@@ -124,7 +125,7 @@ func TestCheckRepository_ChangeStatus_Pause(t *testing.T) {
 	expectAuditInsert(mock)
 	mock.ExpectCommit()
 
-	snap, err := repo.ChangeStatus(context.Background(), coreFixtureCheckRepositoryTenantID, "", 1, 1, "pause")
+	snap, err := repo.ChangeStatus(monitoringActorContext(), coreFixtureCheckRepositoryTenantID, "", 1, 1, "pause")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -146,7 +147,7 @@ func TestCheckRepository_ChangeStatus_NotFound(t *testing.T) {
 		WillReturnError(sql.ErrNoRows)
 
 	mock.ExpectRollback()
-	_, err := repo.ChangeStatus(context.Background(), coreFixtureCheckRepositoryTenantID, "", 99, 1, "pause")
+	_, err := repo.ChangeStatus(monitoringActorContext(), coreFixtureCheckRepositoryTenantID, "", 99, 1, "pause")
 	var expected *resource.NotFoundError
 	if !errors.As(err, &expected) {
 		t.Fatalf("expected *resource.NotFoundError, got %v", err)
@@ -172,7 +173,7 @@ func TestCheckRepository_ChangeStatus_VersionConflict(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
 	mock.ExpectRollback()
 
-	_, err := repo.ChangeStatus(context.Background(), coreFixtureCheckRepositoryTenantID, "", 1, 1, "pause")
+	_, err := repo.ChangeStatus(monitoringActorContext(), coreFixtureCheckRepositoryTenantID, "", 1, 1, "pause")
 	var expected *resource.ConflictError
 	if !errors.As(err, &expected) {
 		t.Fatalf("expected *resource.ConflictError, got %v", err)
@@ -193,7 +194,7 @@ func TestCheckRepository_Delete(t *testing.T) {
 	expectAuditInsert(mock)
 	mock.ExpectCommit()
 
-	if err := repo.Delete(context.Background(), coreFixtureCheckRepositoryTenantID, "", 1, 1); err != nil {
+	if err := repo.Delete(monitoringActorContext(), coreFixtureCheckRepositoryTenantID, "", 1, 1); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -211,7 +212,7 @@ func TestCheckRepository_Delete_NotFound(t *testing.T) {
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectRollback()
 
-	err := repo.Delete(context.Background(), coreFixtureCheckRepositoryTenantID, "", 99, 1)
+	err := repo.Delete(monitoringActorContext(), coreFixtureCheckRepositoryTenantID, "", 99, 1)
 	var expected *resource.NotFoundError
 	if !errors.As(err, &expected) {
 		t.Fatalf("expected *resource.NotFoundError, got %v", err)
@@ -241,7 +242,7 @@ func TestCheckRepository_ListDue(t *testing.T) {
 		WillReturnRows(rows)
 	mock.ExpectCommit()
 
-	checks, err := repo.ListDue(context.Background(), coreFixtureCheckRepositoryTenantID, now, 50)
+	checks, err := repo.ListDue(monitoringActorContext(), coreFixtureCheckRepositoryTenantID, now, 50)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -274,7 +275,7 @@ func TestCheckRepository_ListDue_Empty(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows(checkColumns))
 	mock.ExpectCommit()
 
-	checks, err := repo.ListDue(context.Background(), coreFixtureCheckRepositoryTenantID, now, 50)
+	checks, err := repo.ListDue(monitoringActorContext(), coreFixtureCheckRepositoryTenantID, now, 50)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -297,7 +298,7 @@ func TestCheckRepository_UpdateNextRunAt(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	if advanced, err := repo.UpdateNextRunAt(context.Background(), coreFixtureCheckRepositoryTenantID, 1, 2, previous, next); err != nil || !advanced {
+	if advanced, err := repo.UpdateNextRunAt(monitoringActorContext(), coreFixtureCheckRepositoryTenantID, 1, 2, previous, next); err != nil || !advanced {
 		t.Fatalf("advanced=%t err=%v", advanced, err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -321,7 +322,7 @@ func TestCheckRepository_UpdateNextRunAt_StaleSnapshot(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectCommit()
 
-	if advanced, err := repo.UpdateNextRunAt(context.Background(), coreFixtureCheckRepositoryTenantID, 1, 2, previous, next); err != nil || advanced {
+	if advanced, err := repo.UpdateNextRunAt(monitoringActorContext(), coreFixtureCheckRepositoryTenantID, 1, 2, previous, next); err != nil || advanced {
 		t.Fatalf("advanced=%t err=%v", advanced, err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -347,7 +348,7 @@ func TestCheckRepository_GetByID(t *testing.T) {
 		))
 	mock.ExpectCommit()
 
-	snap, err := repo.GetByID(context.Background(), coreFixtureCheckRepositoryTenantID, 1)
+	snap, err := repo.GetByID(monitoringActorContext(), coreFixtureCheckRepositoryTenantID, 1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -375,7 +376,7 @@ func TestCheckRepository_GetByID_NotFound(t *testing.T) {
 	// TestCheckRepository_GetByID_NotFound_RollsBack.
 	mock.ExpectRollback()
 
-	_, err := repo.GetByID(context.Background(), coreFixtureCheckRepositoryTenantID, 99)
+	_, err := repo.GetByID(monitoringActorContext(), coreFixtureCheckRepositoryTenantID, 99)
 	var notFound *resource.NotFoundError
 	if !errors.As(err, &notFound) {
 		t.Fatalf("expected *resource.NotFoundError, got %T: %v", err, err)
@@ -391,3 +392,13 @@ func TestCheckRepository_GetByID_NotFound(t *testing.T) {
 var coreFixtureCheckRepositoryTenantID = scan.GenerateID()
 
 var coreFixtureCheckReadGroupID = scan.GenerateID()
+
+var monitoringActorID = scan.GenerateID()
+
+func monitoringActorContext(contexts ...context.Context) context.Context {
+	ctx := context.Background()
+	if len(contexts) > 0 {
+		ctx = contexts[0]
+	}
+	return audit.WithActor(ctx, monitoringActorID, "api_key")
+}

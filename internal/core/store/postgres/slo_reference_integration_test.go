@@ -12,7 +12,7 @@ import (
 
 func TestSLOCreationRequiresLiveScopedSLI(t *testing.T) {
 	owner := OpenStoreDB(t)
-	ctx := ctxStore(t)
+	ctx := monitoringActorContext(ctxStore(t))
 	const tenant = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
 	const other = "01ARZ3NDEKTSV4RRFFQ69G5FAW"
 	const group = "01ARZ3NDEKTSV4RRFFQ69G5FAX"

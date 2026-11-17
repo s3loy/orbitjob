@@ -1,7 +1,6 @@
 package postgres
 
 import (
-	"context"
 	"database/sql"
 	"errors"
 	"regexp"
@@ -67,9 +66,10 @@ func TestSLIRepository_Create(t *testing.T) {
 			"job_run", []byte(`{"source_uid":"check-7"}`), "ratio",
 			[]byte(`{"status":"success"}`), 1, now, now,
 		))
+	expectAuditInsert(mock)
 	mock.ExpectCommit()
 
-	snap, err := repo.Create(context.Background(), coreFixtureSliRepositoryTenantID, spec)
+	snap, err := repo.Create(monitoringActorContext(), coreFixtureSliRepositoryTenantID, spec)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestSLIRepository_Create_BeginTxError(t *testing.T) {
 	repo, mock := newSLIRepoMock(t)
 	mock.ExpectBegin().WillReturnError(errors.New("boom"))
 
-	if _, err := repo.Create(context.Background(), coreFixtureSliRepositoryTenantID, sli.CreateSpec{}); err == nil {
+	if _, err := repo.Create(monitoringActorContext(), coreFixtureSliRepositoryTenantID, sli.CreateSpec{}); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -119,9 +119,10 @@ func TestSLIRepository_Delete(t *testing.T) {
 	mock.ExpectExec("UPDATE slis SET deleted_at").
 		WithArgs(coreFixtureSliRepositoryTenantID, int64(1), 2, group).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	expectAuditInsert(mock)
 	mock.ExpectCommit()
 
-	if err := repo.Delete(context.Background(), coreFixtureSliRepositoryTenantID, group, 1, 2); err != nil {
+	if err := repo.Delete(monitoringActorContext(), coreFixtureSliRepositoryTenantID, group, 1, 2); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -139,7 +140,7 @@ func TestSLIRepository_Delete_NotFound(t *testing.T) {
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectRollback()
 
-	err := repo.Delete(context.Background(), coreFixtureSliRepositoryTenantID, "", 99, 1)
+	err := repo.Delete(monitoringActorContext(), coreFixtureSliRepositoryTenantID, "", 99, 1)
 	var notFound *resource.NotFoundError
 	if !errors.As(err, &notFound) {
 		t.Fatalf("expected *resource.NotFoundError, got %T: %v", err, err)
@@ -167,7 +168,7 @@ func TestSLIRepository_Delete_DBError(t *testing.T) {
 		WillReturnError(errors.New("delete failed"))
 	mock.ExpectRollback()
 
-	if err := repo.Delete(context.Background(), coreFixtureSliRepositoryTenantID, "", 1, 2); err == nil {
+	if err := repo.Delete(monitoringActorContext(), coreFixtureSliRepositoryTenantID, "", 1, 2); err == nil {
 		t.Fatal("expected error")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -190,7 +191,7 @@ func TestSLIRepository_FindBySourceUID(t *testing.T) {
 		))
 	mock.ExpectCommit()
 
-	slis, err := repo.FindBySourceUID(context.Background(), coreFixtureSliRepositoryTenantID, "check-42")
+	slis, err := repo.FindBySourceUID(monitoringActorContext(), coreFixtureSliRepositoryTenantID, "check-42")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -218,7 +219,7 @@ func TestSLIRepository_FindBySourceUID_DBError(t *testing.T) {
 		WillReturnError(errors.New("query failed"))
 	mock.ExpectRollback()
 
-	if _, err := repo.FindBySourceUID(context.Background(), coreFixtureSliRepositoryTenantID, "check-42"); err == nil {
+	if _, err := repo.FindBySourceUID(monitoringActorContext(), coreFixtureSliRepositoryTenantID, "check-42"); err == nil {
 		t.Fatal("expected error")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {

@@ -7,7 +7,11 @@
 // requires the grant to have been written down when it happened.
 package audit
 
-import "context"
+import (
+	"context"
+	"errors"
+	"strings"
+)
 
 // Event is one authorization change to record.
 type Event struct {
@@ -60,4 +64,21 @@ func ActorType(ctx context.Context, id string) string {
 		return "user"
 	}
 	return "api_key"
+}
+
+// ErrActorRequired rejects mutations without an explicitly declared server identity.
+var ErrActorRequired = errors.New("audit actor is missing or invalid")
+
+// Actor reads the identity supplied by authentication or an explicit system caller.
+func Actor(ctx context.Context) (id, kind string, err error) {
+	actor, ok := ctx.Value(actorContextKey{}).(actorIdentity)
+	if !ok || strings.TrimSpace(actor.ID) == "" {
+		return "", "", ErrActorRequired
+	}
+	switch actor.Type {
+	case "user", "api_key", "system":
+		return actor.ID, actor.Type, nil
+	default:
+		return "", "", ErrActorRequired
+	}
 }

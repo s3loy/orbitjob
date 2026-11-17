@@ -79,6 +79,14 @@ WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL
 	}
 	snap.WindowDuration = time.Duration(windowSecs) * time.Second
 
+	if err := auditMonitoringMutation(ctx, tx, tenantID, "slo.created", "slo", snap.ID, map[string]any{
+		"name": snap.Name, "sli_id": snap.SLIID, "target": snap.Target,
+		"window_type": snap.WindowType, "window_duration_seconds": windowSecs,
+		"status": snap.Status, "version": snap.Version, "resource_group_id": spec.ResourceGroupID,
+	}); err != nil {
+		return snap, err
+	}
+
 	if err := tx.Commit(); err != nil {
 		return snap, fmt.Errorf("commit create slo: %w", err)
 	}
@@ -120,6 +128,12 @@ func (r *SLORepository) ChangeStatus(ctx context.Context, tenantID, resourceGrou
 	}
 	snap.WindowDuration = time.Duration(windowSecs) * time.Second
 
+	if err := auditMonitoringMutation(ctx, tx, tenantID, "slo.status_changed", "slo", snap.ID, map[string]any{
+		"to_status": snap.Status, "from_version": version, "to_version": snap.Version,
+	}); err != nil {
+		return snap, err
+	}
+
 	if err := tx.Commit(); err != nil {
 		return snap, fmt.Errorf("commit slo status: %w", err)
 	}
@@ -154,6 +168,12 @@ func (r *SLORepository) Delete(ctx context.Context, tenantID, resourceGroupID st
 	}
 	if rows == 0 {
 		return r.classifyWriteMiss(ctx, tx, tenantID, resourceGroupID, id)
+	}
+
+	if err := auditMonitoringMutation(ctx, tx, tenantID, "slo.deleted", "slo", id, map[string]any{
+		"from_version": version, "to_version": version + 1,
+	}); err != nil {
+		return err
 	}
 
 	if err := tx.Commit(); err != nil {

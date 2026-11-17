@@ -38,7 +38,7 @@ func TestCheckSchedulePauseStopsTimerAndPreservesAcceptedRecovery(t *testing.T) 
 	control := NewControlPlaneRepository(runtimeDB)
 	interval := 60
 	planned := time.Now().UTC().Add(time.Minute).Truncate(time.Microsecond)
-	c, err := NewCheckRepository(owner).Create(t.Context(), check.CreateSpec{
+	c, err := NewCheckRepository(owner).Create(monitoringActorContext(t.Context()), check.CreateSpec{
 		Name: "schedule-pause", TenantID: tenant, CheckType: check.CheckTypeHTTPHealth,
 		CheckConfig:    map[string]any{"url": "https://example.com/health", "method": "GET", "expected_status": 200},
 		AssertionRules: []check.AssertionRule{}, Labels: map[string]any{},

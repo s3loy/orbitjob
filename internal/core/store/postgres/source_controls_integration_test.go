@@ -341,7 +341,7 @@ func TestSourcePauseDoesNotReverseSLIConfigurationFreezeLocks(t *testing.T) {
 	}
 	created, frozen := make(chan error, 1), make(chan error, 1)
 	go func() {
-		_, err := NewSLIRepository(admin).Create(ctx, f.tenant, sli.CreateSpec{Name: "extract-completion", SLIType: "availability", SourceType: "job_run", SourceConfig: map[string]any{"source_uid": f.extract}, Aggregation: "ratio", GoodEventCriteria: map[string]any{"status": "success"}})
+		_, err := NewSLIRepository(admin).Create(monitoringActorContext(ctx), f.tenant, sli.CreateSpec{Name: "extract-completion", SLIType: "availability", SourceType: "job_run", SourceConfig: map[string]any{"source_uid": f.extract}, Aggregation: "ratio", GoodEventCriteria: map[string]any{"status": "success"}})
 		created <- err
 	}()
 	go func() {

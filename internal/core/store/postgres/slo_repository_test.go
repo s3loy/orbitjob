@@ -1,7 +1,6 @@
 package postgres
 
 import (
-	"context"
 	"database/sql"
 	"errors"
 	"testing"
@@ -65,9 +64,10 @@ func TestSLORepository_Create(t *testing.T) {
 			3, coreFixtureSloRepositoryTenantID, "checkout-slo", nil, int64(7), 0.99,
 			"rolling", int64(86400), 14.4, 6, "active", 1, now, now,
 		))
+	expectAuditInsert(mock)
 	mock.ExpectCommit()
 
-	snap, err := repo.Create(context.Background(), coreFixtureSloRepositoryTenantID, spec)
+	snap, err := repo.Create(monitoringActorContext(), coreFixtureSloRepositoryTenantID, spec)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestSLORepository_Create_Error(t *testing.T) {
 		WillReturnError(errors.New("insert failed"))
 	mock.ExpectRollback()
 
-	if _, err := repo.Create(context.Background(), coreFixtureSloRepositoryTenantID, slo.CreateSpec{}); err == nil {
+	if _, err := repo.Create(monitoringActorContext(), coreFixtureSloRepositoryTenantID, slo.CreateSpec{}); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -124,9 +124,10 @@ func TestSLORepository_ChangeStatus(t *testing.T) {
 			3, coreFixtureSloRepositoryTenantID, "checkout-slo", nil, int64(7), 0.99,
 			"rolling", int64(3600), 14.4, 6, "paused", 2, now, now,
 		))
+	expectAuditInsert(mock)
 	mock.ExpectCommit()
 
-	snap, err := repo.ChangeStatus(context.Background(), coreFixtureSloRepositoryTenantID, "", 3, 1, "paused")
+	snap, err := repo.ChangeStatus(monitoringActorContext(), coreFixtureSloRepositoryTenantID, "", 3, 1, "paused")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -157,7 +158,7 @@ func TestSLORepository_ChangeStatus_NotFound(t *testing.T) {
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectRollback()
 
-	_, err := repo.ChangeStatus(context.Background(), coreFixtureSloRepositoryTenantID, "", 99, 1, "paused")
+	_, err := repo.ChangeStatus(monitoringActorContext(), coreFixtureSloRepositoryTenantID, "", 99, 1, "paused")
 	var notFound *resource.NotFoundError
 	if !errors.As(err, &notFound) {
 		t.Fatalf("expected *resource.NotFoundError, got %T: %v", err, err)
@@ -180,7 +181,7 @@ func TestSLORepository_ChangeStatus_VersionConflict(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(3))
 	mock.ExpectRollback()
 
-	_, err := repo.ChangeStatus(context.Background(), coreFixtureSloRepositoryTenantID, "", 3, 1, "paused")
+	_, err := repo.ChangeStatus(monitoringActorContext(), coreFixtureSloRepositoryTenantID, "", 3, 1, "paused")
 	var conflict *resource.ConflictError
 	if !errors.As(err, &conflict) {
 		t.Fatalf("expected *resource.ConflictError, got %T: %v", err, err)
@@ -198,9 +199,10 @@ func TestSLORepository_Delete(t *testing.T) {
 	mock.ExpectExec("UPDATE slos SET deleted_at").
 		WithArgs(coreFixtureSloRepositoryTenantID, int64(3), 1, nil).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	expectAuditInsert(mock)
 	mock.ExpectCommit()
 
-	if err := repo.Delete(context.Background(), coreFixtureSloRepositoryTenantID, "", 3, 1); err != nil {
+	if err := repo.Delete(monitoringActorContext(), coreFixtureSloRepositoryTenantID, "", 3, 1); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -218,7 +220,7 @@ func TestSLORepository_Delete_NotFound(t *testing.T) {
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectRollback()
 
-	err := repo.Delete(context.Background(), coreFixtureSloRepositoryTenantID, "", 99, 1)
+	err := repo.Delete(monitoringActorContext(), coreFixtureSloRepositoryTenantID, "", 99, 1)
 	var notFound *resource.NotFoundError
 	if !errors.As(err, &notFound) {
 		t.Fatalf("expected *resource.NotFoundError, got %T: %v", err, err)
@@ -241,7 +243,7 @@ func TestSLORepository_Delete_VersionConflict(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(3))
 	mock.ExpectRollback()
 
-	err := repo.Delete(context.Background(), coreFixtureSloRepositoryTenantID, "", 3, 1)
+	err := repo.Delete(monitoringActorContext(), coreFixtureSloRepositoryTenantID, "", 3, 1)
 	var conflict *resource.ConflictError
 	if !errors.As(err, &conflict) {
 		t.Fatalf("expected *resource.ConflictError, got %T: %v", err, err)
@@ -261,7 +263,7 @@ func TestSLORepository_Delete_DBError(t *testing.T) {
 		WillReturnError(errors.New("delete failed"))
 	mock.ExpectRollback()
 
-	if err := repo.Delete(context.Background(), coreFixtureSloRepositoryTenantID, "", 3, 1); err == nil {
+	if err := repo.Delete(monitoringActorContext(), coreFixtureSloRepositoryTenantID, "", 3, 1); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -281,7 +283,7 @@ func TestSLORepository_ListActive(t *testing.T) {
 				"calendar", int64(604800), 14.4, 6, "active", 1, now, now))
 	mock.ExpectCommit()
 
-	slos, err := repo.ListActive(context.Background(), coreFixtureSloRepositoryTenantID)
+	slos, err := repo.ListActive(monitoringActorContext(), coreFixtureSloRepositoryTenantID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -309,7 +311,7 @@ func TestSLORepository_ListActive_Empty(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows(sloColumns))
 	mock.ExpectCommit()
 
-	slos, err := repo.ListActive(context.Background(), coreFixtureSloRepositoryTenantID)
+	slos, err := repo.ListActive(monitoringActorContext(), coreFixtureSloRepositoryTenantID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -328,7 +330,7 @@ func TestSLORepository_ListActive_DBError(t *testing.T) {
 		WillReturnError(errors.New("query failed"))
 	mock.ExpectRollback()
 
-	if _, err := repo.ListActive(context.Background(), coreFixtureSloRepositoryTenantID); err == nil {
+	if _, err := repo.ListActive(monitoringActorContext(), coreFixtureSloRepositoryTenantID); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -341,7 +343,7 @@ func TestSLORepository_Create_InaccessibleSLI(t *testing.T) {
 	expectSetConfig(mock, coreFixtureSloRepositoryTenantID)
 	mock.ExpectQuery("SELECT id FROM slis").WithArgs(coreFixtureSloRepositoryTenantID, int64(99), nil).WillReturnError(sql.ErrNoRows)
 	mock.ExpectRollback()
-	_, err := repo.Create(context.Background(), coreFixtureSloRepositoryTenantID, slo.CreateSpec{SLIID: 99})
+	_, err := repo.Create(monitoringActorContext(), coreFixtureSloRepositoryTenantID, slo.CreateSpec{SLIID: 99})
 	var missing *resource.NotFoundError
 	if !errors.As(err, &missing) || missing.Resource != "sli" {
 		t.Fatalf("expected hidden SLI, got %v", err)

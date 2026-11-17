@@ -27,7 +27,7 @@ func seedSLIRetirement(t *testing.T, missing bool) sliRetirementFixture {
 	t.Helper()
 	owner, tenant, runID := seedIntegrityRun(t, jobrun.Pending, 0)
 	admin := openRoleDB(t, owner, "orbitjob_admin")
-	snapshot, err := NewSLIRepository(admin).Create(t.Context(), tenant, sli.CreateSpec{Name: "retirement-measurement", SLIType: sli.TypeAvailability, SourceType: "job_run", SourceConfig: map[string]any{"source_uid": tenant}, Aggregation: "ratio", GoodEventCriteria: map[string]any{"status": "success"}})
+	snapshot, err := NewSLIRepository(admin).Create(monitoringActorContext(t.Context()), tenant, sli.CreateSpec{Name: "retirement-measurement", SLIType: sli.TypeAvailability, SourceType: "job_run", SourceConfig: map[string]any{"source_uid": tenant}, Aggregation: "ratio", GoodEventCriteria: map[string]any{"status": "success"}})
 	if err != nil {
 		t.Fatal(err)
 	}

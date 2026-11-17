@@ -159,25 +159,25 @@ func TestGroupedDerivedResourcesRequireVisibleParents(t *testing.T) {
 		t.Fatal(err)
 	}
 	admin := openRoleDB(t, db, "orbitjob_admin")
-	_, err := NewSLIRepository(admin).Create(ctx, tenant, sli.CreateSpec{Name: "indirect-check", SLIType: "availability", SourceType: "job_run", SourceConfig: map[string]any{"source_uid": fmt.Sprintf("check-%d", checkID)}, Aggregation: "ratio", ResourceGroupID: g1})
+	_, err := NewSLIRepository(admin).Create(monitoringActorContext(ctx), tenant, sli.CreateSpec{Name: "indirect-check", SLIType: "availability", SourceType: "job_run", SourceConfig: map[string]any{"source_uid": fmt.Sprintf("check-%d", checkID)}, Aggregation: "ratio", ResourceGroupID: g1})
 	var missing *resource.NotFoundError
 	if !errors.As(err, &missing) {
 		t.Fatalf("cross-group SLI returned %v", err)
 	}
-	_, err = NewSLORepository(admin).Create(ctx, tenant, slo.CreateSpec{Name: "indirect-sli", SLIID: sliID, Target: .99, WindowType: "rolling", WindowDuration: time.Hour, ResourceGroupID: g1})
+	_, err = NewSLORepository(admin).Create(monitoringActorContext(ctx), tenant, slo.CreateSpec{Name: "indirect-sli", SLIID: sliID, Target: .99, WindowType: "rolling", WindowDuration: time.Hour, ResourceGroupID: g1})
 	if !errors.As(err, &missing) {
 		t.Fatalf("cross-group SLO returned %v", err)
 	}
-	if _, err := NewSLIRepository(admin).Create(ctx, tenant, sli.CreateSpec{Name: "same-group-check", SLIType: "availability", SourceType: "job_run", SourceConfig: map[string]any{"source_uid": fmt.Sprintf("check-%d", checkID)}, Aggregation: "ratio", ResourceGroupID: g2}); err != nil {
+	if _, err := NewSLIRepository(admin).Create(monitoringActorContext(ctx), tenant, sli.CreateSpec{Name: "same-group-check", SLIType: "availability", SourceType: "job_run", SourceConfig: map[string]any{"source_uid": fmt.Sprintf("check-%d", checkID)}, Aggregation: "ratio", ResourceGroupID: g2}); err != nil {
 		t.Fatalf("same-group SLI: %v", err)
 	}
-	if _, err := NewSLORepository(admin).Create(ctx, tenant, slo.CreateSpec{Name: "same-group-sli", SLIID: sliID, Target: .99, WindowType: "rolling", WindowDuration: time.Hour, ResourceGroupID: g2}); err != nil {
+	if _, err := NewSLORepository(admin).Create(monitoringActorContext(ctx), tenant, slo.CreateSpec{Name: "same-group-sli", SLIID: sliID, Target: .99, WindowType: "rolling", WindowDuration: time.Hour, ResourceGroupID: g2}); err != nil {
 		t.Fatalf("same-group SLO: %v", err)
 	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO job_definition_revisions(tenant_id,source_mode,source_uid,source_namespace,source_name,generation,spec_hash,normalized_spec,actor,is_active) VALUES($1,'kubernetes','plain-job','ns','plain',1,'hash','{}','operator',true)`, tenant); err != nil {
 		t.Fatal(err)
 	}
-	_, err = NewSLIRepository(admin).Create(ctx, tenant, sli.CreateSpec{Name: "groupless-job", SLIType: "availability", SourceType: "job_run", SourceConfig: map[string]any{"source_uid": "plain-job"}, Aggregation: "ratio", ResourceGroupID: g1})
+	_, err = NewSLIRepository(admin).Create(monitoringActorContext(ctx), tenant, sli.CreateSpec{Name: "groupless-job", SLIType: "availability", SourceType: "job_run", SourceConfig: map[string]any{"source_uid": "plain-job"}, Aggregation: "ratio", ResourceGroupID: g1})
 	if !errors.As(err, &missing) {
 		t.Fatalf("group-scoped link to groupless Job: %v", err)
 	}

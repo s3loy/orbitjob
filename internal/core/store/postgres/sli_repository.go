@@ -90,6 +90,13 @@ func (r *SLIRepository) Create(ctx context.Context, tenantID string, spec sli.Cr
 		}
 	}
 
+	if err = auditMonitoringMutation(ctx, tx, tenantID, "sli.created", "sli", snap.ID, map[string]any{
+		"name": snap.Name, "sli_type": snap.SLIType, "source_type": snap.SourceType,
+		"aggregation": snap.Aggregation, "version": snap.Version, "resource_group_id": spec.ResourceGroupID,
+	}); err != nil {
+		return snap, err
+	}
+
 	if err = tx.Commit(); err != nil {
 		return snap, fmt.Errorf("commit create sli: %w", err)
 	}
@@ -138,6 +145,12 @@ func (r *SLIRepository) Delete(ctx context.Context, tenantID, resourceGroupID st
 	}
 	if rows == 0 {
 		return &resource.NotFoundError{Resource: "sli", ID: id}
+	}
+
+	if err = auditMonitoringMutation(ctx, tx, tenantID, "sli.deleted", "sli", id, map[string]any{
+		"from_version": version, "to_version": version + 1,
+	}); err != nil {
+		return err
 	}
 
 	if err = tx.Commit(); err != nil {

@@ -89,7 +89,7 @@ func openRoleDB(t *testing.T, owner *sql.DB, role string) *sql.DB {
 
 func TestSLORepositoryUnderRLS(t *testing.T) {
 	owner := OpenStoreDB(t)
-	ctx := ctxStore(t)
+	ctx := monitoringActorContext(ctxStore(t))
 
 	// Seed two tenants, one SLI and one active SLO each, as the owner: RLS
 	// does not bind it, which is what lets one connection speak for both.

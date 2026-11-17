@@ -47,6 +47,9 @@ implementation scope and [verification](docs/verification.md) for test results.
 
 ### Fixed
 
+- Preserve the authenticated actor in Check management audits and record
+  Check, SLI and SLO management changes in the same transaction as their audit.
+  Roll back changes when a valid actor or audit write is unavailable.
 - Require Go 1.27.4 and pin the Docker builder to the same patch version to
   resolve the standard-library HTTP/1 header race reported as GO-2026-6859.
 - Provide English and Chinese recovery in the shared static-host 404 page,
