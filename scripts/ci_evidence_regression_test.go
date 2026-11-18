@@ -1,11 +1,15 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -131,6 +135,167 @@ wait_run_phase() { if [[ $2 == 60 ]]; then printf '%s\n' "$RUNNING"; else printf
 				}
 			} else if !strings.Contains(out, ":1:0") {
 				t.Fatalf("unobserved cancellation did not fail:\n%s", out)
+			}
+		})
+	}
+}
+
+func TestSmokeUsesCheckedDefinitionWrite(t *testing.T) {
+	const (
+		canonicalSpec = `{"executionPolicyVersion":1,"jobTemplate":{"command":["sleep","30"]},"retryPolicy":{"maxAttempts":1}}`
+		digest        = "checked-fixture-digest"
+		uid           = "11111111-1111-4111-8111-111111111111"
+	)
+	type request struct {
+		ID     string `json:"request_id"`
+		DryRun bool   `json:"dry_run"`
+		Spec   string `json:"spec_json"`
+		Digest string `json:"manifest_digest"`
+	}
+	for _, tc := range []struct {
+		name         string
+		wantRequests int32
+		wantResult   string
+	}{
+		{"accepted", 2, "RESULT=success:1:" + uid},
+		{"check rejected", 1, "RESULT=failure:0:"},
+		{"wrong check receipt", 1, "RESULT=failure:0:"},
+		{"apply unavailable", 2, "RESULT=failure:1:"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var requests atomic.Int32
+			var checkedID atomic.Value
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPut || r.URL.Path != "/api/v1/definitions/jobs/default/smoke-sleep" || r.Header.Get("Authorization") != "Bearer fixture" {
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+				}
+				var in request
+				if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+					t.Errorf("invalid request: %v", err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				receipt := map[string]string{"request_id": in.ID, "kind": "jobs", "namespace": "default", "name": "smoke-sleep"}
+				switch requests.Add(1) {
+				case 1:
+					if !in.DryRun || in.ID == "" || in.Digest != "" || !strings.Contains(in.Spec, `"executionPolicyVersion": 1`) || !strings.Contains(in.Spec, `["sleep", "30"]`) {
+						t.Errorf("unexpected dry run: %+v", in)
+					}
+					if tc.name == "check rejected" {
+						w.WriteHeader(http.StatusForbidden)
+						return
+					}
+					checkedID.Store(in.ID)
+					receipt["state"], receipt["spec_json"], receipt["manifest_digest"] = "validated", canonicalSpec, digest
+					if tc.name == "wrong check receipt" {
+						receipt["name"] = "another-job"
+					}
+				case 2:
+					if in.DryRun || in.ID != checkedID.Load() || in.Spec != canonicalSpec || in.Digest != digest {
+						t.Errorf("apply did not replay the checked request: %+v", in)
+					}
+					if tc.name == "apply unavailable" {
+						w.WriteHeader(http.StatusServiceUnavailable)
+						return
+					}
+					receipt["state"], receipt["uid"] = "accepted", uid
+				default:
+					t.Errorf("unexpected extra request: %+v", in)
+				}
+				if err := json.NewEncoder(w).Encode(receipt); err != nil {
+					t.Errorf("encode receipt: %v", err)
+				}
+			}))
+			defer server.Close()
+			script := smokePrefix(t) + `
+API="$FIXTURE_API"
+BOOTSTRAP_KEY=fixture
+JOB_NAMESPACE=default
+if apply_smoke_job smoke-sleep sleep 30; then result=success; else result=failure; fi
+printf 'RESULT=%s:%s:%s\n' "$result" "${#CRS_TO_DELETE[@]}" "${JOB_UID:-}"
+`
+			out, err := runSmokeFragment(t, t.TempDir(), script, "FIXTURE_API="+server.URL)
+			if err != nil || !strings.Contains(out, tc.wantResult) || requests.Load() != tc.wantRequests {
+				t.Fatalf("wanted %s after %d requests; got %d, err=%v:\n%s", tc.wantResult, tc.wantRequests, requests.Load(), err, out)
+			}
+		})
+	}
+}
+
+func TestSmokeCleanupRequiresMatchingFixture(t *testing.T) {
+	const (
+		uid      = "11111111-1111-4111-8111-111111111111"
+		observed = `{"metadata":{"uid":"` + uid + `","resourceVersion":"42","annotations":{"orbitjob.io/admin-request-id":"fixture-request"}}}`
+	)
+	source := readGateSource(t, "smoke-test.sh")
+	start := strings.Index(source, "cleanup_crs() {")
+	end := strings.Index(source, "trap cleanup_crs EXIT")
+	if start < 0 || end <= start {
+		t.Fatal("cannot locate smoke cleanup")
+	}
+	for _, tc := range []struct {
+		name, acceptedUID, observed, wantDiagnostic string
+		deleteConflicts, wantDeleteRequest          bool
+	}{
+		{"accepted fixture", uid, observed, "", false, true},
+		{"accepted fixture missing from this context", uid, "", "could not match ScheduledJob", false, false},
+		{"recreated fixture", uid, strings.Replace(observed, uid, "wrong-uid", 1), "could not match ScheduledJob", false, false},
+		{"ambiguous write with copied annotation", "", observed, "operation fixture-request has no confirmed UID", false, false},
+		{"ambiguous write did not persist", "", "", "", false, false},
+		{"delete precondition conflict", uid, observed, "could not confirm the guarded delete", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			shim := filepath.Join(dir, "fakebin")
+			writeGateExecutable(t, filepath.Join(shim, "kubectl"), `#!/usr/bin/env bash
+set -eu
+[[ $1 == --context && $2 == fixture-context && $3 == -n && $4 == default && $5 == --request-timeout=30s ]]
+case $6 in
+  get) printf '%s' "$FIXTURE_LIVE" ;;
+  delete)
+    [[ $7 == --raw && $8 == /apis/workloads.orbitjob.io/v1alpha1/namespaces/default/scheduledjobs/smoke-sleep && $9 == -f && ${10} == - ]]
+    cat > delete-request
+    if [[ $FIXTURE_DELETE_CONFLICTS == true ]]; then
+      echo 'Error from server (Conflict): resourceVersion precondition failed' >&2
+      exit 1
+    fi ;;
+  wait) test -s delete-request && touch wait-called ;;
+  *) exit 1 ;;
+esac
+`)
+			script := smokePrefix(t) + source[start:end] + `
+KUBE_CONTEXT=fixture-context
+JOB_NAMESPACE=default
+CRS_TO_DELETE=("smoke-sleep:fixture-request:$FIXTURE_UID")
+cleanup_crs
+`
+			out, err := runSmokeFragment(t, dir, script, "PATH="+shim+":"+os.Getenv("PATH"), "FIXTURE_UID="+tc.acceptedUID, "FIXTURE_LIVE="+tc.observed,
+				"FIXTURE_DELETE_CONFLICTS="+strconv.FormatBool(tc.deleteConflicts))
+			if (err == nil) != (tc.wantDiagnostic == "") || !strings.Contains(out, tc.wantDiagnostic) {
+				t.Fatalf("wanted diagnostic %q, err=%v:\n%s", tc.wantDiagnostic, err, out)
+			}
+			_, waitErr := os.Stat(filepath.Join(dir, "wait-called"))
+			if shouldWait := tc.wantDeleteRequest && !tc.deleteConflicts; (waitErr == nil) != shouldWait {
+				t.Fatalf("wait for deletion called=%v, want %v", waitErr == nil, shouldWait)
+			}
+			body, readErr := os.ReadFile(filepath.Join(dir, "delete-request"))
+			if !tc.wantDeleteRequest {
+				if !os.IsNotExist(readErr) {
+					t.Fatalf("cleanup attempted an unrelated delete: %q, err=%v", body, readErr)
+				}
+				return
+			}
+			var opts struct {
+				Preconditions struct {
+					UID             string `json:"uid"`
+					ResourceVersion string `json:"resourceVersion"`
+				} `json:"preconditions"`
+			}
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if err := json.Unmarshal(body, &opts); err != nil || opts.Preconditions.UID != uid || opts.Preconditions.ResourceVersion != "42" {
+				t.Fatalf("cleanup must delete the observed UID and resourceVersion, got %s, err=%v", body, err)
 			}
 		})
 	}

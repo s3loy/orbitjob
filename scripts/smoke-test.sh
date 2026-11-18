@@ -4,10 +4,11 @@
 # Default API_BASE_URL=http://localhost:8080 (for a kind cluster, port-forward first:
 #   kubectl -n orbitjob-system port-forward svc/orbitjob-admin-api 8080:8080)
 #
-# Jobs are declared as ScheduledJob CRs (the API has no create route), so the
-# script kubectl-applies two temporary CRs into $SMOKE_JOB_NAMESPACE (default
-# "default"; it must be listed in the operator's namespaceTenants mapping) and
-# deletes them when done.
+# The script submits two temporary ScheduledJobs through the checked definition
+# API in $SMOKE_JOB_NAMESPACE (default "default"), which must be mapped to the
+# bootstrap credential's tenant. The current kubeconfig must be able to read
+# and delete those ScheduledJobs in that namespace on the same cluster.
+# Use a disposable installation. The smoke tenant is retained after the run.
 
 set -euo pipefail
 
@@ -21,11 +22,8 @@ NC='\033[0m'
 # ── Configuration ──────────────────────────────────────────────
 API="${1:-http://localhost:8080}"
 SMOKE_TENANT_SLUG="${ORBITJOB_TENANT_SLUG:-smoke-$(date +%s)-$$}"
-# The operator only watches namespaces listed in the namespaceTenants mapping;
-# the CRs must land in one of them.
 JOB_NAMESPACE="${SMOKE_JOB_NAMESPACE:-default}"
-CR_ECHO_NAME="smoke-echo-$(date +%s)-$$"
-CR_SLEEP_NAME="smoke-sleep-$(date +%s)-$$"
+CRS_TO_DELETE=()
 # Digest pinned to the busybox entry in test/load/config/images.lock.yaml:
 # echo runs `true` (exits instantly), sleep runs 30s to leave a cancel window.
 CR_IMAGE="docker.io/library/busybox:1.37@sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028"
@@ -70,6 +68,90 @@ assert_code() {
   else
     log_fail "$name (expected $expected, got $LAST_CODE): $LAST_BODY"
   fi
+}
+
+apply_smoke_job() {
+  local name="$1" path="/api/v1/definitions/jobs/$JOB_NAMESPACE/$1"
+  shift
+  local request_id request cleanup_index
+  request_id=$(python3 -c 'import uuid; print(uuid.uuid4())') || return 1
+  # February 30 never fires, leaving these jobs available for manual triggers.
+  request=$(python3 -c '
+import json, sys
+request_id, image, *command = sys.argv[1:]
+spec = {
+    "schedule": "0 0 30 2 *",
+    "executionPolicyVersion": 1,
+    "history": {"successfulRuns": 10, "failedRuns": 10},
+    "timeoutSeconds": 120,
+    "jobTemplate": {"image": image, "command": command},
+}
+print(json.dumps({"request_id": request_id, "dry_run": True, "spec_json": json.dumps(spec)}))
+' "$request_id" "$CR_IMAGE" "$@") || return 1
+  http PUT "$path" -H "Authorization: Bearer $BOOTSTRAP_KEY" \
+    -H "Content-Type: application/json" -d "$request"
+  assert_code "200" "check ScheduledJob $name"
+  [ "$LAST_CODE" = "200" ] || return 1
+
+  if ! request=$(python3 -c '
+import json, sys
+request_id, namespace, name = sys.argv[1:]
+receipt = json.load(sys.stdin)
+identity = tuple(receipt.get(key) for key in ("request_id", "kind", "namespace", "name", "state"))
+if identity != (request_id, "jobs", namespace, name, "validated"):
+    raise SystemExit(1)
+spec, digest = receipt.get("spec_json"), receipt.get("manifest_digest")
+if not isinstance(spec, str) or not spec or not isinstance(digest, str) or not digest:
+    raise SystemExit(1)
+print(json.dumps({"request_id": request_id, "spec_json": spec, "manifest_digest": digest}))
+' "$request_id" "$JOB_NAMESPACE" "$name" <<< "$LAST_BODY"); then
+    log_fail "check response has no matching validated receipt for $name"
+    return 1
+  fi
+
+  # Track the request so cleanup can identify an unresolved write for review.
+  cleanup_index=${#CRS_TO_DELETE[@]}
+  CRS_TO_DELETE+=("$name:$request_id:")
+  http PUT "$path" -H "Authorization: Bearer $BOOTSTRAP_KEY" \
+    -H "Content-Type: application/json" -d "$request"
+  assert_code "200" "apply checked ScheduledJob $name (request $request_id)"
+  [ "$LAST_CODE" = "200" ] || return 1
+  if ! JOB_UID=$(python3 -c '
+import json, sys, uuid
+request_id, namespace, name = sys.argv[1:]
+receipt = json.load(sys.stdin)
+identity = tuple(receipt.get(key) for key in ("request_id", "kind", "namespace", "name"))
+if identity != (request_id, "jobs", namespace, name) or receipt.get("state") not in ("accepted", "reconciled"):
+    raise SystemExit(1)
+print(uuid.UUID(receipt["uid"]))
+' "$request_id" "$JOB_NAMESPACE" "$name" <<< "$LAST_BODY"); then
+    log_fail "apply response has no matching acceptance receipt for $name"
+    return 1
+  fi
+  CRS_TO_DELETE[$cleanup_index]="$name:$request_id:$JOB_UID"
+}
+
+# The definition receipt describes the admitted CR. Wait for the operator's
+# independent projection of that exact source UID before triggering any runs.
+wait_job_revision() {
+  local uid="$1" revision
+  for _ in $(seq 1 60); do
+    http GET "/api/v1/jobs?source_uid=$uid&limit=1" -H "Authorization: Bearer $BOOTSTRAP_KEY"
+    if [ "$LAST_CODE" = "200" ]; then
+      revision=$(python3 -c '
+import json, sys
+item = next(iter(json.load(sys.stdin).get("items") or []), {})
+if item.get("source_uid") == sys.argv[1]:
+    print(item.get("id", ""))
+' "$uid" <<< "$LAST_BODY" 2>/dev/null || true)
+      if [[ $revision =~ ^[1-9][0-9]*$ ]]; then
+        printf '%s\n' "$revision"
+        return 0
+      fi
+    fi
+    sleep 1
+  done
+  return 1
 }
 
 # Find a run by occurrence_key in the /instances list; prints "id phase" (empty if not found)
@@ -143,16 +225,58 @@ cat > "$RESULTS_FILE" << EOF
 # OrbitJob smoke test report
 
 > Generated $(date)
-> Scope: core API endpoints, every run phase, and the full declarative
-> ScheduledJob CR -> run lifecycle
+> Scope: core API endpoints, checked ScheduledJob submission, successful
+> manual execution, and cancellation from the Running phase.
 
 EOF
 
-# CR cleanup safety net: any exit path deletes the temporary CRs
-# (cascading cleanup of JobRuns and Kubernetes Jobs).
+# The checked API writes definitions. Kubernetes deletes the temporary CRs and
+# their owned JobRuns and Jobs; deletion is outside the definition webhook.
 cleanup_crs() {
-  [ -n "${CR_ECHO_NAME:-}" ] && kubectl delete scheduledjob "$CR_ECHO_NAME" -n "$JOB_NAMESPACE" --ignore-not-found >/dev/null 2>&1
-  [ -n "${CR_SLEEP_NAME:-}" ] && kubectl delete scheduledjob "$CR_SLEEP_NAME" -n "$JOB_NAMESPACE" --ignore-not-found >/dev/null 2>&1
+  [ "${#CRS_TO_DELETE[@]}" -gt 0 ] || return 0
+  local entry name request_id expected_uid live options path status=0
+  local -a kube=(kubectl --context "$KUBE_CONTEXT" -n "$JOB_NAMESPACE" --request-timeout=30s)
+  for entry in "${CRS_TO_DELETE[@]}"; do
+    IFS=: read -r name request_id expected_uid <<< "$entry"
+    if ! live=$("${kube[@]}" get "scheduledjobs.workloads.orbitjob.io/$name" --ignore-not-found -o json); then
+      status=1
+      continue
+    fi
+    if [ -z "$expected_uid" ]; then
+      if [ -n "$live" ]; then
+        printf 'Cleanup retained ScheduledJob %s/%s in kube context %s. API operation %s has no confirmed UID.\n' \
+          "$JOB_NAMESPACE" "$name" "$KUBE_CONTEXT" "$request_id" >&2
+        status=1
+      fi
+      continue
+    fi
+    if ! options=$(python3 -c '
+import json, sys
+metadata = json.load(sys.stdin)["metadata"]
+request_id, expected_uid = sys.argv[1:]
+uid, version = metadata["uid"], metadata["resourceVersion"]
+if uid != expected_uid or metadata.get("annotations", {}).get("orbitjob.io/admin-request-id") != request_id:
+    raise SystemExit(1)
+print(json.dumps({"apiVersion": "v1", "kind": "DeleteOptions", "preconditions": {"uid": uid, "resourceVersion": version}}))
+' "$request_id" "$expected_uid" <<< "$live" 2>/dev/null); then
+      printf 'Cleanup could not match ScheduledJob %s/%s in kube context %s to the API write.\n' \
+        "$JOB_NAMESPACE" "$name" "$KUBE_CONTEXT" >&2
+      status=1
+      continue
+    fi
+    path="/apis/workloads.orbitjob.io/v1alpha1/namespaces/$JOB_NAMESPACE/scheduledjobs/$name"
+    if ! "${kube[@]}" delete --raw "$path" -f - <<< "$options" >/dev/null; then
+      printf 'Cleanup could not confirm the guarded delete of ScheduledJob %s/%s (UID %s). Verify its current identity before retrying.\n' \
+        "$JOB_NAMESPACE" "$name" "$expected_uid" >&2
+      status=1
+      continue
+    fi
+    if ! "${kube[@]}" wait --for=delete "scheduledjobs.workloads.orbitjob.io/$name" --timeout=30s >/dev/null; then
+      status=1
+    fi
+  done
+  CRS_TO_DELETE=()
+  return "$status"
 }
 trap cleanup_crs EXIT
 
@@ -163,7 +287,19 @@ log_section "0. Preconditions"
 log_info "Checking curl / python3 / kubectl"
 command -v curl >/dev/null && log_pass "curl available" || { log_fail "curl not available"; exit 1; }
 command -v python3 >/dev/null && log_pass "python3 available" || { log_fail "python3 not available"; exit 1; }
-command -v kubectl >/dev/null && log_pass "kubectl available" || { log_fail "kubectl not available (required: jobs are declared as ScheduledJob CRs)"; exit 1; }
+command -v kubectl >/dev/null && log_pass "kubectl available" || { log_fail "kubectl not available (required for ScheduledJob cleanup)"; exit 1; }
+if ! KUBE_CONTEXT=$(kubectl config current-context); then
+  log_fail "kubectl has no current context for ScheduledJob cleanup"
+  exit 1
+fi
+if [[ ! $JOB_NAMESPACE =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]; then
+  log_fail "SMOKE_JOB_NAMESPACE must be a valid Kubernetes namespace"
+  exit 1
+fi
+
+FIXTURE_SUFFIX=$(python3 -c 'import uuid; print(uuid.uuid4().hex)')
+CR_ECHO_NAME="smoke-echo-$FIXTURE_SUFFIX"
+CR_SLEEP_NAME="smoke-sleep-$FIXTURE_SUFFIX"
 
 log_info "Waiting for admin-api to become ready (up to 60s)"
 for i in $(seq 1 60); do
@@ -262,7 +398,6 @@ assert_code "201" "create API key for smoke tenant"
 TEST_KEY=$(jget "$LAST_BODY" "key")
 TEST_KEY_ID=$(jget "$LAST_BODY" "id")
 [ -n "$TEST_KEY" ] && log_pass "API key plaintext returned" || log_fail "API key plaintext not returned"
-log_info "smoke tenant key: ${TEST_KEY:0:12}... (id=$TEST_KEY_ID)"
 
 # List keys
 http GET "/api/v1/tenants/$TENANT_ID/api_keys" -H "Authorization: Bearer $BOOTSTRAP_KEY"
@@ -280,95 +415,21 @@ assert_code "401" "revoked key rejected (401)"
 log_section "5. Job definitions (declarative ScheduledJob CRs)"
 # ═══════════════════════════════════════════════════════════════
 
-# The API has no create route: a definition is a ScheduledJob CR. The schedule
-# "0 0 30 2 *" (Feb 30) never fires — it satisfies the CRD's non-empty
-# requirement while keeping all runs manual-trigger only.
-log_info "applying ScheduledJob CRs to namespace $JOB_NAMESPACE ..."
-if ! kubectl apply -f - >/dev/null 2>&1 <<EOF
-apiVersion: workloads.orbitjob.io/v1alpha1
-kind: ScheduledJob
-metadata:
-  name: $CR_ECHO_NAME
-  namespace: $JOB_NAMESPACE
-spec:
-  schedule: "0 0 30 2 *"
-  history:
-    successfulRuns: 10
-    failedRuns: 10
-  timeoutSeconds: 120
-  jobTemplate:
-    image: $CR_IMAGE
-    command: ["true"]
-    backoffLimit: 0
----
-apiVersion: workloads.orbitjob.io/v1alpha1
-kind: ScheduledJob
-metadata:
-  name: $CR_SLEEP_NAME
-  namespace: $JOB_NAMESPACE
-spec:
-  schedule: "0 0 30 2 *"
-  history:
-    successfulRuns: 10
-    failedRuns: 10
-  timeoutSeconds: 120
-  jobTemplate:
-    image: $CR_IMAGE
-    command: ["sleep", "30"]
-    backoffLimit: 0
-EOF
-then
-  log_fail "kubectl apply of ScheduledJob CRs failed"
+apply_smoke_job "$CR_ECHO_NAME" true || exit 1
+ECHO_UID=$JOB_UID
+apply_smoke_job "$CR_SLEEP_NAME" sleep 30 || exit 1
+SLEEP_UID=$JOB_UID
+
+log_info "waiting for the operator to materialize both job revisions..."
+if ! REVISION_ID=$(wait_job_revision "$ECHO_UID"); then
+  log_fail "$CR_ECHO_NAME did not materialize after 60 job-list attempts"
   exit 1
 fi
-log_pass "ScheduledJob CRs declared ($CR_ECHO_NAME, $CR_SLEEP_NAME)"
-
-# The API only sees a revision after the operator materializes the CR; poll for it.
-log_info "waiting for the operator to materialize revisions (up to 60s)..."
-REVISION_ID=""
-for i in $(seq 1 60); do
-  http GET "/api/v1/jobs?limit=100" -H "Authorization: Bearer $BOOTSTRAP_KEY"
-  if [ "$LAST_CODE" = "200" ]; then
-    REVISION_ID=$(echo "$LAST_BODY" | python3 -c "
-import sys, json
-name = '$CR_ECHO_NAME'
-try:
-    d = json.load(sys.stdin)
-except Exception:
-    print(''); raise SystemExit
-for it in d.get('items', []):
-    if it.get('name') == name:
-        print(it.get('id', ''))
-        break
-else:
-    print('')
-" 2>/dev/null || echo "")
-  fi
-  [ -n "$REVISION_ID" ] && { log_info "revision appeared after ${i}s (id=$REVISION_ID)"; break; }
-  sleep 1
-done
-if [ -n "$REVISION_ID" ]; then
-  log_pass "CR materialized as job revision"
-else
-  log_fail "CR not materialized as revision within 60s (operator not watching namespace $JOB_NAMESPACE?)"
+if ! SLEEP_REVISION_ID=$(wait_job_revision "$SLEEP_UID"); then
+  log_fail "$CR_SLEEP_NAME did not materialize after 60 job-list attempts"
+  exit 1
 fi
-
-SLEEP_REVISION_ID=""
-http GET "/api/v1/jobs?limit=100" -H "Authorization: Bearer $BOOTSTRAP_KEY"
-SLEEP_REVISION_ID=$(echo "$LAST_BODY" | python3 -c "
-import sys, json
-name = '$CR_SLEEP_NAME'
-try:
-    d = json.load(sys.stdin)
-except Exception:
-    print(''); raise SystemExit
-for it in d.get('items', []):
-    if it.get('name') == name:
-        print(it.get('id', ''))
-        break
-else:
-    print('')
-" 2>/dev/null || echo "")
+log_pass "both ScheduledJobs materialized as job revisions ($REVISION_ID, $SLEEP_REVISION_ID)"
 
 # Get a single revision
 http GET "/api/v1/jobs/$REVISION_ID" -H "Authorization: Bearer $BOOTSTRAP_KEY"
@@ -546,15 +607,28 @@ assert_code "200" "resume check"
 log_section "9. Check runs"
 # ═══════════════════════════════════════════════════════════════
 
-# The scheduler ticks every 5s and the interval check runs every 30s, so a
-# check_run row should appear within 60s
-log_info "waiting for a check run to appear (up to 60s)..."
+# Resuming a Check can skip an occurrence from before revision activation.
+# The read model appears after a later occurrence completes and is projected.
+CHECK_RUN_WAIT_SECONDS=120
+log_info "waiting for a completed check run (up to ${CHECK_RUN_WAIT_SECONDS}s)..."
 CHECK_RUN_ID=""
-for i in $(seq 1 60); do
-  http GET "/api/v1/check-runs?check_id=$CHECK_ID&limit=5" -H "Authorization: Bearer $BOOTSTRAP_KEY"
-  CHECK_RUN_ID=$(echo "$LAST_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('items',[{}])[0].get('id',''))" 2>/dev/null || echo "")
-  [ -n "$CHECK_RUN_ID" ] && log_info "check run appeared after ${i}s" && break
-  sleep 1
+check_run_deadline=$((SECONDS + CHECK_RUN_WAIT_SECONDS))
+while (( SECONDS < check_run_deadline )); do
+  remaining=$((check_run_deadline - SECONDS))
+  (( remaining > 0 )) || break
+  http GET "/api/v1/check-runs?check_id=$CHECK_ID&limit=5" \
+    -H "Authorization: Bearer $BOOTSTRAP_KEY" --max-time "$((remaining < 5 ? remaining : 5))"
+  if [ "$LAST_CODE" = "200" ]; then
+    CHECK_RUN_ID=$(python3 -c '
+import json, sys
+for item in json.load(sys.stdin).get("items") or []:
+    if str(item.get("check_id")) == sys.argv[1] and isinstance(item.get("id"), int) and item["id"] > 0:
+        print(item["id"])
+        break
+' "$CHECK_ID" <<< "$LAST_BODY" 2>/dev/null || true)
+    [ -n "$CHECK_RUN_ID" ] && break
+  fi
+  (( SECONDS >= check_run_deadline )) || sleep 1
 done
 
 http GET "/api/v1/check-runs?limit=20" -H "Authorization: Bearer $BOOTSTRAP_KEY"
@@ -568,7 +642,7 @@ if [ -n "$CHECK_RUN_ID" ]; then
   http GET "/api/v1/check-runs/$CHECK_RUN_ID" -H "Authorization: Bearer $BOOTSTRAP_KEY"
   assert_code "200" "get single check run"
 else
-  log_fail "no check run produced within 60s"
+  log_fail "no completed run for check $CHECK_ID within ${CHECK_RUN_WAIT_SECONDS}s"
 fi
 
 # ═══════════════════════════════════════════════════════════════
@@ -578,7 +652,7 @@ log_section "10. SLIs"
 http POST "/api/v1/slis" \
   -H "Authorization: Bearer $BOOTSTRAP_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"name":"availability-sli","sli_type":"availability","source_type":"job_run","source_config":{"source_uid":"check-'"$CHECK_ID"'"},"aggregation":"ratio","good_event_criteria":{"field":"status","op":"eq","value":"success"}}'
+  -d '{"name":"availability-sli","sli_type":"availability","source_type":"job_run","source_config":{"source_uid":"check-'"$CHECK_ID"'"},"aggregation":"ratio","good_event_criteria":{"status":"success"}}'
 assert_code "201" "create SLI"
 SLI_ID=$(jget "$LAST_BODY" "id")
 SLI_VERSION=$(jget "$LAST_BODY" "version")
@@ -729,8 +803,11 @@ else
 fi
 
 # Delete the temporary ScheduledJob CRs (cascades to JobRuns and Kubernetes Jobs)
-cleanup_crs
-log_info "temporary ScheduledJob CRs deleted ($CR_ECHO_NAME, $CR_SLEEP_NAME)"
+if cleanup_crs; then
+  log_pass "temporary ScheduledJob CRs deleted"
+else
+  log_fail "could not delete temporary ScheduledJobs $CR_ECHO_NAME and $CR_SLEEP_NAME in $JOB_NAMESPACE"
+fi
 
 # ═══════════════════════════════════════════════════════════════
 log_section "Summary"
