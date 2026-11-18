@@ -32,8 +32,7 @@ fi
 
 # The history branch is independent of the site source. Verify the file types
 # and names in its tree before copying anything out of it.
-entries=$(git ls-tree --format='%(objectmode) %(objecttype) %(path)' "$revision" -- dev/bench/)
-entries=${entries//100755 blob /100644 blob }
+entries=$(git ls-tree "$revision" -- dev/bench/ | sed -E $'s/^100(644|755) blob [0-9a-f]+\t/100644 blob /')
 if [[ $entries != $'100644 blob dev/bench/data.js\n100644 blob dev/bench/index.html' ]]; then
   echo 'Benchmark history must contain only regular files data.js and index.html.' >&2
   exit 1

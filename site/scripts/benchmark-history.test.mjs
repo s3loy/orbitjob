@@ -12,7 +12,7 @@ async function fixture(t) {
   return root;
 }
 
-test('benchmark history preserves FETCH_HEAD and uses its own revision after another fetch', async t => {
+test('benchmark history supports legacy ls-tree and uses its own revision after another fetch', async t => {
   const root = await fixture(t);
   const remote = path.join(root, 'remote');
   const checkout = path.join(root, 'checkout');
@@ -38,7 +38,8 @@ test('benchmark history preserves FETCH_HEAD and uses its own revision after ano
   const dev = git(remote, 'rev-parse', 'HEAD');
   git(remote, 'switch', '-qc', 'gh-pages');
   await writeFile(index, 'benchmark fixture\n');
-  git(remote, 'commit', '-qam', 'benchmark branch');
+  git(remote, 'add', '--chmod=+x', '--', 'dev/bench/index.html');
+  git(remote, 'commit', '-qm', 'benchmark branch');
   git(root, 'clone', '-q', '--branch', 'dev', '--depth', '1', pathToFileURL(remote).href, checkout);
   git(checkout, 'fetch', '-q', '--depth=1', 'origin', 'refs/heads/dev');
 
@@ -48,6 +49,13 @@ test('benchmark history preserves FETCH_HEAD and uses its own revision after ano
   await mkdir(shimDir);
   await writeFile(path.join(shimDir, 'git'), `#!/usr/bin/env bash
 set -euo pipefail
+if [[ $1 == ls-tree ]]; then
+  for option in "$@"; do
+    case $option in
+      --format|--format=*) echo "error: unknown option 'format'" >&2; exit 129 ;;
+    esac
+  done
+fi
 PATH="$FIXTURE_GIT_PATH" git "$@"
 if [[ $1 == fetch && $* == *refs/heads/gh-pages* ]]; then
   test "$(PATH="$FIXTURE_GIT_PATH" git rev-parse --verify FETCH_HEAD)" = "$FIXTURE_DEV_REVISION"
@@ -55,11 +63,13 @@ if [[ $1 == fetch && $* == *refs/heads/gh-pages* ]]; then
 fi
 `, { mode: 0o700 });
 
-  const archive = execFileSync('bash', [path.join(scripts, 'fetch-benchmark-history.sh'), path.join(root, 'archive')], {
+  const fetchHistory = destination => spawnSync('bash', [path.join(scripts, 'fetch-benchmark-history.sh'), destination], {
     env: { ...env, PATH: `${shimDir}${path.delimiter}${process.env.PATH}`, FIXTURE_GIT_PATH: process.env.PATH, FIXTURE_DEV_REVISION: dev },
     encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  }).trim();
+  });
+  const fetched = fetchHistory(path.join(root, 'archive'));
+  assert.equal(fetched.status, 0, fetched.stderr);
+  const archive = fetched.stdout.trim();
   assert.equal(await readFile(path.join(archive, 'index.html'), 'utf8'), 'benchmark fixture\n');
   assert.equal(await readFile(path.join(archive, 'data.js'), 'utf8'), 'benchmark data\n');
   assert.equal(git(checkout, 'rev-parse', 'FETCH_HEAD'), dev);
@@ -68,12 +78,21 @@ fi
   await writeFile(path.join(remote, 'dev/bench/local-draft.txt'), 'private draft fixture\n');
   git(remote, 'add', '--', 'dev/bench/local-draft.txt');
   git(remote, 'commit', '-qm', 'unexpected archive member');
-  const rejectedArchive = path.join(root, 'rejected-archive');
-  const rejected = spawnSync('bash', [path.join(scripts, 'fetch-benchmark-history.sh'), rejectedArchive], { env, encoding: 'utf8' });
-  assert.equal(rejected.status, 1, rejected.stderr);
-  assert.match(rejected.stderr, /Benchmark history must contain only regular files/);
-  await assert.rejects(readdir(rejectedArchive), { code: 'ENOENT' });
-  assert.equal(git(checkout, 'for-each-ref', 'refs/orbitjob/benchmark-history/'), '');
+  async function assertRejected(name) {
+    const destination = path.join(root, name);
+    const rejected = fetchHistory(destination);
+    assert.equal(rejected.status, 1, rejected.stderr);
+    assert.match(rejected.stderr, /Benchmark history must contain only regular files/);
+    await assert.rejects(readdir(destination), { code: 'ENOENT' });
+    assert.equal(git(checkout, 'for-each-ref', 'refs/orbitjob/benchmark-history/'), '');
+  }
+  await assertRejected('extra-file-archive');
+
+  git(remote, 'rm', '--', 'dev/bench/local-draft.txt', 'dev/bench/data.js');
+  await symlink('index.html', data);
+  git(remote, 'add', '--', 'dev/bench/data.js');
+  git(remote, 'commit', '-qm', 'unexpected archive symlink');
+  await assertRejected('symlink-archive');
 });
 
 test('site assembly rejects extra files and non-regular benchmark entries', async t => {
