@@ -72,6 +72,19 @@ const links = (text: string) =>
 const isLocal = (target: string) => !/^(?:[a-z][a-z\d+.-]*:|\/\/|#)/i.test(target);
 
 describe('downloadable workload assistant', () => {
+  it('includes the public assistant files in the Docker asset allowlist', () => {
+    const published = ['orbitjob-workloads.zip', ...expectedFiles].map(
+      (file) => `ai/orbitjob-workloads/${file}`,
+    );
+    published.push('orbit.svg');
+    const allowed = readFileSync(new URL('.dockerignore', root), 'utf8')
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith('!web/public/'))
+      .map((line) => line.slice('!web/public/'.length))
+      .sort();
+    expect(allowed).toEqual(published.sort());
+  });
+
   it('ships the generated files unchanged inside the ZIP', () => {
     expect(bytes.readUInt32LE(offset)).toBe(0x02014b50);
     expect([...entries.keys()]).toEqual(expectedFiles.map((name) => `orbitjob-workloads/${name}`));

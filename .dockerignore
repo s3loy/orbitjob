@@ -2,12 +2,10 @@
 **
 !go.mod
 !go.sum
-!api/
-!api/**
-!cmd/
-!cmd/**
-!internal/
-!internal/**
+!api/**/*.go
+!api/openapi.yaml
+!cmd/**/*.go
+!internal/**/*.go
 
 # Only the Admin image needs Console source; Go stages copy their own inputs.
 !web/
@@ -19,8 +17,32 @@ web/*
 !web/index.html
 !web/src/
 !web/src/**
-!web/public/
-!web/public/**
+
+# Vite publishes public files verbatim. Add each new shipped file explicitly.
+!web/public/ai/orbitjob-workloads/SKILL.md
+!web/public/ai/orbitjob-workloads/assets/manual-job.yaml
+!web/public/ai/orbitjob-workloads/assets/manual-workflow.yaml
+!web/public/ai/orbitjob-workloads/orbitjob-workloads.zip
+!web/public/ai/orbitjob-workloads/references/api-index.md
+!web/public/ai/orbitjob-workloads/references/docs/concepts/execution-model.md
+!web/public/ai/orbitjob-workloads/references/docs/getting-started.md
+!web/public/ai/orbitjob-workloads/references/docs/reference/access-policies.md
+!web/public/ai/orbitjob-workloads/references/docs/reference/http-conventions.md
+!web/public/ai/orbitjob-workloads/references/docs/reference/workload-resources.md
+!web/public/ai/orbitjob-workloads/references/docs/tasks/call-api.md
+!web/public/ai/orbitjob-workloads/references/docs/tasks/cancel-a-run.md
+!web/public/ai/orbitjob-workloads/references/docs/tasks/checks-and-slos.md
+!web/public/ai/orbitjob-workloads/references/docs/tasks/functions-and-workflows.md
+!web/public/ai/orbitjob-workloads/references/docs/tasks/manage-access.md
+!web/public/ai/orbitjob-workloads/references/docs/tasks/manage-jobs.md
+!web/public/ai/orbitjob-workloads/references/docs/tasks/read-logs.md
+!web/public/ai/orbitjob-workloads/references/docs/tasks/trigger-and-observe.md
+!web/public/ai/orbitjob-workloads/references/openapi.yaml
+!web/public/ai/orbitjob-workloads/references/scheduledjob-crd.yaml
+!web/public/ai/orbitjob-workloads/references/usage.md
+!web/public/ai/orbitjob-workloads/references/workflowjob-crd.yaml
+!web/public/ai/orbitjob-workloads/sources.json
+!web/public/orbit.svg
 
 # Tests, local credentials and generated tooling output are never image inputs.
 **/*_test.go
@@ -28,6 +50,9 @@ web/*
 **/*.test.tsx
 **/testdata
 **/node_modules
+**/__pycache__
+**/*.py[cod]
+**/*.o
 **/.runtime
 **/.env
 **/.env.*
