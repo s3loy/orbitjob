@@ -18,6 +18,9 @@ document.addEventListener('click', (event) => {
     update();
     return;
   }
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || link.hasAttribute('download')) return;
+  const target = link.target.toLowerCase();
+  if (target && target !== '_self') return;
   const destination = new URL(link.href, window.location.href);
   if (destination.origin === window.location.origin && destination.pathname === window.location.pathname && destination.hash) {
     selectedHash = destination.hash;
@@ -31,6 +34,15 @@ const rememberLocation = () => {
 window.addEventListener('hashchange', rememberLocation);
 window.addEventListener('popstate', rememberLocation);
 // Programmatic selections push history; ignore the viewer's scroll replacements.
-window.navigation?.addEventListener('currententrychange', (event) => {
-  if (event.navigationType === 'push') rememberLocation();
-});
+if (window.navigation) {
+  window.navigation.addEventListener('currententrychange', (event) => {
+    if (event.navigationType === 'push') rememberLocation();
+  });
+} else {
+  const pushState = window.history.pushState;
+  window.history.pushState = function (...args) {
+    const result = pushState.apply(this, args);
+    rememberLocation();
+    return result;
+  };
+}

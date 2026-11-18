@@ -152,6 +152,44 @@ test('rich reference language links retain anchor and history navigation without
   }
 });
 
+test('rich reference language switching retains a search selection without the Navigation API', async ({ page }) => {
+  await page.addInitScript(() => { Object.defineProperty(window, 'navigation', { value: undefined }); });
+  const source = path('api/?source=legacy-search');
+  const target = path('zh-cn/api/?source=legacy-search#tag/jobs/triggerJob');
+  await page.goto(`${source}#tag/jobs/getJob`);
+  await page.locator('#api-reference').getByRole('button', { name: /^Open Search/ }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByRole('combobox').fill('triggerJob');
+  await dialog.getByRole('option').filter({ hasText: '/api/v1/jobs/{id}/trigger' }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.locator('[id$="/tag/jobs/triggerJob"]').first()).toBeInViewport();
+
+  const languageLink = page.getByRole('link', { name: '简体中文', exact: true });
+  await languageLink.scrollIntoViewIfNeeded();
+  await page.evaluate(() => { history.replaceState(history.state, '', '#description/introduction'); });
+  await expect(languageLink).toHaveAttribute('href', new URL(target, page.url()).href);
+  await languageLink.click();
+  await expect(page).toHaveURL(target);
+  await expect(page.locator('[id$="/tag/jobs/triggerJob"]').first()).toBeInViewport();
+});
+
+test('opening an operation in a new tab leaves the original language selection intact', async ({ page }) => {
+  const source = path('api/?source=new-tab');
+  const target = path('zh-cn/api/?source=new-tab#tag/jobs/getJob');
+  await page.goto(`${source}#tag/jobs/getJob`);
+  await expect(page.locator('[id$="/tag/jobs/getJob"]').first()).toBeInViewport();
+  await page.locator('.operation-index > summary').click();
+  const languageLink = page.getByRole('link', { name: '简体中文', exact: true });
+  await expect(languageLink).toHaveAttribute('href', new URL(target, page.url()).href);
+
+  const [newTab] = await Promise.all([
+    page.context().waitForEvent('page'),
+    page.locator('.operation-index a[href="#tag/jobs/listJobs"]').click({ modifiers: ['ControlOrMeta'] }),
+  ]);
+  await expect(newTab).toHaveURL(`${source}#tag/jobs/listJobs`);
+  await expect(languageLink).toHaveAttribute('href', new URL(target, page.url()).href);
+});
+
 test('a local schema load failure offers working static documentation recovery', async ({ page }) => {
   await page.route('**/openapi.json', (route) => route.fulfill({ status: 503, body: 'Temporarily unavailable' }));
   await page.goto(path('api/'));
