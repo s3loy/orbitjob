@@ -206,7 +206,7 @@ mixed-line-ending、go-fmt）在修复后以非零状态退出：检查更改，
 | go-fmt | 暂存 `*.go` | `gofmt` 重写了暂存文件（已修复；需重新暂存） |
 | go-vet | 暂存 `*.go` | `go vet` 报告包含暂存文件的包存在问题 |
 | no-cjk | 每次提交 | `README.zh.md` 和 `site/` 以外出现 CJK 字符 |
-| no-artifacts | 每次提交 | 暂存了根目录二进制（`operator`、`orbitjob`）、`smoke-test-results.md` 或 `bench.txt`/`bench-*.txt` |
+| no-artifacts | 每次提交 | 暂存文件命中了仓库的 `.gitignore` 规则，包括用 `git add -f` 强制暂存的文件 |
 | openapi-drift | 暂存 `api/openapi.yaml`、`internal/admin/http/` 或领域 `create_input.go` | `make openapi-check` 报告 spec 偏移 |
 | chart-gate | 暂存 `charts/` | `make helm-check` 失败 |
 | commit-msg | 每次提交 | 主题为空、超过 72 个字符，或包含 `WIP` 标记 |

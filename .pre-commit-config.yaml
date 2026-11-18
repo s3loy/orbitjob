@@ -61,7 +61,7 @@ repos:
         language: system
         pass_filenames: false
 
-      # Keep root binaries and bench/load-test debris out of history.
+      # Catch force-added files covered by repository .gitignore rules.
       - id: no-artifacts
         name: no build artifacts in the index
         entry: scripts/hooks/no-artifacts.sh

@@ -147,8 +147,8 @@
     },
     "contribute/overview": {
       "source": "CONTRIBUTING.md",
-      "englishSha256": "fe421816aa5104d2b116653ff5a914cbaa2c89ddb576c7b870b1182298140d47",
-      "chineseSha256": "cafc20d3c81e25c7c7d4df575a391bbf57aba15edcefdb65a32c55c142bc4372"
+      "englishSha256": "481b5ca2e2a743f46ccee95fa5b9f27f73e9f31ac86902103341904863e7263b",
+      "chineseSha256": "fde43c91cec64d3b1b64152bcf26dc74a8edbfd4a6da2d7e54ca5a06f2000312"
     },
     "contribute/local-development": {
       "source": "docs/local-deployment.md",

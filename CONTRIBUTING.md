@@ -214,7 +214,7 @@ commit again.
 | go-fmt | staged `*.go` | `gofmt` rewrote a staged file (fixed; re-stage) |
 | go-vet | staged `*.go` | `go vet` flags a package containing staged files |
 | no-cjk | every commit | CJK characters appear outside `README.zh.md` and `site/` |
-| no-artifacts | every commit | root binaries (`operator`, `orbitjob`), `smoke-test-results.md` or `bench.txt`/`bench-*.txt` are staged |
+| no-artifacts | every commit | a staged file matches a repository `.gitignore` rule, including files added with `git add -f` |
 | openapi-drift | `api/openapi.yaml`, `internal/admin/http/` or a domain `create_input.go` staged | `make openapi-check` reports spec drift |
 | chart-gate | `charts/` staged | `make helm-check` fails |
 | commit-msg | every commit | subject is empty, longer than 72 characters, or a `WIP` marker |
