@@ -173,10 +173,10 @@ image and chart sequence:
 bash scripts/quickstart.sh
 ```
 
-It also restarts Admin API, Scheduler, Operator, archive and collector to pick
-up rebuilt `:dev` images, then writes private credential exports to
-`.kind/env.sh`. It prints API port-forward/check commands for the operator to
-run. Complete the access and workload checks above after it finishes.
+The helper restarts Admin API, Scheduler, Operator, Admission, the archive and
+the collector after loading the rebuilt `:dev` images. It writes private
+credential exports to `.kind/env.sh` and prints the API port-forward and check
+commands. Complete the access and workload checks above after it finishes.
 
 The helper reuses an existing cluster and performs `helm upgrade --install`.
 For a retained installation, follow [upgrading](operations/upgrading.md) and

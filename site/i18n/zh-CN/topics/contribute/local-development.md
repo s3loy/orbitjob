@@ -109,7 +109,7 @@ curl --fail-with-body -H "Authorization: Bearer $ORBITJOB_API_KEY" \
 bash scripts/quickstart.sh
 ```
 
-它还会重启 Admin API、Scheduler、Operator、归档和采集器，以使用重新构建的 `:dev` 镜像，然后将私有凭据导出写入 `.kind/env.sh`。它打印 API 端口转发和检查命令，供运维人员运行。完成后应执行前述访问和工作负载检查。
+加载重新构建的 `:dev` 镜像后，脚本会重启 Admin API、Scheduler、Operator、Admission、归档服务和采集器。脚本将凭据写入私有文件 `.kind/env.sh`，并打印 API 端口转发和检查命令。脚本完成后，按前文验证 API 访问和工作负载执行。
 
 辅助工具会复用已有集群并执行 `helm upgrade --install`。对于需要保留的安装，应先遵循[升级](operations/upgrading.md)和[本地维护](local-maintenance.md)。辅助工具的就绪消息不能证明与所有旧模式或资源格式兼容。
 

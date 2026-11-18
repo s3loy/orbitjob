@@ -152,8 +152,8 @@
     },
     "contribute/local-development": {
       "source": "docs/local-deployment.md",
-      "englishSha256": "77624947677150e1ebb3590726b324daaa339a24176f5a7b1b8314364564e353",
-      "chineseSha256": "72dc1d26965c02da6609dbebda2cd3ce678330d5f6e337ffee89ea86cd330406"
+      "englishSha256": "32c882e2786071b4725593a1bc89d24ab4f939e98efa61d084da198d2789c3bd",
+      "chineseSha256": "d9f5b1498afd1449952c74bd9f944970a74f556a6f859d004504e48485226c68"
     },
     "contribute/load-testing": {
       "source": "docs/loadtest-guide.md",

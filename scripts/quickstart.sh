@@ -83,7 +83,7 @@ install_chart() {
 restart_deployments() {
     log "Step 6/7: restarting deployments to pick up the freshly built $TAG image"
     local deploy
-    for deploy in orbitjob-admin-api orbitjob-scheduler orbitjob-operator; do
+    for deploy in orbitjob-admission orbitjob-admin-api orbitjob-scheduler orbitjob-operator; do
         kubectl -n "$NAMESPACE" rollout restart "deployment/$deploy" \
             || die "rollout restart failed for $deploy"
         kubectl -n "$NAMESPACE" rollout status "deployment/$deploy" \
