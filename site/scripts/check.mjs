@@ -16,6 +16,14 @@ async function files(directory) {
   return (await Promise.all((await readdir(directory, { withFileTypes: true })).map(entry => entry.isDirectory() ? files(path.join(directory, entry.name)) : path.join(directory, entry.name)))).flat();
 }
 const output = await files(dist);
+const publicFiles = (await files(path.join(site, 'public')))
+  .map(file => path.relative(path.join(site, 'public'), file).split(path.sep).join('/'))
+  .sort();
+assert.deepEqual(
+  publicFiles,
+  ['favicon.svg', 'openapi.json', 'zh-cn/openapi.json', 'zh-cn/search-titles.json'],
+  'Unexpected documentation public files. Only listed assets may be deployed.',
+);
 assert(output.includes(path.join(dist, 'index.html')), 'Documentation entry is missing');
 assert(output.includes(path.join(dist, '404.html')), 'Static host recovery page is missing');
 const notFound = await readFile(path.join(dist, '404.html'), 'utf8');
