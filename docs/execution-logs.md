@@ -138,11 +138,12 @@ routes also need their available parent definition to resolve current group
 authorization; retained files alone do not preserve that URL after the parent
 is unavailable.
 
-A sealed state does not prove gap-free source coverage. Known omissions carry
-ranges where available; unknown loss keeps an unknown extent. A reserved control
-block records known loss when the main manifest budget is exhausted. Never-collected
-historical output cannot be reconstructed. Missing output does not change the
-Run's confirmed success, failure or cancellation outcome.
+A sealed archive can still have collection gaps. The archive records the range
+of an omission when it can determine the bounds and reports an unknown range
+otherwise. When the manifest is full, the reserved control block records loss
+and retains confirmed completion and seal information for retention and cleanup.
+The Run's confirmed success, failure or cancellation remains authoritative when
+output is missing. The archive can return only output it collected.
 
 **Delete retained logs** requires independent `instance:DeleteLogs` or
 `function:DeleteLogs`. It commits an audited cleanup request and can remove a

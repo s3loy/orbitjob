@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -31,9 +30,10 @@ func (s *Store) AppendBatch(id Identity, batchID string, records []Record) (resu
 		}
 		return ErrMissing
 	}
+	lossReason := "execution log capacity limit rejected lifecycle events"
 	defer func() {
 		if errors.Is(result, ErrCapacity) {
-			if err := s.markLossLocked(key, "execution log capacity limit rejected output"); err != nil {
+			if err := s.markLossLocked(key, lossReason); err != nil {
 				result = fmt.Errorf("persist collection loss marker: %w", err)
 			}
 		}
@@ -91,6 +91,7 @@ func (s *Store) AppendBatch(id Identity, batchID string, records []Record) (resu
 		}
 		switch r.Kind {
 		case "stdout", "stderr":
+			lossReason = "execution log capacity limit rejected output"
 			raw += int64(len(r.Text))
 			output = append(output, r)
 		case "event":
@@ -155,7 +156,11 @@ func (s *Store) AppendBatch(id Identity, batchID string, records []Record) (resu
 			workflowBytes += other.RetainedBytes
 		}
 	}
-	if (old.SealedAt != nil && m.RetainedBytes+raw > s.limits.RunBytes) || tenantBytes+raw > s.limits.TenantBytes || (id.WorkflowID > 0 && workflowBytes+raw > s.limits.WorkflowBytes) || !s.roomLocked(int64(len(data))*2+s.limits.ManifestBytes*2) {
+	roomErr := s.checkRoomLocked(int64(len(data))*2 + s.limits.ManifestBytes*2)
+	if roomErr != nil && !errors.Is(roomErr, ErrCapacity) {
+		return roomErr
+	}
+	if (old.SealedAt != nil && m.RetainedBytes+raw > s.limits.RunBytes) || tenantBytes+raw > s.limits.TenantBytes || (id.WorkflowID > 0 && workflowBytes+raw > s.limits.WorkflowBytes) || roomErr != nil {
 		addGap(m, output[0].Sequence, output[len(output)-1].Sequence, "log storage capacity")
 		m.State = "partial"
 		m.Reason = "output omitted because the log storage budget is exhausted"
@@ -171,9 +176,6 @@ func (s *Store) AppendBatch(id Identity, batchID string, records []Record) (resu
 		seg.Bytes += previous.Bytes
 		seg.Records += previous.Records
 		m.Segments = m.Segments[:len(m.Segments)-1]
-	}
-	if err = s.atomicLocked(key+"/"+seg.Name, data); err != nil {
-		return err
 	}
 	m.Segments = append(m.Segments, seg)
 	m.RetainedBytes += raw
@@ -201,11 +203,17 @@ func (s *Store) AppendBatch(id Identity, batchID string, records []Record) (resu
 		m.State = "partial"
 		m.Reason = "retained beginning and recent output; execution output limit reached"
 	}
-	if err = s.saveLocked(key, m); err != nil {
-		// The previous manifest remains authoritative; the new segment is unacknowledged.
-		if previous == nil {
-			_ = s.removeLocked(key + "/" + seg.Name)
-		}
+	// Admit the manifest and its replay fingerprints before altering a segment.
+	manifest, oldManifestSize, err := s.prepareManifestLocked(key, m)
+	if err != nil {
+		return err
+	}
+	if err = s.atomicLocked(key+"/"+seg.Name, data); err != nil {
+		return err
+	}
+	if err = s.publishManifestLocked(key, m, manifest, oldManifestSize); err != nil {
+		// A failed directory sync can follow a manifest rename. Keep the
+		// segment until startup can reconcile it against the durable manifest.
 		return err
 	}
 	for _, drop := range obsolete {
@@ -273,7 +281,7 @@ func (s *Store) Complete(id Identity, outcome string, completed time.Time) error
 	if old.SealedAt != nil {
 		return nil
 	}
-	if !strings.Contains("|Succeeded|Failed|Canceled|Rejected|", "|"+outcome+"|") {
+	if !terminalOutcome(outcome) {
 		return fmt.Errorf("not a terminal execution outcome")
 	}
 	if old.CompletedAt != nil {
@@ -281,12 +289,10 @@ func (s *Store) Complete(id Identity, outcome string, completed time.Time) error
 	}
 	m := clone(old)
 	m.Outcome = outcome
-	if m.CompletedAt == nil {
-		t := completed.UTC()
-		m.CompletedAt = &t
-	}
+	t := completed.UTC()
+	m.CompletedAt = &t
 	m.UpdatedAt = s.limits.Now().UTC()
-	return s.saveLocked(key, m)
+	return s.saveTerminalLocked(key, m)
 }
 
 // Seal freezes the retained window. Coverage stays unverified unless collector
@@ -306,7 +312,11 @@ func (s *Store) Seal(id Identity) error {
 		return fmt.Errorf("active archive cannot be sealed")
 	}
 	m := clone(old)
-	now := s.limits.Now().UTC()
+	sealManifest(m, s.limits.Now().UTC())
+	return s.saveTerminalLocked(key, m)
+}
+
+func sealManifest(m *Manifest, now time.Time) {
 	m.SealedAt = &now
 	end := now
 	if m.CompletedAt.After(end) {
@@ -319,5 +329,4 @@ func (s *Store) Seal(id Identity) error {
 		m.Reason = "retained output sealed; source coverage is not independently certified"
 	}
 	m.UpdatedAt = now
-	return s.saveLocked(key, m)
 }

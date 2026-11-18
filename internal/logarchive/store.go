@@ -201,6 +201,11 @@ func (s *Store) reconcile() error {
 	for key, m := range s.items {
 		wanted[key+"/manifest.json"] = true
 		wanted[key+"/control"] = true
+		if err := s.restoreTerminal(key, m); err != nil {
+			archiveCorruption.WithLabelValues("control").Inc()
+			m.State = "partial"
+			m.Reason = "terminal archive control record unavailable or invalid"
+		}
 		for _, seg := range m.Segments {
 			if path.Base(seg.Name) != seg.Name || !strings.HasSuffix(seg.Name, ".gz") {
 				return fmt.Errorf("invalid segment path")
@@ -231,17 +236,20 @@ func (s *Store) reconcile() error {
 	})
 }
 
-func (s *Store) roomLocked(need int64) bool {
+func (s *Store) checkRoomLocked(need int64) error {
 	if need < 0 || s.used+need > s.limits.TotalBytes {
-		return false
+		return ErrCapacity
 	}
 	var st syscall.Statfs_t
-	if s.statfs(s.root.Name(), &st) != nil {
-		return false
+	if err := s.statfs(s.root.Name(), &st); err != nil {
+		return fmt.Errorf("check archive filesystem capacity: %w", err)
 	}
 	available := int64(st.Bavail) * int64(st.Bsize)
 	// A zero inode total means the filesystem does not report a finite count.
-	return available-need >= s.limits.ReserveBytes && (st.Files == 0 || st.Ffree > 64)
+	if available-need < s.limits.ReserveBytes || (st.Files != 0 && st.Ffree <= 64) {
+		return ErrCapacity
+	}
+	return nil
 }
 
 func (s *Store) atomicLocked(name string, data []byte) error {
@@ -269,6 +277,8 @@ func (s *Store) atomicLocked(name string, data []byte) error {
 	var old int64
 	if info, e := s.root.Stat(name); e == nil {
 		old = allocated(info)
+	} else if !os.IsNotExist(e) {
+		return e
 	}
 	if err = s.root.Rename(tmp, name); err != nil {
 		return err
@@ -292,28 +302,45 @@ func (s *Store) atomicLocked(name string, data []byte) error {
 }
 
 func (s *Store) saveLocked(key string, m *Manifest) error {
+	data, oldSize, err := s.prepareManifestLocked(key, m)
+	if err != nil {
+		return err
+	}
+	return s.publishManifestLocked(key, m, data, oldSize)
+}
+
+func (s *Store) prepareManifestLocked(key string, m *Manifest) ([]byte, int64, error) {
 	m.Checksum = ""
 	unsigned, err := json.Marshal(m)
 	if err != nil {
-		return err
+		return nil, 0, err
 	}
 	digest := sha256.Sum256(unsigned)
 	m.Checksum = hex.EncodeToString(digest[:])
 	data, err := json.Marshal(m)
 	if err != nil {
-		return err
+		return nil, 0, err
 	}
 	if int64(len(data)) > s.limits.ManifestBytes {
-		return ErrCapacity
+		return nil, 0, ErrCapacity
 	}
 	var oldSize int64
 	if info, e := s.root.Stat(key + "/manifest.json"); e == nil {
 		oldSize = info.Size()
+	} else if !os.IsNotExist(e) {
+		return nil, 0, e
 	}
-	if s.metadata-oldSize+int64(len(data)) > s.limits.MetadataBytes || !s.roomLocked(int64(len(data))+8192) {
-		return ErrCapacity
+	if s.metadata-oldSize+int64(len(data)) > s.limits.MetadataBytes {
+		return nil, 0, ErrCapacity
 	}
-	if err = s.atomicLocked(key+"/manifest.json", data); err != nil {
+	if err = s.checkRoomLocked(int64(len(data)) + 8192); err != nil {
+		return nil, 0, err
+	}
+	return data, oldSize, nil
+}
+
+func (s *Store) publishManifestLocked(key string, m *Manifest, data []byte, oldSize int64) error {
+	if err := s.atomicLocked(key+"/manifest.json", data); err != nil {
 		return err
 	}
 	s.metadata += int64(len(data)) - oldSize
@@ -393,8 +420,8 @@ func (s *Store) Register(id Identity) error {
 		}
 		return nil
 	}
-	if !s.roomLocked(s.limits.ManifestBytes * 2) {
-		return ErrCapacity
+	if err := s.checkRoomLocked(s.limits.ManifestBytes * 2); err != nil {
+		return err
 	}
 	_, existingDirectory := s.root.Stat(key)
 	if err := s.root.MkdirAll(key, 0700); err != nil {

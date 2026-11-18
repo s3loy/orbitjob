@@ -78,7 +78,8 @@ func (o *Observer) register(ctx context.Context, run *api.JobRun) (Identity, err
 		}
 		return id, err
 	}
-	if err = o.Store.Append(id, runEvents(id, run, phase)); err != nil && err != ErrSealed {
+	// ErrCapacity from Append means the omission was recorded in the control block.
+	if err = o.Store.Append(id, runEvents(id, run, phase)); err != nil && !errors.Is(err, ErrSealed) && (finished == nil || !errors.Is(err, ErrCapacity)) {
 		return id, err
 	}
 	if finished != nil {
@@ -90,7 +91,8 @@ func (o *Observer) register(ctx context.Context, run *api.JobRun) (Identity, err
 	if err != nil {
 		return id, err
 	}
-	if m.CompletedAt != nil && m.SealedAt == nil && time.Since(*m.CompletedAt) >= 30*time.Second && time.Since(m.UpdatedAt) >= 3*time.Second {
+	now := o.Store.limits.Now()
+	if m.CompletedAt != nil && m.SealedAt == nil && now.Sub(*m.CompletedAt) >= 30*time.Second && now.Sub(m.UpdatedAt) >= 3*time.Second {
 		if err = o.Store.Seal(id); err != nil {
 			return id, err
 		}

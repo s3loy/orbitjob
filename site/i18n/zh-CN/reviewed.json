@@ -77,8 +77,8 @@
     },
     "reference/execution-logs": {
       "source": "docs/execution-logs.md",
-      "englishSha256": "eaca313ce3ea109958cd1800d11700d9be8d041a6dda177b5ab0a633dfb89d3b",
-      "chineseSha256": "655b5877daca9a502e3b9ab7a05f020fc85eaace562f5b9df6a1ae8250c63a8c"
+      "englishSha256": "63668746e4af2c13d37b7dab73d38446d2eb517540dc721ca711019a60f2e6ba",
+      "chineseSha256": "f660794c4e521201a97eeb9c9b9b4523b4cfe0cc84ccd1e57bb86d9bb4e139d6"
     },
     "reference/configuration": {
       "source": "docs/reference/configuration.md",

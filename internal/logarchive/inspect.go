@@ -132,6 +132,9 @@ func Inspect(ctx context.Context, directory string, limits Limits) (Inspection, 
 			finding("manifest", "invalid manifest counters")
 			return nil
 		}
+		if store.restoreTerminal(key, &m) != nil {
+			finding("control", "terminal archive control record unavailable or invalid")
+		}
 		var last int64
 		for _, segment := range m.Segments {
 			if path.Base(segment.Name) != segment.Name || path.Ext(segment.Name) != ".gz" {

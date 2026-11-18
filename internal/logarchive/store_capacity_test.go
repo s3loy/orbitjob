@@ -22,7 +22,7 @@ func TestArchiveRegistrationFilesystemCapacity(t *testing.T) {
 		{name: "finite inodes at reserve", files: 1024, free: 64, wantCapacity: true},
 		{name: "finite inodes above reserve", files: 1024, free: 65},
 		{name: "insufficient available bytes", lowBytes: true, wantCapacity: true},
-		{name: "statfs unavailable", statfsError: errors.New("statfs unavailable"), wantCapacity: true},
+		{name: "statfs unavailable", statfsError: errors.New("statfs unavailable")},
 		{name: "logical allocation exhausted", logicalBudget: true, wantCapacity: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -53,9 +53,13 @@ func TestArchiveRegistrationFilesystemCapacity(t *testing.T) {
 			}
 			id := identity(1)
 			err = s.Register(id)
-			if tc.wantCapacity {
-				if !errors.Is(err, ErrCapacity) {
-					t.Fatalf("registration did not refuse exhausted capacity: %v", err)
+			if tc.wantCapacity || tc.statfsError != nil {
+				want := ErrCapacity
+				if tc.statfsError != nil {
+					want = tc.statfsError
+				}
+				if !errors.Is(err, want) {
+					t.Fatalf("registration returned %v, want %v", err, want)
 				}
 				if _, err = s.Snapshot(id); !errors.Is(err, ErrMissing) {
 					t.Fatalf("refused registration retained an archive: %v", err)
