@@ -1,14 +1,30 @@
 #!/usr/bin/env bash
-# Check staged files against repository .gitignore rules, including force-adds.
+# Check staged files against indexed .gitignore rules, including force-adds.
 set -euo pipefail
 
+index=$(git rev-parse --path-format=absolute --git-path index)
+export GIT_INDEX_FILE="$index"
+cd -- "$(git rev-parse --show-toplevel)"
 staged=$(git -c core.quotePath=true diff --cached --name-only --diff-filter=ACMR)
 if [ -z "$staged" ]; then
 	exit 0
 fi
 
+rules=$(mktemp -d)
+trap 'rm -rf -- "$rules"' EXIT
+git ls-files --stage -z -- ':(glob)**/.gitignore' |
+	while IFS= read -r -d '' entry; do
+		read -r mode blob stage <<< "${entry%%$'\t'*}"
+		if [[ $stage == 0 && ( $mode == 100644 || $mode == 100755 ) ]]; then
+			rule="$rules/${entry#*$'\t'}"
+			mkdir -p -- "${rule%/*}"
+			git cat-file blob "$blob" > "$rule"
+		fi
+	done
+
 # Git quotes names containing line breaks. Use the same quoting on both lists.
-ignored=$(git -c core.quotePath=true ls-files -ci --exclude-per-directory=.gitignore)
+ignored=$(git -C "$rules" --git-dir="$(git rev-parse --absolute-git-dir)" \
+	--work-tree="$rules" -c core.quotePath=true ls-files -ci --exclude-per-directory=.gitignore)
 if [ -z "$ignored" ]; then
 	exit 0
 fi
