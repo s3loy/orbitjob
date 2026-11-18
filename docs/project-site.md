@@ -194,7 +194,8 @@ fetched the archive before Benchmark completed, retry the current production
 deployment after Benchmark succeeds or wait for the next build.
 
 To include an existing archive when running `npm --prefix site run build`
-locally, set `BENCHMARK_ARCHIVE` to the archive directory. The measurements
-retain their original source, hardware and configuration limits. A site build
+locally, set `BENCHMARK_ARCHIVE` to the directory containing only the benchmark
+`index.html` and `data.js` files. The measurements retain their original source,
+hardware and configuration limits. A site build
 reuses recorded measurements without running benchmarks. Source changes remain
 reviewable independently of publication.

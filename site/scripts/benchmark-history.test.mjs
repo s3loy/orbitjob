@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -64,4 +64,54 @@ fi
   assert.equal(await readFile(path.join(archive, 'data.js'), 'utf8'), 'benchmark data\n');
   assert.equal(git(checkout, 'rev-parse', 'FETCH_HEAD'), dev);
   assert.equal(git(checkout, 'for-each-ref', 'refs/orbitjob/benchmark-history/'), '');
+
+  await writeFile(path.join(remote, 'dev/bench/local-draft.txt'), 'private draft fixture\n');
+  git(remote, 'add', '--', 'dev/bench/local-draft.txt');
+  git(remote, 'commit', '-qm', 'unexpected archive member');
+  const rejectedArchive = path.join(root, 'rejected-archive');
+  const rejected = spawnSync('bash', [path.join(scripts, 'fetch-benchmark-history.sh'), rejectedArchive], { env, encoding: 'utf8' });
+  assert.equal(rejected.status, 1, rejected.stderr);
+  assert.match(rejected.stderr, /Benchmark history must contain only regular files/);
+  await assert.rejects(readdir(rejectedArchive), { code: 'ENOENT' });
+  assert.equal(git(checkout, 'for-each-ref', 'refs/orbitjob/benchmark-history/'), '');
+});
+
+test('site assembly rejects extra files and non-regular benchmark entries', async t => {
+  const root = await fixture(t);
+  const source = path.join(root, 'source');
+  const dist = path.join(root, 'dist');
+  const scripts = path.join(root, 'scripts');
+  const target = path.join(dist, 'dev/bench');
+  for (const directory of [source, dist, scripts]) await mkdir(directory);
+  const assemble = path.join(scripts, 'assemble.mjs');
+  await copyFile(new URL('./assemble.mjs', import.meta.url), assemble);
+  await writeFile(path.join(dist, 'index.html'), 'site fixture\n');
+  await writeFile(path.join(source, 'index.html'), 'benchmark fixture\n');
+  await writeFile(path.join(source, 'data.js'), 'benchmark data\n');
+  const build = () => spawnSync(process.execPath, [assemble], {
+    env: { ...process.env, BENCHMARK_ARCHIVE: source },
+    encoding: 'utf8',
+  });
+
+  await writeFile(path.join(source, 'local-draft.txt'), 'private draft fixture\n');
+  const extra = build();
+  assert.equal(extra.status, 1, extra.stderr);
+  assert.match(extra.stderr, /Benchmark archive must contain only regular files/);
+  assert.match(extra.stderr, /local-draft\.txt/);
+  await assert.rejects(readdir(target), { code: 'ENOENT' });
+  await rm(path.join(source, 'local-draft.txt'));
+
+  await rm(path.join(source, 'data.js'));
+  await symlink('index.html', path.join(source, 'data.js'));
+  const symlinked = build();
+  assert.equal(symlinked.status, 1, symlinked.stderr);
+  assert.match(symlinked.stderr, /data\.js \(not a regular file\)/);
+  await rm(path.join(source, 'data.js'));
+  await writeFile(path.join(source, 'data.js'), 'benchmark data\n');
+
+  const clean = build();
+  assert.equal(clean.status, 0, clean.stderr);
+  assert.deepEqual((await readdir(target)).sort(), ['data.js', 'index.html']);
+  assert.equal(await readFile(path.join(target, 'data.js'), 'utf8'), 'benchmark data\n');
+  assert.equal(await readFile(path.join(target, 'index.html'), 'utf8'), 'benchmark fixture\n');
 });

@@ -167,8 +167,8 @@
     },
     "contribute/documentation": {
       "source": "docs/project-site.md",
-      "englishSha256": "7dea7b92874ace517b7342d2cafcf2e5a26fa53783fe42f914eb235d8f304896",
-      "chineseSha256": "2cf7a5e612fd2787a25f46998ec3a387b0d5be940de3c645a2cd1f6f040073b3"
+      "englishSha256": "3f81dfe41c6473d6366378560cba9105735fbb23dc1b70ac6c159274ebbe7223",
+      "chineseSha256": "748ba49ec81be80a450ffb4864d4526b7d6bbabdab69f443def9943ed28ff822"
     }
   },
   "references": {

@@ -111,4 +111,4 @@ npm --prefix site run test:browser
 
 两个平台在构建时导入 `gh-pages` 分支中已有的 `dev/bench/` 归档。要在 GitHub Pages 中纳入最新测量结果，请等待 Benchmark 成功后再手动启动部署。如果 Cloudflare 在 Benchmark 完成前就已获取归档，可在 Benchmark 成功后重试当前生产部署，或等待下一次构建。
 
-在本地运行 `npm --prefix site run build` 时，可将 `BENCHMARK_ARCHIVE` 设为归档目录以纳入已有归档。测量结果保留原有的来源、硬件和配置限制。站点构建复用已记录的测量结果，不运行基准测试。源码修改可以独立于发布接受审阅。
+要在本地构建中纳入已有归档，将 `BENCHMARK_ARCHIVE` 设为仅包含 `index.html` 和 `data.js` 的基准测试归档目录，再运行 `npm --prefix site run build`。测量结果保留原有的来源、硬件和配置限制。站点构建复用已记录的测量结果，不运行基准测试。源码修改可以独立于发布接受审阅。
